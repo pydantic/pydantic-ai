@@ -112,6 +112,7 @@ facts with [`profile=`](overview.md#provider-support), which resolves like a
 | Explicit interruption/truncation | Unsupported | Gemini [interrupts server-side](turns.md#barge-in) and emits `RealtimeResponseInterruptedEvent` |
 | Input transcription | Full feature support | Native [transcription](audio.md#input-transcription), enabled by default; no separate model ID |
 | Native tools | Limited parameter support | Google Search grounding only; URL context and code execution fall back to a [`local=` tool](tools.md#native-tools) (see above) |
+| Mid-session tool updates | Unsupported | Tools are fixed at `setup`, so a tool-contributing [deferred capability](capabilities.md#deferred-capability-loading) is rejected before connecting |
 | Usage | Full feature support | Token and modality breakdowns; function-call usage may arrive on a later turn |
 | State-restoring reconnect | Full feature support | Requires [session resumption](#session-resumption) plus a reconnect policy |
 

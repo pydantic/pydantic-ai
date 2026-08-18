@@ -99,6 +99,7 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
+from ..toolsets._capability_owned import is_gated_by_deferred_capability
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -3177,6 +3178,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         and is not itself a run.
         """
         from ..realtime import RealtimeModel, infer_realtime_model
+        from ..realtime._utils import resolve_realtime_request_tools
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -3206,6 +3208,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
             messages=list(message_history) if message_history else [],
             max_retries=max_tool_retries,
+            # A session resumed from a history in which a deferred capability was already loaded (or a
+            # deferred tool already discovered) starts where that history left off, exactly as `iter`
+            # does — so those tools advertise at connect and `load_capability` refuses a redundant
+            # re-load. KEEP IN SYNC with `iter`.
+            loaded_capability_ids=parse_loaded_capabilities(message_history) if message_history else set[str](),
+            discovered_tool_names=parse_discovered_tools(message_history) if message_history else set[str](),
         )
         # Both need the context that only exists once it's built, so they're assigned rather than passed —
         # the graph does the same via `replace`. Without them a tool validated in a session sees a
@@ -3264,25 +3272,44 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
-        # Deferred capabilities load in a session the same way they do in a graph run: the catalog
-        # renders into the connect-time instructions and the loaded instructions come back as the
-        # `load_capability` tool's own result, which every provider supports. What no provider
-        # connection can do (yet) is advertise NEW tools mid-session — tools are fixed at connect —
-        # so a deferred capability whose loading would have to reveal tools can't be honored, and
-        # fails up front rather than silently loading less than it promised. The direct hook calls
-        # probe the same contributions extraction reads; their results are discarded.
-        undeliverable_capability_ids = [
+        model_profile = model.profile
+        deferred_capability_ids = {
             capability_id
             for capability_id, capability in run_context.capabilities.items()
             if capability.defer_loading is True
-            and (capability.get_toolset() is not None or (capability.get_native_tools() or ()))
-        ]
-        if undeliverable_capability_ids:
-            formatted_ids = ', '.join(repr(capability_id) for capability_id in undeliverable_capability_ids)
+        }
+        # Deferred capabilities load in a session the same way they do in a graph run: the catalog
+        # renders into the connect-time instructions and the loaded instructions come back as the
+        # `load_capability` tool's own result, which every provider supports. Revealing the *tools* a
+        # load brings with it takes a second tool advertisement mid-session, which only a provider
+        # whose profile sets `supports_tool_updates` accepts — except for a capability the seeded
+        # `message_history` already shows as loaded, whose tools go out at connect like any other. A
+        # native tool can't be revealed on any provider. Whatever is left over fails up front rather
+        # than silently loading less than it promised. The direct hook calls probe the same
+        # contributions extraction reads; their results are discarded.
+        if native_tool_capability_ids := [
+            capability_id
+            for capability_id in deferred_capability_ids
+            if run_context.capabilities[capability_id].get_native_tools()
+        ]:
+            formatted_ids = ', '.join(repr(capability_id) for capability_id in sorted(native_tool_capability_ids))
             raise exceptions.UserError(
-                'Realtime sessions cannot reveal tools mid-session, so deferred capabilities that '
-                'contribute tools or native tools are not supported; remove `defer_loading=True` '
-                f'from: {formatted_ids}.'
+                'Realtime sessions cannot reveal native tools mid-session, so deferred capabilities '
+                f'that contribute native tools are not supported; remove `defer_loading=True` from: {formatted_ids}.'
+            )
+        if not model_profile.get('supports_tool_updates', False) and (
+            unrevealable_capability_ids := [
+                capability_id
+                for capability_id in deferred_capability_ids
+                if capability_id not in run_context.loaded_capability_ids
+                and run_context.capabilities[capability_id].get_toolset() is not None
+            ]
+        ):
+            formatted_ids = ', '.join(repr(capability_id) for capability_id in sorted(unrevealable_capability_ids))
+            raise exceptions.UserError(
+                f'The {model.model_name!r} realtime model does not support updating tools mid-session, so a '
+                'deferred capability that contributes tools cannot be loaded during a session; remove '
+                f'`defer_loading=True` from: {formatted_ids}.'
             )
         # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
         # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published
@@ -3330,7 +3357,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 native_tool = resolved_native
             if not (isinstance(native_tool, ToolSearchTool) and native_tool.optional):
                 native_tools.append(native_tool)
-        model_profile = model.profile
 
         toolset = self._get_toolset(
             output_toolset=None,
@@ -3426,38 +3452,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
                 native_tools=native_tools,
+                deferred_capability_ids=deferred_capability_ids,
+                # Seeded from `message_history` the way the graph seeds each request: a capability the
+                # prior run loaded advertises its tools from connect, so no mid-session update is
+                # needed for it — on any provider.
+                revealed_tool_names=_agent_graph.resolve_revealed_tool_names(
+                    run_context.discovered_tool_names,
+                    tool_defs,
+                    deferred_capability_ids=deferred_capability_ids,
+                    loaded_capability_ids=run_context.loaded_capability_ids,
+                ),
             )
-            # Resolve `include_return_schema` exactly as `Model.prepare_request` does: return schemas
-            # are cleared on tools that didn't opt in, kept as-is for a model that renders them
-            # natively (Gemini Live's function-declaration `response` schema), and injected into the
-            # tool description elsewhere.
-            model_request_parameters = models.prepare_return_schemas(
-                model_request_parameters,
-                supports_tool_return_schema=model_profile.get('supports_tool_return_schema', False),
-            )
-            # Run the same native ↔ local-tool fallback swap the classic agent-run path applies (via
-            # `Model._resolve_request_tools`): drop an unsupported native tool when a local fallback
-            # (stamped `unless_native=...` by the capability's toolset) is present, drop the redundant
-            # local tool when the native tool IS supported, and raise the shared `UserError` (suggesting
-            # `local=...`) only when unsupported with no local fallback. Realtime models genuinely default
-            # to supporting no native tools, so the default here is `frozenset()`, not `SUPPORTED_NATIVE_TOOLS`.
-            # No `can_withhold_tool_schemas`/`tool_addition_mode`: a realtime connection can neither
-            # withhold a schema nor reveal a tool later, so every deferred unrevealed tool resolves
-            # to `'withheld'` in the visibility table.
-            model_request_parameters = models.resolve_request_tools(
-                model_request_parameters, model_profile.get('supported_native_tools', frozenset())
-            )
-            # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose
-            # tools are fixed at connect can never do — the model would be handed a `search_tools`
-            # affordance that finds the tool and then can't have it. Rejected up front for the same
-            # reason a deferred *capability* that contributes tools is (see `_resolve_run_capabilities`
-            # above), rather than silently advertising a search that leads nowhere.
-            deferred_tool_names = [tool.name for tool in model_request_parameters.function_tools if tool.defer_loading]
+            model_request_parameters = resolve_realtime_request_tools(model_request_parameters, model_profile)
+            # A `defer_loading=True` tool that no *deferred capability* gates is hidden until tool
+            # search reveals it, and the session drops the optional `ToolSearchTool` — so the model
+            # would be handed a `search_tools` affordance that finds the tool and then can't have it.
+            # Rejected up front, rather than silently advertising a search that leads nowhere. Two
+            # kinds are left alone: one a deferred capability gates, which loading that capability
+            # reveals (the guards above already established this session can honor it), and one the
+            # seeded history has already revealed, which goes out with the connect-time list like any
+            # visible tool and needs nothing further.
+            deferred_tool_names = [
+                tool.name
+                for tool in model_request_parameters.function_tools
+                if tool.defer_loading
+                and tool.name not in model_request_parameters.revealed_tool_names
+                and not is_gated_by_deferred_capability(run_context, tool)
+            ]
             if deferred_tool_names:
                 formatted_names = ', '.join(repr(name) for name in deferred_tool_names)
                 raise exceptions.UserError(
-                    'Realtime sessions cannot reveal tools mid-session, so tools with '
-                    f'`defer_loading=True` are not supported; remove it from: {formatted_names}.'
+                    'Realtime sessions have no tool-search surface, so a tool with `defer_loading=True` '
+                    'that no capability owns can never be revealed; remove it from: '
+                    f'{formatted_names}.'
                 )
             # Realtime codecs read `function_tools` directly, so hidden tools are dropped from the
             # connect-time advertisement entirely — the same physical removal this path applied

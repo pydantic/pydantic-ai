@@ -259,6 +259,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         model_name_getter: Callable[[], str | None] | None = None,
         conversation_id: str | None = None,
         replayed_items: list[ConversationItemCreated] | None = None,
+        session_config: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             ws,
@@ -267,6 +268,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             input_transcription_enabled=input_transcription_enabled,
             model_name=model_name,
             model_name_getter=model_name_getter,
+            session_config=session_config,
         )
         self._restores_state_on_reconnect = True
         self._conversation_id = conversation_id
@@ -531,6 +533,7 @@ class XaiRealtimeModel(RealtimeModel):
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,
                 replayed_items=replayed_items,
+                session_config=session_config,
             )
             return connection
 

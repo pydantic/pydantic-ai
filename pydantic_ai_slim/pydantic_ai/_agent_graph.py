@@ -6,7 +6,7 @@ import inspect
 import time
 from asyncio import Task
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -827,7 +827,7 @@ async def _prepare_request_parameters(
         native_tools=native_tools,
         deferred_capability_ids=deferred_capability_ids,
         # Preserve discovered names that aren't in the current definitions.
-        revealed_tool_names=_revealed_tool_names(
+        revealed_tool_names=resolve_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
             deferred_capability_ids=deferred_capability_ids,
@@ -2383,23 +2383,34 @@ def run_cancelled_snapshot(
     )
 
 
-def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
-    """Refresh the history-derived loaded capability ids from the current graph state."""
+def refresh_loaded_capability_ids(
+    loaded_capability_ids: set[str],
+    messages: Sequence[_messages.ModelMessage],
+    capabilities: Mapping[str, AbstractCapability[Any]],
+) -> None:
+    """Refresh history-derived loaded capability ids in place.
+
+    Shared with the realtime session, which re-derives the same state per turn from its own history
+    rather than from graph state.
+    """
     # The `load_capability` tool (and therefore any `LoadCapability*` history parts) only exists
     # when a deferred capability is configured — the same condition that injects the loader. Without
     # one, the set can never change during the run, so the seeded value stays in sync without rescanning.
     # (`discovered_tool_names` has no equally-cheap guard: tool search is auto-injected and its trigger
     # is "deferred tools exist", which isn't known without resolving toolsets, so its refresh stays
     # unconditional.)
-    if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
+    if not any(capability.defer_loading is True for capability in capabilities.values()):
         return
-
-    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
 
     # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`
     # copies made via `replace(ctx, ...)`, so clear + update keeps them all in sync.
-    ctx.deps.loaded_capability_ids.clear()
-    ctx.deps.loaded_capability_ids.update(loaded_capability_ids)
+    loaded_capability_ids.clear()
+    loaded_capability_ids.update(parse_loaded_capabilities(messages))
+
+
+def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh the history-derived loaded capability ids from the current graph state."""
+    refresh_loaded_capability_ids(ctx.deps.loaded_capability_ids, ctx.state.message_history, ctx.deps.capabilities)
 
 
 def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
@@ -2411,7 +2422,7 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
 
 
-def _revealed_tool_names(
+def resolve_revealed_tool_names(
     discovered: Iterable[str],
     function_tools: Iterable[ToolDefinition],
     *,
@@ -2460,7 +2471,7 @@ def _with_outgoing_reveal_state(
     """
     return replace(
         parameters,
-        revealed_tool_names=_revealed_tool_names(
+        revealed_tool_names=resolve_revealed_tool_names(
             parse_discovered_tools(messages),
             parameters.function_tools,
             deferred_capability_ids=parameters.deferred_capability_ids,

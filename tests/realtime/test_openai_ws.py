@@ -487,6 +487,7 @@ def test_profile_allow_seeding() -> None:
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
         supports_async_tool_calls=True,  # the realtime models keep talking through a tool call
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
+        supports_tool_updates=True,  # `session.update` takes a fresh `tools` array mid-session
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
         audio_input_sample_rate=24000,

@@ -115,6 +115,7 @@ from .codec import (
     SessionUsage,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer
 from .profiles import RealtimeModelProfileSpec
@@ -361,8 +362,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         model_name: str | None = None,
         model_name_getter: Callable[[], str | None] | None = None,
         observes_output_audio: bool = True,
+        session_config: dict[str, Any] | None = None,
     ) -> None:
         self._ws = ws
+        # The `session.update` payload the handshake configured this session with, and the one a
+        # re-dial replays. `UpdateTools` rewrites its `tools` in place so a reconnect re-advertises
+        # whatever the session has revealed since. Empty when a connection is built without one, in
+        # which case a tool update only reaches the live socket.
+        self._session_config = session_config if session_config is not None else {}
         self._model_name = model_name
         self._model_name_getter = model_name_getter
         # `dial` re-establishes a fully configured connection; with a `reconnect` policy it is used to
@@ -431,12 +438,54 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
 
+    def _apply_tool_update(self, tools: Sequence[ToolDefinition]) -> dict[str, Any]:
+        """Adopt `tools` as the session's advertised list, returning the frame that re-advertises it."""
+        payload = [tool_def_to_openai(tool) for tool in tools]
+        # Written back into the captured config so a re-dial's `session.update` advertises the
+        # revealed tools too, instead of resuming the call with the connect-time list.
+        self._session_config['tools'] = payload
+        session: dict[str, Any] = {'tools': payload}
+        # Only the tools are re-sent: OpenAI rejects an update that repeats settled audio
+        # configuration (e.g. `audio.output.voice`) once the model has produced audio. The GA shape
+        # still requires its `type` discriminator; Azure Voice Live's beta config has none.
+        if (session_type := self._session_config.get('type')) is not None:
+            session['type'] = session_type
+        return {'type': SESSION_UPDATE_EVENT, 'session': session}
+
+    async def _send_tool_result(self, content: ToolResult) -> None:
+        """Send a settled tool call's result, plus any follow-up content, and ask for the answer."""
+        # Normalize any follow-up content (downloading and re-encoding media) before the first
+        # frame goes out, so content this provider can't carry fails with nothing sent rather than
+        # leaving the result on the wire without the material that explains it.
+        item = (
+            await user_message_item(
+                content.content,
+                provider_name=self._provider_name,
+                supports_images=self._supports_tool_result_images,
+            )
+            if content.content
+            else None
+        )
+        await self._send_event(
+            {
+                'type': CONVERSATION_ITEM_CREATE_EVENT,
+                'item': {
+                    'type': 'function_call_output',
+                    'call_id': content.tool_call_id,
+                    'output': content.output,
+                },
+            }
+        )
+        if item:
+            await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
+        await self._request_response()
+
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the OpenAI Realtime API.
 
         Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `BinaryImage`,
-        `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
-        `CancelResponse`, and `TruncateOutput`.
+        `ToolResult`, `UpdateTools`, and the control verbs `CommitAudio`, `ClearAudio`,
+        `CreateResponse`, `CancelResponse`, and `TruncateOutput`.
         """
         if isinstance(content, BinaryAudio):
             require_pcm_audio(content, provider_name=self._provider_label)
@@ -459,31 +508,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             )
             await self._request_response()
         elif isinstance(content, ToolResult):
-            # Normalize any follow-up content (downloading and re-encoding media) before the first
-            # frame goes out, so content this provider can't carry fails with nothing sent rather than
-            # leaving the result on the wire without the material that explains it.
-            item = (
-                await user_message_item(
-                    content.content,
-                    provider_name=self._provider_name,
-                    supports_images=self._supports_tool_result_images,
-                )
-                if content.content
-                else None
-            )
-            await self._send_event(
-                {
-                    'type': CONVERSATION_ITEM_CREATE_EVENT,
-                    'item': {
-                        'type': 'function_call_output',
-                        'call_id': content.tool_call_id,
-                        'output': content.output,
-                    },
-                }
-            )
-            if item:
-                await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
-            await self._request_response()
+            await self._send_tool_result(content)
         elif isinstance(content, BinaryImage):
             # An image is added as conversation context (like a video frame), not a turn of its own,
             # so it doesn't trigger a response — drive that with audio (VAD) or `CreateResponse`.
@@ -498,6 +523,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     },
                 }
             )
+        elif isinstance(content, UpdateTools):
+            # No wait for the `session.updated` ack: the pump owns the socket reads mid-session, and
+            # WebSocket ordering already guarantees the server applies this before any later frame.
+            await self._send_event(self._apply_tool_update(content.tools))
         elif isinstance(content, CommitAudio):
             await self._send_event({'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT})
         elif isinstance(content, ClearAudio):
@@ -1166,6 +1195,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 model_name=server_model,
                 model_name_getter=lambda: server_model,
                 observes_output_audio=False,
+                session_config=session_config,
             )
         finally:
             if cm is not None:  # pragma: no branch
@@ -1249,6 +1279,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
                 model_name_getter=model_name_getter,
+                session_config=session_config,
             )
 
         async with connect_openai_protocol(

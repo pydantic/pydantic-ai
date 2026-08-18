@@ -86,6 +86,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from pydantic_ai.realtime.profiles import merge_realtime_profile
 from pydantic_ai.realtime.xai import map_conversation_event as _map_conversation_wire_event
@@ -932,6 +933,46 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
+
+
+@pytest.mark.anyio
+async def test_update_tools_re_advertises_only_the_tool_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mid-session `UpdateTools` sends the new `tools` plus the GA `type` discriminator, nothing else.
+
+    Re-sending the whole session config would repeat settled audio configuration, which the API
+    rejects once the model has produced audio. The server's `session.updated` acknowledgement carries
+    nothing a session needs, so it maps to no codec event instead of surfacing as an error — the
+    session never waits for it, and WebSocket ordering already guarantees the update lands first.
+    """
+    ws = FakeWebSocket([_created(), _updated(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice='alloy'),
+    )
+    forecast = ToolDefinition(name='forecast', description='Weather', parameters_json_schema={'type': 'object'})
+
+    async with _connect(model, 'Be nice') as conn:
+        await conn.send(UpdateTools(tools=[forecast]))
+        assert await collect_codec_events(conn) == []
+
+    assert json.loads(ws.sent[-1]) == snapshot(
+        {
+            'type': 'session.update',
+            'session': {
+                'tools': [
+                    {
+                        'type': 'function',
+                        'name': 'forecast',
+                        'parameters': {'type': 'object'},
+                        'description': 'Weather',
+                    }
+                ],
+                'type': 'realtime',
+            },
+        }
+    )
 
 
 @pytest.mark.anyio
@@ -2866,6 +2907,30 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
     assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
+
+
+@pytest.mark.anyio
+async def test_update_tools_survives_a_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A re-dial re-advertises the revealed tools, not the list the session originally connected with.
+
+    The update is written back into the captured session config, which is what `dial()` replays — so
+    a dropped socket doesn't quietly take a loaded capability's tools away mid-call.
+    """
+    dropped = _DropAfterHandshake([_created(), _updated()])
+    good = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _RecordingConnect([dropped, good]))
+    model = OpenAIRealtimeModel('gpt-realtime', settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}})
+    forecast = ToolDefinition(name='forecast', parameters_json_schema={'type': 'object'})
+
+    async with _connect(model, 'x') as conn:
+        await conn.send(UpdateTools(tools=[forecast]))
+        events = await collect_codec_events(conn)
+
+    assert events == [RealtimeSessionReconnectEvent(state_restored=False)]
+    # The connect-time config carried no tools at all, so this can only come from the update.
+    redial = json.loads(good.sent[0])
+    assert redial['type'] == 'session.update'
+    assert [tool['name'] for tool in redial['session']['tools']] == ['forecast']
 
 
 @pytest.mark.anyio

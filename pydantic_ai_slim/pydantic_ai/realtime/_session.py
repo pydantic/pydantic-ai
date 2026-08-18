@@ -19,6 +19,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType, assert_never
 
 from .. import _agent_graph
+from .._deferred_capabilities import LoadCapabilityCallPart
 from .._enqueue import PendingMessage, PendingMessagePriority
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
@@ -60,11 +61,13 @@ from ..messages import (
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
     UserPromptPart,
 )
+from ..models import ModelRequestParameters
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
 from ..tool_manager import ToolManager
@@ -72,7 +75,7 @@ from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._instrumentation import (
     SessionInstrumentation,
 )
-from ._utils import seed_pcm_audio
+from ._utils import resolve_advertised_tools, resolve_realtime_request_tools, seed_pcm_audio
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -93,6 +96,7 @@ from .codec import (
     ToolCallCancelled,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeError
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfile
@@ -100,9 +104,8 @@ from .settings import AudioRetention, RealtimeModelSettings
 
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
-    from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
-    from ..tools import DeferredToolRequests, DeferredToolResults
+    from ..tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
     from .model import RealtimeModel
 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
@@ -261,7 +264,8 @@ _TranslatableEvent: TypeAlias = (
     | PartEndEvent
     | RealtimeSessionErrorEvent
 )
-_SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]
+_SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None, list[str]]
+"""A settled tool call's history part, follow-up user content, and the tool names it newly revealed."""
 
 
 def _as_event(item: object) -> RealtimeEvent:
@@ -343,7 +347,8 @@ def _tool_result_call_id(message: ModelMessage) -> str | None:
         return None
     result = message.parts[0]
     if not isinstance(result, (ToolReturnPart, RetryPromptPart)) or not all(
-        isinstance(part, (ToolReturnPart, RetryPromptPart, UserPromptPart)) for part in message.parts
+        isinstance(part, (ToolReturnPart, RetryPromptPart, ToolAvailabilityDeltaPart, UserPromptPart))
+        for part in message.parts
     ):
         return None
     return result.tool_call_id
@@ -356,8 +361,8 @@ def _is_tool_result_request(message: ModelMessage) -> bool:
 
 def _build_session_tool_return(
     tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
-) -> tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]:
-    """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
+) -> tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None, Sequence[str]]:
+    """Translate a settled session tool result into its history part and the tools it reveals."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
     result_part, user_content, tools_added = build_tool_return_part(
         tool_result,
@@ -365,14 +370,17 @@ def _build_session_tool_return(
         tool_kind=tool_def.tool_kind if tool_def else None,
     )
     if tools_added:
-        # Mirrors the graph (`_tool_execution._call_tool`), which rejects only a name owned by an
-        # unloaded capability and treats every other name — a typo, an already-visible tool — as a
-        # silent no-op. Killing the session over any reveal at all was harsher than the graph *and*
-        # unreachable-by-design harshness: a session refuses `defer_loading=True` tools and
-        # tool-contributing deferred capabilities when it opens, so it holds nothing that a reveal
-        # could have surfaced. Nothing is silently lost by dropping the request here.
-        _reject_unloaded_capability_reveals(tools_added, tool_manager)
-    return result_part, user_content
+        # Mirrors the graph (`_tool_execution._call_tool`), which lets a `load_capability` call reveal
+        # its own capability's tools, rejects a name owned by a capability that isn't loaded, and
+        # treats every other name — a typo, an already-visible tool — as a silent no-op.
+        _reject_unloaded_capability_reveals(
+            tools_added,
+            tool_manager,
+            activating_capability_id=(
+                call_part.capability_id if isinstance(call_part, LoadCapabilityCallPart) else None
+            ),
+        )
+    return result_part, user_content, tools_added or ()
 
 
 def _unsettled_call_return(call: ToolCallPart, error: ApprovalRequired | CallDeferred | RunCancelled) -> ToolReturnPart:
@@ -568,8 +576,17 @@ class RealtimeSession:
         # each model request can vary — a realtime session sends these once at connect, so they belong on
         # the session span (set once), not repeated on every per-turn `chat` span. Carrying
         # `model_request_parameters` is what makes the session's configured native tools inspectable.
+        # These stay the connect-time snapshot: a mid-session reveal (`_build_tool_update`) widens what
+        # the provider advertises without re-stamping the span, so the tool list a trace shows is the one
+        # the session opened with — the reveal itself is visible in history, as a `ToolAvailabilityDeltaPart`.
         self._model_request_parameters = model_request_parameters
         self._model_settings = model_settings
+        # What the connection was opened advertising, and the base every mid-session re-advertisement
+        # is recomputed from. A session constructed without parameters advertised nothing, and only a
+        # `supports_tool_updates` provider can change any of it once the connection is open.
+        self._advertised_parameters = model_request_parameters or ModelRequestParameters()
+        self._revealed_tool_names = set(self._advertised_parameters.revealed_tool_names)
+        self._advertised_tool_names = {tool.name for tool in self._advertise(self._advertised_parameters)}
         self._wrap_event_stream = wrap_event_stream
         self._instructions = instructions
         self._metadata = metadata
@@ -1590,8 +1607,15 @@ class RealtimeSession:
         call_part: ToolCallPart,
         result_part: ToolReturnPart | RetryPromptPart,
         content: str | Sequence[UserContent] | None = None,
+        tools_added: list[str] | None = None,
     ) -> list[RealtimeEvent]:
         request_parts: list[ModelRequestPart] = [result_part]
+        if tools_added:
+            # Recorded exactly where the graph records it, so history handed to `Agent.run` carries
+            # the same reveal state the session is running with.
+            request_parts.append(
+                ToolAvailabilityDeltaPart(tools_added=tools_added, tool_call_id=call_part.tool_call_id)
+            )
         if content:
             request_parts.append(UserPromptPart(content=content))
         self._insert_tool_return(call_part, self._new_request(request_parts))
@@ -2075,6 +2099,58 @@ class RealtimeSession:
                 return text
         return None
 
+    def _advertise(self, parameters: ModelRequestParameters) -> list[ToolDefinition]:
+        """The function tools these parameters put in front of the model.
+
+        The provider applies the same two filters when it builds its connect-time session config —
+        withheld tools never reach the wire, and `tool_choice` can narrow what is left — so a
+        re-advertisement has to reproduce both or it would silently widen the list.
+        """
+        tools, _ = resolve_advertised_tools(
+            parameters.declared_function_tools, (self._model_settings or {}).get('tool_choice')
+        )
+        return tools
+
+    def _record_reveal(
+        self, revealed: Sequence[str], tool_defs: list[ToolDefinition]
+    ) -> tuple[list[str], UpdateTools | None]:
+        """Take up the tools a settled call revealed: the names to record, and the update to send."""
+        # First reveal of a name owns it, as in a graph run (`_prune_duplicate_tool_reveals`): a later
+        # call naming it again neither re-advertises nor re-records it. `dict.fromkeys` collapses a
+        # name the same call repeated, matching the graph's own call-level dedupe.
+        tools_added = [name for name in dict.fromkeys(revealed) if name not in self._revealed_tool_names]
+        self._revealed_tool_names.update(tools_added)
+        # A reveal only reaches the wire on a model that takes a new tool list mid-session; elsewhere
+        # the connect-time guards mean there is nothing revealable to advertise.
+        if tools_added and self._profile.get('supports_tool_updates', False):
+            return tools_added, self._build_tool_update(tool_defs)
+        return tools_added, None
+
+    def _build_tool_update(self, tool_defs: list[ToolDefinition]) -> UpdateTools | None:
+        """The re-advertisement a reveal calls for, or `None` when the advertised list is unchanged.
+
+        Recomputed from the calling step's tool definitions rather than patched: a reveal moves a
+        tool's resolved visibility, and running the whole connect-time resolution again is what keeps
+        the mid-session list identical to the one this session would have opened with.
+        """
+        parameters = resolve_realtime_request_tools(
+            replace(
+                self._advertised_parameters,
+                function_tools=tool_defs,
+                revealed_tool_names=set(self._revealed_tool_names),
+            ),
+            self._profile,
+        )
+        tools = self._advertise(parameters)
+        names = {tool.name for tool in tools}
+        if names == self._advertised_tool_names:
+            # A reveal that adds nothing the model can't already see (a typo, an already-visible tool)
+            # is a no-op, as in a graph run — and sending an identical list would churn the session
+            # for nothing.
+            return None
+        self._advertised_tool_names = names
+        return UpdateTools(tools=tools)
+
     async def _execute_tool(
         self,
         call_part: ToolCallPart,
@@ -2105,6 +2181,8 @@ class RealtimeSession:
             await self._queue.put(DeferredToolRequestsEvent(requests))
             await self._queue.put(DeferredToolResultsEvent(results))
 
+        revealed: Sequence[str] = ()
+        settled_tool_defs: list[ToolDefinition] = []
         try:
             async with self._tool_manager_lock:
                 ctx = self._tool_manager.ctx
@@ -2120,10 +2198,16 @@ class RealtimeSession:
                     # `ModelResponse` is finalized, so this re-prepares the *local* manager once per
                     # turn — refreshing prepare hooks, availability filters, and retry state exactly
                     # as the graph does per model request. It never re-advertises tools mid-call: the
-                    # tool list the provider sees is fixed at connect (`session.update` is sent
-                    # once), so a prepare filter changing here only affects whether a call the model
-                    # makes is accepted or settled as unknown-tool.
+                    # tool list the provider sees only changes when a reveal re-advertises it
+                    # (`_build_tool_update`), so a prepare filter changing here otherwise only
+                    # affects whether a call the model makes is accepted or settled as unknown-tool.
                     if ctx.run_step < run_step:
+                        # Which deferred capabilities are loaded is derived from history, so it has to
+                        # be re-read before the new step's tools are prepared — the graph refreshes
+                        # the same set before each model request.
+                        _agent_graph.refresh_loaded_capability_ids(
+                            ctx.loaded_capability_ids, ctx.messages, ctx.capabilities
+                        )
                         self._tool_manager = await self._tool_manager.for_run_step(replace(ctx, run_step=run_step))
                 # Pin the step-synchronized manager for this call: a concurrent tool task can swap
                 # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
@@ -2149,7 +2233,11 @@ class RealtimeSession:
             result_part = _unsettled_call_return(call_part, e)
             user_content = None
         else:
-            result_part, user_content = _build_session_tool_return(tool_result, call_part, tool_manager)
+            result_part, user_content, revealed = _build_session_tool_return(tool_result, call_part, tool_manager)
+            # Snapshotted with the result: the re-advertisement is computed from the definitions this
+            # call ran against, and `self._tool_manager` can be swapped by a concurrent task's own
+            # step advance before the reveal is taken up below.
+            settled_tool_defs = tool_manager.tool_defs if revealed else []
         finally:
             # The call has settled: on success `handle_call` has already recorded it on
             # `usage.tool_calls` in this same event-loop segment (so no limit check can observe the
@@ -2170,19 +2258,29 @@ class RealtimeSession:
             wire_content.extend(user_content)
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
+        # Taken up here, not where the result settled, so that claiming the names, building the
+        # re-advertisement, and queueing for the wire form one uninterrupted synchronous stretch: no
+        # other tool task can slip a claim in between, and `_send_lock` is acquired (or joined as a
+        # FIFO waiter) before this task can yield. Concurrent reveals therefore reach the provider in
+        # the order their lists were computed, and each list is a superset of the ones before it, so
+        # `_advertised_tool_names` keeps describing what the model actually last saw.
+        tools_added, update_tools = self._record_reveal(revealed, settled_tool_defs)
         self._reserve_response_request()
         try:
+            # One group, so the model can never learn a capability loaded before the tools it brought
+            # exist server-side.
             await self._send_frame(
+                *((update_tools,) if update_tools is not None else ()),
                 ToolResult(
                     tool_call_id=call_part.tool_call_id,
                     output=output,
                     content=wire_content or None,
-                )
+                ),
             )
         except BaseException:
             self._pending_response_requests -= 1
             raise
-        return result_part, user_content
+        return result_part, user_content, tools_added
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -2315,7 +2413,7 @@ class RealtimeSession:
     ) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
-            result_part, content = await self._execute_tool(
+            result_part, content, tools_added = await self._execute_tool(
                 call_part,
                 validation_done=validation_done,
                 execution_prerequisites=execution_prerequisites,
@@ -2337,7 +2435,7 @@ class RealtimeSession:
             self._tool_completion_events.discard(completion)
             # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
-        events = self._complete_tool_call(call_part, result_part, content)
+        events = self._complete_tool_call(call_part, result_part, content, tools_added)
         if ordered_events:
             # Held until nothing is still running, then released in call order — the graph waits for a
             # whole segment (`ALL_COMPLETED`) and replays it by index for the same reason. The release
@@ -2404,10 +2502,17 @@ class RealtimeSession:
         # its request. Read at execution time instead, a call held behind a `sequential` barrier
         # could observe a later response's advance and land a step ahead of its own batch.
         tool_run_step = self._tool_run_step
-        call_part = ToolCallPart(
-            tool_name=event.tool_name,
-            args=event.args,
-            tool_call_id=event.tool_call_id,
+        # Promoted to the typed subclass its `tool_kind` registers, exactly as the graph promotes the
+        # calls in a non-streaming response (`_narrow_tool_call_parts`). Without it a `load_capability`
+        # call stays a base part and nothing downstream — the session's own per-step refresh, or a
+        # later `Agent.run(message_history=...)` — can pair it with its return.
+        call_part = ToolCallPart.narrow_type(
+            ToolCallPart(
+                tool_name=event.tool_name,
+                args=event.args,
+                tool_call_id=event.tool_call_id,
+            ),
+            tool_kind=tool_def.tool_kind if tool_def else None,
         )
         for out in self._handle_tool_call_part(
             call_part,

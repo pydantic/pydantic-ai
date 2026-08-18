@@ -17,8 +17,14 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._deferred_capabilities import (
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    parse_loaded_capabilities,
+)
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
@@ -27,14 +33,18 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -54,11 +64,15 @@ from pydantic_ai.realtime.codec import (
     RealtimeInput,
     ResponseDone,
     ToolCall,
+    ToolResult,
+    UpdateTools,
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
+
+from ..conftest import IsDatetime
 
 pytestmark = pytest.mark.anyio
 
@@ -86,11 +100,15 @@ class _RecordingModel(RealtimeModel):
         *,
         settings: RealtimeModelSettings | None = None,
         supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(),
+        supports_tool_updates: bool = False,
         connection_events: Sequence[RealtimeCodecEvent] = (ResponseDone(),),
+        connection: RealtimeConnection | None = None,
     ) -> None:
         self.settings = settings
         self._supported = supported_native_tools
+        self._supports_tool_updates = supports_tool_updates
         self._connection_events = connection_events
+        self.connection = connection
         self.instructions: str | None = None
         self.tools: list[ToolDefinition] | None = None
         self.native_tools: list[AbstractNativeTool] | None = None
@@ -112,6 +130,7 @@ class _RecordingModel(RealtimeModel):
             supports_interruption=True,
             supports_output_truncation=True,
             supports_session_seeding=True,
+            supports_tool_updates=self._supports_tool_updates,
             supported_native_tools=self._supported,
         )
 
@@ -127,7 +146,9 @@ class _RecordingModel(RealtimeModel):
         self.tools = model_request_parameters.function_tools
         self.native_tools = model_request_parameters.native_tools
         self.model_settings = model_settings
-        yield _Connection(self._connection_events)
+        if self.connection is None:
+            self.connection = _Connection(self._connection_events)
+        yield self.connection
 
 
 async def _drain(agent: Agent[None, str], model: _RecordingModel, **kwargs: object) -> list[RealtimeEvent]:
@@ -232,39 +253,241 @@ async def test_capability_toolset_reaches_session() -> None:
     assert any(t.name == 'greet' for t in model.tools)
 
 
-@pytest.mark.parametrize('contribution', ['tools', 'native_tools'])
-async def test_deferred_capability_with_tools_raises_before_connect(contribution: str) -> None:
-    """A deferred capability whose loading would have to reveal tools fails at session open.
-
-    A session's tools are fixed when the connection opens, so a mid-session load could never make
-    them available — silently loading less than promised is worse than the up-front error.
-    """
+def _weather_toolset() -> FunctionToolset[None]:
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
-    def greet() -> str:  # pragma: no cover — the session raises before any tool can run
-        return 'Hello!'
+    def forecast(city: str) -> str:
+        return f'Sunny in {city}.'
+
+    return toolset
+
+
+class _Weather(AbstractCapability[None]):
+    """A deferred capability that contributes one tool, revealed when it loads."""
+
+    id = 'weather'
+    defer_loading = True
+
+    def get_description(self) -> str:
+        return 'Look up the weather.'
+
+    def get_instructions(self) -> str | None:
+        return 'Answer weather questions from the forecast tool.'
+
+    def get_toolset(self) -> FunctionToolset[None]:
+        return _weather_toolset()
+
+
+class _ScriptedConnection(RealtimeConnection):
+    """Replays turns, holding each one back until the session has answered the previous tool call.
+
+    A real provider only speaks again once it has the tool result, and the reveal under test depends
+    on that ordering: the follow-up call must be dispatched against the tool list the load produced.
+    """
+
+    def __init__(self, turns: Sequence[Sequence[RealtimeCodecEvent]]) -> None:
+        self._turns = turns
+        self.sent: list[RealtimeInput] = []
+        self._answered = asyncio.Event()
+
+    async def send(self, content: RealtimeInput) -> None:
+        self.sent.append(content)
+        if isinstance(content, ToolResult):
+            self._answered.set()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        for index, turn in enumerate(self._turns):
+            if index:
+                await self._answered.wait()
+                self._answered.clear()
+            for event in turn:
+                yield event
+
+
+@pytest.mark.parametrize('supports_tool_updates', [False, True])
+async def test_deferred_capability_with_native_tools_raises_before_connect(supports_tool_updates: bool) -> None:
+    """A deferred capability contributing *native* tools fails at session open on every provider.
+
+    Re-advertising function tools is what `supports_tool_updates` buys; no realtime provider can turn
+    on a server-side native tool mid-conversation, so the flag makes no difference here.
+    """
 
     class DeferredCap(AbstractCapability[None]):
         id = 'deferred'
         defer_loading = True
 
-        def get_toolset(self) -> FunctionToolset[None] | None:
-            return toolset if contribution == 'tools' else None
-
         def get_native_tools(self) -> Sequence[AbstractNativeTool]:
-            return [WebSearchTool()] if contribution == 'native_tools' else []
+            return [WebSearchTool()]
 
     agent = Agent()
-    model = _RecordingModel(supported_native_tools=frozenset({WebSearchTool}))
+    model = _RecordingModel(
+        supported_native_tools=frozenset({WebSearchTool}), supports_tool_updates=supports_tool_updates
+    )
 
     with pytest.raises(
         UserError,
-        match=r"Realtime sessions cannot reveal tools mid-session.*'deferred'",
+        match=r"Realtime sessions cannot reveal native tools mid-session.*'deferred'",
     ):
         await _drain(agent, model, capabilities=[DeferredCap()])
 
     assert model.tools is None
+
+
+async def test_deferred_capability_with_tools_raises_when_the_model_cannot_update_tools() -> None:
+    """A tool-contributing deferred capability fails at open on a model that fixes tools at connect.
+
+    Loading it would advertise nothing new, so the model would be told a capability is active while
+    the tools it promised stay invisible — worse than the up-front error.
+    """
+    agent = Agent()
+    model = _RecordingModel()
+
+    with pytest.raises(
+        UserError,
+        match=r"does not support updating tools mid-session.*'weather'",
+    ):
+        await _drain(agent, model, capabilities=[_Weather()])
+
+    assert model.tools is None
+
+
+async def test_deferred_capability_tools_are_revealed_by_a_mid_session_update() -> None:
+    """On a `supports_tool_updates` model, loading a deferred capability advertises its tools.
+
+    The connect-time list holds `load_capability` and not the capability's own tools; the load sends
+    a re-advertisement carrying them, ahead of the tool result that announces the load, so the model
+    can never learn of the capability before its tools exist. The revealed tool is then callable, and
+    the reveal is recorded in history the way a graph run records it.
+    """
+    connection = _ScriptedConnection(
+        [
+            [ToolCall(tool_call_id='tc_1', tool_name='load_capability', args='{"id": "weather"}')],
+            [ToolCall(tool_call_id='tc_2', tool_name='forecast', args='{"city": "Lisbon"}'), ResponseDone()],
+        ]
+    )
+    agent = Agent()
+    model = _RecordingModel(supports_tool_updates=True, connection=connection)
+
+    events: list[RealtimeEvent] = []
+    async with agent.realtime(model, capabilities=[_Weather()]).session() as session:  # type: ignore[arg-type]
+        async for event in session:  # pragma: no branch
+            events.append(event)
+
+    assert model.tools is not None
+    assert [tool.name for tool in model.tools] == ['load_capability']
+
+    update, load_result, forecast_result = connection.sent
+    assert isinstance(update, UpdateTools)
+    assert [tool.name for tool in update.tools] == ['load_capability', 'forecast']
+    assert isinstance(load_result, ToolResult) and load_result.tool_call_id == 'tc_1'
+    assert isinstance(forecast_result, ToolResult) and forecast_result.output == 'Sunny in Lisbon.'
+
+    results = [e.part for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert [(part.tool_name, part.content) for part in results] == snapshot(
+        [
+            ('load_capability', {'instructions': 'Answer weather questions from the forecast tool.'}),
+            ('forecast', 'Sunny in Lisbon.'),
+        ]
+    )
+
+    history = session.all_messages()
+    assert parse_loaded_capabilities(history) == {'weather'}
+    assert [
+        part
+        for message in history
+        for part in message.parts
+        if isinstance(part, (LoadCapabilityCallPart, LoadCapabilityReturnPart, ToolAvailabilityDeltaPart))
+    ] == snapshot(
+        [
+            LoadCapabilityCallPart(args='{"id": "weather"}', tool_call_id='tc_1'),
+            LoadCapabilityReturnPart(
+                content={'instructions': 'Answer weather questions from the forecast tool.'},
+                tool_call_id='tc_1',
+                timestamp=IsDatetime(),
+            ),
+            ToolAvailabilityDeltaPart(tools_added=['forecast'], tool_call_id='tc_1'),
+        ]
+    )
+
+
+async def test_seeded_history_advertises_a_loaded_capabilitys_tools_at_connect() -> None:
+    """A capability the seeded history already loaded needs no mid-session update, on any provider.
+
+    Its tools go out with the connect-time list, so this works on a model that fixes its tools at
+    connect (`supports_tool_updates` off) — the guard that rejects a tool-contributing deferred
+    capability exempts an already-loaded one. Loading it again is refused as already available.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content="What's the weather?")]),
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id='tc_0')]),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(content={'instructions': 'Use it.'}, tool_call_id='tc_0'),
+                ToolAvailabilityDeltaPart(tools_added=['forecast'], tool_call_id='tc_0'),
+            ]
+        ),
+    ]
+    agent = Agent()
+    model = _RecordingModel(
+        connection_events=[
+            ToolCall(tool_call_id='tc_1', tool_name='load_capability', args='{"id": "weather"}'),
+            ResponseDone(),
+        ],
+    )
+    events = await _drain(agent, model, capabilities=[_Weather()], message_history=history)
+
+    assert model.tools is not None
+    assert [tool.name for tool in model.tools] == ['load_capability', 'forecast']
+    assert model.connection is not None
+    assert not any(isinstance(frame, UpdateTools) for frame in model.connection.sent)  # type: ignore[attr-defined]
+
+    retry = next(e.part for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(retry, RetryPromptPart)
+    assert retry.content == snapshot(
+        "Capability 'weather' is already available. Use its existing instructions and any tools it "
+        'provides; do not call `load_capability` for it again.'
+    )
+
+
+async def test_seeded_history_advertises_an_already_revealed_deferred_tool_at_connect() -> None:
+    """A plain `defer_loading=True` tool the seeded history already revealed advertises at connect.
+
+    The session has no tool-search surface to reveal one *during* the call, which is why an unrevealed
+    deferred tool is refused — but a history that already carries its
+    `ToolAvailabilityDeltaPart` resolves it to visible, so there is nothing left to reveal and nothing
+    to refuse. Works on a model that fixes its tools at connect (`supports_tool_updates` off).
+
+    The local `search_tools` fallback rides along, because a deferred tool exists to build a corpus
+    from. It is inert here rather than a dead end: this state is only reachable when *every* deferred
+    tool is already revealed (an unrevealed one still fails the guard), so a search can only ever name
+    tools the model can already see, which the session recognizes as a no-op reveal.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def unlock() -> ToolReturn[str]:  # pragma: no cover — only its recorded history is replayed here
+        return ToolReturn(return_value='unlocked', tools=['withheld_tool'])
+
+    @agent.tool_plain(defer_loading=True)
+    def withheld_tool() -> str:  # pragma: no cover — the model never calls it in this test
+        return 'withheld'
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='unlock the extras')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='unlock', args='{}', tool_call_id='tc_0')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='unlock', content='unlocked', tool_call_id='tc_0'),
+                ToolAvailabilityDeltaPart(tools_added=['withheld_tool'], tool_call_id='tc_0'),
+            ]
+        ),
+    ]
+    model = _RecordingModel()
+    await _drain(agent, model, message_history=history)
+
+    assert model.tools is not None
+    assert sorted(tool.name for tool in model.tools) == snapshot(['search_tools', 'unlock', 'withheld_tool'])
 
 
 async def test_deferred_instruction_capability_loads_through_the_tool() -> None:
@@ -913,12 +1136,13 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     assert any(isinstance(part, SpeechPart) and part.transcript == 'cut off mid-' for part in response.parts)
 
 
-async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:
-    # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose tools
-    # are fixed at connect can never do. Advertising it silently would hand the model a `search_tools`
-    # affordance that finds the tool and then can't have it — a dead end — so the session refuses to
-    # open, exactly as it does for a deferred *capability* that contributes tools. The guard fires
-    # before any dial, so no provider is involved.
+@pytest.mark.parametrize('supports_tool_updates', [False, True])
+async def test_agent_realtime_session_rejects_a_deferred_tool(supports_tool_updates: bool) -> None:
+    # A `defer_loading=True` tool that no capability owns is hidden until tool *search* reveals it,
+    # and a session drops the optional `ToolSearchTool`. Advertising it silently would hand the model
+    # a `search_tools` affordance that finds the tool and then can't have it — a dead end. Being able
+    # to re-advertise tools mid-session doesn't help: nothing in a session would ever trigger the
+    # reveal. The guard fires before any dial, so no provider is involved.
     agent: Agent[None, str] = Agent()
 
     @agent.tool_plain(defer_loading=True)
@@ -927,42 +1151,119 @@ async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:
 
     with pytest.raises(
         UserError,
-        match=r'cannot reveal tools mid-session.*`defer_loading=True`.*"?\'withheld_tool\'"?',
+        match=r'no tool-search surface.*`defer_loading=True`.*"?\'withheld_tool\'"?',
     ):
-        async with agent.realtime(_RecordingModel()).session():
+        async with agent.realtime(_RecordingModel(supports_tool_updates=supports_tool_updates)).session():
             pass  # pragma: no cover
 
 
-async def test_session_tool_reveal_is_a_no_op_like_a_standard_run() -> None:
+async def test_session_reveal_of_an_unloaded_capabilitys_tool_ends_the_session() -> None:
+    """An ordinary tool revealing a still-unloaded capability's tool ends the session, as it ends a run.
+
+    `ToolReturn.tools` may not smuggle a capability's tool past `load_capability` — the load is what
+    activates the bundle's instructions and hooks. The graph raises the same `UserError` out of the
+    run; here it surfaces through the session's event stream and the conversation stops.
+
+    Reachable only now that a session can hold a tool-contributing deferred capability at all, and
+    pinned rather than endorsed: whether a developer-error reveal should be allowed to end a live
+    voice call is a maintainer question, flagged on the PR.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def sneaky() -> ToolReturn[str]:
+        return ToolReturn(return_value='done', tools=['forecast'])
+
+    model = _RecordingModel(
+        supports_tool_updates=True,
+        connection_events=[
+            ToolCall(tool_call_id='tc_1', tool_name='sneaky', args='{}'),
+            ResponseDone(),
+        ],
+    )
+
+    with pytest.raises(
+        UserError,
+        match=r"`ToolReturn.tools` cannot reveal 'forecast'.*belongs to capability 'weather'",
+    ):
+        await _drain(agent, model, capabilities=[_Weather()])
+
+    assert model.connection is not None
+    # The refusal happens before anything is sent, so the model never hears about the reveal.
+    assert not any(isinstance(frame, UpdateTools) for frame in model.connection.sent)  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize('supports_tool_updates', [False, True])
+async def test_agent_realtime_session_rejects_an_always_on_capabilitys_deferred_tool(
+    supports_tool_updates: bool,
+) -> None:
+    # `defer_loading=True` on a tool inside an *always-on* capability is a tool-search gate, not a
+    # capability-load gate — nothing in a session would ever reveal it, so it is refused like any
+    # other search-gated tool. Only a tool a *deferred* capability gates has a reveal path.
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(defer_loading=True)
+    def searchable() -> str:  # pragma: no cover — the session raises before any tool can run
+        return 'searchable'
+
+    class AlwaysOn(AbstractCapability[None]):
+        id = 'always_on'
+
+        def get_toolset(self) -> FunctionToolset[None]:
+            return toolset
+
+    agent = Agent()
+    model = _RecordingModel(supports_tool_updates=supports_tool_updates)
+
+    with pytest.raises(UserError, match=r"no tool-search surface.*'searchable'"):
+        await _drain(agent, model, capabilities=[AlwaysOn()])
+
+    assert model.tools is None
+
+
+@pytest.mark.parametrize('supports_tool_updates', [False, True])
+async def test_session_tool_reveal_is_a_no_op_like_a_standard_run(supports_tool_updates: bool) -> None:
     """`ToolReturn.tools` naming nothing revealable is a silent no-op, exactly as in a graph run.
 
     The graph rejects only a name owned by an unloaded capability and treats every other name — a
     typo, an already-visible tool — as a no-op (see `_reject_unloaded_capability_reveals`, and
-    `ToolAvailabilityDeltaPart`'s "silent no-op by design"). A session used to raise on *any* reveal,
-    which was both harsher than the graph and harsher than it needed to be: a session refuses
-    `defer_loading=True` tools and tool-contributing deferred capabilities when it opens, so it holds
-    nothing a reveal could have surfaced and nothing is lost by dropping the request.
+    `ToolAvailabilityDeltaPart`'s "silent no-op by design"). The session records the reveal in history
+    the same way, and nothing goes out on the wire either way: a model that can't re-advertise tools
+    never tries, and one that can finds the advertised list unchanged and sends nothing.
 
-    That also makes the unloaded-capability branch unreachable from a session — the capabilities that
-    own hidden tools are exactly the ones a session refuses at connect — so it is covered on the graph
-    side rather than here.
+    The repeated name pins the graph's call-level dedupe (`list(dict.fromkeys(tools))`): one name
+    reveals once, however many times a single result asks for it.
     """
     agent = Agent()
 
     @agent.tool_plain
     def revealer() -> ToolReturn[str]:
-        return ToolReturn(return_value='done', tools=['hidden_tool'])
+        return ToolReturn(return_value='done', tools=['hidden_tool', 'hidden_tool'])
 
     model = _RecordingModel(
+        supports_tool_updates=supports_tool_updates,
         connection_events=[
             ToolCall(tool_call_id='tc_1', tool_name='revealer', args='{}'),
             ResponseDone(),
         ],
     )
-    events = await _drain(agent, model)
+    events: list[RealtimeEvent] = []
+    async with agent.realtime(model).session() as session:
+        async for event in session:  # pragma: no branch
+            events.append(event)
+
+    assert model.connection is not None
+    assert not any(isinstance(frame, UpdateTools) for frame in model.connection.sent)  # type: ignore[attr-defined]
 
     # Reaching here at all is the point: the reveal no longer raises out of the session.
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.content == 'done'
     assert result.part.outcome == 'success'
+
+    assert [
+        part
+        for message in session.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ] == snapshot([ToolAvailabilityDeltaPart(tools_added=['hidden_tool'], tool_call_id='tc_1')])

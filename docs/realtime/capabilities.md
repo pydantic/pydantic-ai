@@ -68,11 +68,27 @@ session when filtering or redaction is required.
 
 Deferred capabilities load in a session the same way they do in a regular run: the capability
 catalog is part of the session's instructions, and calling the `load_capability` tool returns the
-loaded capability's instructions as its result — which works on every provider. What a session
-cannot do is advertise *new tools* mid-conversation (the connection's tools are fixed when it
-opens; see [#7288](https://github.com/pydantic/pydantic-ai/issues/7288)), so opening a session with
-a `defer_loading=True` capability that contributes tools or native tools raises
-[`UserError`][pydantic_ai.exceptions.UserError] before connecting — accepting it would silently
-provide less than requested. Realtime per-turn/exchange hooks are expected to widen this boundary
-in the future; see [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) and
-[#7191](https://github.com/pydantic/pydantic-ai/issues/7191).
+loaded capability's instructions as its result — which works on every provider.
+
+A capability that also contributes *tools* needs those tools to reach the model after the session is
+already open. That works on providers whose realtime profile sets
+[`supports_tool_updates`][pydantic_ai.realtime.RealtimeModelProfile.supports_tool_updates] — the
+OpenAI-protocol providers ([OpenAI](openai.md), [Azure OpenAI](azure.md)) — where the load
+re-advertises the session's tool list before it answers the tool call, so the tools exist by the time
+the model hears the capability is active. On a provider that fixes its tools when the connection
+opens ([Gemini Live](gemini.md), and [xAI](xai.md) until its behavior is verified), opening a session
+with such a capability raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting,
+because accepting it would silently provide less than requested.
+
+Two related cases are unaffected by the provider:
+
+- A capability that a seeded [`message_history`](history.md#seeding-a-session) still carries the full
+  record of loading — the `load_capability` exchange *and* the
+  [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] recording its tool
+  reveal — advertises those tools with the rest of the connect-time tool list, so it needs no update
+  and is accepted everywhere.
+- A capability contributing [native tools](../native-tools.md) is still rejected on every provider:
+  no realtime API can turn a server-side tool on mid-conversation.
+
+Realtime per-turn/exchange hooks are expected to widen this boundary further; see
+[#7190](https://github.com/pydantic/pydantic-ai/issues/7190).
