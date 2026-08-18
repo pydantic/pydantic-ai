@@ -116,6 +116,24 @@ async def test_reads_forward_and_mutations_raise():
     assert backend.commands == []
 
 
+async def test_wrapped_backend_stays_fully_usable_outside_the_wrapper():
+    """Policy lives in the wrapper, not the backend: the application keeps read-write access
+    through `wrapped` while the model's view is read-only — one environment, two views."""
+    backend = _FilesystemBackend()
+    read_only = ReadOnlySandbox(backend)
+    assert read_only.wrapped is backend  # the unrestricted object stays reachable
+
+    await backend.fs.write_bytes('/workspace/data.csv', b'a,b\n')
+    result = await backend.run(['touch', 'marker'])
+    assert result.exit_code == 0
+    assert backend.commands == [['touch', 'marker']]
+
+    sandbox = Sandbox(read_only)
+    assert await sandbox.read_text('data.csv') == 'a,b\n'  # the application's write is visible
+    with pytest.raises(UserError, match='read-only'):
+        await sandbox.run(['touch', 'marker2'])
+
+
 async def test_identity_and_working_dir_forward():
     """The wrapper keeps the wrapped backend's identity: policy is not part of it."""
     backend = _FilesystemBackend()

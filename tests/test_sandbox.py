@@ -737,14 +737,66 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
     assert connector.sandbox_ids == ['fake-deferred']  # concurrent first ops connect exactly once
 
 
-@pytest.mark.parametrize('with_other_capability', [False, True], ids=['no-capabilities', 'unrelated-capability'])
+async def test_deferred_filesystem_proxy_serves_every_operation():
+    """A file operation as the FIRST act on a deferred facade must connect and work, and an
+    `fs` handle obtained before connection stays valid afterwards — tools may capture one and
+    use it across the connect boundary. Unit-level via `from_ref` because the durable suites
+    always run a command before touching files, leaving the pre-connection proxy unexercised.
+    """
+    backend = FakeSandbox('proxy')
+    connected: list[str] = []
+
+    async def resolver(ref: SandboxRef) -> SandboxBackend:
+        connected.append(ref.sandbox_id)
+        return backend
+
+    sandbox = Sandbox.from_ref(SandboxRef(provider='fake', sandbox_id='fake-proxy'), resolver)
+    fs = sandbox.fs  # obtained before any connection: the deferred proxy
+    assert connected == []
+
+    await fs.write_bytes('/workspace/notes.txt', b'hello')
+    assert connected == ['fake-proxy']  # the first operation connected
+    assert await fs.read_bytes('/workspace/notes.txt') == b'hello'
+    assert (await fs.stat('/workspace/notes.txt')).size == 5
+    assert [entry.path for entry in await fs.list_dir('/workspace')] == ['/workspace/notes.txt']
+    await fs.make_dir('/workspace/sub')
+    assert await fs.exists('/workspace/notes.txt')
+    await fs.remove('/workspace/notes.txt')
+    assert not await fs.exists('/workspace/notes.txt')
+    assert connected == ['fake-proxy']  # connected exactly once across all operations
+
+
+async def test_ref_resolution_skips_deferred_capabilities():
+    """A deferred capability's contributions are inert until it loads, so ref resolution walks
+    past it to a loaded capability that recognizes the provider."""
+    deferred = SandboxCapability(id='deferred-sandbox', defer_loading=True)
+    connector = ConnectOnlySandboxCapability()
+    seen: list[str] = []
+    # The connector sits earlier in the chain, so resolution (which walks latest-first)
+    # reaches the deferred capability first and must skip, not consult, it.
+    agent = make_connecting_probe_agent(seen, capabilities=[connector, deferred])
+    await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1'))
+    assert seen == ['1']
+    assert connector.sandbox_ids == ['fake-1']
+
+
+@pytest.mark.parametrize('with_other_capability', [False, True], ids=['no-capabilities', 'declining-capabilities'])
 async def test_sandbox_ref_requires_recognizing_capability(with_other_capability: bool):
+    """Every capability shape declines a foreign provider by returning `None`, and a chain of
+    pure declines ends in the attachment error rather than a silent fallback."""
+
     @dataclass
     class OtherProviderCapability(AbstractCapability[Any]):
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return FakeSandbox('other') if ref.provider == 'other' else None
 
-    capabilities = [OtherProviderCapability()] if with_other_capability else []
+    capabilities = (
+        # Suppliers decline too: with a ref run argument their `create_sandbox` is skipped, so
+        # only their (provider-mismatched) `get_sandbox` is consulted.
+        [OtherProviderCapability(), SandboxCapability(), ConnectOnlySandboxCapability(), LifecycleSandboxCapability()]
+        if with_other_capability
+        else []
+    )
     agent = make_connecting_probe_agent([], capabilities=capabilities)
     with pytest.raises(
         UserError,

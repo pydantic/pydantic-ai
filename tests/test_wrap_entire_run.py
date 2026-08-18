@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SandboxRef
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_graph import End
 
@@ -81,8 +81,8 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
             events.append('create_sandbox')
             return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            return LocalSandbox(Path(ref.sandbox_id)) if ref.provider == 'local' else None
+        # No `get_sandbox`: the test's claim is hook ordering, and nothing operates on the
+        # sandbox, so connection is never attempted.
 
         async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             events.append('destroy_sandbox')
@@ -170,11 +170,10 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
 
     @dataclass
     class ServeSandbox(AbstractCapability[Any]):
+        # No `get_sandbox`: the test only inspects the preparation context, so the
+        # contributed sandbox is never connected.
         async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(provider='local', sandbox_id=str(tmp_path))
-
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            return LocalSandbox(Path(ref.sandbox_id)) if ref.provider == 'local' else None
 
     model = FunctionModel(simple_model_function)
     await Agent(model, capabilities=[CaptureContext(), ServeSandbox()]).run('capability served')

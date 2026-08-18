@@ -1444,8 +1444,8 @@ async def test_dbos_tool_sandbox_is_unavailable_inside_durable_run(
 
     @agent.tool
     async def use_sandbox(ctx: RunContext[object]) -> str:
-        await ctx.sandbox.run(['echo', 'hello'])
-        return ctx.sandbox.provider
+        # One statement: the run raises the unavailable reason, so a second line would be dead.
+        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
 
     async def run() -> object:
         if entry_style == 'durability':
