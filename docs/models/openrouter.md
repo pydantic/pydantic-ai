@@ -208,9 +208,9 @@ Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePo
 
 OpenRouter supports web search through its [Beta server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). Enable it with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]. The model decides whether to search and may make zero or multiple searches for a request.
 
-Pydantic AI previously enabled OpenRouter's `web` plugin, which searched on every request and billed a flat fee for each one, whether or not the question needed the web. If you want that always-on grounding, OpenRouter's plugin is deprecated but still reachable by passing it yourself:
+Before Pydantic AI v2.30.0, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] enabled OpenRouter's `web` plugin, which searched on every request and billed a flat fee for each one, whether or not the question needed the web. If you want that always-on grounding, OpenRouter's plugin is deprecated but still reachable by passing it yourself:
 
-```python {title="web_search_openrouter_plugin.py" test="skip"}
+```python {title="web_search_openrouter_plugin.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
@@ -250,7 +250,7 @@ Pydantic AI surfaces the per-request web-search count under [`ModelResponse.prov
 
 When OpenRouter runs the search itself rather than delegating to the downstream provider's own search, it attaches the sources it used to the message as `url_citation` annotations. Pydantic AI surfaces them verbatim under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['annotations']`, each carrying the result's `url`, `title` and the excerpt that was given to the model:
 
-```python {title="web_search_openrouter_sources.py" test="skip"}
+```python {title="web_search_openrouter_sources.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.models.openrouter import OpenRouterModel
@@ -260,7 +260,8 @@ result = agent.run_sync('What is the latest news in AI?')
 
 annotations = (result.response.provider_details or {}).get('annotations', [])
 for annotation in annotations:
-    print(annotation['url_citation']['url'])
+    if annotation['type'] == 'url_citation':
+        print(annotation['url_citation']['url'])
 ```
 
 !!! note "Only non-native search reports its sources"
