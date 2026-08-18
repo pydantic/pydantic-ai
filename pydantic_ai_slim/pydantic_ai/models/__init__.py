@@ -1475,6 +1475,14 @@ def _suggest_known_model_name(model: str, model_name: str, known_model_ids: Sequ
 def _suggest_known_model_id_from_provider_error(  # pyright: ignore[reportUnusedFunction]
     model_id_namespace: str, model_name: str
 ) -> str | None:
+    """The closest known model ID for a name the provider itself rejected, or `None`.
+
+    The result rides on `ModelHTTPError.suggested_model_id` rather than a dedicated exception type.
+    Only some model classes carry a not-found signal at all — `MistralModel`, `CohereModel`,
+    `HuggingFaceModel` and `XaiModel` map their errors without one — so a distinct type would assert
+    a taxonomy that holds for part of the matrix only. A hint that is sometimes absent degrades
+    harmlessly; an exception type that is sometimes absent misclassifies.
+    """
     model_id = f'{model_id_namespace}:{model_name}'
     provider_prefix = f'{model_id_namespace}:'
     known_model_ids = [name for name in known_model_names() if name.startswith(provider_prefix)]
