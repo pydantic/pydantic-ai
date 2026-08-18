@@ -560,3 +560,45 @@ async def test_stripped_reveal_marker_survives_a_boundary_the_wire_skipped() -> 
     assert result.output == 'EXECUTED'
     refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
     assert refusals == []
+
+
+async def test_unknown_tool_retry_does_not_leak_deferred_capability_tools() -> None:
+    """An unresolvable tool name must not enumerate unloaded capability tools.
+
+    `_resolve_tool` builds the "Available tools" retry hint from the full tool
+    registry, which includes tools owned by deferred capabilities that have not
+    been loaded. A model that guesses one of those names would otherwise read the
+    real names out of the error and call them directly, skipping
+    `load_capability`. Only tools callable right now may be listed. Regression
+    test for #7552.
+    """
+    retry_contents: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        retry_contents[:] = [
+            str(part.content)
+            for message in messages
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        if not retry_contents:
+            return ModelResponse(parts=[ToolCallPart(tool_name='bogus_tool', args={}, tool_call_id='b1')])
+        return make_text_response('done')
+
+    agent = Agent(
+        FunctionModel(model_fn), capabilities=[TestUnavailableCapabilityToolsAreNotCallable._guarded_capability()]
+    )
+
+    @agent.tool_plain
+    def untouched() -> str:
+        return 'safe'  # pragma: no cover
+
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    assert len(retry_contents) == 1
+    retry = retry_contents[0]
+    assert 'bogus_tool' in retry
+    assert 'untouched' in retry
+    assert 'load_capability' in retry
+    assert 'secret_op' not in retry

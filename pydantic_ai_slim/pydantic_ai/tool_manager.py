@@ -501,8 +501,12 @@ class ToolManager(Generic[AgentDepsT]):
         name = call.tool_name
         tool = self.tools.get(name)
         if tool is None:
-            if self.tools:
-                available = sorted(self.tools.keys())
+            available = sorted(
+                name
+                for name, t in self.tools.items()
+                if self._unavailable_reason(t.tool_def) is None
+            )
+            if available:
                 msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
             else:
                 msg = 'No tools available.'
