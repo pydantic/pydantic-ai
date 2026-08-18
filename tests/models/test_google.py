@@ -4638,6 +4638,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         _response=cast(Any, PeekableAsyncStream(response)),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
+        _model_id_namespace='test-provider',
         _provider_url='',
     )
 
@@ -4680,6 +4681,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
         _timestamp=IsDatetime(),
         _provider_name='google',
+        _model_id_namespace='google',
         _provider_url='',
     )
 

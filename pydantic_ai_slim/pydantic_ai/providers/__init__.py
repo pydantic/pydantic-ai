@@ -56,6 +56,7 @@ class Provider(ABC, Generic[InterfaceClient]):
     _own_http_client: httpx.AsyncClient | None = None
     _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
     _entered_count: int = 0
+    _model_id_namespace: str | None = None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -75,6 +76,11 @@ class Provider(ABC, Generic[InterfaceClient]):
         replay of any message history captured against the old name.
         """
         raise NotImplementedError()
+
+    @property
+    def model_id_namespace(self) -> str:
+        """The namespace used to fully qualify model IDs routed through this provider."""
+        return self._model_id_namespace or self.name
 
     @property
     @abstractmethod

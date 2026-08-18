@@ -169,6 +169,7 @@ def gateway_provider(
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
         _gateway_providers.add(provider)
+        provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
         return provider
 
     own_http_client = http_client is None
@@ -190,17 +191,17 @@ def gateway_provider(
     if canonical in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
-        return _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        provider = _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     elif canonical == 'groq':
         from .groq import GroqProvider
 
-        return _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        provider = _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     elif canonical == 'anthropic':
         from anthropic import AsyncAnthropic
 
         from .anthropic import AnthropicProvider
 
-        return _with_http_client(
+        provider = _with_http_client(
             AnthropicProvider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
@@ -211,11 +212,14 @@ def gateway_provider(
         # land here via `normalize_gateway_provider`.
         from .google_cloud import GoogleCloudProvider
 
-        provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client)
-        _set_google_ws_gateway_auth(provider.client, api_key)
-        return _with_http_client(provider)
+        google_cloud_provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client)
+        _set_google_ws_gateway_auth(google_cloud_provider.client, api_key)
+        provider = _with_http_client(google_cloud_provider)
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
+
+    provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
+    return provider
 
 
 def is_gateway_provider(provider: Provider[Any]) -> bool:
