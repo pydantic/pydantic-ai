@@ -322,6 +322,12 @@ class TestResolvePromptCacheRetentionUnified:
         model = _make_model(supports_cache=False)
         assert model.resolve_prompt_cache_retention(ModelSettings(cache='1h')) is None
 
+    def test_wrapper_model_delegates_to_wrapped(self):
+        from pydantic_ai.models.wrapper import WrapperModel
+
+        model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '1h'))
+        assert WrapperModel(model).resolve_prompt_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
+
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     def test_anthropic_longest_wins_across_unified_and_provider_settings(self):
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))

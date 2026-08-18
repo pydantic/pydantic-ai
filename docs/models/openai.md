@@ -124,6 +124,8 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 
 ### Prompt caching
 
+OpenAI caches prompts implicitly for all supported models, so the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting is accepted without adding anything to the request; retentions beyond the default remain provider-specific via [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention].
+
 GPT-5.6 models support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
 
 ```python {test="skip"}
