@@ -18,7 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
 from unittest.mock import AsyncMock
 
 import anyio
@@ -343,6 +343,24 @@ class TestMCPToolsetConstruction:
         # Both kwargs flow into the FastMCP `Client`; verify the read timeout was forwarded.
         assert toolset.client._init_timeout is not None  # pyright: ignore[reportPrivateUsage]
 
+    def test_stateless_mode_sets_auto_initialize_false(self):
+        """When `stateless=True`, the underlying FastMCP Client is configured with `auto_initialize=False`."""
+        toolset = MCPToolset('https://example.com/mcp', stateless=True)
+        assert toolset.stateless is True
+        # The Client's auto_initialize flag should be False
+        assert toolset.client.auto_initialize is False
+
+    def test_stateless_with_pre_built_client_raises(self):
+        """Cannot pass `stateless=True` alongside a pre-built `fastmcp.Client`."""
+        client = Client('https://example.com/mcp')
+        with pytest.raises(ValueError, match=r"'stateless'.*pre-built.*fastmcp.Client"):
+            MCPToolset(client, stateless=True)
+
+    def test_stateless_default_is_false(self):
+        """By default, stateless mode is disabled."""
+        toolset = MCPToolset('https://example.com/mcp')
+        assert toolset.stateless is False
+
 
 class TestResourceTypeMapping:
     """The PAI-shaped `Resource` / `ResourceTemplate` / `MCPError` types are kept under
@@ -576,6 +594,261 @@ class TestMCPToolsetIntegration:
                 'openWorldHint': None,
             }
         )
+
+    # --- Stateless mode tests ---
+
+    async def test_stateless_mode_defers_initialization(self, fastmcp_server: FastMCP[None]):
+        """In stateless mode, entering the toolset does not call `initialize` — the session is open
+        but `server_info` / `capabilities` / `instructions` remain `None` until the first real operation."""
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        assert toolset.is_running is False
+        async with toolset:
+            assert toolset.is_running is True
+            # Properties that require initialization should raise AttributeError
+            with pytest.raises(AttributeError, match='only available after initialization'):
+                _ = toolset.server_info
+            with pytest.raises(AttributeError, match='only available after initialization'):
+                _ = toolset.capabilities
+            with pytest.raises(AttributeError, match='only available after initialization'):
+                _ = toolset.instructions
+        assert toolset.is_running is False
+
+    async def test_stateless_mode_lazy_initializes_on_list_tools(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """In stateless mode, calling `list_tools` triggers lazy initialization and populates
+        `server_info` / `capabilities`."""
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        async with toolset:
+            # Before list_tools, not initialized
+            assert toolset._initialized is False  # pyright: ignore[reportPrivateUsage]
+
+            # list_tools triggers lazy init
+            tools = await toolset.list_tools()
+            assert 'echo' in [t.name for t in tools]
+
+            # Now initialized
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+            assert toolset.server_info.name == 'test_server'
+            assert toolset.capabilities.tools is True
+
+    async def test_stateless_mode_lazy_initializes_on_call_tool(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """In stateless mode, calling `direct_call_tool` triggers lazy initialization."""
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        async with toolset:
+            assert toolset._initialized is False  # pyright: ignore[reportPrivateUsage]
+
+            result = await toolset.direct_call_tool('echo', {'message': 'hello'})
+            assert result == 'Echo: hello'
+
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+            assert toolset.server_info.name == 'test_server'
+
+    async def test_stateless_mode_idempotent_lazy_init(self, fastmcp_server: FastMCP[None]):
+        """Multiple calls to `_ensure_initialized` are idempotent — initialization happens once."""
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        async with toolset:
+            # Call multiple operations that each call _ensure_initialized
+            await toolset.list_tools()
+            info1 = toolset.server_info
+
+            await toolset.list_tools()
+            info2 = toolset.server_info
+
+            # Should be the same object (same init result)
+            assert info1 is info2
+
+    async def test_stateless_with_eager_mode_comparison(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        """Compare stateless and eager mode behavior — both should produce the same tools."""
+        eager_toolset = MCPToolset(fastmcp_server)
+        stateless_toolset = MCPToolset(fastmcp_server, stateless=True)
+
+        async with eager_toolset:
+            eager_tools = await eager_toolset.list_tools()
+
+        async with stateless_toolset:
+            stateless_tools = await stateless_toolset.list_tools()
+
+        assert [t.name for t in eager_tools] == [t.name for t in stateless_tools]
+
+    async def test_stateless_ensure_initialized_before_entering_context_raises(self, fastmcp_server: FastMCP[None]):
+        """Calling _ensure_initialized on a stateless toolset before __aenter__ raises ValueError."""
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        # Not yet entered context (is_running is False)
+        assert toolset.is_running is False
+        with pytest.raises(ValueError, match='called before entering the toolset context'):
+            await toolset._ensure_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    async def test_stateless_with_log_level_sets_logging_after_lazy_init(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Deferred initialization applies `log_level` exactly like the eager path does — which is
+        era-dependent, because the modern protocol has no `logging/setLevel` request. Stateless
+        mode inherits that behaviour from the shared metadata read rather than reimplementing it."""
+        toolset = MCPToolset(fastmcp_server, stateless=True, log_level='warning')
+        async with toolset:
+            assert toolset._initialized is False  # pyright: ignore[reportPrivateUsage]
+            if MCP_SDK_V2:
+                # FastMCP 4 negotiates a modern session here, so the deferred read warns instead
+                # of sending `logging/setLevel` — the same warning the eager path emits.
+                with pytest.warns(UserWarning, match='`log_level` was not applied'):
+                    await toolset.list_tools()
+            else:
+                await toolset.list_tools()
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+
+    async def test_stateless_get_instructions_triggers_lazy_init(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """get_instructions triggers _ensure_initialized when stateless and running."""
+        toolset = MCPToolset(fastmcp_server, stateless=True, include_instructions=True)
+        async with toolset:
+            # Not yet initialized, but running — get_instructions should trigger init
+            assert toolset._initialized is False  # pyright: ignore[reportPrivateUsage]
+            result = await toolset.get_instructions(run_context)
+            # After get_instructions, should be initialized
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+            # Result depends on whether server has instructions
+            assert result is not None  # test_server provides instructions
+
+    async def test_stateless_get_instructions_returns_none_when_server_has_no_instructions(
+        self, run_context: RunContext
+    ):
+        """get_instructions returns None when server provides no instructions."""
+        from fastmcp.server import FastMCP as FastMCPServer
+
+        server_no_instructions = FastMCPServer(name='no_instructions_server')
+        toolset = MCPToolset(server_no_instructions, stateless=True, include_instructions=True)
+        async with toolset:
+            result = await toolset.get_instructions(run_context)
+            assert result is None  # Server has no instructions
+
+    async def test_stateless_concurrent_ensure_initialized_only_inits_once(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Concurrent _ensure_initialized calls serialize — only one handshake sent."""
+        import asyncio
+
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        async with toolset:
+            # Spy on client.initialize to count handshakes (wraps the real impl)
+            spy = AsyncMock(wraps=toolset.client.initialize)
+            toolset.client.initialize = spy
+
+            # Launch multiple concurrent list_tools (each triggers _ensure_initialized)
+            results = await asyncio.gather(
+                toolset.list_tools(),
+                toolset.list_tools(),
+                toolset.list_tools(),
+            )
+            # All should succeed
+            assert all(len(r) > 0 for r in results)
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+            # Only ONE initialize handshake was sent despite 3 concurrent callers
+            assert spy.call_count == 1, f'Expected 1 initialize call, got {spy.call_count}'
+
+    async def test_stateless_reraises_initialize_failure_with_no_metadata(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
+    ):
+        """The era dispatch tolerates the `RuntimeError` a modern session raises for having no
+        `InitializeResult` — but only because that error still leaves era-neutral metadata behind.
+        A genuine failure (not connected, timeout) leaves none, and must propagate."""
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        async with toolset:
+
+            async def failing_initialize(*_args: Any, **_kwargs: Any) -> NoReturn:
+                raise RuntimeError('Client failed to initialize: timed out')
+
+            monkeypatch.setattr(toolset.client, 'initialize', failing_initialize)
+            monkeypatch.setattr(type(toolset.client), 'server_capabilities', property(lambda self: None), raising=False)
+            with pytest.raises(RuntimeError, match='timed out'):
+                await toolset.list_tools()
+            assert toolset._initialized is False  # pyright: ignore[reportPrivateUsage]
+
+    async def test_stateless_refuses_server_initiated_requests_before_init(self, fastmcp_server: FastMCP[None]):
+        """A deferred handshake leaves the session open with handlers dispatchable, so
+        server-initiated requests are refused until initialization has run — and work normally
+        once it has. Toolsets that are not stateless keep their handlers untouched."""
+        from pydantic_ai.mcp import _guard_server_initiated_handlers  # type: ignore[attr-defined]
+
+        calls: list[str] = []
+
+        async def sampling_handler(*_args: Any, **_kwargs: Any) -> str:
+            calls.append('sampling')
+            return 'ok'
+
+        async def elicitation_handler(*_args: Any, **_kwargs: Any) -> str:
+            calls.append('elicitation')
+            return 'ok'
+
+        # Not stateless: handlers pass through unwrapped.
+        eager = MCPToolset(fastmcp_server)
+        assert _guard_server_initiated_handlers(
+            eager, False, cast(Any, sampling_handler), cast(Any, elicitation_handler)
+        ) == (sampling_handler, elicitation_handler)
+
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        guarded_sampling, guarded_elicitation = _guard_server_initiated_handlers(
+            toolset, True, cast(Any, sampling_handler), cast(Any, elicitation_handler)
+        )
+        assert _guard_server_initiated_handlers(toolset, True, None, None) == (None, None)
+        async with toolset:
+            # Before the deferred initialization: refused, and the user's handlers never run.
+            with pytest.raises(UserError, match='server-initiated `sampling` request before initialization'):
+                await cast(Any, guarded_sampling)()
+            with pytest.raises(UserError, match='server-initiated `elicitation` request before initialization'):
+                await cast(Any, guarded_elicitation)()
+            assert calls == []
+            # After it: passed straight through.
+            await toolset.list_tools()
+            await cast(Any, guarded_sampling)()
+            await cast(Any, guarded_elicitation)()
+            assert calls == ['sampling', 'elicitation']
+
+    async def test_stateless_set_sampling_model_keeps_the_guard(self, fastmcp_server: FastMCP[None]):
+        """`set_sampling_model` installs a fresh callback, which must be guarded too — otherwise
+        swapping the model would reopen the pre-initialization window."""
+        installed: list[Any] = []
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        monkey = cast(Any, toolset.client)
+        monkey.set_sampling_callback = installed.append
+        toolset.set_sampling_model(TestModel())
+        assert len(installed) == 1
+        with pytest.raises(UserError, match='server-initiated `sampling` request before initialization'):
+            await installed[0]([], mcp_types.CreateMessageRequestParams(maxTokens=1, messages=[]), None)
+
+    # --- End stateless mode tests ---
+
+    async def test_stateless_on_modern_session_reads_metadata_without_handshake(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
+    ):
+        """`stateless=True` on a modern (sessionless) session: there is no handshake to defer, so
+        the deferred initialization reads the era-neutral metadata directly and never calls
+        `initialize`. (Exercises `_ensure_initialized` directly — the fixture presents the modern
+        metadata view, but the FastMCP 3 wire underneath still speaks the handshake era, so a real
+        operation would not survive the simulated combination.)"""
+        toolset = MCPToolset(fastmcp_server, stateless=True)
+        async with toolset:
+            assert toolset._initialized is False  # pyright: ignore[reportPrivateUsage]
+            spy = AsyncMock(wraps=toolset.client.initialize)
+            toolset.client.initialize = spy
+            await toolset._ensure_initialized()  # pyright: ignore[reportPrivateUsage]
+            assert toolset._initialized is True  # pyright: ignore[reportPrivateUsage]
+            assert spy.call_count == 0, 'a modern session has no handshake to defer'
+            assert toolset.server_info.name == 'modern'
+
+    async def test_stateless_deferred_init_matches_eager_metadata(self, fastmcp_server: FastMCP[None]):
+        """The deferred read produces byte-identical metadata to the eager path — same
+        `_read_server_metadata` in both, so stateless mode cannot drift."""
+        eager = MCPToolset(fastmcp_server)
+        lazy = MCPToolset(fastmcp_server, stateless=True)
+        async with eager, lazy:
+            await lazy.list_tools()
+            assert lazy.server_info == eager.server_info
+            assert lazy.capabilities == eager.capabilities
+            assert lazy.instructions == eager.instructions
 
     async def test_get_instructions_when_enabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
