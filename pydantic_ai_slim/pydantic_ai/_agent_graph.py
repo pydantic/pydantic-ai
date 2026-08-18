@@ -1907,8 +1907,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
 
             is_empty = not self.model_response.parts
+            # An empty `TextPart` carries no text output; some OpenAI-compatible gateways return
+            # a text item with `text: null` that the adapter preserves as `TextPart('')` for
+            # ID round-tripping.
             is_thinking_only = not is_empty and all(
-                isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
+                isinstance(p, _messages.ThinkingPart) or (isinstance(p, _messages.TextPart) and not p.content)
+                for p in self.model_response.parts
             )
 
             if is_empty or is_thinking_only:

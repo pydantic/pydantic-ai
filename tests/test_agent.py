@@ -12340,6 +12340,73 @@ async def test_agent_allows_none_output_empty_response():
     )
 
 
+async def test_agent_allows_none_output_blank_text_response():
+    """Test that Agent(output_type=str | None) succeeds on a response with only empty text.
+
+    Some OpenAI-compatible gateways return a text output item with `text: null`, which the
+    OpenAI adapter preserves as an empty `TextPart` so its ID can be round-tripped. A response
+    whose only text is empty carries no text output, so it completes as `None` just like a
+    response with no parts. Uses `FunctionModel` because no real provider emits this on demand.
+    """
+
+    async def blank_text_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')])
+
+    model = FunctionModel(function=blank_text_model)
+    agent = Agent(model, output_type=str | None)
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='')],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:blank_text_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_blank_text_with_thinking():
+    """Test that Agent(output_type=str | None) succeeds on empty text combined with thinking."""
+
+    async def blank_text_thinking_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(''), ThinkingPart(content='Nothing more to add.')])
+
+    model = FunctionModel(function=blank_text_thinking_model)
+    agent = Agent(model, output_type=str | None)
+
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_blank_text_response_retries_without_none_output():
+    """Test that a response with only empty text still triggers an output retry for plain `str`.
+
+    Empty text is treated as no text output; when `None` is not an allowed output type, the
+    agent asks the model to try again rather than accepting an empty answer.
+    """
+
+    async def blank_text_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')])
+
+    model = FunctionModel(function=blank_text_model)
+    agent = Agent(model, output_type=str)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        await agent.run('hello')
+
+
 async def test_agent_allows_none_output_after_tool():
     """Test that Agent(output_type=str | None) succeeds after tool call with no final text."""
     call_count = 0
