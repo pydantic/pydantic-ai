@@ -15737,7 +15737,7 @@ async def _replay_input(
     *,
     group_function_calls: bool,
     model_request_parameters: ModelRequestParameters | None = None,
-    model_settings: OpenAIResponsesModelSettings | None = None,
+    model_settings: 'OpenAIResponsesModelSettings | None' = None,
 ) -> list[dict[str, Any]]:
     model = OpenAIResponsesModel(
         'custom-model',
@@ -15955,7 +15955,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
-            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            {'openai_send_reasoning_ids': True},
             id='sent-function-call-id',
         ),
         pytest.param(
@@ -15969,7 +15969,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a|fc-a')]),
             ],
-            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            {'openai_send_reasoning_ids': True},
             id='sent-legacy-combined-function-call-id',
         ),
         pytest.param(
@@ -15983,7 +15983,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
-            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            {'openai_send_reasoning_ids': True},
             id='sent-message-id',
         ),
         pytest.param(
@@ -15997,7 +15997,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
-            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            {'openai_send_reasoning_ids': True},
             id='sent-reasoning-id',
         ),
         pytest.param(
@@ -16092,7 +16092,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
     ],
 )
 async def test_openai_responses_function_call_grouping_preserves_protected_boundaries(
-    history: list[ModelMessage], model_settings: OpenAIResponsesModelSettings | None
+    history: list[ModelMessage], model_settings: 'OpenAIResponsesModelSettings | None'
 ) -> None:
     """Protected provider-owned and unsettled histories serialize identically with the profile on or off.
 
@@ -16162,7 +16162,7 @@ async def test_openai_responses_function_call_grouping_preserves_protected_bound
                     ]
                 ),
             ],
-            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            {'openai_send_reasoning_ids': True},
             snapshot(
                 [
                     {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
@@ -16191,7 +16191,7 @@ async def test_openai_responses_function_call_grouping_preserves_protected_bound
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
-            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            {'openai_send_reasoning_ids': True},
             snapshot(
                 [
                     {'role': 'assistant', 'content': '<think>\ninspect the file\n</think>'},
@@ -16205,7 +16205,7 @@ async def test_openai_responses_function_call_grouping_preserves_protected_bound
 )
 async def test_openai_responses_function_call_grouping_ignores_unsent_item_ids(
     history: list[ModelMessage],
-    model_settings: OpenAIResponsesModelSettings | None,
+    model_settings: 'OpenAIResponsesModelSettings | None',
     expected: list[dict[str, Any]],
 ) -> None:
     """An item ID the renderer drops is invisible to the provider, so it cannot pin an item's position.
