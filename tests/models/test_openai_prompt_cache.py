@@ -720,6 +720,41 @@ async def test_openai_responses_cache_instructions_after_last_static(allow_model
     )
 
 
+async def test_openai_responses_cache_instructions_all_dynamic_falls_back_to_system_prompt(
+    allow_model_requests: None,
+):
+    """With no static instruction to end the prefix, the boundary is the last system prompt."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, system_prompt='Support policies.', model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'system', 'content': 'Today is 2026-08-18.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
 async def test_openai_responses_cache_instructions_all_dynamic_without_system_prompt(allow_model_requests: None):
     """With no breakpoint to place, the instructions stay in the top-level field."""
     mock_client = MockOpenAIResponses.create_mock(responses_completion())
