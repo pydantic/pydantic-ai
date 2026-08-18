@@ -1281,9 +1281,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         provider_details.update(_map_openrouter_provider_details(chunk))
         if annotations := chunk.choices[0].delta.annotations:
             self._annotations.extend(_dump_openrouter_annotations(annotations))
-        if self._annotations:
-            # Streamed provider details are shallow-merged per chunk, and OpenRouter spreads
-            # annotations over several deltas, so the running list is re-published whole.
+            # Provider details are shallow-merged across chunks, so publish the running list.
             provider_details['annotations'] = list(self._annotations)
         return provider_details or None
 

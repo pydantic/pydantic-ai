@@ -214,7 +214,7 @@ Pydantic AI previously enabled OpenRouter's `web` plugin, which searched on ever
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
-model = OpenRouterModel('openai/gpt-4.1')
+model = OpenRouterModel('openai/gpt-5.2')
 settings = OpenRouterModelSettings(extra_body={'plugins': [{'id': 'web'}]})
 agent = Agent(model, model_settings=settings)
 result = agent.run_sync('What is the latest news in AI?')
@@ -264,7 +264,7 @@ for annotation in annotations:
 ```
 
 !!! note "Only non-native search reports its sources"
-    Models whose downstream provider runs the search natively — OpenAI and Anthropic among them — return no annotations at all, so `provider_details` carries only the search count for those. Which engine OpenRouter picks is not currently configurable from Pydantic AI.
+    Models whose downstream provider runs the search natively — OpenAI and Anthropic among them — return no annotations at all, so `provider_details` has no `annotations` entry for those. The normal OpenRouter provider details remain available. Which engine OpenRouter picks is not currently configurable from Pydantic AI.
 
 !!! note "Engine-specific parameters"
     A recorded request verifies only that OpenRouter accepts these parameter names. The per-engine effects below come from OpenRouter's [Beta server-tool documentation](https://openrouter.ai/docs/guides/features/server-tools/web-search), not from responses recorded in this project: native provider search ignores `search_context_size`; `user_location` works only with native search; and domain-filter support varies (native OpenAI ignores `excluded_domains`). The server tool can make zero or several searches when it is available to the model. `max_uses` caps a request when OpenRouter uses a non-native search engine or Anthropic's native search; other native providers, including the OpenAI model in this example, ignore it. OpenRouter does not support [`WebSearchTool.external_web_access`][pydantic_ai.native_tools.WebSearchTool.external_web_access].

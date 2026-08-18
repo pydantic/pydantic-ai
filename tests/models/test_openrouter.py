@@ -960,34 +960,10 @@ async def test_openrouter_file_annotation_validation(openrouter_api_key: str) ->
     result = model._process_response(response)  # type: ignore[reportPrivateUsage]
     text_part = cast(TextPart, result.parts[0])
     assert text_part.content == 'Here is the summary of your file.'
-
-
-async def test_openrouter_url_citation_annotation_validation(openrouter_api_key: str) -> None:
-    """Test that url_citation annotations from OpenRouter are correctly validated."""
-    from openai.types.chat.chat_completion_message import ChatCompletionMessage
-
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
-
-    message = ChatCompletionMessage.model_construct(
-        role='assistant',
-        content='According to the source, this is the answer.',
-        annotations=[
-            {
-                'type': 'url_citation',
-                'url_citation': {'url': 'https://example.com', 'title': 'Example', 'start_index': 0, 'end_index': 10},
-            },
-        ],
+    assert result.provider_details is not None
+    assert result.provider_details['annotations'] == snapshot(
+        [{'type': 'file', 'file': {'filename': 'test.pdf', 'file_id': 'file-123'}}]
     )
-    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
-    response = ChatCompletion.model_construct(
-        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='test'
-    )
-
-    # This should not raise a validation error
-    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
-    text_part = cast(TextPart, result.parts[0])
-    assert text_part.content == 'According to the source, this is the answer.'
 
 
 async def test_openrouter_service_tier_completion(openrouter_api_key: str) -> None:
@@ -1605,6 +1581,7 @@ async def test_openrouter_web_search_tool_usage(
     raw_response = json.loads(vcr.responses[0]['body']['string'])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
     assert raw_response['usage']['server_tool_use_details'] == {'web_search_requests': 1}
     assert response.provider_details['server_tool_use'] == {'web_search_requests': 1}
+    assert 'annotations' not in response.provider_details
 
 
 _OPENROUTER_WEB_SEARCH_FULL_PARAMS_CASSETTE = (
@@ -1686,6 +1663,7 @@ async def test_openrouter_web_search_tool_usage_stream(allow_model_requests: Non
 
     assert stream.response.provider_details is not None
     assert stream.response.provider_details['server_tool_use'] == {'web_search_requests': 1}
+    assert 'annotations' not in stream.response.provider_details
 
 
 async def test_openrouter_web_search_annotations(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -1704,10 +1682,48 @@ async def test_openrouter_web_search_annotations(allow_model_requests: None, ope
     assert isinstance(response, ModelResponse)
     assert response.provider_details is not None
     annotations = response.provider_details['annotations']
-    assert [annotation['type'] for annotation in annotations] == snapshot(
-        ['url_citation', 'url_citation', 'url_citation', 'url_citation', 'url_citation']
+    assert annotations[0] == snapshot(
+        {
+            'type': 'url_citation',
+            'url_citation': {
+                'end_index': 0,
+                'start_index': 0,
+                'title': 'AI Agent Framework, the Pydantic way',
+                'url': 'https://github.com/pydantic/pydantic-ai',
+                'content': """\
+# pydantic/pydantic-ai
+
+...
+
+- Stars: 19265
+- Forks: 2514
+- Watchers: 19265
+- Open issues: 702
+- License: MIT License
+- Homepage: https://pydantic.dev/pydantic-ai
+- Default branch: main
+- Created: 2024-06-21T15:55:04Z
+
+...
+
+AI Agent Framework, the Pydantic way
+
+...
+
+### Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.\
+""",
+            },
+        }
     )
-    assert annotations[0]['url_citation']['url'] == snapshot('https://github.com/pydantic/pydantic-ai')
+    assert [annotation['url_citation']['url'] for annotation in annotations] == snapshot(
+        [
+            'https://github.com/pydantic/pydantic-ai',
+            'https://pydantic.dev/pydantic-ai',
+            'https://github.com/pydantic/pydantic-ai/releases/tag/v2.0.0',
+            'https://pydantic.dev/docs/ai/overview/',
+            'https://github.com/pydantic/pydantic-ai/tree/refs/tags/v1.44.0',
+        ]
+    )
 
 
 async def test_openrouter_web_search_annotations_stream(allow_model_requests: None, openrouter_api_key: str) -> None:
