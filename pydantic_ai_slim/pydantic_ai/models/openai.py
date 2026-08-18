@@ -1870,7 +1870,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 type='file',
             )
         elif isinstance(item, CachePoint):
-            # Cache points are handled by `_map_user_prompt_content_item()` when supported.
+            # Reached only when the profile doesn't support explicit breakpoints:
+            # `_map_user_prompt_content_item()` intercepts the supported case.
+            warn_cache_point_ignored(f'model {self.model_name!r}')
             return None
         else:
             assert_never(item)
@@ -1884,11 +1886,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         before the default mapping (e.g. `OpenRouterModel` translates `CachePoint` into a
         `cache_control` breakpoint on the preceding part).
         """
-        if isinstance(item, CachePoint):
-            if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
-                _add_openai_prompt_cache_breakpoint(content)
-            else:
-                warn_cache_point_ignored(f'model {self.model_name!r}')
+        if isinstance(item, CachePoint) and self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            _add_openai_prompt_cache_breakpoint(content)
         else:
             mapped_item = await self._map_content_item(item)
             if mapped_item is not None:

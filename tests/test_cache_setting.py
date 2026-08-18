@@ -70,6 +70,14 @@ def _resolve_cache(model: FunctionModel, cache: CacheSetting) -> tuple[ModelSett
     return settings, params.cache
 
 
+async def test_cache_setting_end_to_end_run():
+    """The setting survives a full agent run on a supporting model without reaching the model function."""
+    from pydantic_ai import Agent
+
+    result = await Agent(_make_model(supports_cache=True), model_settings={'cache': True}).run('hi')
+    assert result.output == 'ok'
+
+
 class TestSnapCacheRetention:
     @pytest.mark.parametrize(
         ('value', 'supported', 'expected'),
@@ -319,6 +327,10 @@ class TestResolvePromptCacheRetentionUnified:
         assert model.resolve_prompt_cache_retention(ModelSettings(cache=True)) == timedelta(minutes=5)
         assert model.resolve_prompt_cache_retention(ModelSettings(cache=False)) is None
         assert model.resolve_prompt_cache_retention(None) is None
+
+    def test_30m_retention_on_supporting_profile(self):
+        model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '30m'))
+        assert model.resolve_prompt_cache_retention(ModelSettings(cache='30m')) == timedelta(minutes=30)
 
     def test_unified_retention_snapped_before_resolution(self):
         model = _make_model(supports_cache=True, supported_cache_retentions=('5m',))

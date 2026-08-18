@@ -48,14 +48,11 @@ class BaseGoogleProvider(Provider[Client], ABC):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        profile = google_model_profile(model_name)
-        if profile is None:
-            return None
         # The unified `cache` setting adds nothing to a Google request: Gemini caches prompts
         # implicitly, and explicit caching needs a pre-created resource passed via
         # `google_cached_content`. Claiming support here lets `GoogleModel.prepare_request` warn
         # when `cache` is set without one, instead of ignoring the setting silently.
-        return merge_profile(profile, ModelProfile(supports_cache=True))
+        return merge_profile(google_model_profile(model_name), ModelProfile(supports_cache=True))
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
