@@ -3125,7 +3125,8 @@ async def test_sync_tool_timeout_triggers_retry():
     @agent.tool_plain(timeout=0.01)
     def slow_sync_tool() -> str:
         time.sleep(0.1)
-        return 'done'  # pragma: no cover
+        # The abandoned thread runs to completion, so this line is covered; only its result is discarded.
+        return 'done'
 
     result = await agent.run('call slow_sync_tool')
 

@@ -12357,7 +12357,8 @@ class TestHooksCapability:
         @hooks.on.before_model_request(timeout=0.01)
         def slow_sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             time.sleep(0.1)
-            return request_context  # pragma: no cover
+            # The abandoned thread runs to completion, so this line is covered; only its result is discarded.
+            return request_context
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
         with pytest.raises(HookTimeoutError) as exc_info:
