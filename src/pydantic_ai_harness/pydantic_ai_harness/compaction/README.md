@@ -1,9 +1,11 @@
 # Compaction
 
 A menu of strategies for keeping an agent's conversation history within a model's context
-window. Each is a Pydantic AI `Capability` that edits the message history just before each
-request goes out; edits **persist** into the run's message history, so a trim/clear/summary carries forward to later
-steps (it is not recomputed from the full history every turn).
+window. Most are Pydantic AI `Capability` classes that edit the message history just before each
+request goes out. `FallbackCompaction` is instead a composing `CompactionStrategy` used through
+`TieredCompaction` or `compact_now`; it has no request trigger of its own. Edits **persist** into the
+run's message history, so a trim, clear, or summary carries forward to later steps (it is not
+recomputed from the full history every turn).
 
 All strategies preserve tool-call / tool-return **pairing** -- core does not validate this, and a
 provider rejects an orphaned pair. The zero-LLM strategies never call a model.
@@ -16,7 +18,7 @@ alternative: they work with every model and keep the compaction logic (and its c
 
 ## The menu
 
-| Capability | Cost | What it does | Reach for it when |
+| Component | Cost | What it does | Reach for it when |
 |---|---|---|---|
 | `ClampOversizedMessages` | zero-LLM | Head/tail-truncates a single oversized part (response text, tool-call args) | One runaway generation blew past the context cap and no other strategy can reach it |
 | `SlidingWindowCompaction` | zero-LLM | Drops the oldest whole messages down to a tail | You only need the recent turns and can discard old context entirely |
@@ -24,6 +26,7 @@ alternative: they work with every model and keep the compaction logic (and its c
 | `DeduplicateFileReads` | zero-LLM | Blanks every file read superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
+| `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and deterministic truncation must keep the run alive |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
@@ -232,6 +235,33 @@ summarizing tier rather than stopping at the wrapper.
 A compaction that changes the history emits the same `compact_messages` span the in-run path emits,
 so an instrumented application sees one shape however compaction was triggered. Pass `tracer=` to
 record it; without one the span goes to a no-op tracer.
+
+## `FallbackCompaction`: recover when a strategy fails
+
+`TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction`
+advances only when a strategy raises an exception selected by `fallback_on`, which defaults to
+Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model
+in a `FallbackModel` fails. Each attempt receives a fresh list containing the original message
+objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must
+still avoid mutating message objects. If every strategy fails, the
+last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException`
+subclasses pass through immediately; `fallback_on` rejects types that do not derive from
+`Exception`.
+
+```python
+from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+
+fallback = FallbackCompaction(
+    fallback_chain=[
+        SummarizingCompaction(max_messages=1, keep_tokens=20_000),
+        SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+    ]
+)
+```
+
+The strategies' trigger fields are not consulted when a composing strategy calls `compact`
+directly. Put `fallback` inside `TieredCompaction` to give the chain a context trigger, or pass it
+to `compact_now` for manual compaction.
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 

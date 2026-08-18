@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -10,6 +11,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer, Tracer
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     ModelMessage,
@@ -27,8 +29,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -36,6 +40,7 @@ from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
     DeduplicateFileReads,
+    FallbackCompaction,
     SlidingWindowCompaction,
     SummarizingCompaction,
     TieredCompaction,
@@ -431,6 +436,122 @@ class TestSlidingWindowCompaction:
         assert len(result.messages) < 10
 
 
+class TestFallbackCompaction:
+    @pytest.fixture
+    def anyio_backend(self) -> str:
+        # The exhausted-model test runs a real Agent; trio hits a core event-loop quirk unrelated to compaction.
+        return 'asyncio'
+
+    def test_validation_empty_chain(self):
+        with pytest.raises(ValueError, match='fallback_chain must not be empty'):
+            FallbackCompaction(fallback_chain=[])
+
+    def test_validation_empty_fallback_on(self):
+        with pytest.raises(ValueError, match='fallback_on must not be empty'):
+            FallbackCompaction(fallback_chain=[AsyncMock()], fallback_on=())
+
+    def test_validation_cancelled_error(self):
+        with pytest.raises(ValueError, match='fallback_on must contain only Exception subclasses'):
+            FallbackCompaction(
+                fallback_chain=[AsyncMock()],
+                fallback_on=(asyncio.CancelledError,),  # pyright: ignore[reportArgumentType]
+            )
+
+    @pytest.mark.anyio
+    async def test_returns_first_success(self):
+        first = AsyncMock()
+        first.compact.return_value = [_user('summary')]
+        second = AsyncMock()
+        fallback = FallbackCompaction(fallback_chain=[first, second])
+
+        result = await fallback.compact([_user('original')], _make_ctx())
+
+        assert result == first.compact.return_value
+        second.compact.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_fallback_receives_fresh_original_list(self):
+        class MutateThenFail:
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
+                messages.clear()
+                raise RuntimeError('summary failed')
+
+        second = AsyncMock()
+        messages: list[ModelMessage] = [_user('original')]
+        second.compact.return_value = messages
+        fallback = FallbackCompaction(fallback_chain=[MutateThenFail(), second], fallback_on=(RuntimeError,))
+
+        result = await fallback.compact(messages, _make_ctx())
+
+        assert result == messages
+        assert second.compact.call_args.args[0] == messages
+
+    @pytest.mark.anyio
+    async def test_reraises_last_failure(self):
+        first = AsyncMock()
+        first.compact.side_effect = ValueError('first')
+        second = AsyncMock()
+        second.compact.side_effect = RuntimeError('last')
+        fallback = FallbackCompaction(fallback_chain=[first, second], fallback_on=(Exception,))
+
+        with pytest.raises(RuntimeError, match='last'):
+            await fallback.compact([_user('original')], _make_ctx())
+
+    @pytest.mark.anyio
+    async def test_non_matching_error_does_not_fallback(self):
+        first = AsyncMock()
+        first.compact.side_effect = ValueError('programming error')
+        second = AsyncMock()
+        fallback = FallbackCompaction(fallback_chain=[first, second])
+
+        with pytest.raises(ValueError, match='programming error'):
+            await fallback.compact([_user('original')], _make_ctx())
+        second.compact.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_cancellation_does_not_fallback(self):
+        first = AsyncMock()
+        first.compact.side_effect = asyncio.CancelledError
+        second = AsyncMock()
+        fallback = FallbackCompaction(fallback_chain=[first, second])
+
+        with pytest.raises(asyncio.CancelledError):
+            await fallback.compact([_user('original')], _make_ctx())
+        second.compact.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_fallback_model_exhaustion_uses_next_strategy(self):
+        def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError('summarizer', 'rejected history')
+
+        summarizer = SummarizingCompaction(
+            model=FallbackModel(FunctionModel(fail), FunctionModel(fail)),
+            max_messages=1,
+            keep_messages=1,
+        )
+        deterministic = AsyncMock()
+        deterministic.compact.return_value = [_user('trimmed')]
+        fallback = FallbackCompaction(fallback_chain=[summarizer, deterministic])
+
+        result = await fallback.compact([_user('old'), _assistant('old'), _user('recent')], _make_ctx())
+
+        assert result == deterministic.compact.return_value
+        deterministic.compact.assert_awaited_once()
+
+    def test_with_focus_updates_only_supported_strategies(self):
+        summarizer = SummarizingCompaction(max_messages=1)
+        sliding = SlidingWindowCompaction(max_messages=1)
+        fallback = FallbackCompaction(fallback_chain=[summarizer, sliding])
+
+        focused = fallback.with_focus('authentication')
+
+        assert focused is not fallback
+        focused_summarizer = focused.fallback_chain[0]
+        assert isinstance(focused_summarizer, SummarizingCompaction)
+        assert 'Give particular weight to: authentication' in focused_summarizer.summary_prompt
+        assert focused.fallback_chain[1] is sliding
+
+
 # ---------------------------------------------------------------------------
 # WarnNearLimits
 # ---------------------------------------------------------------------------
@@ -813,6 +934,7 @@ class TestExports:
             'WarnNearLimits',
             'SummarizingCompaction',
             'TieredCompaction',
+            'FallbackCompaction',
         ]
         for name in names:
             assert hasattr(compaction, name)
