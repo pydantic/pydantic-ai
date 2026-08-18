@@ -68,6 +68,10 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `web` - installs [Web UI](ui/overview.md) dependencies `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}, `httpx` [PyPI ↗](https://pypi.org/project/httpx){:target="_blank"}, and `uvicorn` [PyPI ↗](https://pypi.org/project/uvicorn){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
+* `realtime` - installs [Realtime Agents](realtime/overview.md) dependency `websockets` [PyPI ↗](https://pypi.org/project/websockets){:target="_blank"}
+* `openai-realtime` - installs [OpenAI Realtime](realtime/openai.md) dependencies `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"} and `websockets` [PyPI ↗](https://pypi.org/project/websockets){:target="_blank"}
+* `google-realtime` - installs [Gemini Live](realtime/gemini.md) dependencies `google-genai` [PyPI ↗](https://pypi.org/project/google-genai){:target="_blank"} and `websockets` [PyPI ↗](https://pypi.org/project/websockets){:target="_blank"}
+* `xai-realtime` - installs [xAI Realtime](realtime/xai.md) dependencies `xai-sdk` [PyPI ↗](https://pypi.org/project/xai-sdk){:target="_blank"}, `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}, and `websockets` [PyPI ↗](https://pypi.org/project/websockets){:target="_blank"}
 * `retries` - installs [HTTP Retries](models/http-request-retries.md) dependency `tenacity` [PyPI ↗](https://pypi.org/project/tenacity){:target="_blank"}
 * `temporal` - installs [Temporal Durable Execution](durable_execution/temporal.md) dependency `temporalio` [PyPI ↗](https://pypi.org/project/temporalio){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
