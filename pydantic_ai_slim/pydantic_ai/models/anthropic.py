@@ -1698,7 +1698,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
         for m in messages:
             if isinstance(m, ModelRequest):
-                standing_prompt_count = _standing_system_prompt_count(m.parts) if m is leading_request else 0
+                standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
                 user_content_params: list[BetaContentBlockParam] = []
                 mid_conversation_system_prompts: list[str] = []
                 tool_availability_blocks: list[dict[str, Any]] = []

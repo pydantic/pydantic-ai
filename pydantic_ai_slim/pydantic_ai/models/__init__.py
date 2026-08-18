@@ -1982,7 +1982,7 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
     return new_messages
 
 
-def _standing_system_prompt_count(parts: Sequence[ModelRequestPart]) -> int:
+def _standing_system_prompt_count(request: ModelRequest) -> int:
     """How many of a request's opening parts belong to the run's standing system prompt.
 
     The standing prompt is authored before the run starts, so it is whatever `SystemPromptPart`s the
@@ -1995,7 +1995,7 @@ def _standing_system_prompt_count(parts: Sequence[ModelRequestPart]) -> int:
     exists to avoid.
     """
     count = 0
-    for part in parts:
+    for part in request.parts:
         if not isinstance(part, SystemPromptPart):
             break
         count += 1
@@ -2079,7 +2079,7 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     """
     first_request = next((m for m in prefix if isinstance(m, ModelRequest)), None)
     opening: Sequence[ModelRequestPart] = (
-        first_request.parts[: _standing_system_prompt_count(first_request.parts)]
+        first_request.parts[: _standing_system_prompt_count(first_request)]
         if first_request and include_system_parts
         else []
     )
@@ -2112,7 +2112,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     new_messages: list[ModelMessage] = list(messages[:first_request_idx])
     changed = False
     for offset, msg in enumerate(messages[first_request_idx:]):
-        start = _standing_system_prompt_count(msg.parts) if offset == 0 and isinstance(msg, ModelRequest) else 0
+        start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
                 UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
@@ -2365,10 +2365,11 @@ def _announce_tool_availability_delta_messages(
             # history's first request are the agent's standing prompt, which the adapters lift into
             # the provider's dedicated system field based on exactly this position, so they stay at
             # the front.
-            keep = _standing_system_prompt_count(replacement_parts) if is_first_kept_request else 0
+            request = replace(message, parts=replacement_parts)
+            keep = _standing_system_prompt_count(request) if is_first_kept_request else 0
             head, tail = replacement_parts[:keep], replacement_parts[keep:]
             tail.sort(key=_tool_results_first_sort_key)
-            transformed.append(replace(message, parts=[*head, *tail]))
+            transformed.append(replace(request, parts=[*head, *tail]))
             is_first_kept_request = False
 
     return transformed if changed else messages
