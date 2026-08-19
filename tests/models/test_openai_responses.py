@@ -15738,8 +15738,8 @@ async def _replay_input(
     group_function_calls: bool,
     model_request_parameters: ModelRequestParameters | None = None,
     model_settings: 'OpenAIResponsesModelSettings | None' = None,
-) -> list[dict[str, Any]]:
-    """Render `history` to Responses input items, with the grouping profile fact on or off.
+) -> list[dict[str, object]]:
+    """Test the ordering matrix directly; DeepSeek VCR tests already cover the public request boundary.
 
     The profile is built bare rather than merged onto `openai_model_profile(...)` on purpose: an
     empty profile leaves `openai_supports_encrypted_reasoning_content` unset, so `send_item_ids`
@@ -16300,7 +16300,7 @@ provider-owned item follows
 async def test_openai_responses_function_call_grouping_ignores_item_ids(
     history: list[ModelMessage],
     model_settings: 'OpenAIResponsesModelSettings | None',
-    expected: list[dict[str, Any]],
+    expected: list[dict[str, object]],
 ) -> None:
     """Item IDs never suppress grouping, whether or not the renderer puts them on the wire.
 

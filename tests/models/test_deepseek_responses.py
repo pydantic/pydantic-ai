@@ -26,7 +26,7 @@ from typing import Any
 
 import httpx2
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -57,6 +57,9 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+_request_body_adapter = TypeAdapter(dict[str, JsonValue])
 
 
 class City(BaseModel):
@@ -838,10 +841,10 @@ async def test_deepseek_responses(case: Case, allow_model_requests: None, deepse
 
 async def test_deepseek_responses_replay_unsent_item_ids(allow_model_requests: None, deepseek_api_key: str) -> None:
     """Item IDs another provider minted never reach DeepSeek, so they don't pin the interleaved order."""
-    sent_bodies: list[dict[str, Any]] = []
+    sent_bodies: list[dict[str, JsonValue]] = []
 
     async def capture_request(request: httpx2.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
+        sent_bodies.append(_request_body_adapter.validate_json(request.read()))
 
     history = [
         ModelResponse(
@@ -907,10 +910,10 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
     allow_model_requests: None, deepseek_api_key: str
 ) -> None:
     """DeepSeek accepts the grouped wire projection of complete portable history."""
-    sent_bodies: list[dict[str, Any]] = []
+    sent_bodies: list[dict[str, JsonValue]] = []
 
     async def capture_request(request: httpx2.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
+        sent_bodies.append(_request_body_adapter.validate_json(request.read()))
 
     history = [
         ModelResponse(
@@ -976,10 +979,10 @@ async def test_deepseek_responses_replay_own_reasoning_history(
     suite-wide cache-prefix check: reordering has to place the calls identically on every turn, or it
     would rewrite the cacheable prefix and silently cost a full re-read of the conversation.
     """
-    sent_bodies: list[dict[str, Any]] = []
+    sent_bodies: list[dict[str, JsonValue]] = []
 
     async def capture_request(request: httpx2.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
+        sent_bodies.append(_request_body_adapter.validate_json(request.read()))
 
     history = [
         ModelResponse(
@@ -1023,6 +1026,8 @@ async def test_deepseek_responses_replay_own_reasoning_history(
     assert history == original_history
 
     first_input, second_input = (body['input'] for body in sent_bodies)
+    assert isinstance(first_input, list)
+    assert isinstance(second_input, list)
     assert second_input[: len(first_input) - 1] == first_input[:-1], (
         'the replayed turn must render identically on both turns, or the cacheable prefix moves'
     )
