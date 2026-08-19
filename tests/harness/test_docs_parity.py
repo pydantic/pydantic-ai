@@ -132,6 +132,7 @@ _CAPABILITY_PAGE_META = {
     'researcher.md': ('researcher', 'Researcher'),
     'pydantic-ai-docs.md': ('pydantic_ai_docs', 'Pydantic AI Docs'),
     'exa-search.md': ('exa', 'Exa Search'),
+    'youdotcom.md': ('youdotcom', 'You.com'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),

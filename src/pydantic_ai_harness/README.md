@@ -172,6 +172,8 @@ Finding and reading things on the open web.
 | [X Search](https://ai.pydantic.dev/capabilities/x-search/) | Core | Search X; native on xAI, subagent fallback elsewhere |
 | [Exa Search](pydantic_ai_harness/exa/) | Harness | Web research via [Exa](https://exa.ai): excerpted search, full-page reads, opt-in cited deep search |
 | [Exa Agent](pydantic_ai_harness/exa/) | Harness | Delegate open-ended research to the Exa Agent API |
+| [You.com Search](pydantic_ai_harness/youdotcom/) | Harness | Web search and page reads via [You.com](https://you.com): query-relevant excerpts or full-page markdown |
+| [You.com Research](pydantic_ai_harness/youdotcom/) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
 | [Browser Use](pydantic_ai_harness/browser_use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 
 ### Reasoning, planning & delegation

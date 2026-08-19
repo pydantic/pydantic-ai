@@ -1,6 +1,19 @@
 """Shared helpers for model-visible tool output."""
 
 
+def truncate_head(text: str, max_chars: int) -> str:
+    """Limit text to `max_chars`, keeping the head.
+
+    Suits page and document text, where the lead carries the substance. The
+    truncation marker counts toward the cap, so the returned text stays within
+    the bound; a cap smaller than the marker returns the marker alone.
+    """
+    if len(text) <= max_chars:
+        return text
+    marker = f'\n[... page text truncated at {max_chars} characters]'
+    return f'{text[: max(max_chars - len(marker), 0)]}{marker}'
+
+
 def truncate_tail(text: str, max_chars: int) -> str:
     """Limit text to `max_chars`, keeping the tail.
 
