@@ -3032,6 +3032,9 @@ def sanitize_messages(
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
       tool return parts.
+    - [`UserPromptPart.source`][pydantic_ai.messages.UserPromptPart.source] values. Tool-return
+      provenance is server-authored; accepting it from a client would let ordinary user content be
+      rendered as if a tool produced it.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -3246,17 +3249,19 @@ def _sanitize_request_parts(
         if strip_system_prompts and isinstance(part, SystemPromptPart):
             stripped_system_prompt = True
             continue
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-            filtered_content = _filter_user_content(
-                part.content,
-                allowed_file_url_schemes,
-                allowed_file_url_force_download,
-                allow_uploaded_files,
-                disallowed_schemes,
-                reset_force_download_values,
-                dropped_uploaded_file_providers,
-            )
-            new_parts.append(replace(part, content=filtered_content))
+        if isinstance(part, UserPromptPart):
+            content = part.content
+            if not isinstance(content, str):
+                content = _filter_user_content(
+                    content,
+                    allowed_file_url_schemes,
+                    allowed_file_url_force_download,
+                    allow_uploaded_files,
+                    disallowed_schemes,
+                    reset_force_download_values,
+                    dropped_uploaded_file_providers,
+                )
+            new_parts.append(replace(part, content=content, source=None))
         elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
             # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
             # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
