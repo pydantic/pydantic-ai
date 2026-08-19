@@ -132,7 +132,7 @@ Terse, not botty. Structure:
 - Flag pre-existing latent bugs found but deliberately not fixed.
 - Link the prior add-model PR for context.
 
-Include the [PR template](.github/pull_request_template.md), fill in the issue number, and check the "AI generated code" box in the GitHub UI yourself — `gh pr create` cannot set it.
+Include the [PR template](../../../.github/pull_request_template.md), fill in the issue number, and check the "AI generated code" box in the GitHub UI yourself — `gh pr create` cannot set it.
 
 ## Provider-specific landmines
 
