@@ -297,6 +297,8 @@ Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI sy
 
 Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these versions to [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; use version 5 unless you are temporarily preserving an older telemetry pipeline.
 
+Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
+
 #### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
@@ -340,6 +342,15 @@ Note: The `modality` field is only included for image, audio, and video content 
 Builds on version 4 with improved handling of deferred tool calls:
 
 - [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions no longer record an exception event or set the span status to ERROR — the span is left as UNSET, since deferrals are control flow, not errors.
+
+#### Version 6 (opt-in)
+
+Builds on version 5 by giving tool results the message role the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/model/gen-ai/gen-ai-input-messages.json) pair with the `tool_call_response` parts they carry:
+
+- Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
+- New (v6): it moves to a `{"role": "tool"}` message
+
+This applies to tool returns and to retries that answer a tool call. A retry that answers nothing — output validation, a `ModelRetry` from a validator — stays on `user`, which is the role it reaches the model as. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
 
 ---
 
