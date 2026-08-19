@@ -37,6 +37,7 @@ def test_leak_non_sampled_span_into_ambient_context():
         NonRecordingSpan(SpanContext(trace_id=0x1234, span_id=0x5678, is_remote=True, trace_flags=TraceFlags(0)))
     )
     otel_context.attach(ctx)
+    assert not trace.get_current_span().get_span_context().trace_flags.sampled
 
 
 @pytest.mark.anyio
