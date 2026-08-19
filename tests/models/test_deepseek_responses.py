@@ -40,6 +40,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -47,6 +48,7 @@ from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 
@@ -969,6 +971,10 @@ async def test_deepseek_responses_replay_own_reasoning_history(
     interesting case because those IDs go out on the wire: the request below is rejected when the
     calls stay interleaved, which is what makes reordering the load-bearing step rather than the
     portable-history case where nothing is emitted to preserve.
+
+    Two turns run over the same history so the recording carries a consecutive request pair for the
+    suite-wide cache-prefix check: reordering has to place the calls identically on every turn, or it
+    would rewrite the cacheable prefix and silently cost a full re-read of the conversation.
     """
     sent_bodies: list[dict[str, Any]] = []
 
@@ -1008,10 +1014,18 @@ async def test_deepseek_responses_replay_own_reasoning_history(
         model = OpenAIResponsesModel(
             'deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=http_client)
         )
-        result = await Agent(model).run('Reply exactly: done', message_history=history)
+        agent = Agent(model)
+        result = await agent.run('Reply exactly: done', message_history=history)
+        follow_up = await agent.run('Reply exactly: again', message_history=result.all_messages())
 
     assert result.output == 'done'
+    assert follow_up.output == 'again'
     assert history == original_history
+
+    first_input, second_input = (body['input'] for body in sent_bodies)
+    assert second_input[: len(first_input) - 1] == first_input[:-1], (
+        'the replayed turn must render identically on both turns, or the cacheable prefix moves'
+    )
     assert sent_bodies == snapshot(
         [
             {
@@ -1038,6 +1052,83 @@ async def test_deepseek_responses_replay_own_reasoning_history(
                 ],
                 'model': 'deepseek-v4-flash',
                 'stream': False,
-            }
+            },
+            {
+                'input': [
+                    {
+                        'id': 'rs-a',
+                        'summary': [{'text': 'inspect inputs', 'type': 'summary_text'}],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                        'content': [{'text': 'inspect inputs', 'type': 'reasoning_text'}],
+                    },
+                    {
+                        'id': 'rs-b',
+                        'summary': [{'text': 'inspect views', 'type': 'summary_text'}],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                        'content': [{'text': 'inspect views', 'type': 'reasoning_text'}],
+                    },
+                    {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'name': 'view', 'arguments': '{"path":"b"}', 'call_id': 'call-b', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                    {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'rendered'},
+                    {'role': 'user', 'content': 'Reply exactly: done'},
+                    {
+                        'id': '84cf774d-60a1-4e20-85e3-4cf73ee18cd5',
+                        'summary': [],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                        'content': [
+                            {
+                                'text': 'The user requested reading "a" and viewing "b", then asked to reply exactly "done". The outputs confirm both operations succeeded. The next turn should be the exact reply "done".',
+                                'type': 'reasoning_text',
+                            }
+                        ],
+                    },
+                    {'role': 'assistant', 'content': 'done'},
+                    {'role': 'user', 'content': 'Reply exactly: again'},
+                ],
+                'model': 'deepseek-v4-flash',
+                'stream': False,
+            },
         ]
     )
+
+
+async def test_deepseek_responses_rejects_interleaved_function_calls(
+    allow_model_requests: None, deepseek_api_key: str
+) -> None:
+    """DeepSeek rejects the interleaved order — the provider fact the grouping rests on.
+
+    Recorded by turning the capability fact back on, which is the only way to reach the pre-fix wire
+    order now. Without this the rejection would live only in prose, so nobody could tell when
+    DeepSeek fixes its endpoint and the normalization becomes dead weight.
+    """
+    history = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='inspect inputs'),
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
+                ThinkingPart(content='inspect views'),
+                ToolCallPart('view', {'path': 'b'}, tool_call_id='call-b'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('read', 'contents', tool_call_id='call-a'),
+                ToolReturnPart('view', 'rendered', tool_call_id='call-b'),
+            ]
+        ),
+    ]
+    model = OpenAIResponsesModel(
+        'deepseek-v4-flash',
+        provider=DeepSeekProvider(api_key=deepseek_api_key),
+        profile=OpenAIModelProfile(openai_responses_supports_interleaved_function_calls=True),
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Agent(model).run('Reply exactly: done', message_history=history)
+
+    assert exc_info.value.status_code == 400
+    assert 'No tool output found for tool call call-a' in str(exc_info.value)
