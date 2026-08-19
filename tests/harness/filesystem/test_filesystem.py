@@ -879,6 +879,121 @@ class TestFindFiles:
         assert 'skip.md' not in result
 
 
+class TestResolveSymlinkLoop:
+    async def test_symlink_loop_is_recoverable(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `Path.resolve` only raises this on Python 3.10-3.12, so drive it
+        # directly to pin the behavior on every supported version.
+        def raise_loop(*args: object, **kwargs: object) -> None:
+            raise RuntimeError('Symlink loop from ...')
+
+        monkeypatch.setattr(Path, 'resolve', raise_loop)
+        with pytest.raises(ModelRetry, match='symlink loop'):
+            await toolset.read_file('hello.txt')
+
+    @pytest.mark.parametrize('op', ['read_file', 'list_directory', 'search_files', 'find_files', 'file_info'])
+    async def test_real_symlink_loop_is_reported(
+        self, toolset: FileSystemToolset[None], fs_root: Path, op: str
+    ) -> None:
+        (fs_root / 'loop').symlink_to(fs_root / 'loop')
+        calls = {
+            'read_file': lambda: toolset.read_file('loop'),
+            'list_directory': lambda: toolset.list_directory('loop'),
+            'search_files': lambda: toolset.search_files('text', path='loop'),
+            'find_files': lambda: toolset.find_files('*', path='loop'),
+            'file_info': lambda: toolset.file_info('loop'),
+        }
+
+        with pytest.raises(ModelRetry, match="Path 'loop' resolves through a symlink loop"):
+            await calls[op]()
+
+
+class TestReadSideOSErrors:
+    # `Path.is_file`/`exists` propagate ENAMETOOLONG on 3.10 through 3.13 and
+    # swallow it on 3.14, so the message differs by version. What must hold
+    # everywhere is that the run survives.
+    @pytest.mark.parametrize('op', ['read_file', 'edit_file', 'list_directory', 'file_info'])
+    async def test_long_name_is_recoverable(self, toolset: FileSystemToolset[None], op: str) -> None:
+        long = 'x' * 300
+        calls = {
+            'read_file': lambda: toolset.read_file(long),
+            'edit_file': lambda: toolset.edit_file(long, 'a', 'b'),
+            'list_directory': lambda: toolset.list_directory(long),
+            'file_info': lambda: toolset.file_info(long),
+        }
+        with pytest.raises(ModelRetry):
+            await calls[op]()
+
+    async def test_walker_long_path_is_recoverable(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The walkers reach the syscall only on 3.10 through 3.13; on 3.14 a
+        # long path yields no matches instead. Inject so the conversion is
+        # pinned on every version.
+        def raise_name_too_long(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.ENAMETOOLONG, 'File name too long')
+
+        monkeypatch.setattr(Path, 'is_file', raise_name_too_long)
+        with pytest.raises(ModelRetry, match='name is too long'):
+            await toolset.search_files('hello', path='x' * 300)
+
+
+class TestWriteFileOSErrors:
+    async def test_write_name_too_long(self, toolset: FileSystemToolset[None]) -> None:
+        with pytest.raises(ModelRetry, match='name is too long'):
+            await toolset.write_file('x' * 300, 'content')
+
+    async def test_write_through_symlink_loop(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        (fs_root / 'loop').symlink_to(fs_root / 'loop')
+        # Python 3.10-3.12 raise at `Path.resolve`, 3.13+ at the write syscall.
+        with pytest.raises(ModelRetry, match='symlink loop'):
+            await toolset.write_file('loop', 'content')
+
+    async def test_write_non_recoverable_errno_propagates(
+        self, toolset: FileSystemToolset[None], fs_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raise_enospc(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.ENOSPC, 'No space left on device')
+
+        monkeypatch.setattr(Path, 'write_text', raise_enospc)
+        with pytest.raises(OSError, match='No space left on device'):
+            await toolset.write_file('new.txt', 'content')
+
+    async def test_write_windows_invalid_name_is_recoverable(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class WindowsInvalidNameError(OSError):
+            winerror = 123
+
+        def raise_invalid_name(*args: object, **kwargs: object) -> None:
+            raise WindowsInvalidNameError(errno.EINVAL, 'The filename, directory name, or volume label is incorrect')
+
+        monkeypatch.setattr(Path, 'write_text', raise_invalid_name)
+        with pytest.raises(ModelRetry, match='path name is invalid'):
+            await toolset.write_file('bad<name', 'content')
+
+    async def test_write_einval_without_windows_invalid_name_propagates(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raise_einval(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EINVAL, 'Invalid argument')
+
+        monkeypatch.setattr(Path, 'write_text', raise_einval)
+        with pytest.raises(OSError, match='Invalid argument'):
+            await toolset.write_file('new.txt', 'content')
+
+    async def test_write_illegal_byte_sequence_is_recoverable(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raise_illegal_byte_sequence(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EILSEQ, 'Illegal byte sequence')
+
+        monkeypatch.setattr(Path, 'write_text', raise_illegal_byte_sequence)
+        with pytest.raises(ModelRetry, match='filesystem cannot represent'):
+            await toolset.write_file('bad-name', 'content')
+
+
 class TestWalkerEntryResolution:
     """Walkers authorize the entry's resolved target, matching `read_file`."""
 
@@ -954,6 +1069,38 @@ class TestCreateDirectory:
     async def test_create_protected_blocked(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(ModelRetry, match='protected'):
             await toolset.create_directory('.git/hooks')
+
+    async def test_create_name_too_long(self, toolset: FileSystemToolset[None]) -> None:
+        with pytest.raises(ModelRetry, match='name is too long'):
+            await toolset.create_directory('x' * 300)
+
+    async def test_create_illegal_byte_sequence_is_recoverable(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raise_illegal_byte_sequence(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EILSEQ, 'Illegal byte sequence')
+
+        monkeypatch.setattr(Path, 'mkdir', raise_illegal_byte_sequence)
+        with pytest.raises(ModelRetry, match='filesystem cannot represent'):
+            await toolset.create_directory('bad-name')
+
+    async def test_create_non_recoverable_errno_propagates(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raise_erofs(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EROFS, 'Read-only file system')
+
+        monkeypatch.setattr(Path, 'mkdir', raise_erofs)
+        with pytest.raises(OSError, match='Read-only file system'):
+            await toolset.create_directory('newdir')
+
+    async def test_create_over_existing_file(self, toolset: FileSystemToolset[None]) -> None:
+        with pytest.raises(ModelRetry, match="'hello.txt' exists and is not a directory"):
+            await toolset.create_directory('hello.txt')
+
+    async def test_create_under_existing_file(self, toolset: FileSystemToolset[None]) -> None:
+        with pytest.raises(ModelRetry, match="'hello.txt/nested' has a parent that is not a directory"):
+            await toolset.create_directory('hello.txt/nested')
 
 
 class TestFileInfo:
@@ -1236,6 +1383,32 @@ class TestMutationKillers:
     async def test_find_files_error_message(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(ModelRetry, match='Not a directory'):
             await toolset.find_files('*.txt', path='hello.txt')
+
+    async def test_find_files_rooted_pattern_rejected_by_glob(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `find_files` rejects an absolute pattern up front, so on POSIX nothing
+        # rooted reaches `glob`. On Windows since 3.13 `os.path.isabs` calls a
+        # single leading slash relative, and `glob` is what refuses it; drive
+        # that directly to pin the conversion on every platform.
+        def raise_not_implemented(*args: object, **kwargs: object) -> None:
+            raise NotImplementedError('Non-relative patterns are unsupported')
+
+        monkeypatch.setattr(Path, 'glob', raise_not_implemented)
+        with pytest.raises(ModelRetry, match='must be relative'):
+            await toolset.find_files('*.conf')
+
+    async def test_find_files_invalid_pattern(
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Only Python 3.10 through 3.12 raise this, for a pattern ending in a
+        # bare `.`, so drive it directly to pin it on every supported version.
+        def raise_index_error(*args: object, **kwargs: object) -> None:
+            raise IndexError('tuple index out of range')
+
+        monkeypatch.setattr(Path, 'glob', raise_index_error)
+        with pytest.raises(ModelRetry, match='not a valid glob pattern'):
+            await toolset.find_files('.')
 
     async def test_find_files_no_suffix_on_files(self, toolset: FileSystemToolset[None]) -> None:
         result = await toolset.find_files('*')

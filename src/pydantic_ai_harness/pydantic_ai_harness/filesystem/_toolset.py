@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fnmatch
 import functools
 import hashlib
@@ -27,6 +28,23 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
 # to the model; any other exception aborts the whole run. `_recoverable`
 # converts these so the agent can correct itself and continue.
 _RECOVERABLE_ERRORS = (PermissionError, FileNotFoundError, NotADirectoryError, IsADirectoryError, ValueError)
+
+# The same idea one level down, for failures Python raises as a bare `OSError`
+# with no dedicated subclass for `_RECOVERABLE_ERRORS` to name. Entries are
+# explicit so other errors keep aborting the run; for example, retrying cannot
+# fix `ENOSPC` or `EROFS`.
+#
+# Which operations reach these depends on the Python version. `Path.is_file`
+# and friends stopped propagating `ENAMETOOLONG` in 3.14, so on 3.10 through
+# 3.13 the read operations surface it too, not just the write path.
+#
+# Keyed by `OSError.errno`, which the stdlib types as `int | None`.
+_RECOVERABLE_ERRNOS: dict[int | None, str] = {
+    errno.ENAMETOOLONG: 'The path name is too long.',
+    errno.ELOOP: 'The path resolves through a symlink loop.',
+    errno.EILSEQ: 'The path name contains a byte sequence the filesystem cannot represent.',
+}
+_WINDOWS_ERROR_INVALID_NAME = 123
 
 _OUTSIDE_WORKSPACE = '<outside-workspace>'
 """Shown instead of an absolute path that is not inside the workspace root."""
@@ -84,6 +102,14 @@ def _recoverable(
         except _RECOVERABLE_ERRORS as e:
             real_root = self._real_root  # pyright: ignore[reportPrivateUsage]
             raise ModelRetry(_sanitize_recoverable_error(e, real_root)) from e
+        except OSError as e:
+            reason = _RECOVERABLE_ERRNOS.get(e.errno)
+            if reason is None and getattr(e, 'winerror', None) == _WINDOWS_ERROR_INVALID_NAME:
+                reason = 'The path name is invalid.'
+            if reason is None:
+                raise
+            # The full error may embed the absolute host path; the reason is path-free.
+            raise ModelRetry(reason) from e
 
     return wrapper
 
@@ -203,7 +229,20 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Uses os.path.realpath for symlink resolution before checking containment.
         """
-        candidate = (self._root / path).resolve()
+        try:
+            candidate = (self._root / path).resolve()
+        except RuntimeError as e:
+            # Python 3.10-3.12 signal a symlink loop this way.
+            raise ModelRetry(f'Path {path!r} resolves through a symlink loop.') from e
+
+        if not candidate.exists():
+            try:
+                candidate.stat()
+            except OSError as e:
+                # Python 3.13+ suppresses `ELOOP` in `resolve` and `exists`, so
+                # probe the path before treating it as missing.
+                if e.errno == errno.ELOOP:
+                    raise ModelRetry(f'Path {path!r} resolves through a symlink loop.') from e
         real = Path(os.path.realpath(candidate))
         if not real.is_relative_to(self._real_root):
             raise PermissionError(f'Path {path!r} resolves outside the root directory.')
@@ -515,8 +554,24 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if not resolved.is_dir():
             raise NotADirectoryError(f'Not a directory: {path}')
 
+        try:
+            found = sorted(resolved.glob(pattern))
+        except NotImplementedError as e:
+            # The `isabs` guard above takes a rooted pattern first on POSIX. On
+            # Windows it does not: since 3.13 `os.path.isabs` reports a single
+            # leading slash as relative, so `/etc/*.conf` reaches `glob`, which
+            # rejects any rooted pattern. `NotImplementedError` is not an
+            # `OSError`, so neither the recoverable tuple nor the errno table
+            # can reach it.
+            raise ModelRetry(f'Pattern {pattern!r} must be relative to {path!r}, not an absolute path.') from e
+        except IndexError as e:
+            # Python 3.10 through 3.12 raise this for a pattern whose last
+            # component is a bare `.`. On 3.13+ the same pattern raises
+            # `ValueError`, which the recoverable tuple already covers.
+            raise ModelRetry(f'Pattern {pattern!r} is not a valid glob pattern.') from e
+
         matches: list[str] = []
-        for match in sorted(resolved.glob(pattern)):
+        for match in found:
             try:
                 rel_path = match.relative_to(self._real_root)
             except ValueError:  # pragma: no cover
@@ -549,7 +604,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             Confirmation message.
         """
         resolved = self._safe_resolve(path, write=True)
-        resolved.mkdir(parents=True, exist_ok=True)
+        try:
+            resolved.mkdir(parents=True, exist_ok=True)
+        except FileExistsError as e:
+            # `exist_ok` only suppresses the error when the existing path is a
+            # directory; name the conflicting model-supplied path directly.
+            raise ModelRetry(f'Path {path!r} exists and is not a directory.') from e
+        except NotADirectoryError as e:
+            # Distinguish a parent collision from a collision at the leaf.
+            raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from e
         return f'Created directory: {path}'
 
     @_recoverable
