@@ -97,6 +97,7 @@ class Instrumentation(AbstractCapability[Any]):
     _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
     _variable_instructions: bool = field(default=False, repr=False, init=False)
+    """Whether agent-level instructions varied across requests in this run."""
 
     _: KW_ONLY
 
@@ -106,7 +107,6 @@ class Instrumentation(AbstractCapability[Any]):
     Two instances in the same layer collide rather than being auto-disambiguated. Pass an explicit
     `id` (or `id=None`) to opt out.
     """
-    """Whether agent-level instructions varied across requests in this run."""
     _message_json_cache: MessageJsonCache = field(default_factory=MessageJsonCache, repr=False, init=False)
     """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`).
     `for_run`'s `replace(self)` re-runs the factory, so each run starts with an empty cache

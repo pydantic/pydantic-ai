@@ -39,6 +39,9 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     """
 
     replace_existing: bool = False
+    """If `True`, strip any existing `SystemPromptPart`s from the history before prepending
+    the agent's configured prompt. If `False` (the default), the capability is a no-op when
+    any `SystemPromptPart` is already present."""
 
     _: KW_ONLY
 
@@ -48,9 +51,6 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     Two instances in the same layer collide rather than being auto-disambiguated. Pass an explicit
     `id` (or `id=None`) to opt out.
     """
-    """If `True`, strip any existing `SystemPromptPart`s from the history before prepending
-    the agent's configured prompt. If `False` (the default), the capability is a no-op when
-    any `SystemPromptPart` is already present."""
 
     async def before_model_request(
         self,

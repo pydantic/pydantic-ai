@@ -3244,8 +3244,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
         # tool spans.
+        # Search the run-level layer first, and its last entry first, because a run-level
+        # `Instrumentation` supersedes an agent-level one (see `_compose_run_layers`). Taking the
+        # first match over `[agent, *extras]` would pick the instance the run is about to drop.
         explicit_instrumentation = find_capability(
-            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
+            [*reversed(extra_capabilities), self._effective_root_capability()], InstrumentationCap
         )
         session_instrumentation_settings = (
             explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
