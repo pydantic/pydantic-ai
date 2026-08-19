@@ -21,11 +21,13 @@ from functools import cache, cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
-import httpx
+import httpx2
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._cost import preload_pricing_data
+from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -84,25 +86,21 @@ from ..profiles import (
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
-
-if TYPE_CHECKING:
-    from ..agent.abstract import AbstractAgent
-from .._cost import preload_pricing_data
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 
 if TYPE_CHECKING:
+    from httpx import AsyncClient
+
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
-
-DEFAULT_HTTP_TIMEOUT: int = 600
-"""Default HTTP timeout in seconds for API requests.
-
-This matches the default timeout used by OpenAI's Python client.
-See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
-"""
+else:
+    # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
+    # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
+    # its caller owns and closes. Calling it without legacy HTTPX still raises (see its body).
+    AsyncClient = legacy_httpx.AsyncClient if legacy_httpx is not None else object
 
 _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
@@ -1101,13 +1099,18 @@ class StreamedResponse(ABC):
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Return transport errors caused by `cancel()` tearing down the stream.
 
-        The default covers model classes whose SDKs iterate `httpx` responses
-        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
-        and the custom Gemini client), since they let bare `httpx` errors
-        propagate from chunk reads. Model classes that use other transports
-        (for example gRPC or botocore) should override this method.
+        The default covers model classes whose SDKs iterate HTTP responses
+        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, and HuggingFace),
+        since they let bare `httpx2` (or legacy `httpx`) errors propagate from
+        chunk reads. Model classes that use other transports (for example gRPC or
+        botocore) should override this method.
         """
-        return (httpx.StreamError, httpx.TransportError)
+        try:
+            import httpx
+        except ImportError:
+            return (httpx2.StreamError, httpx2.TransportError)
+
+        return (httpx2.StreamError, httpx2.TransportError, httpx.StreamError, httpx.TransportError)
 
     async def close_stream(self) -> None:
         """Close the provider stream and any exposed HTTP or gRPC transport.
@@ -1647,15 +1650,30 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
-    """Create an HTTPX async client.
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
+    """Create a legacy HTTPX async client.
+
+    This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
+    providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
     the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
+
+    Raises:
+        ImportError: If legacy `httpx` is not installed.
     """
+    try:
+        import httpx
+    except ImportError as _import_error:
+        raise ImportError(
+            'Please install `httpx` to create a legacy HTTPX client with this factory, '
+            'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`. '
+            'Providers otherwise build their own `httpx2.AsyncClient`, which you can also pass in yourself.'
+        ) from _import_error
+
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},

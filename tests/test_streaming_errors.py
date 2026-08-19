@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any, Literal
 
 import httpx
+import httpx2
 import pytest
 from typing_extensions import assert_never
 
@@ -182,6 +183,10 @@ def _httpx_response(status_code: int, url: str = 'https://test.example.com') -> 
     return httpx.Response(status_code, request=httpx.Request('POST', url))
 
 
+def _httpx2_response(status_code: int, url: str = 'https://test.example.com') -> httpx2.Response:
+    return httpx2.Response(status_code, request=httpx2.Request('POST', url))
+
+
 def _anthropic_start_event() -> BetaRawMessageStartEvent:
     return BetaRawMessageStartEvent(
         type='message_start',
@@ -347,7 +352,7 @@ async def test_openai_midstream_status_error(allow_model_requests: None):
     """APIStatusError during stream iteration is wrapped as ModelHTTPError."""
     error = OpenAIStatusError(
         message='Server error',
-        response=_httpx_response(500),
+        response=_httpx2_response(500),
         body={'error': {'message': 'Internal server error'}},
     )
     stream = [_openai_chunk(), error]
@@ -367,7 +372,7 @@ async def test_openai_midstream_status_error(allow_model_requests: None):
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 async def test_openai_midstream_connection_error(allow_model_requests: None):
     """APIConnectionError during stream iteration is wrapped as ModelAPIError."""
-    error = OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com'))
+    error = OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com'))
     stream = [_openai_chunk(), error]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -386,7 +391,7 @@ async def test_openai_peek_error(allow_model_requests: None):
     """APIStatusError during peek is wrapped as ModelHTTPError."""
     error = OpenAIStatusError(
         message='Rate limited',
-        response=_httpx_response(429),
+        response=_httpx2_response(429),
         body={'error': {'message': 'Rate limit exceeded'}},
     )
     stream = [error]
@@ -406,12 +411,12 @@ async def test_openai_peek_error(allow_model_requests: None):
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
+            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -434,7 +439,7 @@ async def test_openai_peek_non_http_error(
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 async def test_openai_midstream_non_http_error(allow_model_requests: None):
     """APIStatusError with status<400 during stream iteration is wrapped as ModelAPIError."""
-    error = OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={})
+    error = OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={})
     stream = [_openai_chunk(), error]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -461,19 +466,19 @@ def _openai_responses_created_event() -> responses.ResponseCreatedEvent:
     'error_factory,expected_exc,expected_status',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='Server error', response=_httpx_response(500), body={}),
+            lambda: OpenAIStatusError(message='Server error', response=_httpx2_response(500), body={}),
             ModelHTTPError,
             500,
             id='http',
         ),
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),
             ModelAPIError,
             None,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
+            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             None,
             id='connection',
@@ -503,17 +508,17 @@ async def test_openai_responses_peek_error(
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='Server error', response=_httpx_response(500), body={}),
+            lambda: OpenAIStatusError(message='Server error', response=_httpx2_response(500), body={}),
             ModelHTTPError,
             id='http',
         ),
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
+            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -785,15 +790,18 @@ async def test_gateway_model_name_suggestion_midstream(
     allow_model_requests: None,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async with httpx.AsyncClient() as http_client:
+    async with httpx.AsyncClient() as http_client, httpx2.AsyncClient() as httpx2_client:
         match provider_name:
             case 'openai-chat':
                 provider = gateway_provider(
-                    'openai', api_key='test-key', base_url='https://gateway.example.com/proxy', http_client=http_client
+                    'openai',
+                    api_key='test-key',
+                    base_url='https://gateway.example.com/proxy',
+                    http_client=httpx2_client,
                 )
                 error = OpenAIStatusError(
                     message='Model not found',
-                    response=_httpx_response(404),
+                    response=_httpx2_response(404),
                     body={'code': 'model_not_found'},
                 )
                 chunk = _openai_chunk()
@@ -802,11 +810,14 @@ async def test_gateway_model_name_suggestion_midstream(
                 model: Model = OpenAIChatModel(model_name, provider=provider)
             case 'openai-responses':
                 provider = gateway_provider(
-                    'openai', api_key='test-key', base_url='https://gateway.example.com/proxy', http_client=http_client
+                    'openai',
+                    api_key='test-key',
+                    base_url='https://gateway.example.com/proxy',
+                    http_client=httpx2_client,
                 )
                 error = OpenAIStatusError(
                     message='Model not found',
-                    response=_httpx_response(404),
+                    response=_httpx2_response(404),
                     body={'code': 'model_not_found'},
                 )
                 created_event = _openai_responses_created_event()
@@ -838,7 +849,7 @@ async def test_gateway_model_name_suggestion_midstream(
                     'google-cloud',
                     api_key='test-key',
                     base_url='https://gateway.example.com/proxy',
-                    http_client=http_client,
+                    http_client=httpx2_client,
                 )
 
                 async def google_stream() -> AsyncIterator[SimpleNamespace]:

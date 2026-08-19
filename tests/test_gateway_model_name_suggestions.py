@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
+import httpx2
 import pytest
 from typing_extensions import assert_never
 
@@ -86,14 +87,14 @@ async def test_gateway_direct_model_suggests_gateway_model_id(
     env: TestEnv,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def handler(_request: httpx.Request) -> httpx.Response:
+    def not_found_body() -> dict[str, Any]:
         match provider:
             case 'openai-responses' | 'openai-chat' | 'groq':
-                body = {'error': {'code': 'model_not_found'}}
+                return {'error': {'code': 'model_not_found'}}
             case 'anthropic':
-                body = {'error': {'type': 'not_found_error', 'message': f'model: {model_name}'}}
+                return {'error': {'type': 'not_found_error', 'message': f'model: {model_name}'}}
             case 'google':
-                body = {
+                return {
                     'error': {
                         'code': 404,
                         'message': f'models/{model_name} is not found for API version v1beta.',
@@ -103,14 +104,22 @@ async def test_gateway_direct_model_suggests_gateway_model_id(
             case _:
                 assert_never(provider)
 
-        return httpx.Response(404, json=body)
-
     def create_gateway_http_client() -> httpx.AsyncClient:
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json=not_found_body())
+
         return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    def create_gateway_httpx2_client() -> httpx2.AsyncClient:
+        async def handler(_request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(404, json=not_found_body())
+
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
 
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'test-key')
     env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.example.com/proxy')
     monkeypatch.setattr('pydantic_ai.providers.gateway.create_async_http_client', create_gateway_http_client)
+    monkeypatch.setattr('pydantic_ai.providers.gateway.create_async_httpx2_client', create_gateway_httpx2_client)
 
     match provider:
         case 'openai-responses':
@@ -168,11 +177,11 @@ async def test_gateway_bedrock_direct_model_suggests_gateway_model_id(
     assert exc_info.value.suggested_model_id == 'gateway/bedrock:us.amazon.nova-premier-v1:0'
 
 
-def _openai_model_not_found_client() -> httpx.AsyncClient:
-    async def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404, json={'error': {'code': 'model_not_found'}})
+def _openai_model_not_found_client() -> httpx2.AsyncClient:
+    async def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(404, json={'error': {'code': 'model_not_found'}})
 
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -181,7 +190,7 @@ async def test_inferred_gateway_model_suggests_gateway_model_id(
 ):
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'test-key')
     env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.example.com/proxy')
-    monkeypatch.setattr('pydantic_ai.providers.gateway.create_async_http_client', _openai_model_not_found_client)
+    monkeypatch.setattr('pydantic_ai.providers.gateway.create_async_httpx2_client', _openai_model_not_found_client)
     model = infer_model('gateway/openai:gpt-5.2-proo')
 
     assert model.system == 'openai'
@@ -230,10 +239,10 @@ async def test_explicit_gateway_provider_suggests_gateway_model_id(allow_model_r
 async def test_google_not_found_without_model_resolution_does_not_suggest(
     allow_model_requests: None, error: str | dict[str, int | str]
 ):
-    async def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404, json={'error': error})
+    async def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(404, json={'error': error})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
         model = GoogleModel(
             'gemini-3.6-flahs',
             provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='https://google.example.com'),

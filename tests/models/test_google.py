@@ -14,7 +14,13 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from httpx import AsyncClient as HttpxAsyncClient, MockTransport, Request, Response, Timeout
+from httpx import Timeout
+from httpx2 import (
+    AsyncClient as HTTPX2AsyncClient,
+    MockTransport as HTTPX2MockTransport,
+    Request as HTTPX2Request,
+    Response as HTTPX2Response,
+)
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -562,7 +568,13 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
 
     # Raises before any request is made.
-    with pytest.raises(ValueError, match=re.escape('labels parameter is not supported in Gemini API.')):
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            'labels parameter is only supported in Gemini Enterprise Agent Platform mode, '
+            'not in Gemini Developer API mode.'
+        ),
+    ):
         await agent.run('What is the capital of France?')
 
 
@@ -5705,13 +5717,13 @@ async def test_google_stream_api_non_http_error_is_wrapped(
 async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model_requests: None):
     model_name = 'definitely-missing'
     error_response = {'error': {'code': 404, 'message': 'Model not found', 'status': 'NOT_FOUND'}}
-    requests: list[Request] = []
+    requests: list[HTTPX2Request] = []
 
-    async def handler(request: Request) -> Response:
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
         requests.append(request)
-        return Response(404, json=error_response)
+        return HTTPX2Response(404, json=error_response)
 
-    async with HttpxAsyncClient(transport=MockTransport(handler)) as http_client:
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
         model = GoogleModel(
             model_name,
             provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
@@ -6257,7 +6269,7 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
     See https://github.com/pydantic/pydantic-ai/pull/4032#discussion_r2709797127
     """
     custom_timeout = 120
-    custom_http_client = HttpxAsyncClient(timeout=Timeout(custom_timeout))
+    custom_http_client = HTTPX2AsyncClient(timeout=custom_timeout)
     provider = GoogleProvider(api_key=gemini_api_key, http_client=custom_http_client)
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]

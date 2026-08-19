@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, Mock
 
 import httpx
+import httpx2
 import pytest
 
 from .conftest import try_import
@@ -21,11 +22,141 @@ with try_import() as imports_successful:
         wait_fixed,
     )
 
-    from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, TenacityTransport, wait_retry_after
+    from pydantic_ai import PydanticAIDeprecationWarning
+    from pydantic_ai.retries import (
+        AsyncHTTPX2TenacityTransport,
+        AsyncTenacityTransport,
+        HTTPX2TenacityTransport,
+        RetryConfig,
+        TenacityTransport,
+        wait_retry_after,
+    )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install tenacity to run tenacity tests')
 
+# Only the classes that construct the deprecated transports may silence their warning; the `httpx2` classes
+# run under the repo-wide `filterwarnings = ["error"]` so a deprecation escaping into them fails the test.
+ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning')
 
+
+class TestHTTPX2TenacityTransport:
+    """`httpx2` retry transports use the same Tenacity configuration as their `httpx` predecessors."""
+
+    def test_sync_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
+        request = httpx2.Request('GET', 'https://example.com')
+        response = httpx2.Response(200, request=request)
+        wrapped = Mock(spec=httpx2.BaseTransport)
+        wrapped.handle_request.return_value = response
+        transport = HTTPX2TenacityTransport(config=RetryConfig(), wrapped=wrapped)
+
+        assert transport.handle_request(request) is response
+
+        transport.close()
+
+        wrapped.handle_request.assert_called_once_with(request)
+        wrapped.close.assert_called_once_with()
+
+    def test_sync_transport_retries_response_validator(self):
+        attempts = 0
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx2.Response(503 if attempts == 1 else 200, request=request)
+
+        transport = HTTPX2TenacityTransport(
+            config=RetryConfig(
+                retry=retry_if_exception_type(httpx2.HTTPStatusError),
+                stop=stop_after_attempt(2),
+                wait=wait_fixed(0),
+                reraise=True,
+            ),
+            wrapped=httpx2.MockTransport(handler),
+            validate_response=lambda response: response.raise_for_status(),
+        )
+
+        with httpx2.Client(transport=transport) as client:
+            response = client.get('https://example.com')
+
+        assert response.status_code == 200
+        assert attempts == 2
+
+    async def test_async_transport_exits_wrapped_transport_once(self):
+        wrapped = AsyncMock(spec=httpx2.AsyncBaseTransport)
+        transport = AsyncHTTPX2TenacityTransport(
+            config=RetryConfig(),
+            wrapped=wrapped,
+        )
+
+        async with transport:
+            pass
+
+        wrapped.__aenter__.assert_awaited_once_with()
+        wrapped.__aexit__.assert_awaited_once_with(None, None, None)
+
+    async def test_async_transport_retries_response_validator(self):
+        attempts = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx2.Response(503 if attempts == 1 else 200, request=request)
+
+        transport = AsyncHTTPX2TenacityTransport(
+            config=RetryConfig(
+                retry=retry_if_exception_type(httpx2.HTTPStatusError),
+                stop=stop_after_attempt(2),
+                wait=wait_fixed(0),
+                reraise=True,
+            ),
+            wrapped=httpx2.MockTransport(handler),
+            validate_response=lambda response: response.raise_for_status(),
+        )
+
+        async with httpx2.AsyncClient(transport=transport) as client:
+            response = await client.get('https://example.com')
+
+        assert response.status_code == 200
+        assert attempts == 2
+
+    async def test_async_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
+        request = httpx2.Request('GET', 'https://example.com')
+        response = httpx2.Response(200, request=request)
+        wrapped = AsyncMock(spec=httpx2.AsyncBaseTransport)
+        wrapped.handle_async_request.return_value = response
+        transport = AsyncHTTPX2TenacityTransport(config=RetryConfig(), wrapped=wrapped)
+
+        assert await transport.handle_async_request(request) is response
+
+        await transport.aclose()
+
+        wrapped.handle_async_request.assert_awaited_once_with(request)
+        wrapped.aclose.assert_awaited_once_with()
+
+
+class TestLegacyHTTPXTransports:
+    def test_sync_transport_warns_with_httpx2_replacement(self):
+        with pytest.warns(
+            PydanticAIDeprecationWarning,
+            match=(
+                r'`TenacityTransport` is deprecated and will be removed in v3; use `HTTPX2TenacityTransport` '
+                r'with `httpx2.Client` instead\.'
+            ),
+        ):
+            TenacityTransport(RetryConfig())
+
+    def test_async_transport_warns_with_httpx2_replacement(self):
+        with pytest.warns(
+            PydanticAIDeprecationWarning,
+            match=(
+                r'`AsyncTenacityTransport` is deprecated and will be removed in v3; use `AsyncHTTPX2TenacityTransport` '
+                r'with `httpx2.AsyncClient` instead\.'
+            ),
+        ):
+            AsyncTenacityTransport(RetryConfig())
+
+
+@ignore_deprecation
 class TestTenacityTransport:
     """Tests for the synchronous TenacityTransport."""
 
@@ -186,6 +317,7 @@ class TestTenacityTransport:
         mock_response_success.raise_for_status.assert_called_once()
 
 
+@ignore_deprecation
 class TestAsyncTenacityTransport:
     """Tests for the asynchronous AsyncTenacityTransport."""
 
@@ -419,6 +551,23 @@ class TestWaitRetryAfter:
         assert result == 30.0
         fallback.assert_not_called()
 
+    def test_httpx2_retry_after_seconds_format(self):
+        fallback = Mock()
+        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
+
+        request = httpx2.Request('GET', 'https://example.com')
+        response = httpx2.Response(429, headers={'retry-after': '30'}, request=request)
+        with pytest.raises(httpx2.HTTPStatusError) as exc_info:
+            response.raise_for_status()
+
+        retry_state = Mock(spec=RetryCallState)
+        retry_state.outcome = Mock()
+        retry_state.outcome.failed = True
+        retry_state.outcome.exception.return_value = exc_info.value
+
+        assert wait_func(retry_state) == 30.0
+        fallback.assert_not_called()
+
     @pytest.mark.parametrize('retry_after', ['120', pytest.param('1' + '0' * 309, id='huge')])
     def test_retry_after_seconds_respects_max_wait(self, retry_after: str):
         """Integer `Retry-After` values are capped locally without a provider request."""
@@ -593,6 +742,7 @@ class TestWaitRetryAfter:
         fallback.assert_not_called()
 
 
+@ignore_deprecation
 class TestIntegration:
     """Integration tests combining transports with wait strategies."""
 
@@ -674,6 +824,7 @@ class TestIntegration:
         assert sleep_calls == [0.1]
 
 
+@ignore_deprecation
 class TestConnectionPool:
     class AlwaysReturnHTTP429Handler(BaseHTTPRequestHandler):
         def do_GET(self):

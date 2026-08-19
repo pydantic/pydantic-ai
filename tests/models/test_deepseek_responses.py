@@ -6,7 +6,7 @@ DeepSeek exposes a Responses endpoint at `https://api.deepseek.com/responses`, c
 continuation is not available and is not exercised here.
 
 Each case snapshots both the resulting messages and the bodies that actually went out, captured by an
-httpx event hook so the wire assertions run against what the client built rather than what the
+`httpx2` event hook so the wire assertions run against what the client built rather than what the
 cassette happens to hold. The request bodies are what pin the facts this pairing rests on:
 
 - the `openai_reasoning_effort` setting reaching DeepSeek as `reasoning.effort`
@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel
 
@@ -804,10 +804,10 @@ async def test_deepseek_responses(case: Case, allow_model_requests: None, deepse
     """
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
+    async def capture_request(request: httpx2.Request) -> None:
+        sent_bodies.append(json.loads(request.content))
 
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
     model = OpenAIResponsesModel(
         'deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=http_client)
     )

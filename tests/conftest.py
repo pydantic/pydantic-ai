@@ -18,12 +18,14 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
+import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
 
+import pydantic_ai._http
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.messages import (
@@ -770,36 +772,50 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
     check_cache_prefix_stability(request.node, cassette_path)
 
 
-_HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
+_HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
+_HttpClientCache: TypeAlias = 'dict[tuple[str, int, int], _HttpClient]'
 
 
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
-    """Monkeypatch `create_async_http_client` in all loaded modules and track created clients.
+    """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
 
     Within a single test, calls with the same (timeout, connect) args reuse the same
-    httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
+    client. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
     companion `close_httpx_clients` fixture handles async cleanup first.
     """
     cache: _HttpClientCache = {}
-    original = pydantic_ai.models.create_async_http_client
+    original_httpx = pydantic_ai.models.create_async_http_client
+    original_httpx2 = pydantic_ai._http.create_async_httpx2_client
 
     def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
-        key = (kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+        key = ('httpx', kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
         if key not in cache or cache[key].is_closed:
-            cache[key] = original(**kwargs)
-        return cache[key]
+            cache[key] = original_httpx(**kwargs)
+        client = cache[key]
+        assert isinstance(client, httpx.AsyncClient)
+        return client
+
+    def cached_httpx2_per_test(**kwargs: Any) -> httpx2.AsyncClient:
+        key = ('httpx2', kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+        if key not in cache or cache[key].is_closed:
+            cache[key] = original_httpx2(**kwargs)
+        client = cache[key]
+        assert isinstance(client, httpx2.AsyncClient)
+        return client
 
     for mod in list(sys.modules.values()):
         # Read the module's own namespace via `__dict__` rather than `getattr`: some
         # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
         # that imports submodules on attribute access, and probing every loaded module
         # with `getattr` would trigger those unrelated (and possibly failing) imports.
-        mod_dict = getattr(mod, '__dict__', None)
-        if mod_dict is not None and mod_dict.get('create_async_http_client', None) is original:
+        mod_dict: dict[str, object] = getattr(mod, '__dict__', None) or {}
+        if mod_dict.get('create_async_http_client', None) is original_httpx:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
+        if mod_dict.get('create_async_httpx2_client', None) is original_httpx2:
+            monkeypatch.setattr(mod, 'create_async_httpx2_client', cached_httpx2_per_test)
 
     yield cache
 

@@ -17,14 +17,15 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args, overload
 
-from httpx import Timeout
+from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Never, Protocol, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._http import legacy_httpx
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
@@ -122,6 +123,13 @@ from . import (
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
+if TYPE_CHECKING:
+    from httpx import Timeout
+else:
+    # Legacy HTTPX is optional: without it `_normalize_openai_timeout`'s `isinstance` check falls back
+    # to the HTTPX2 type the SDK already accepts, so the conversion just rebuilds an equivalent value.
+    Timeout = legacy_httpx.Timeout if legacy_httpx is not None else HTTPX2Timeout
+
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
 try:
@@ -199,6 +207,12 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+def _normalize_openai_timeout(timeout: float | Timeout | NotGiven) -> float | HTTPX2Timeout | NotGiven:
+    if isinstance(timeout, Timeout):
+        return HTTPX2Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
+    return timeout
 
 
 def _preload_openai_sdk_resource_modules(model: OpenAIChatModel | OpenAIResponsesModel, client: AsyncOpenAI) -> None:
@@ -1147,7 +1161,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stop=model_settings.get('stop_sequences', OMIT),
                     max_completion_tokens=max_tokens if supports_max_completion_tokens else OMIT,
                     max_tokens=OMIT if supports_max_completion_tokens else max_tokens,
-                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    timeout=_normalize_openai_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
@@ -2670,10 +2684,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @staticmethod
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
-    ) -> tuple[dict[str, str], float | Timeout | NotGiven]:
+    ) -> tuple[dict[str, str], float | HTTPX2Timeout | NotGiven]:
         extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
-        timeout = model_settings.get('timeout', NOT_GIVEN)
+        timeout = _normalize_openai_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
     @overload

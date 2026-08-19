@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import httpx
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import assert_never
@@ -166,10 +167,10 @@ CASES = [
 async def test_model_name_suggestion(case: Case, request: pytest.FixtureRequest, allow_model_requests: None):
     requested_identifiers: list[str] = []
 
-    async def capture_model_request(request: httpx.Request) -> None:
+    async def capture_model_request(request: httpx.Request | httpx2.Request) -> None:
         requested_identifiers.append(json.loads(request.content)['model'])
 
-    async def capture_google_request(request: httpx.Request) -> None:
+    async def capture_google_request(request: httpx.Request | httpx2.Request) -> None:
         requested_identifiers.append(request.url.path)
 
     def capture_bedrock_request(request: AWSPreparedRequest, **_: object) -> None:
@@ -179,7 +180,7 @@ async def test_model_name_suggestion(case: Case, request: pytest.FixtureRequest,
         if case.provider in ('openai-responses', 'openai-chat'):
             api_key: str = request.getfixturevalue('openai_api_key')
             http_client = await stack.enter_async_context(
-                httpx.AsyncClient(event_hooks={'request': [capture_model_request]})
+                httpx2.AsyncClient(event_hooks={'request': [capture_model_request]})
             )
             openai_provider = OpenAIProvider(api_key=api_key, http_client=http_client)
             if case.provider == 'openai-responses':
@@ -198,7 +199,7 @@ async def test_model_name_suggestion(case: Case, request: pytest.FixtureRequest,
         elif case.provider == 'google':
             api_key: str = request.getfixturevalue('gemini_api_key')
             http_client = await stack.enter_async_context(
-                httpx.AsyncClient(event_hooks={'request': [capture_google_request]})
+                httpx2.AsyncClient(event_hooks={'request': [capture_google_request]})
             )
             model = GoogleModel(
                 case.model_name,

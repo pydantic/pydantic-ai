@@ -10,13 +10,14 @@ from __future__ import annotations
 import ipaddress
 import socket
 import zlib
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
-import httpx
+import httpx2
 
+from ._http import create_async_httpx2_client, legacy_httpx as _legacy_httpx
 from ._utils import run_in_executor
-from .models import create_async_http_client
 
 __all__ = ['safe_download']
 
@@ -126,6 +127,65 @@ _CLOUD_METADATA_IPV6: frozenset[ipaddress.IPv6Address] = frozenset(
 _MAX_REDIRECTS = 10
 _DEFAULT_TIMEOUT = 30  # seconds
 _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
+
+
+# These initialize classes inheriting from both HTTPX families, so they call `Exception.__init__`
+# directly: `super().__init__` would walk a diamond MRO spanning two libraries and run only the
+# first family's initializer. `_request` is the private backing field of the `request` property in
+# both libraries, so an upstream rename of it breaks these silently.
+def _compatible_request_error_init(self: Exception, message: str, *, request: httpx2.Request | None = None) -> None:
+    Exception.__init__(self, message)
+    self.__dict__['_request'] = request
+
+
+def _compatible_http_status_error_init(
+    self: Exception, message: str, *, request: httpx2.Request, response: httpx2.Response
+) -> None:
+    Exception.__init__(self, message)
+    self.__dict__['_request'] = request
+    self.__dict__['response'] = response
+
+
+# TODO(v3): remove the compatibility classes below and raise the plain httpx2 errors; they exist
+# only so exception handlers written against legacy `httpx` keep matching during the v2 window.
+if _legacy_httpx is not None:
+    _CompatibleRequestError = type(
+        '_CompatibleRequestError',
+        (httpx2.RequestError, _legacy_httpx.RequestError),
+        {'__init__': _compatible_request_error_init},
+    )
+    _CompatibleHTTPStatusError = type(
+        '_CompatibleHTTPStatusError',
+        (httpx2.HTTPStatusError, _legacy_httpx.HTTPStatusError),
+        {'__init__': _compatible_http_status_error_init},
+    )
+    _CompatibleDecodingError = type(
+        '_CompatibleDecodingError',
+        (httpx2.DecodingError, _legacy_httpx.DecodingError),
+        {'__init__': _compatible_request_error_init},
+    )
+else:
+    _CompatibleRequestError = httpx2.RequestError
+    _CompatibleHTTPStatusError = httpx2.HTTPStatusError
+    _CompatibleDecodingError = httpx2.DecodingError
+
+
+def _compatible_request_error(error: httpx2.RequestError) -> Exception:
+    return _CompatibleRequestError(str(error), request=error.request)
+
+
+async def _send_request(client: httpx2.AsyncClient, request: httpx2.Request) -> httpx2.Response:
+    try:
+        return await client.send(request, follow_redirects=False, stream=True)
+    except httpx2.RequestError as e:
+        raise _compatible_request_error(e) from e
+
+
+async def _read_body(response: httpx2.Response) -> None:
+    try:
+        await response.aread()
+    except httpx2.RequestError as e:
+        raise _compatible_request_error(e) from e
 
 
 @dataclass
@@ -483,7 +543,7 @@ async def safe_download(
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
     max_bytes: int | None = None,
-) -> httpx.Response:
+) -> httpx2.Response:
     """Download content from a URL with SSRF protection.
 
     This function:
@@ -516,12 +576,20 @@ async def safe_download(
                 Checked on every hop including redirects.
 
     Returns:
-        The httpx.Response object.
+        The httpx2.Response object.
 
     Raises:
         ValueError: If the URL fails SSRF validation, domain validation,
                 or too many redirects occur.
-        httpx.HTTPStatusError: If the response has an error status code.
+        httpx2.HTTPStatusError: If the response has an error status code. When legacy
+            `httpx` is installed, this also matches `httpx.HTTPStatusError` handlers.
+        httpx2.RequestError: If the request fails or the response body cannot be read.
+            Request errors are re-raised at family level, so the specific subclass
+            (`ConnectError`, `TimeoutException`, ...) is not preserved and handlers must
+            catch `httpx2.RequestError` itself; when legacy `httpx` is installed, they also
+            match `httpx.RequestError` handlers.
+        httpx2.DecodingError: If a `gzip`-encoded body is malformed. When legacy `httpx` is
+            installed, this also matches `httpx.DecodingError` handlers.
     """
     if max_bytes is not None and max_bytes < 0:
         raise ValueError('max_bytes must be non-negative')
@@ -530,7 +598,7 @@ async def safe_download(
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
 
-    async with create_async_http_client(timeout=timeout) as client:
+    async with create_async_httpx2_client(timeout=timeout) as client:
         while True:
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)
@@ -565,9 +633,9 @@ async def safe_download(
                 request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
 
             # Stream the raw response so gzip members can be decoded and validated before
-            # httpx's automatic content decoder discards member boundaries.
+            # httpx2's automatic content decoder discards member boundaries.
             request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
-            response = await client.send(request, follow_redirects=False, stream=True)
+            response = await _send_request(client, request)
 
             # Check if we need to follow a redirect
             if response.is_redirect:
@@ -595,14 +663,17 @@ async def safe_download(
 
             # Not a redirect, we're done
             try:
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx2.HTTPStatusError as e:
+                    raise _CompatibleHTTPStatusError(str(e), request=e.request, response=e.response) from e
                 if max_bytes is not None:
                     content = await _read_capped_body(response, max_bytes)
                     return _response_with_decoded_content(response, content)
                 if _content_encodings(response) in (['gzip'], ['x-gzip']):
                     content = await _read_gzip_body(response)
                     return _response_with_decoded_content(response, content)
-                await response.aread()
+                await _read_body(response)
                 return response
             finally:
                 await response.aclose()
@@ -612,16 +683,16 @@ def _download_exceeds(max_bytes: int) -> ValueError:
     return ValueError(_DOWNLOAD_EXCEEDS_TEMPLATE.format(max_bytes=max_bytes))
 
 
-def _response_with_decoded_content(response: httpx.Response, content: bytes) -> httpx.Response:
+def _response_with_decoded_content(response: httpx2.Response, content: bytes) -> httpx2.Response:
     # Body is already decoded, so the reconstructed response must not carry the content
-    # coding, or `httpx.Response` would run it through the decoder again. `content-length`
-    # described the encoded body and no longer applies; httpx recomputes it from `content`.
+    # coding, or `httpx2.Response` would run it through the decoder again. `content-length`
+    # described the encoded body and no longer applies; httpx2 recomputes it from `content`.
     decoded_headers = [
         (key, value)
         for key, value in response.headers.multi_items()
         if key.lower() not in ('content-encoding', 'content-length')
     ]
-    return httpx.Response(
+    return httpx2.Response(
         response.status_code,
         headers=decoded_headers,
         content=content,
@@ -631,7 +702,7 @@ def _response_with_decoded_content(response: httpx.Response, content: bytes) -> 
     )
 
 
-def _content_encodings(response: httpx.Response) -> list[str]:
+def _content_encodings(response: httpx2.Response) -> list[str]:
     encodings: list[str] = []
     for value in response.headers.get_list('content-encoding'):
         for part in value.split(','):
@@ -641,7 +712,7 @@ def _content_encodings(response: httpx.Response) -> list[str]:
     return encodings
 
 
-async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
+async def _read_capped_body(response: httpx2.Response, max_bytes: int) -> bytes:
     """Read a streamed response body without buffering more than `max_bytes` of decoded data.
 
     Streams the *encoded* body via `aiter_raw` so oversized wire traffic is rejected as it
@@ -652,7 +723,7 @@ async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
     size-limited while streaming are rejected; callers with `max_bytes` also send
     `Accept-Encoding: identity, gzip` so servers are not invited to use them.
 
-    Some transports (e.g. httpx mock responses built from an in-memory `content=` bytes object)
+    Some transports (e.g. httpx2 mock responses built from an in-memory `content=` bytes object)
     preload the body and mark the stream consumed; in that case the decoded body is already in
     `response.content` and we only enforce the size cap on it.
     """
@@ -674,21 +745,34 @@ async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
     )
 
 
-async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> bytes:
+async def _aiter_raw(response: httpx2.Response) -> AsyncIterator[bytes]:
+    """Stream the raw response body, re-raising read failures through the dual-family error type.
+
+    The translation lives in the generator rather than around the consuming loop so that errors the
+    loop body raises itself (the size cap, malformed gzip) keep their own type.
+    """
+    try:
+        async for raw in response.aiter_raw():
+            yield raw
+    except httpx2.RequestError as e:
+        raise _compatible_request_error(e) from e
+
+
+async def _read_capped_identity(response: httpx2.Response, max_bytes: int) -> bytes:
     content = bytearray()
-    async for raw in response.aiter_raw():
+    async for raw in _aiter_raw(response):
         if len(content) + len(raw) > max_bytes:
             raise _download_exceeds(max_bytes)
         content.extend(raw)
     return bytes(content)
 
 
-async def _read_gzip_body(response: httpx.Response, max_bytes: int | None = None) -> bytes:
+async def _read_gzip_body(response: httpx2.Response, max_bytes: int | None = None) -> bytes:
     content = bytearray()
     encoded_total = 0
     decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
     member_started = False
-    async for raw in response.aiter_raw():
+    async for raw in _aiter_raw(response):
         encoded_total += len(raw)
         if max_bytes is not None and encoded_total > max_bytes:
             raise _download_exceeds(max_bytes)
@@ -710,7 +794,7 @@ async def _read_gzip_body(response: httpx.Response, max_bytes: int | None = None
             try:
                 content.extend(decompressor.decompress(raw, max_length=max_length))
             except zlib.error as e:
-                raise httpx.DecodingError(f'Invalid gzip response body: {e}') from e
+                raise _CompatibleDecodingError(f'Invalid gzip response body: {e}', request=response.request) from e
             if max_bytes is not None and len(content) > max_bytes:
                 raise _download_exceeds(max_bytes)
 
@@ -721,9 +805,9 @@ async def _read_gzip_body(response: httpx.Response, max_bytes: int | None = None
     try:
         content.extend(decompressor.flush())
     except zlib.error as e:
-        raise httpx.DecodingError(f'Invalid gzip response body: {e}') from e
+        raise _CompatibleDecodingError(f'Invalid gzip response body: {e}', request=response.request) from e
     if max_bytes is not None and len(content) > max_bytes:
         raise _download_exceeds(max_bytes)
     if not decompressor.eof:
-        raise httpx.DecodingError('Received an incomplete gzip response body')
+        raise _CompatibleDecodingError('Received an incomplete gzip response body', request=response.request)
     return bytes(content)
