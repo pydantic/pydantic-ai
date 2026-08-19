@@ -453,6 +453,7 @@ async def test_bedrock_framed_failure_defers_unsupported_media(bedrock_provider:
         {
             'role': 'user',
             'content': [
+                {'text': '<pydantic_ai:tool_return tool_name="tool" tool_call_id="call_1" />'},
                 {'text': 'This is file report:'},
                 {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': b'%PDF-1.4'}}},
             ],
