@@ -468,6 +468,8 @@ async def test_event_stream_error_closes_open_tool_call():
         yield PartStartEvent(
             index=0, part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={'query': 'pydantic'})
         )
+        # Keep the delta representation compatible with the existing dict args so
+        # updating the tracked open part does not fail before the intended RuntimeError.
         yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'page': 1}, tool_call_id='call_1'))
         raise RuntimeError('boom')
 
