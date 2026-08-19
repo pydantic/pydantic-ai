@@ -737,6 +737,95 @@ async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_reques
     )
 
 
+async def test_xai_tool_return_images_keep_call_provenance(allow_model_requests: None):
+    response = create_response(content='done', usage=create_usage(prompt_tokens=20, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/user.png')])]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_1'),
+                ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_2'),
+            ],
+            finish_reason='tool_call',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=ImageUrl(url='https://example.com/tool-1.png'),
+                    tool_call_id='call_1',
+                ),
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=ImageUrl(url='https://example.com/tool-2.png'),
+                    tool_call_id='call_2',
+                ),
+            ]
+        ),
+    ]
+
+    await model.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'grok-4-fast-non-reasoning',
+                'messages': [
+                    {
+                        'content': [
+                            {'image_url': {'image_url': 'https://example.com/user.png', 'detail': 'DETAIL_AUTO'}}
+                        ],
+                        'role': 'ROLE_USER',
+                    },
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {
+                                'id': 'call_1',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'get_image', 'arguments': '{}'},
+                            },
+                            {
+                                'id': 'call_2',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'get_image', 'arguments': '{}'},
+                            },
+                        ],
+                    },
+                    {'content': [{'text': 'See file 1a49cc.'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'call_1'},
+                    {'content': [{'text': 'See file 12cddc.'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'call_2'},
+                    {
+                        'content': [
+                            {'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_1" />'},
+                            {'text': 'This is file 1a49cc:'},
+                            {'image_url': {'image_url': 'https://example.com/tool-1.png', 'detail': 'DETAIL_AUTO'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    },
+                    {
+                        'content': [
+                            {'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_2" />'},
+                            {'text': 'This is file 12cddc:'},
+                            {'image_url': {'image_url': 'https://example.com/tool-2.png', 'detail': 'DETAIL_AUTO'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    },
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
 async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_model_requests: None):
     response = create_response(
         content='done',

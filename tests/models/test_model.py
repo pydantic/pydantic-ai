@@ -5,18 +5,30 @@ from importlib import import_module
 from unittest.mock import patch
 
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, UserError
+from pydantic_ai import Agent, BinaryContent, ToolReturn, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
+    ToolReturnContentSource,
     UserPromptPart,
 )
-from pydantic_ai.models import DEFAULT_PROFILE, AbstractModel, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models import (
+    DEFAULT_PROFILE,
+    AbstractModel,
+    Model,
+    ModelRequestParameters,
+    infer_model,
+    infer_model_profile,
+    parse_model_id,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 
@@ -32,6 +44,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers import openai
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 if not imports_successful():
     pytest.skip('model packages were not installed', allow_module_level=True)  # pragma: lax no cover
@@ -551,6 +565,153 @@ def test_prepare_messages_system_prompt_wrapping(
 ):
     model = TestModel(profile=ModelProfile(supports_inline_system_prompts=supports_inline))
     assert _request_parts(model.prepare_messages(messages)) == expected
+
+
+def test_prepare_messages_renders_tool_return_content_source() -> None:
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='user upload'),
+                UserPromptPart(
+                    content='first tool attachment',
+                    source=ToolReturnContentSource(tool_name='get_file', tool_call_id='call_1'),
+                ),
+                UserPromptPart(
+                    content='second tool attachment',
+                    source=ToolReturnContentSource(tool_name='get_file', tool_call_id='call_2'),
+                ),
+            ]
+        )
+    ]
+    model = TestModel()
+
+    prepared = model.prepare_messages(messages)
+
+    prepared_request = prepared[0]
+    assert isinstance(prepared_request, ModelRequest)
+    assert [part.content for part in prepared_request.parts if isinstance(part, UserPromptPart)] == [
+        'user upload',
+        '<pydantic_ai:tool_return tool_name="get_file" tool_call_id="call_1" />\nfirst tool attachment',
+        '<pydantic_ai:tool_return tool_name="get_file" tool_call_id="call_2" />\nsecond tool attachment',
+    ]
+    assert all(part.source is None for part in prepared_request.parts if isinstance(part, UserPromptPart))
+    assert model.prepare_messages(prepared) == prepared
+    original_request = messages[0]
+    assert isinstance(original_request, ModelRequest)
+    original_part = original_request.parts[1]
+    assert isinstance(original_part, UserPromptPart)
+    assert original_part.source == ToolReturnContentSource(tool_name='get_file', tool_call_id='call_1')
+
+
+@pytest.mark.anyio
+async def test_tool_return_content_source_replays_across_provider_mappers() -> None:
+    agent = Agent(TestModel(call_tools=['get_image']))
+
+    @agent.tool_plain
+    def get_image() -> ToolReturn:
+        return ToolReturn(
+            return_value='image returned',
+            content=[BinaryContent(data=b'tool image', media_type='image/png')],
+        )
+
+    result = await agent.run([BinaryContent(data=b'user image', media_type='image/png')])
+    history = result.all_messages()
+    replayed = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+
+    tool_call = next(
+        part
+        for message in replayed
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    )
+    tool_prompt = next(
+        part
+        for message in replayed
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.source is not None
+    )
+    expected_source = ToolReturnContentSource(tool_name=tool_call.tool_name, tool_call_id=tool_call.tool_call_id)
+    assert tool_prompt.source == expected_source
+
+    openai_model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+    openai_messages = await openai_model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        openai_model.prepare_messages(replayed), ModelRequestParameters()
+    )
+    google_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    _, google_contents = await google_model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        google_model.prepare_messages(replayed), ModelRequestParameters()
+    )
+
+    assert openai_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'image_url': {'url': 'data:image/png;base64,dXNlciBpbWFnZQ=='}, 'type': 'image_url'}],
+            },
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [
+                    {
+                        'id': 'pyd_ai_tool_call_id__get_image',
+                        'type': 'function',
+                        'function': {'name': 'get_image', 'arguments': '{}'},
+                    }
+                ],
+            },
+            {'role': 'tool', 'tool_call_id': 'pyd_ai_tool_call_id__get_image', 'content': 'image returned'},
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="pyd_ai_tool_call_id__get_image" />',
+                        'type': 'text',
+                    },
+                    {'image_url': {'url': 'data:image/png;base64,dG9vbCBpbWFnZQ=='}, 'type': 'image_url'},
+                ],
+            },
+            {'role': 'assistant', 'content': '{"get_image":"image returned"}'},
+        ]
+    )
+    assert google_contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'inline_data': {'data': b'user image', 'mime_type': 'image/png'}}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'function_call': {'name': 'get_image', 'args': {}, 'id': 'pyd_ai_tool_call_id__get_image'},
+                        'thought_signature': b'skip_thought_signature_validator',
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'get_image',
+                            'response': {'return_value': 'image returned'},
+                            'id': 'pyd_ai_tool_call_id__get_image',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="pyd_ai_tool_call_id__get_image" />'
+                    },
+                    {'inline_data': {'data': b'tool image', 'mime_type': 'image/png'}},
+                ],
+            },
+            {'role': 'model', 'parts': [{'text': '{"get_image":"image returned"}'}]},
+        ]
+    )
+    assert tool_prompt.source == expected_source
 
 
 @pytest.mark.anyio

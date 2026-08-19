@@ -597,6 +597,21 @@ def test_cache_point_silently_skipped_user_prompt_part(allow_model_requests: Non
     )
 
 
+def test_tool_return_media_is_not_silently_dropped(allow_model_requests: None):
+    request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_image',
+                tool_call_id='call_1',
+                content=ImageUrl(url='https://example.com/image.png'),
+            )
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match=re.escape('Cohere does not yet support multi-modal inputs.')):
+        list(CohereModel._map_user_message(request))  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_multimodal(allow_model_requests: None):
     c = completion_message(AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='world')]))
     mock_client = MockAsyncClientV2.create_mock(c)

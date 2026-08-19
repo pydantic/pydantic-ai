@@ -765,7 +765,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             else:
                 tool_parts_by_index[index] = tool_parts
                 if tool_user_content:
-                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+                    tool_part = tool_parts[0]
+                    assert isinstance(tool_part, _messages.ToolReturnPart)
+                    user_parts_by_index[index] = _messages.UserPromptPart(
+                        content=tool_user_content,
+                        source=_messages.ToolReturnContentSource(
+                            tool_name=tool_part.tool_name, tool_call_id=tool_part.tool_call_id
+                        ),
+                    )
 
                 tool_part = tool_parts[0]
                 assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
@@ -1196,7 +1203,14 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 tool_parts, tool_user_content = payload
                                 function_parts[index] = tool_parts
                                 if tool_user_content:
-                                    function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
+                                    tool_part = tool_parts[0]
+                                    assert isinstance(tool_part, _messages.ToolReturnPart)
+                                    function_user_parts[index] = _messages.UserPromptPart(
+                                        content=tool_user_content,
+                                        source=_messages.ToolReturnContentSource(
+                                            tool_name=tool_part.tool_name, tool_call_id=tool_part.tool_call_id
+                                        ),
+                                    )
                                 tool_part = tool_parts[0]
                                 assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):

@@ -36,6 +36,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -368,28 +369,36 @@ class CohereModel(Model[AsyncClientV2]):
         )
 
     @classmethod
+    def _map_user_prompt(cls, part: UserPromptPart) -> ChatMessageV2:
+        if isinstance(part.content, str):
+            return UserChatMessageV2(role='user', content=part.content)
+
+        cohere_content: list[CohereContent] = []
+        for item in part.content:
+            if isinstance(item, str | TextContent):
+                cohere_content.append(CohereTextContent(text=item if isinstance(item, str) else item.content))
+            elif isinstance(item, CachePoint):
+                continue
+            else:
+                raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+        return UserChatMessageV2(role='user', content=cohere_content)
+
+    @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
+        file_prompts: list[UserPromptPart] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                if isinstance(part.content, str):
-                    yield UserChatMessageV2(role='user', content=part.content)
-                else:
-                    cohere_content: list[CohereContent] = []
-                    for c in part.content:
-                        if isinstance(c, str | TextContent):
-                            cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
-                        elif isinstance(c, CachePoint):
-                            continue
-                        else:
-                            raise RuntimeError('Cohere does not yet support multi-modal inputs.')
-                    yield UserChatMessageV2(role='user', content=cohere_content)
+                yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                tool_text, tool_prompt = part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
+                if tool_prompt:
+                    file_prompts.append(tool_prompt)
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
+                    content=tool_text,
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -407,6 +416,8 @@ class CohereModel(Model[AsyncClientV2]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
+        for file_prompt in file_prompts:
+            yield cls._map_user_prompt(_render_tool_return_content_part(file_prompt))
 
 
 def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:

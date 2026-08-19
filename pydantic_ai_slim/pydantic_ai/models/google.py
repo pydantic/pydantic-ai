@@ -38,10 +38,12 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolReturnContentSource,
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _tool_return_content_marker,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
     AbstractNativeTool,
@@ -1216,6 +1218,9 @@ class GoogleModel(Model[Client]):
             function_response_dict['parts'] = function_response_parts
 
         result: list[PartDict] = [{'function_response': function_response_dict}]
+        if fallback_parts:
+            source = ToolReturnContentSource(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+            result.append({'text': _tool_return_content_marker(source)})
         result.extend(fallback_parts)
 
         return result

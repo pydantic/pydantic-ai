@@ -1064,11 +1064,18 @@ async def test_image_tool_return_is_forwarded_as_user_message():
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(api_key='x'))
     model_request = ModelRequest(
         parts=[
+            UserPromptPart(content=[ImageUrl(url='https://example.com/user.png')]),
             ToolReturnPart(
                 tool_name='get_image',
-                content=ImageUrl(url='https://example.com/image.png'),
+                content=ImageUrl(url='https://example.com/tool-1.png'),
                 tool_call_id='call_1',
-            )
+            ),
+            ToolReturnPart(
+                tool_name='get_image',
+                content=ImageUrl(url='https://example.com/tool-2.png'),
+                tool_call_id='call_2',
+            ),
+            ToolReturnPart(tool_name='get_image', content='No image', tool_call_id='call_3'),
         ]
     )
 
@@ -1079,12 +1086,35 @@ async def test_image_tool_return_is_forwarded_as_user_message():
 
     assert mapped_messages == snapshot(
         [
-            {'role': 'tool', 'content': 'See file 01a7df.', 'tool_call_id': 'call_1'},
+            {
+                'role': 'user',
+                'content': [{'type': 'image_url', 'image_url': {'url': 'https://example.com/user.png'}, 'text': None}],
+            },
+            {'role': 'tool', 'content': 'See file 1a49cc.', 'tool_call_id': 'call_1'},
+            {'role': 'tool', 'content': 'See file 12cddc.', 'tool_call_id': 'call_2'},
+            {'role': 'tool', 'content': 'No image', 'tool_call_id': 'call_3'},
             {
                 'role': 'user',
                 'content': [
-                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
-                    {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
+                    {
+                        'type': 'text',
+                        'image_url': None,
+                        'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_1" />',
+                    },
+                    {'type': 'text', 'image_url': None, 'text': 'This is file 1a49cc:'},
+                    {'type': 'image_url', 'image_url': {'url': 'https://example.com/tool-1.png'}, 'text': None},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'text',
+                        'image_url': None,
+                        'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_2" />',
+                    },
+                    {'type': 'text', 'image_url': None, 'text': 'This is file 12cddc:'},
+                    {'type': 'image_url', 'image_url': {'url': 'https://example.com/tool-2.png'}, 'text': None},
                 ],
             },
         ]

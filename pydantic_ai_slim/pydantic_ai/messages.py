@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import html
 import mimetypes
 import os
 import warnings
@@ -951,6 +952,43 @@ UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 """A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
 
+@dataclass(frozen=True, repr=False)
+class ToolReturnContentSource:
+    """The tool call that produced content carried outside its native tool result."""
+
+    tool_name: str
+    """The name of the tool that produced the content."""
+
+    tool_call_id: str
+    """The identifier of the tool call that produced the content."""
+
+    kind: Literal['tool-return'] = 'tool-return'
+    """Source type identifier."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _tool_return_content_marker(source: ToolReturnContentSource) -> str:
+    """Render the fixed fallback marker for tool-origin content."""
+    return (
+        f'<pydantic_ai:tool_return tool_name="{html.escape(source.tool_name, quote=True)}" '
+        f'tool_call_id="{html.escape(source.tool_call_id, quote=True)}" />'
+    )
+
+
+def _render_tool_return_content_part(  # pyright: ignore[reportUnusedFunction]
+    part: UserPromptPart,
+) -> UserPromptPart:
+    """Render a tool-origin marker on the outgoing copy of a `UserPromptPart`."""
+    source = part.source
+    if source is None or not part.content:
+        return part
+
+    marker = _tool_return_content_marker(source)
+    content = f'{marker}\n{part.content}' if isinstance(part.content, str) else [marker, *part.content]
+    return replace(part, content=content, source=None)
+
+
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
 """Type variable for the return value type in `ToolReturn[T]`.
 
@@ -1084,6 +1122,13 @@ class UserPromptPart:
     """The content of the prompt."""
 
     _: KW_ONLY
+
+    source: Annotated[ToolReturnContentSource | None, pydantic.Field(exclude_if=lambda source: source is None)] = None
+    """The semantic origin of content that was not written by the user.
+
+    Provider-specific roles or fallback markers are derived from this field when the request is rendered,
+    so serialized message history remains model-neutral.
+    """
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
@@ -1541,6 +1586,16 @@ class BaseToolReturnPart:
         # Safe: when was_list is False, content is either scalar data (→ str item) or a single
         # MultiModalContent (→ 'See file ...' placeholder), so tool_content_parts always has one entry.
         return tool_content_parts[0], file_content
+
+    def _model_response_str_and_user_prompt(self, *, wrap_if_error: bool = True) -> tuple[str, UserPromptPart | None]:
+        """Build a text-only tool result and a provenance-bearing prompt for extracted files."""
+        tool_response, user_content = self.model_response_str_and_user_content(wrap_if_error=wrap_if_error)
+        if not user_content:
+            return tool_response, None
+        return tool_response, UserPromptPart(
+            content=user_content,
+            source=ToolReturnContentSource(tool_name=self.tool_name, tool_call_id=self.tool_call_id),
+        )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         part = _otel_messages.ToolCallResponsePart(

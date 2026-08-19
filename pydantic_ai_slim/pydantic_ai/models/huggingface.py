@@ -38,9 +38,9 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
-    UserContent,
     UserPromptPart,
     VideoUrl,
+    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -465,15 +465,16 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     async def _map_user_message(
         self, message: ModelRequest
     ) -> AsyncIterable[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
-        file_content: list[UserContent] = []
+        file_prompts: list[UserPromptPart] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # pyright: ignore[reportUnknownMemberType]
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = part.model_response_str_and_user_content()
-                file_content.extend(tool_file_content)
+                tool_text, tool_prompt = part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
+                if tool_prompt:
+                    file_prompts.append(tool_prompt)
                 yield ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                     {
                         'role': 'tool',
@@ -501,8 +502,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
-        if file_content:
-            yield await self._map_user_prompt(UserPromptPart(content=file_content))
+        for file_prompt in file_prompts:
+            yield await self._map_user_prompt(_render_tool_return_content_part(file_prompt))
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart) -> ChatCompletionInputMessage:

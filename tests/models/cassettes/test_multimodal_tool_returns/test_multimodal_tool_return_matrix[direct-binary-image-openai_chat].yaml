@@ -35,6 +35,8 @@ interactions:
     headers:
       access-control-expose-headers:
       - X-Request-ID
+      - CF-Ray
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -43,12 +45,8 @@ interactions:
       - '748'
       content-type:
       - application/json
-      openai-organization:
-      - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1089'
-      openai-project:
-      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      - '1087'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -68,10 +66,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_S7tRWNiD8CbD2xDRMuXOEc8e
+            id: call_HeTZJ3jfrB4jBiYIX7Nk2p0X
             type: function
-      created: 1769755908
-      id: chatcmpl-D3ce4iMWOCgEgt3dSVmbjdbDY2Dnq
+      created: 1787175842
+      id: chatcmpl-EEiMkc2WeQsv4ryfZwEEAv2PcduJo
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
@@ -100,12 +98,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132216'
+      - '132343'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=S4EIbXSXT0eSBczPMYKHkLc5pUxmxhjKEGlK_P0V0xs-1769755909-1.0.1.1-xm8fH.vRhospAMhX8k5c8J1aYIpRwhhg8h7Pa2MGVEfvjhaNJXh.019FpbA3ESLEJCLy4gAhLuu3eWVHL3wTGWDyprsmiiX6TSd_I35Dmjw;
-        _cfuvid=YZQg99mmc8Mi1NZW2feODwPZRjj_S3GPDxlaYmVKzk0-1769755909665-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -119,12 +114,14 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_S7tRWNiD8CbD2xDRMuXOEc8e
+          id: call_HeTZJ3jfrB4jBiYIX7Nk2p0X
           type: function
       - content: See file 241a70.
         role: tool
-        tool_call_id: call_S7tRWNiD8CbD2xDRMuXOEc8e
+        tool_call_id: call_HeTZJ3jfrB4jBiYIX7Nk2p0X
       - content:
+        - text: <pydantic_ai:tool_return tool_name="get_file" tool_call_id="call_HeTZJ3jfrB4jBiYIX7Nk2p0X" />
+          type: text
         - text: 'This is file 241a70:'
           type: text
         - image_url:
@@ -148,20 +145,18 @@ interactions:
     headers:
       access-control-expose-headers:
       - X-Request-ID
+      - CF-Ray
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '1154'
+      - '1147'
       content-type:
       - application/json
-      openai-organization:
-      - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '4461'
-      openai-project:
-      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      - '4087'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -175,34 +170,33 @@ interactions:
         message:
           annotations: []
           content: |-
-            The image is a close-up, top-down view of a halved kiwi fruit placed on a white background. Details:
+            I retrieved file 241a70. It's a close-up, top-down view of a halved kiwi fruit (cross-section). Visual details:
 
-            - A single kiwi cut cleanly through the middle, centered in the frame.
+            - Circular slice filling most of the frame, symmetric composition.
             - Bright green flesh with a lighter, almost white central core.
-            - A ring of small, glossy black seeds arranged radially around the core.
-            - Fine radial lines/striations in the green flesh leading outward from the center.
-            - Thin brown skin with short, fuzzy hairs visible around the edge.
-            - Even, soft lighting that brings out the fruit's texture and vivid color.
+            - A ring of small black seeds arranged radially around the core, each set in slightly darker green "rays."
+            - Thin brown, fuzzy skin visible around the outer edge.
+            - Even, soft lighting and a plain white background; the image is sharp with clear texture detail in the flesh and skin.
           refusal: null
           role: assistant
-      created: 1769755910
-      id: chatcmpl-D3ce6LTbb8dZvyfLCFHXGyeDefXF1
+      created: 1787175844
+      id: chatcmpl-EEiMmpjygZsoCNYXoEl37l4rJ9380
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 253
+        completion_tokens: 317
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 128
+          reasoning_tokens: 192
           rejected_prediction_tokens: 0
-        prompt_tokens: 585
+        prompt_tokens: 622
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 838
+        total_tokens: 939
     status:
       code: 200
       message: OK

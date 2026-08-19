@@ -1765,6 +1765,10 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                     'type': 'message',
                     'role': 'user',
                     'content': [
+                        {
+                            'type': 'input_text',
+                            'text': '<pydantic_ai:tool_return tool_name="inspect" tool_call_id="call-image" />',
+                        },
                         {'type': 'input_text', 'text': 'This is file result.png:'},
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,cmVzdWx0LWltYWdl'},
                     ],

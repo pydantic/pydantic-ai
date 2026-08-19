@@ -58,6 +58,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ToolCallPart,
     ToolReturn,
+    ToolReturnContentSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -5107,13 +5108,20 @@ async def test_agent_realtime_session_tool_return_is_unwrapped(
         ToolResult(
             tool_call_id='tc',
             output='{"value":42}',
-            content=expected_wire_content,
+            content=[
+                '<pydantic_ai:tool_return tool_name="info" tool_call_id="tc" />',
+                *expected_wire_content,
+            ],
         )
     ]
     request = next(message for message in session.new_messages() if isinstance(message, ModelRequest))
     assert request.parts == [
         result.part,
-        UserPromptPart(content=follow_up_content, timestamp=IsDatetime()),
+        UserPromptPart(
+            content=follow_up_content,
+            source=ToolReturnContentSource(tool_name='info', tool_call_id='tc'),
+            timestamp=IsDatetime(),
+        ),
     ]
 
 

@@ -48,6 +48,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturn,
+    ToolReturnContentSource,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UsageLimits,
@@ -7175,7 +7176,11 @@ class TestMultipleToolCalls:
                     tool_call_id='call_good',
                     timestamp=IsDatetime(),
                 ),
-                UserPromptPart(content='extra context', timestamp=IsDatetime()),
+                UserPromptPart(
+                    content='extra context',
+                    source=ToolReturnContentSource(tool_name='good_tool', tool_call_id='call_good'),
+                    timestamp=IsDatetime(),
+                ),
             ]
         )
 
@@ -7196,7 +7201,9 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test')
         assert result.output == 'done'
         assert any(
-            isinstance(part, UserPromptPart) and part.content == 'extra context for the model'
+            isinstance(part, UserPromptPart)
+            and part.content == 'extra context for the model'
+            and part.source is not None
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts

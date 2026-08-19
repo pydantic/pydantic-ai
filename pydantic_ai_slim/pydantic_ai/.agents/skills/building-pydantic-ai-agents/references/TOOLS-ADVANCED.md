@@ -127,7 +127,7 @@ def transfer_funds(ctx: RunContext[int], amount: int) -> str:
 
 Reach for these features when the user needs more than a simple function tool:
 
-- `ToolReturn` for rich return values, separate content/metadata, and `tools` names that reveal deferred tools
+- `ToolReturn` for rich return values, provenance-preserving separate content/metadata, and `tools` names that reveal deferred tools
 - `prepare=` for dynamic tool definitions
 - `timeout=` for tool execution limits
 - `sequential=True` to make a tool a barrier — it runs alone (tools emitted before it finish first, tools after it start once it finishes) while other tools parallelize around it; works on function tools and on output tools via `ToolOutput(sequential=True)`

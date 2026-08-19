@@ -61,9 +61,11 @@ from ..messages import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolReturnContentSource,
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
@@ -1593,7 +1595,12 @@ class RealtimeSession:
     ) -> list[RealtimeEvent]:
         request_parts: list[ModelRequestPart] = [result_part]
         if content:
-            request_parts.append(UserPromptPart(content=content))
+            source = (
+                ToolReturnContentSource(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id)
+                if isinstance(result_part, ToolReturnPart)
+                else None
+            )
+            request_parts.append(UserPromptPart(content=content, source=source))
         self._insert_tool_return(call_part, self._new_request(request_parts))
         return [FunctionToolResultEvent(part=result_part, content=content)]
 
@@ -2163,11 +2170,16 @@ class RealtimeSession:
             output = result_part.model_response()
             wire_content: list[UserContent] = []
         else:
-            output, wire_content = result_part.model_response_str_and_user_content()
-        if isinstance(user_content, str):
-            wire_content.append(user_content)
-        elif user_content:
-            wire_content.extend(user_content)
+            output, wire_prompt = result_part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
+            wire_content = list(wire_prompt.content) if wire_prompt else []
+            if isinstance(user_content, str):
+                wire_content.append(user_content)
+            elif user_content:
+                wire_content.extend(user_content)
+            source = ToolReturnContentSource(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id)
+            rendered_prompt = _render_tool_return_content_part(UserPromptPart(content=wire_content, source=source))
+            assert not isinstance(rendered_prompt.content, str)
+            wire_content = list(rendered_prompt.content)
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
         self._reserve_response_request()

@@ -67,7 +67,7 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
-    from mistralai.client.models import AssistantMessage, TextChunk, ToolMessage, UserMessage
+    from mistralai.client.models import TextChunk, ToolMessage
 
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
@@ -173,9 +173,9 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('groq', 'document'): ExpectError(match=r'(?:DocumentUrl|images are supported).*Groq user prompts'),
     ('groq', 'audio'): ExpectError(match=r'(?:AudioUrl|images are supported).*Groq user prompts'),
     ('groq', 'video'): ExpectError(match=r'(?:VideoUrl|images are supported).*Groq user prompts'),
-    # Mistral: images and documents as_user_content, audio/video unsupported
-    ('mistral', 'image'): 'as_user_content',
-    ('mistral', 'document'): 'as_user_content',
+    # Mistral: images and documents in_tool_result, audio/video unsupported
+    ('mistral', 'image'): 'in_tool_result',
+    ('mistral', 'document'): 'in_tool_result',
     ('mistral', 'audio'): ExpectError(
         match=r'(?:AudioUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
     ),
@@ -190,6 +190,12 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
 ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, ReturnStyle | None], ExpectError] = {
     ('openai_responses', 'audio', 'binary', None): ExpectError(
         NotImplementedError, r'(?i)audio.*openai responses|unsupported binary'
+    ),
+    ('mistral', 'audio', None, 'direct'): ExpectError(
+        match=r'(?:AudioUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral tool returns'
+    ),
+    ('mistral', 'video', None, 'direct'): ExpectError(
+        match=r'(?:VideoUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral tool returns'
     ),
     # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
     # force_download variants work since the client downloads locally before sending to Vertex.
@@ -482,6 +488,7 @@ def assert_file_in_user_prompt(messages: list[ModelMessage], file_type: FileType
         if isinstance(upp.content, list):
             for item in upp.content:  # pragma: no branch
                 if _is_file_type(item, file_type):  # pragma: no branch
+                    assert upp.source is not None
                     return
     raise AssertionError(f'No {file_type} found in any UserPromptPart')  # pragma: no cover
 
@@ -619,6 +626,8 @@ async def test_multimodal_tool_return_matrix(
             cassette_ctx.verify_contains(pattern)
         if SUPPORT_MATRIX[(provider, file_type)] == 'as_user_content' and return_style == 'direct':
             cassette_ctx.verify_contains('See file')
+            if provider not in ('groq', 'xai') and content_source == 'binary' and file_type == 'image':
+                cassette_ctx.verify_contains('pydantic_ai:tool_return')
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -809,9 +818,10 @@ async def test_non_pdf_document_url_mistral() -> None:
             parts=[
                 ToolReturnPart(
                     tool_name='get_file',
-                    content=doc_url,
+                    content=['Document follows:', doc_url],
                     tool_call_id='call1',
                 ),
+                ToolReturnPart(tool_name='get_file', content='No document', tool_call_id='call2'),
             ],
         ),
     ]
@@ -825,11 +835,9 @@ async def test_non_pdf_document_url_mistral() -> None:
 
     assert mapped == snapshot(
         [
-            ToolMessage(content='See file fb8964.', tool_call_id='call1'),
-            AssistantMessage(content=[TextChunk(text='OK')]),
-            UserMessage(
+            ToolMessage(
                 content=[
-                    TextChunk(text='This is file fb8964:'),
+                    TextChunk(text='Document follows:'),
                     TextChunk(
                         text="""\
 -----BEGIN FILE id="fb8964" type="text/plain"-----
@@ -837,8 +845,10 @@ Dummy TXT file
 -----END FILE id="fb8964"-----\
 """
                     ),
-                ]
+                ],
+                tool_call_id='call1',
             ),
+            ToolMessage(content='No document', tool_call_id='call2'),
         ]
     )
 

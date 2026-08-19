@@ -69,6 +69,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -776,6 +777,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
+
+        messages = _render_tool_return_content(messages)
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
@@ -2193,6 +2196,29 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _render_tool_return_content(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Render model-neutral tool-content provenance without changing stored history."""
+    changed = False
+    rendered: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, UserPromptPart) and part.source is not None for part in message.parts
+        ):
+            rendered.append(
+                replace(
+                    message,
+                    parts=[
+                        _render_tool_return_content_part(part) if isinstance(part, UserPromptPart) else part
+                        for part in message.parts
+                    ],
+                )
+            )
+            changed = True
+        else:
+            rendered.append(message)
+    return rendered if changed else messages
 
 
 def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]

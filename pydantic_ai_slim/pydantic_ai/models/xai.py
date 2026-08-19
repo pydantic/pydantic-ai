@@ -42,9 +42,9 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
-    UserContent,
     UserPromptPart,
     VideoUrl,
+    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -382,7 +382,7 @@ class XaiModel(Model[AsyncClient]):
 
         return xai_messages
 
-    async def _map_request_parts(
+    async def _map_request_parts(  # noqa: C901
         self,
         parts: Sequence[ModelRequestPart],
         pending_tool_call_ids: list[str],
@@ -412,22 +412,23 @@ class XaiModel(Model[AsyncClient]):
             else:
                 assert_never(part)
 
-        # Sort tool results by requested order, then emit
         if tool_results:
             order = {id: i for i, id in enumerate(pending_tool_call_ids)}
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
-            file_content: list[UserContent] = []
+            file_prompts: list[UserPromptPart] = []
             for part in tool_results:
                 if isinstance(part, ToolReturnPart):
-                    text, files = part.model_response_str_and_user_content()
+                    text, file_prompt = part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
                     xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
-                    file_content.extend(files)
+                    if file_prompt:
+                        file_prompts.append(file_prompt)
                 else:
                     xai_messages.append(tool_result(part.model_response(), tool_call_id=part.tool_call_id))
-            if file_content and (
-                user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
-            ):  # pragma: no branch
-                xai_messages.append(user_msg)
+            for file_prompt in file_prompts:
+                if user_msg := await self._map_user_prompt(
+                    _render_tool_return_content_part(file_prompt)
+                ):  # pragma: no branch
+                    xai_messages.append(user_msg)
 
         return xai_messages
 
