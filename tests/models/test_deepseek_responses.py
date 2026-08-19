@@ -957,3 +957,87 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
             }
         ]
     )
+
+
+async def test_deepseek_responses_replay_own_reasoning_history(
+    allow_model_requests: None, deepseek_api_key: str
+) -> None:
+    """A turn DeepSeek itself produced replays, reasoning items and their IDs intact.
+
+    `_process_response` gives every DeepSeek reasoning item a `ThinkingPart` carrying the provider's
+    own `id` and its raw CoT, so this is the shape a DeepSeek-origin history actually has. It is the
+    interesting case because those IDs go out on the wire: the request below is rejected when the
+    calls stay interleaved, which is what makes reordering the load-bearing step rather than the
+    portable-history case where nothing is emitted to preserve.
+    """
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx2.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    history = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='inspect inputs',
+                    id='rs-a',
+                    provider_name='deepseek',
+                    provider_details={'raw_content': ['inspect inputs']},
+                ),
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
+                ThinkingPart(
+                    content='inspect views',
+                    id='rs-b',
+                    provider_name='deepseek',
+                    provider_details={'raw_content': ['inspect views']},
+                ),
+                ToolCallPart('view', {'path': 'b'}, tool_call_id='call-b'),
+            ],
+            provider_name='deepseek',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('read', 'contents', tool_call_id='call-a'),
+                ToolReturnPart('view', 'rendered', tool_call_id='call-b'),
+            ]
+        ),
+    ]
+    original_history = deepcopy(history)
+
+    async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
+        model = OpenAIResponsesModel(
+            'deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=http_client)
+        )
+        result = await Agent(model).run('Reply exactly: done', message_history=history)
+
+    assert result.output == 'done'
+    assert history == original_history
+    assert sent_bodies == snapshot(
+        [
+            {
+                'input': [
+                    {
+                        'id': 'rs-a',
+                        'summary': [{'text': 'inspect inputs', 'type': 'summary_text'}],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                        'content': [{'text': 'inspect inputs', 'type': 'reasoning_text'}],
+                    },
+                    {
+                        'id': 'rs-b',
+                        'summary': [{'text': 'inspect views', 'type': 'summary_text'}],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                        'content': [{'text': 'inspect views', 'type': 'reasoning_text'}],
+                    },
+                    {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'name': 'view', 'arguments': '{"path":"b"}', 'call_id': 'call-b', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                    {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'rendered'},
+                    {'role': 'user', 'content': 'Reply exactly: done'},
+                ],
+                'model': 'deepseek-v4-flash',
+                'stream': False,
+            }
+        ]
+    )

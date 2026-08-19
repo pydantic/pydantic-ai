@@ -15948,81 +15948,6 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
             [
                 ModelResponse(
                     parts=[
-                        ToolCallPart('read', {}, tool_call_id='call-a', id='fc-a', provider_name='openai'),
-                        ThinkingPart(content='provider-owned item follows'),
-                    ],
-                    provider_name='openai',
-                ),
-                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
-            ],
-            {'openai_send_reasoning_ids': True},
-            id='sent-function-call-id',
-        ),
-        pytest.param(
-            [
-                ModelResponse(
-                    parts=[
-                        ToolCallPart('read', {}, tool_call_id='call-a|fc-a', provider_name='openai'),
-                        ThinkingPart(content='provider-owned item follows'),
-                    ],
-                    provider_name='openai',
-                ),
-                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a|fc-a')]),
-            ],
-            {'openai_send_reasoning_ids': True},
-            id='sent-legacy-combined-function-call-id',
-        ),
-        pytest.param(
-            [
-                ModelResponse(
-                    parts=[
-                        ToolCallPart('read', {}, tool_call_id='call-a'),
-                        TextPart(content='provider-owned message follows', id='msg-a', provider_name='openai'),
-                    ],
-                    provider_name='openai',
-                ),
-                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
-            ],
-            {'openai_send_reasoning_ids': True},
-            id='sent-message-id',
-        ),
-        pytest.param(
-            [
-                ModelResponse(
-                    parts=[
-                        ToolCallPart('read', {}, tool_call_id='call-a'),
-                        ThinkingPart(content='provider-owned item follows', id='reasoning-a'),
-                    ],
-                    provider_name='openai',
-                ),
-                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
-            ],
-            {'openai_send_reasoning_ids': True},
-            id='sent-reasoning-id',
-        ),
-        pytest.param(
-            [
-                ModelResponse(
-                    parts=[
-                        ToolCallPart('read', {}, tool_call_id='call-a'),
-                        ThinkingPart(
-                            content='provider-owned item follows',
-                            id='reasoning-a',
-                            provider_name='openai',
-                            provider_details={'raw_content': ['deliberate']},
-                        ),
-                    ],
-                    provider_name='openai',
-                ),
-                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
-            ],
-            None,
-            id='raw-content-reasoning-id',
-        ),
-        pytest.param(
-            [
-                ModelResponse(
-                    parts=[
                         ToolCallPart('read', {}, tool_call_id='call-a'),
                         ThinkingPart(content='native item follows'),
                         NativeToolCallPart('web_search', {}, tool_call_id='native-a', provider_name='other'),
@@ -16094,11 +16019,11 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
 async def test_openai_responses_function_call_grouping_preserves_protected_boundaries(
     history: list[ModelMessage], model_settings: 'OpenAIResponsesModelSettings | None'
 ) -> None:
-    """Protected provider-owned and unsettled histories serialize identically with the profile on or off.
+    """Provider-owned and unsettled histories serialize identically with the profile on or off.
 
-    Each provider-owned case pins an item ID that the renderer actually puts on the wire, which is
-    what makes the provider own the item's position. IDs the renderer drops are covered by
-    `test_openai_responses_function_call_grouping_ignores_unsent_item_ids`.
+    What makes a turn off-limits is a native or compaction item the provider owns, or a call still
+    waiting on its result — never an item ID, which
+    `test_openai_responses_function_call_grouping_ignores_item_ids` pins as irrelevant either way.
     """
     assert await _replay_input(
         history, group_function_calls=True, model_settings=model_settings
@@ -16201,18 +16126,162 @@ async def test_openai_responses_function_call_grouping_preserves_protected_bound
             ),
             id='file-id-never-sent',
         ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a', id='fc-a', provider_name='openai'),
+                        ThinkingPart(content='provider-owned item follows'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'content': """\
+<think>
+provider-owned item follows
+</think>\
+""",
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call', 'id': 'fc-a'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='sent-function-call-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a|fc-a', provider_name='openai'),
+                        ThinkingPart(content='provider-owned item follows'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a|fc-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'content': """\
+<think>
+provider-owned item follows
+</think>\
+""",
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call', 'id': 'fc-a'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='sent-legacy-combined-function-call-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        TextPart(content='provider-owned message follows', id='msg-a', provider_name='openai'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'id': 'msg-a',
+                        'content': [
+                            {'text': 'provider-owned message follows', 'type': 'output_text', 'annotations': []}
+                        ],
+                        'type': message.__qualname__,
+                        'status': 'completed',
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='sent-message-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='provider-owned item follows', id='reasoning-a'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            {'openai_send_reasoning_ids': True},
+            snapshot(
+                [
+                    {
+                        'id': 'reasoning-a',
+                        'summary': [{'text': 'provider-owned item follows', 'type': 'summary_text'}],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='sent-reasoning-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(
+                            content='provider-owned item follows',
+                            id='reasoning-a',
+                            provider_name='openai',
+                            provider_details={'raw_content': ['deliberate']},
+                        ),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            None,
+            snapshot(
+                [
+                    {
+                        'id': 'reasoning-a',
+                        'summary': [{'text': 'provider-owned item follows', 'type': 'summary_text'}],
+                        'encrypted_content': None,
+                        'type': 'reasoning',
+                        'content': [{'text': 'deliberate', 'type': 'reasoning_text'}],
+                    },
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='raw-content-reasoning-id',
+        ),
     ],
 )
-async def test_openai_responses_function_call_grouping_ignores_unsent_item_ids(
+async def test_openai_responses_function_call_grouping_ignores_item_ids(
     history: list[ModelMessage],
     model_settings: 'OpenAIResponsesModelSettings | None',
     expected: list[dict[str, Any]],
 ) -> None:
-    """An item ID the renderer drops is invisible to the provider, so it cannot pin an item's position.
+    """Item IDs never suppress grouping, whether or not the renderer puts them on the wire.
 
-    Whether an ID reaches the wire is decided by `openai_send_reasoning_ids` combined with
-    same-provider origin (plus the same-provider reasoning `raw_content` path), so a stored ID alone
-    is not evidence that the provider owns the item.
+    An endpoint that clears `openai_responses_supports_interleaved_function_calls` merges each item
+    into the assistant message beside it, so position comes from the sequence and an ID anchors
+    nothing. The `sent-*` cases carry IDs the renderer does emit and are grouped anyway, with every
+    ID still present on the wire — only the order changes.
     """
     original_history = deepcopy(history)
 

@@ -597,7 +597,9 @@ DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which p
 - Image and document inputs are replaced with placeholder text rather than rejected.
 - Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
 
-One difference is handled for you rather than ignored: DeepSeek treats an assistant item that follows a function call as closing that call's output group, so replaying a turn that interleaves function calls with thinking or text would be rejected with `No tool output found for tool call ...`. Pydantic AI groups those calls after the other items when building the request. Only the request is reordered — the [message history](../message-history.md) you hold is unchanged.
+One difference is handled for you rather than ignored: DeepSeek merges each function call into the assistant message next to it, so replaying a turn that interleaves function calls with thinking or text splits them into separate messages that each carry an unanswered call, and the request is rejected with `No tool output found for tool call ...`. Pydantic AI moves those calls after the other items when building the request. Only the request is reordered — the [message history](../message-history.md) you hold is unchanged.
+
+This is best-effort, and two shapes are deliberately left alone: a turn carrying a builtin-tool or compaction item the provider owns, and a turn with a call that has no result yet (DeepSeek rejects that one whichever order it arrives in, so reordering cannot rescue it). Set [`OpenAIModelProfile.openai_responses_supports_interleaved_function_calls`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_interleaved_function_calls] on your own profile if you serve DeepSeek's Responses shape from another endpoint, or to turn the reordering off.
 
 ### Alibaba Cloud Model Studio (DashScope)
 

@@ -3354,8 +3354,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         messages,
                         message_index,
                         message,
-                        system=self.system,
-                        send_item_ids=send_item_ids,
                         client_tool_search_active=client_tool_search_active,
                     )
                 for item in response_parts:
@@ -5065,46 +5063,29 @@ def _map_provider_details(
     return provider_details or None
 
 
-def _sends_any_item_id(message: ModelResponse, *, system: str, send_item_ids: bool) -> bool:
-    """Whether any of `message`'s parts carries an item ID that the Responses renderer puts on the wire.
-
-    Mirrors the emission gates in `OpenAIResponsesModel._map_messages`: an ID is only sent when
-    `send_item_ids` is set and the part came from this provider, plus the reasoning item's raw-CoT
-    path that carries its ID regardless. `FilePart` IDs are never sent.
-    """
-    for part in message.parts:
-        should_send_item_id = send_item_ids and (
-            part.provider_name == system or (part.provider_name is None and message.provider_name == system)
-        )
-        if isinstance(part, ThinkingPart):
-            raw_content = (part.provider_details or {}).get('raw_content') if part.provider_name == system else None
-            if part.id and (should_send_item_id or raw_content):
-                return True
-        elif isinstance(part, ToolCallPart):
-            _, id = _split_combined_tool_call_id(part.tool_call_id)
-            if (id or part.id) and should_send_item_id:
-                return True
-        elif isinstance(part, TextPart) and part.id and should_send_item_id:
-            return True
-    return False
-
-
 def _group_settled_portable_function_calls(
     messages: list[ModelMessage],
     message_index: int,
     message: ModelResponse,
     *,
-    system: str,
-    send_item_ids: bool,
     client_tool_search_active: bool,
 ) -> Sequence[ModelResponsePart]:
-    """Stable-group settled portable function calls for strict Responses replay."""
+    """Reorder one assistant turn's settled function calls to the end of their segment.
+
+    Only for endpoints whose profile clears `openai_responses_supports_interleaved_function_calls`.
+    Such an endpoint folds each call into the assistant message next to it, so an assistant item
+    sitting between two calls splits them into separate messages, each carrying an unanswered call.
+    Item IDs are deliberately *not* consulted: an endpoint that merges items this way derives an
+    item's position from the surrounding sequence rather than its identity, so an ID pins nothing
+    (verified against DeepSeek: the grouped order is accepted with reasoning, message and
+    `function_call` IDs all present on the wire, while the interleaved order is rejected with them).
+
+    Reordering is skipped when the turn carries a native or compaction item the provider owns, or
+    when any of its calls is still unanswered — an unanswered call is rejected in either order, so
+    grouping cannot rescue it.
+    """
     parts = message.parts
     if any(isinstance(part, (NativeToolCallPart, NativeToolReturnPart, CompactionPart)) for part in parts):
-        return parts
-    # An item ID pins its item's position only once it reaches the wire: an ID the renderer drops
-    # is invisible to the provider and must not suppress grouping.
-    if _sends_any_item_id(message, system=system, send_item_ids=send_item_ids):
         return parts
 
     unsettled_call_counts: dict[str, int] = {}
