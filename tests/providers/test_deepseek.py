@@ -51,18 +51,17 @@ def test_deep_seek_model_profile():
     assert model.profile.get('thinking_always_enabled', False) is True
 
 
-def test_deep_seek_responses_function_call_grouping_profile_matrix() -> None:
-    # 'deepseek-v4-turbo' stands in for an unreleased SKU: the fact is set for every DeepSeek model,
-    # so a new alias cannot silently miss the grouping fix.
-    for model_name in (
-        'deepseek-chat',
-        'deepseek-reasoner',
-        'deepseek-v4-flash',
-        'deepseek-v4-pro',
-        'deepseek-v4-turbo',
-    ):
-        model = OpenAIResponsesModel(model_name, provider=DeepSeekProvider(api_key='api-key'))
-        assert model.profile.get('openai_responses_supports_interleaved_function_calls', True) is False
+# 'deepseek-v4-turbo' stands in for an unreleased SKU: the fact is set for every DeepSeek model, so a
+# new alias cannot silently miss the grouping fix.
+@pytest.mark.parametrize(
+    'model_name', ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-turbo']
+)
+def test_deep_seek_responses_function_call_grouping_profile(model_name: str) -> None:
+    model = OpenAIResponsesModel(model_name, provider=DeepSeekProvider(api_key='api-key'))
+    assert model.profile.get('openai_responses_supports_interleaved_function_calls', True) is False
+
+
+def test_openai_responses_function_call_grouping_profile_defaults_on() -> None:
     openai_model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='api-key'))
     assert openai_model.profile.get('openai_responses_supports_interleaved_function_calls', True) is True
     default_model = OpenAIResponsesModel(

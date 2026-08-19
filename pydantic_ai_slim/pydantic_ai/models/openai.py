@@ -5083,6 +5083,12 @@ def _group_settled_portable_function_calls(
     Reordering is skipped when the turn carries a native or compaction item the provider owns, or
     when any of its calls is still unanswered — an unanswered call is rejected in either order, so
     grouping cannot rescue it.
+
+    "Answered" is deliberately wire-local and stricter than `_agent_graph._dangling_tool_calls_by_response`:
+    only the requests between this response and the next one count, and repeated call IDs are
+    counted rather than shadowed. A model must not import the graph layer, and the two answer
+    different questions, so they are allowed to disagree — but only in the direction where this one
+    declines to reorder. Keep any change on that side.
     """
     parts = message.parts
     if any(isinstance(part, (NativeToolCallPart, NativeToolReturnPart, CompactionPart)) for part in parts):

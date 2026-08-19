@@ -15739,6 +15739,13 @@ async def _replay_input(
     model_request_parameters: ModelRequestParameters | None = None,
     model_settings: 'OpenAIResponsesModelSettings | None' = None,
 ) -> list[dict[str, Any]]:
+    """Render `history` to Responses input items, with the grouping profile fact on or off.
+
+    The profile is built bare rather than merged onto `openai_model_profile(...)` on purpose: an
+    empty profile leaves `openai_supports_encrypted_reasoning_content` unset, so `send_item_ids`
+    stays `False` and the cases that turn on IDs never reaching the wire keep testing that. Merging
+    a full profile in would silently change what those cases prove.
+    """
     model = OpenAIResponsesModel(
         'custom-model',
         provider=OpenAIProvider(api_key='not-used'),
@@ -15839,9 +15846,10 @@ async def test_openai_responses_function_call_grouping_preserves_active_tool_sea
             },
         ]
     )
-    assert await _replay_input(
-        history, group_function_calls=True, model_request_parameters=model_request_parameters
-    ) == snapshot(expected)
+    assert (
+        await _replay_input(history, group_function_calls=True, model_request_parameters=model_request_parameters)
+        == expected
+    )
 
 
 async def test_openai_responses_function_call_grouping_around_active_tool_search() -> None:
@@ -15990,6 +15998,20 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
             [
                 ModelResponse(
                     parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='only one of these calls gets answered'),
+                        ToolCallPart('view', {}, tool_call_id='call-b'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            None,
+            id='partially-settled-frontier',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
                         ToolCallPart('read', {}, tool_call_id='duplicate-call-id'),
                         ThinkingPart(content='one duplicate remains unsettled'),
                         ToolCallPart('view', {}, tool_call_id='duplicate-call-id'),
@@ -16024,6 +16046,10 @@ async def test_openai_responses_function_call_grouping_preserves_protected_bound
     What makes a turn off-limits is a native or compaction item the provider owns, or a call still
     waiting on its result — never an item ID, which
     `test_openai_responses_function_call_grouping_ignores_item_ids` pins as irrelevant either way.
+
+    Leaving an unanswered call alone costs nothing: DeepSeek rejects such a turn whichever order it
+    arrives in (measured — interleaved names the first call, grouped names the second), so there is
+    no order for the serializer to reach for.
     """
     assert await _replay_input(
         history, group_function_calls=True, model_settings=model_settings
