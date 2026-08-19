@@ -195,6 +195,11 @@ async def test_async_callable_instance_does_not_need_a_worker_thread():
         result = await Agent(FunctionModel(AsyncCallableFunction('from the async instance'))).run('Hello')
         assert result.output == snapshot('from the async instance')
 
+        # `is_async_callable` unwraps `functools.partial`, so a wrapped async instance stays off the executor
+        # too. Output and model name are identical on both arms, so only the executor can pin this.
+        partial_agent = Agent(FunctionModel(functools.partial(AsyncCallableFunction('from the partial'))))
+        assert (await partial_agent.run('Hello')).output == snapshot('from the partial')
+
         # The counterpart proves the executor really is unusable: a genuinely sync callable still needs it.
         sync_agent = Agent(FunctionModel(SyncCallableFunction('from the sync instance')))
         with pytest.raises(RuntimeError, match='cannot schedule new futures'):
