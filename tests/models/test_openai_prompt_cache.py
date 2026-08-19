@@ -1035,6 +1035,106 @@ async def test_openai_responses_cache_instructions_not_relocated_after_compactio
     )
 
 
+async def test_openai_responses_cache_instructions_skipped_for_user_system_prompt_role(allow_model_requests: None):
+    """A `'user'` system prompt role can't be told apart from a real user turn, so the instructions
+    stay in the top-level field and the user content is left alone."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_system_prompt_role='user', openai_supports_prompt_cache_breakpoints=True),
+    )
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run(['Look at this', ImageUrl(url='https://example.com/image.png')])
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Today is 2026-08-18.'
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Look at this', 'type': 'input_text'},
+                    {'image_url': 'https://example.com/image.png', 'type': 'input_image', 'detail': 'auto'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_relocated_once_per_request_in_tool_loop(
+    allow_model_requests: None,
+):
+    """Each request in a run rebuilds `input` from the full history, so every request must carry
+    exactly one relocated copy of the instructions."""
+    tool_call = resp.ResponseFunctionToolCall(
+        id='fc_1',
+        call_id='call_1',
+        name='get_order_status',
+        arguments='{"order_id": "1234"}',
+        type='function_call',
+        status='completed',
+    )
+    mock_client = MockOpenAIResponses.create_mock([response_message([tool_call]), responses_completion()])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    @agent.tool_plain
+    def get_order_status(order_id: str) -> str:
+        return 'shipped'
+
+    await agent.run('Where is order 1234?')
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert len(requests) == 2
+    assert all('instructions' not in request for request in requests)
+    assert [request['input'] for request in requests] == snapshot(
+        [
+            [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': 'Support policies.',
+                            'prompt_cache_breakpoint': {'mode': 'explicit'},
+                        }
+                    ],
+                },
+                {'role': 'user', 'content': 'Where is order 1234?'},
+            ],
+            [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': 'Support policies.',
+                            'prompt_cache_breakpoint': {'mode': 'explicit'},
+                        }
+                    ],
+                },
+                {'role': 'user', 'content': 'Where is order 1234?'},
+                {
+                    'name': 'get_order_status',
+                    'arguments': '{"order_id": "1234"}',
+                    'call_id': 'call_1',
+                    'type': 'function_call',
+                    'id': 'fc_1',
+                },
+                {'type': 'function_call_output', 'call_id': 'call_1', 'output': 'shipped'},
+            ],
+        ]
+    )
+
+
 async def test_openai_chat_cache_instructions_with_cache_point(allow_model_requests: None):
     """Both breakpoints are sent; OpenAI writes the last four, so the instruction one is dropped first."""
     mock_client = MockOpenAI.create_mock(chat_completion())
