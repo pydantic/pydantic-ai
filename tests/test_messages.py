@@ -107,10 +107,12 @@ def test_video_url():
         pytest.param('https://youtu.be/lCdaVNyHtjU', True, id='youtu.be'),
         pytest.param('https://www.youtube.com/lCdaVNyHtjU', True, id='www.youtube.com'),
         pytest.param('https://youtube.com/lCdaVNyHtjU', True, id='youtube.com'),
-        pytest.param('https://dummy.com/video.mp4', False, id='dummy.com'),
         pytest.param('https://m.youtube.com/watch?v=lCdaVNyHtjU', True, id='m.youtube.com'),
         pytest.param('https://music.youtube.com/watch?v=lCdaVNyHtjU', True, id='music.youtube.com'),
+        pytest.param('https://dummy.com/video.mp4', False, id='dummy.com'),
         pytest.param('https://youtube.com.example.com/video.mp4', False, id='youtube.com.example.com'),
+        pytest.param('https://notyoutube.com/video.mp4', False, id='notyoutube.com'),
+        pytest.param('file:///videos/video.mp4', False, id='no-hostname'),
     ],
 )
 def test_youtube_video_url(url: str, is_youtube: bool):
