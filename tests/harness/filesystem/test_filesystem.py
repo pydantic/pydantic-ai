@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import errno
 import os
+import signal
+import stat
+from contextlib import ExitStack
 from pathlib import Path
+from types import FrameType
 
 import pytest
 from pydantic_ai import Agent
@@ -352,9 +356,71 @@ class TestReadFile:
 
 class TestWriteFile:
     async def test_write_new_file(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
-        result = await toolset.write_file('new.txt', 'new content\n')
+        content = 'h\N{LATIN SMALL LETTER E WITH ACUTE}llo\r\nnew content\n'
+        control = fs_root / 'control.txt'
+        control.write_text(content, encoding='utf-8')
+
+        result = await toolset.write_file('new.txt', content)
         assert 'Wrote' in result
-        assert (fs_root / 'new.txt').read_text() == 'new content\n'
+        target = fs_root / 'new.txt'
+        assert target.read_bytes() == control.read_bytes()
+        assert stat.S_IMODE(target.stat().st_mode) == stat.S_IMODE(control.stat().st_mode)
+
+    @pytest.mark.skipif(os.name == 'nt', reason='FIFOs require POSIX.')
+    async def test_write_existing_fifo_retries_without_blocking(
+        self, toolset: FileSystemToolset[None], fs_root: Path
+    ) -> None:
+        os.mkfifo(fs_root / 'fifo')
+
+        def fail_if_write_blocks(_: int, __: FrameType | None) -> None:
+            raise TimeoutError('write_file blocked on a FIFO')  # pragma: no cover
+
+        previous_handler = signal.signal(signal.SIGALRM, fail_if_write_blocks)
+        signal.alarm(3)
+        try:
+            with pytest.raises(ModelRetry, match="Path 'fifo' exists and is not a regular file"):
+                await toolset.write_file('fifo', 'content')
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous_handler)
+
+    async def test_write_existing_directory_retries(self, toolset: FileSystemToolset[None]) -> None:
+        with pytest.raises(ModelRetry, match="Path 'subdir' exists and is not a regular file"):
+            await toolset.write_file('subdir', 'content')
+
+    @pytest.mark.skipif(os.name == 'nt', reason='FIFOs require POSIX.')
+    @pytest.mark.parametrize('with_reader', [False, True])
+    async def test_write_rejects_fifo_swapped_before_descriptor_open(
+        self,
+        toolset: FileSystemToolset[None],
+        fs_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        with_reader: bool,
+    ) -> None:
+        target = fs_root / 'swap.txt'
+        target.write_text('ordinary file\n')
+        original_open = os.open
+        open_calls = 0
+
+        with ExitStack() as cleanup:
+
+            def swap_then_open(path: Path, flags: int, mode: int = 0o777) -> int:
+                nonlocal open_calls
+                open_calls += 1
+                if open_calls == 2:
+                    target.unlink()
+                    os.mkfifo(target)
+                    assert flags & os.O_NONBLOCK
+                    if with_reader:
+                        reader = original_open(target, os.O_RDONLY | os.O_NONBLOCK)
+                        cleanup.callback(os.close, reader)
+                return original_open(path, flags, mode)
+
+            monkeypatch.setattr(os, 'open', swap_then_open)
+            with pytest.raises(ModelRetry, match="Path 'swap.txt' exists and is not a regular file"):
+                await toolset.write_file('swap.txt', 'content')
+
+        assert open_calls == 2
 
     async def test_write_nonexistent_parent_raises(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(ModelRetry, match="Parent directory 'deep/nested' does not exist"):
@@ -363,6 +429,74 @@ class TestWriteFile:
     async def test_write_overwrite(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         await toolset.write_file('hello.txt', 'overwritten\n')
         assert (fs_root / 'hello.txt').read_text() == 'overwritten\n'
+
+    @pytest.mark.parametrize('recreated_by_peer', [False, True])
+    async def test_write_reclassifies_target_deleted_before_fallback_open(
+        self,
+        toolset: FileSystemToolset[None],
+        fs_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        recreated_by_peer: bool,
+    ) -> None:
+        target = fs_root / 'recreated.txt'
+        target.write_text('original\n')
+        original_open = os.open
+        open_calls = 0
+
+        def replace_during_open(path: Path, flags: int, mode: int = 0o777) -> int:
+            nonlocal open_calls
+            open_calls += 1
+            if open_calls == 2:
+                target.unlink()
+            elif open_calls == 3 and recreated_by_peer:
+                target.write_text('peer content\n')
+            return original_open(path, flags, mode)
+
+        monkeypatch.setattr(os, 'open', replace_during_open)
+        result = await toolset.write_file('recreated.txt', 'final content\n')
+
+        assert open_calls == (4 if recreated_by_peer else 3)
+        assert result.startswith('Wrote 14 chars')
+        assert str(fs_root) not in result
+        assert target.read_text() == 'final content\n'
+
+    async def test_write_reclassification_churn_is_private_and_bounded(
+        self, toolset: FileSystemToolset[None], fs_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = fs_root / 'churn.txt'
+        target.write_text('original\n')
+        open_calls = 0
+
+        def churn_open(path: Path, flags: int, mode: int = 0o777) -> int:
+            nonlocal open_calls
+            del mode
+            open_calls += 1
+            if flags & os.O_EXCL:
+                raise FileExistsError(errno.EEXIST, 'File exists', path)
+            raise FileNotFoundError(errno.ENOENT, 'No such file', path)
+
+        monkeypatch.setattr(os, 'open', churn_open)
+        with pytest.raises(ModelRetry) as exc_info:
+            await toolset.write_file('churn.txt', 'content')
+
+        message = str(exc_info.value)
+        assert open_calls == 6
+        assert message == "Path 'churn.txt' changed repeatedly while opening. Retry the write."
+        assert str(fs_root) not in message
+
+    @pytest.mark.skipif(os.name == 'nt', reason='POSIX mode bits are required.')
+    async def test_write_overwrite_preserves_permissions(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        target = fs_root / 'hello.txt'
+        target.chmod(0o640)
+        await toolset.write_file('hello.txt', 'overwritten\n')
+        assert stat.S_IMODE(target.stat().st_mode) == 0o640
+
+    async def test_write_through_internal_symlink(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        link = fs_root / 'link.txt'
+        link.symlink_to('hello.txt')
+        await toolset.write_file('link.txt', 'through link\n')
+        assert link.is_symlink()
+        assert (fs_root / 'hello.txt').read_text() == 'through link\n'
 
     async def test_write_conflict_detection(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         # Get current hash
@@ -376,6 +510,58 @@ class TestWriteFile:
     async def test_write_conflict_rejection(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         with pytest.raises(ModelRetry, match='Conflict'):
             await toolset.write_file('hello.txt', 'bad\n', expected_hash='wrong_hash_x')
+
+    async def test_write_expected_hash_checks_swapped_target(
+        self, toolset: FileSystemToolset[None], fs_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = fs_root / 'hash-swap.txt'
+        original = 'original\n'
+        replacement = 'replacement\n'
+        target.write_text(original)
+        original_open = os.open
+        open_calls = 0
+
+        def swap_then_open(path: Path, flags: int, mode: int = 0o777) -> int:
+            nonlocal open_calls
+            open_calls += 1
+            if open_calls == 2:
+                target.unlink()
+                target.write_text(replacement)
+            return original_open(path, flags, mode)
+
+        monkeypatch.setattr(os, 'open', swap_then_open)
+        with pytest.raises(ModelRetry, match='Conflict'):
+            await toolset.write_file('hash-swap.txt', 'updated\n', expected_hash=_content_hash(original))
+
+        assert open_calls == 2
+        assert target.read_text() == replacement
+
+    @pytest.mark.skipif(os.name == 'nt', reason='O_NOFOLLOW requires POSIX.')
+    async def test_write_rejects_symlink_swapped_before_descriptor_open(
+        self, toolset: FileSystemToolset[None], fs_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = fs_root / 'symlink-swap.txt'
+        other = fs_root / 'other.txt'
+        target.write_text('ordinary file\n')
+        other.write_text('must remain unchanged\n')
+        original_open = os.open
+        open_calls = 0
+
+        def swap_then_open(path: Path, flags: int, mode: int = 0o777) -> int:
+            nonlocal open_calls
+            open_calls += 1
+            if open_calls == 2:
+                target.unlink()
+                target.symlink_to(other)
+                assert flags & os.O_NOFOLLOW
+            return original_open(path, flags, mode)
+
+        monkeypatch.setattr(os, 'open', swap_then_open)
+        with pytest.raises(ModelRetry, match="Path 'symlink-swap.txt'.*symlink"):
+            await toolset.write_file('symlink-swap.txt', 'content')
+
+        assert open_calls == 2
+        assert other.read_text() == 'must remain unchanged\n'
 
     async def test_write_protected_blocked(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(ModelRetry, match='protected'):
@@ -951,12 +1137,12 @@ class TestWriteFileOSErrors:
             await toolset.write_file('loop', 'content')
 
     async def test_write_non_recoverable_errno_propagates(
-        self, toolset: FileSystemToolset[None], fs_root: Path, monkeypatch: pytest.MonkeyPatch
+        self, toolset: FileSystemToolset[None], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def raise_enospc(*args: object, **kwargs: object) -> None:
             raise OSError(errno.ENOSPC, 'No space left on device')
 
-        monkeypatch.setattr(Path, 'write_text', raise_enospc)
+        monkeypatch.setattr(os, 'open', raise_enospc)
         with pytest.raises(OSError, match='No space left on device'):
             await toolset.write_file('new.txt', 'content')
 
@@ -969,7 +1155,7 @@ class TestWriteFileOSErrors:
         def raise_invalid_name(*args: object, **kwargs: object) -> None:
             raise WindowsInvalidNameError(errno.EINVAL, 'The filename, directory name, or volume label is incorrect')
 
-        monkeypatch.setattr(Path, 'write_text', raise_invalid_name)
+        monkeypatch.setattr(os, 'open', raise_invalid_name)
         with pytest.raises(ModelRetry, match='path name is invalid'):
             await toolset.write_file('bad<name', 'content')
 
@@ -979,7 +1165,7 @@ class TestWriteFileOSErrors:
         def raise_einval(*args: object, **kwargs: object) -> None:
             raise OSError(errno.EINVAL, 'Invalid argument')
 
-        monkeypatch.setattr(Path, 'write_text', raise_einval)
+        monkeypatch.setattr(os, 'open', raise_einval)
         with pytest.raises(OSError, match='Invalid argument'):
             await toolset.write_file('new.txt', 'content')
 
@@ -989,7 +1175,7 @@ class TestWriteFileOSErrors:
         def raise_illegal_byte_sequence(*args: object, **kwargs: object) -> None:
             raise OSError(errno.EILSEQ, 'Illegal byte sequence')
 
-        monkeypatch.setattr(Path, 'write_text', raise_illegal_byte_sequence)
+        monkeypatch.setattr(os, 'open', raise_illegal_byte_sequence)
         with pytest.raises(ModelRetry, match='filesystem cannot represent'):
             await toolset.write_file('bad-name', 'content')
 

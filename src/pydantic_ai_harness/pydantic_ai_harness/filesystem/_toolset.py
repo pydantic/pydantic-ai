@@ -8,6 +8,7 @@ import functools
 import hashlib
 import os
 import re
+import stat
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Concatenate, ParamSpec
@@ -365,20 +366,72 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         resolved = self._safe_resolve(path, write=True)
 
-        # Optimistic concurrency: reject stale writes
-        if expected_hash is not None and resolved.is_file():
-            current = resolved.read_text(encoding='utf-8')
-            current_hash = _content_hash(current)
-            if current_hash != expected_hash:
-                raise ValueError(
-                    f'Conflict: file {path!r} has changed (expected hash:{expected_hash}, '
-                    f'got hash:{current_hash}). Re-read the file and retry.'
-                )
+        if resolved.exists() and not resolved.is_file():
+            raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
 
         if not resolved.parent.exists():
             parent_rel = str(resolved.parent.relative_to(self._root))
             raise FileNotFoundError(f"Parent directory '{parent_rel}' does not exist. Use create_directory first.")
-        resolved.write_text(content, encoding='utf-8')
+
+        # Opening without O_TRUNC lets us classify the descriptor and check the
+        # expected hash before changing the file. POSIX non-blocking mode keeps
+        # a FIFO swapped into place from waiting for a reader; O_NOFOLLOW keeps
+        # a final-component symlink swap from redirecting the descriptor. Windows
+        # has no filesystem FIFO equivalent, and O_BINARY leaves newline handling
+        # to the text wrapper just as Path.write_text does.
+        platform_flags = os.O_BINARY if os.name == 'nt' else os.O_NONBLOCK | os.O_NOFOLLOW
+        access_flags = os.O_RDWR if expected_hash is not None else os.O_WRONLY
+        created = False
+        descriptor = -1
+        try:
+            # The target can disappear after O_EXCL reports that it exists. Retry
+            # the complete atomic classification so an ordinary write still
+            # recreates it, while bounding churn from a concurrently replaced path.
+            for _ in range(3):
+                try:
+                    descriptor = os.open(resolved, access_flags | platform_flags | os.O_CREAT | os.O_EXCL, 0o666)
+                except FileExistsError:
+                    try:
+                        descriptor = os.open(resolved, access_flags | platform_flags)
+                    except FileNotFoundError:
+                        continue
+                else:
+                    created = True
+                break
+            else:
+                raise ModelRetry(f'Path {path!r} changed repeatedly while opening. Retry the write.')
+        except OSError as e:
+            if e.errno == errno.ELOOP:
+                raise ModelRetry(
+                    f'Path {path!r} encountered a symlink loop or changed to a symlink before opening.'
+                ) from e
+            if e.errno in (errno.EISDIR, errno.ENODEV, errno.ENXIO):
+                raise ModelRetry(f'Path {path!r} exists and is not a regular file.') from e
+            raise
+
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
+
+            mode = 'r+' if expected_hash is not None else 'w'
+            text_file = os.fdopen(descriptor, mode, encoding='utf-8', newline=None)
+            descriptor = -1
+            with text_file:
+                if expected_hash is not None and not created:
+                    current_hash = _content_hash(text_file.read())
+                    if current_hash != expected_hash:
+                        raise ValueError(
+                            f'Conflict: file {path!r} has changed (expected hash:{expected_hash}, '
+                            f'got hash:{current_hash}). Re-read the file and retry.'
+                        )
+
+                text_file.seek(0)
+                text_file.truncate(0)
+                text_file.write(content)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
         new_hash = _content_hash(content)
         lines = len(content.splitlines())
         return f'Wrote {len(content)} chars ({lines} lines) to {path}. [hash:{new_hash}]'
