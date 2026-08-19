@@ -72,7 +72,7 @@ async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelRespon
 def test_simple():
     agent = Agent(FunctionModel(return_last))
     result = agent.run_sync('Hello')
-    assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
+    assert result.output == snapshot("content='Hello' source=None part_kind='user-prompt' message_count=1")
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -82,8 +82,8 @@ def test_simple():
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
-                usage=RequestUsage(input_tokens=51, output_tokens=3),
+                parts=[TextPart(content="content='Hello' source=None part_kind='user-prompt' message_count=1")],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -93,7 +93,7 @@ def test_simple():
     )
 
     result2 = agent.run_sync('World', message_history=result.all_messages())
-    assert result2.output == snapshot("content='World' part_kind='user-prompt' message_count=3")
+    assert result2.output == snapshot("content='World' source=None part_kind='user-prompt' message_count=3")
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
@@ -103,8 +103,8 @@ def test_simple():
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
-                usage=RequestUsage(input_tokens=51, output_tokens=3),
+                parts=[TextPart(content="content='Hello' source=None part_kind='user-prompt' message_count=1")],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -117,8 +117,8 @@ def test_simple():
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
-                usage=RequestUsage(input_tokens=52, output_tokens=6),
+                parts=[TextPart(content="content='World' source=None part_kind='user-prompt' message_count=3")],
+                usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -477,7 +477,7 @@ def test_deps_init():
 def test_model_arg():
     agent = Agent()
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
-    assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
+    assert result.output == snapshot("content='Hello' source=None part_kind='user-prompt' message_count=1")
 
     with pytest.raises(
         RuntimeError, match=re.escape('`model` must either be set on the agent or included when calling it.')

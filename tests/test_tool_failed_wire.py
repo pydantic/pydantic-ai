@@ -227,6 +227,10 @@ async def test_openai_chat_failed_tool_return_keeps_files_out_of_error() -> None
         {
             'role': 'user',
             'content': [
+                {
+                    'text': '<pydantic_ai:tool_return tool_name="tool" tool_call_id="call_1" />',
+                    'type': 'text',
+                },
                 {'text': 'This is file report:', 'type': 'text'},
                 {'image_url': {'url': 'https://example.com/image.png'}, 'type': 'image_url'},
             ],

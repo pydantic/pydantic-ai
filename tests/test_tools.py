@@ -29,6 +29,7 @@ from pydantic_ai import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
+    ToolReturnContentSource,
     ToolReturnPart,
     UserError,
     UserPromptPart,
@@ -2282,10 +2283,12 @@ def test_parallel_tool_return_with_deferred():
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
+                        source=ToolReturnContentSource(tool_name='get_price', tool_call_id='get_price_apple'),
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content='The price of pear is 10.0.',
+                        source=ToolReturnContentSource(tool_name='get_price', tool_call_id='get_price_pear'),
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2380,10 +2383,12 @@ def test_parallel_tool_return_with_deferred():
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
+                        source=ToolReturnContentSource(tool_name='get_price', tool_call_id='get_price_apple'),
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content='The price of pear is 10.0.',
+                        source=ToolReturnContentSource(tool_name='get_price', tool_call_id='get_price_pear'),
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2414,6 +2419,7 @@ def test_parallel_tool_return_with_deferred():
                     ),
                     UserPromptPart(
                         content='I bought a banana',
+                        source=ToolReturnContentSource(tool_name='buy', tool_call_id='buy_banana'),
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2423,7 +2429,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=137, output_tokens=36),
+                usage=RequestUsage(input_tokens=158, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2457,6 +2463,7 @@ def test_parallel_tool_return_with_deferred():
                     ),
                     UserPromptPart(
                         content='I bought a banana',
+                        source=ToolReturnContentSource(tool_name='buy', tool_call_id='buy_banana'),
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2466,7 +2473,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=137, output_tokens=36),
+                usage=RequestUsage(input_tokens=158, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2552,15 +2559,24 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='The price of apple is 10.0.',
+                        content="""\
+<pydantic_ai:tool_return tool_name="get_price" tool_call_id="get_price_apple" />
+The price of apple is 10.0.\
+""",
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='The price of pear is 10.0.',
+                        content="""\
+<pydantic_ai:tool_return tool_name="get_price" tool_call_id="get_price_pear" />
+The price of pear is 10.0.\
+""",
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='I bought a banana',
+                        content="""\
+<pydantic_ai:tool_return tool_name="buy" tool_call_id="buy_banana" />
+I bought a banana\
+""",
                         timestamp=IsDatetime(),
                     ),
                 ],
