@@ -1,11 +1,12 @@
 """Tests in a worker process share the main-thread OTel context, so an `attach` without a matching
 `detach` in one test is visible to every later test in that worker. The `fresh_logfire` fixture
-guards against this by running each test in a clean context; these two tests pin that behavior.
+guards against this by resetting the context to its pre-test snapshot at teardown, so no leak
+outlives the test that made it; these two tests pin that behavior.
 
 They must run in order on the same worker (hence the shared `xdist_group`): the first deliberately
-leaks a non-sampled active span, the second asserts spans are still recorded. Without the fixture's
-clean context, parent-based sampling marks the second test's spans unsampled and exporters silently
-drop them, which surfaced as `context_subtree()` returning an empty tree in `tests/evals/test_otel.py`.
+leaks a non-sampled active span, the second asserts spans are still recorded. Without that reset,
+parent-based sampling marks the second test's spans unsampled and exporters silently drop them,
+which surfaced as `context_subtree()` returning an empty tree in `tests/evals/test_otel.py`.
 """
 
 from __future__ import annotations as _annotations
