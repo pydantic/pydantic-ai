@@ -16228,7 +16228,7 @@ provider-owned item follows
                         'content': [
                             {'text': 'provider-owned message follows', 'type': 'output_text', 'annotations': []}
                         ],
-                        'type': message.__qualname__,
+                        'type': 'message',
                         'status': 'completed',
                     },
                     {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
