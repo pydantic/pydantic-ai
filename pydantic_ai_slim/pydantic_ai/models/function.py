@@ -1,13 +1,12 @@
 from __future__ import annotations as _annotations
 
-import inspect
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 from typing_extensions import assert_never, overload
 
@@ -125,7 +124,9 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-        function_name = self.function.__name__ if self.function is not None else ''
+        function_name = (
+            getattr(self.function, '__name__', type(self.function).__name__) if self.function is not None else ''
+        )
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
@@ -158,11 +159,16 @@ class FunctionModel(Model):
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
 
-        if inspect.iscoroutinefunction(self.function):
-            response = await self.function(messages, agent_info)
+        if _utils.is_async_callable(self.function):
+            response = await cast(Callable[..., Awaitable[ModelResponse]], self.function)(messages, agent_info)
         else:
             # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
-            response_ = await _utils.await_maybe(await _utils.run_in_executor(self.function, messages, agent_info))
+            response_ = await _utils.await_maybe(
+                cast(
+                    ModelResponse | Awaitable[ModelResponse],
+                    await _utils.run_in_executor(self.function, messages, agent_info),
+                )
+            )
             assert isinstance(response_, ModelResponse), response_
             response = response_
         response.model_name = self._model_name

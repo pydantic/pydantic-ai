@@ -7,6 +7,7 @@ from datetime import timezone
 import pydantic_core
 import pytest
 from pydantic import BaseModel
+from pytest_mock import MockerFixture
 
 from pydantic_ai import (
     Agent,
@@ -141,6 +142,21 @@ def test_sync_function_returning_coroutine():
     agent = Agent(FunctionModel(sync_returning_coroutine))
     result = agent.run_sync('Hello')
     assert result.output == snapshot('coroutine awaited')
+
+
+class AsyncCallableModel:
+    async def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('async callable awaited directly')])
+
+
+async def test_async_callable_instance_does_not_use_executor(mocker: MockerFixture):
+    run_in_executor = mocker.patch('pydantic_ai.models.function._utils.run_in_executor')
+    agent = Agent(FunctionModel(AsyncCallableModel()))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'async callable awaited directly'
+    run_in_executor.assert_not_called()
 
 
 async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
