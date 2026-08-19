@@ -51,24 +51,23 @@ OutputDataT = TypeVar('OutputDataT')
 _CACHE_FILE_LOCK = threading.Lock()
 
 
+class _ChatConfigInsertionFound(Exception):
+    pass
+
+
 class _ChatConfigInsertionParser(HTMLParser):
-    def __init__(self, source: str):
+    def __init__(self):
         super().__init__(convert_charrefs=False)
-        self._line_starts = [0, *(index + 1 for index, character in enumerate(source) if character == '\n')]
-        self.doctype_end: int | None = None
-        self.first_tag_start: int | None = None
+        self.position: tuple[int, int, int] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if self.first_tag_start is None:
-            self.first_tag_start = self._offset()
+        self.position = (*self.getpos(), 0)
+        raise _ChatConfigInsertionFound
 
     def handle_decl(self, decl: str) -> None:
-        if self.doctype_end is None and decl.lower().startswith('doctype'):
-            self.doctype_end = self._offset() + len(decl) + 3
-
-    def _offset(self) -> int:
-        line, column = self.getpos()
-        return self._line_starts[line - 1] + column
+        if decl.lower().startswith('doctype'):
+            self.position = (*self.getpos(), len(decl) + 3)
+            raise _ChatConfigInsertionFound
 
 
 def _normalize_public_path(path: str, parameter: str) -> str:
@@ -92,12 +91,18 @@ def _inject_chat_config(content: bytes, *, base_path: str, api_path: str) -> byt
     bootstrap = f'<script>window.PYDANTIC_AI_CHAT_CONFIG={config};</script>'.encode()
 
     source = content.decode('latin-1')
-    parser = _ChatConfigInsertionParser(source)
-    parser.feed(source)
-    insertion_point = min(
-        (point for point in (parser.doctype_end, parser.first_tag_start) if point is not None),
-        default=len(content),
-    )
+    parser = _ChatConfigInsertionParser()
+    try:
+        parser.feed(source)
+    except _ChatConfigInsertionFound:
+        assert parser.position is not None
+        line, column, trailing_characters = parser.position
+        insertion_point = 0
+        for _ in range(line - 1):
+            insertion_point = source.index('\n', insertion_point) + 1
+        insertion_point += column + trailing_characters
+    else:
+        insertion_point = len(content)
 
     return content[:insertion_point] + bootstrap + content[insertion_point:]
 
