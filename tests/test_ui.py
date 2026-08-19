@@ -234,6 +234,14 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
         yield f'<error type={error.__class__.__name__!r}>{str(error)}</error>'
 
 
+class PartEndRecordingEventStream(UIEventStream[None, PartEndEvent, None, str]):
+    def encode_event(self, event: PartEndEvent) -> str:
+        return repr(event)
+
+    async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[PartEndEvent]:
+        yield event
+
+
 async def test_run_stream_text_and_thinking():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -460,9 +468,7 @@ async def test_event_stream_error_closes_open_tool_call():
         yield PartStartEvent(
             index=0, part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={'query': 'pydantic'})
         )
-        yield PartDeltaEvent(
-            index=0, delta=ToolCallPartDelta(args_delta='{"query": "pydantic"}', tool_call_id='call_1')
-        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'page': 1}, tool_call_id='call_1'))
         raise RuntimeError('boom')
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
@@ -474,7 +480,7 @@ async def test_event_stream_error_closes_open_tool_call():
             '<stream>',
             '<response>',
             "<tool-call name='my_tool'>{'query': 'pydantic'}",
-            '{"query": "pydantic"}',
+            "{'page': 1}",
             "</tool-call name='my_tool'>",
             "<error type='RuntimeError'>boom</error>",
             '</response>',
@@ -918,6 +924,43 @@ async def test_run_stream_on_cancel():
     assert completions == []
     assert cancellations == [event_stream.cancelled]
     assert cancellations[0].all_messages()
+
+
+@pytest.mark.parametrize(
+    ('part', 'deltas', 'expected_part'),
+    [
+        pytest.param(
+            TextPart(content='The'),
+            [TextPartDelta(content_delta=' quick brown fox'), TextPartDelta(content_delta=' jumps over')],
+            TextPart(content='The quick brown fox jumps over'),
+            id='text',
+        ),
+        pytest.param(
+            ToolCallPart(tool_name='search', args=None, tool_call_id='call_1'),
+            [
+                ToolCallPartDelta(args_delta='{"query":', tool_call_id='call_1'),
+                ToolCallPartDelta(args_delta='"pydantic"}', tool_call_id='call_1'),
+            ],
+            ToolCallPart(tool_name='search', args='{"query":"pydantic"}', tool_call_id='call_1'),
+            id='tool-call',
+        ),
+    ],
+)
+async def test_run_stream_cancelled_part_end_contains_accumulated_deltas(
+    part: TextPart | ToolCallPart,
+    deltas: list[TextPartDelta | ToolCallPartDelta],
+    expected_part: TextPart | ToolCallPart,
+):
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        for delta in deltas:
+            yield PartDeltaEvent(index=0, delta=delta)
+        raise RunCancelled('The agent run was cancelled.')
+
+    event_stream = PartEndRecordingEventStream(run_input=None)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == [PartEndEvent(index=0, part=expected_part)]
 
 
 async def test_run_stream_on_cancel_not_called_for_success_or_error():

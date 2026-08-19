@@ -221,6 +221,16 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
+                elif isinstance(event, PartDeltaEvent):
+                    match event.delta, self._open_part:
+                        case TextPartDelta() as delta, TextPart() as part:
+                            self._open_part = delta.apply(part)
+                        case ThinkingPartDelta() as delta, ThinkingPart() as part:
+                            self._open_part = delta.apply(part)
+                        case ToolCallPartDelta() as delta, (ToolCallPart() | NativeToolCallPart()) as part:
+                            self._open_part = delta.apply(part)
+                        case _:
+                            pass
                 elif isinstance(event, PartEndEvent):
                     # Only one part is open at a time, so this end is for `_open_part` (or it's already
                     # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
