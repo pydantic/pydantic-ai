@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 import tempfile
 import threading
 from collections.abc import Sequence
@@ -13,6 +15,7 @@ import anyio.to_thread
 import httpx2
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
@@ -45,6 +48,50 @@ OutputDataT = TypeVar('OutputDataT')
 # Cache operations run in worker threads. Serialize reads and atomic replacement because Windows
 # may reject replacing a destination file while another thread has it open for reading.
 _CACHE_FILE_LOCK = threading.Lock()
+_OPENING_HEAD_RE = re.compile(rb'<head(?:\s[^>]*)?>', re.IGNORECASE)
+_OPENING_SCRIPT_RE = re.compile(rb'<script(?:\s|>)', re.IGNORECASE)
+
+
+def _normalize_public_path(path: str, parameter: str) -> str:
+    if not path.startswith('/') or path.startswith('//') or any(character in path for character in '\\?#\t\n\r'):
+        raise UserError(
+            f"Invalid `{parameter}` {path!r}. Use an absolute same-origin path such as '/chat/' "
+            'without a query or fragment.'
+        )
+    return f'{path.rstrip("/")}/'
+
+
+def _first_uncommented_match(content: bytes, pattern: re.Pattern[bytes]) -> re.Match[bytes] | None:
+    lower_content = content.lower()
+    search_from = 0
+    while match := pattern.search(content, search_from):
+        comment_start = lower_content.find(b'<!--', search_from)
+        if comment_start == -1 or match.start() < comment_start:
+            return match
+        comment_end = lower_content.find(b'-->', comment_start + 4)
+        if comment_end == -1:
+            return None
+        search_from = comment_end + 3
+    return None
+
+
+def _inject_chat_config(content: bytes, *, base_path: str, api_path: str) -> bytes:
+    config = json.dumps(
+        {'basePath': base_path, 'apiPath': api_path},
+        ensure_ascii=True,
+        separators=(',', ':'),
+    )
+    config = config.replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
+    bootstrap = f'<script>window.PYDANTIC_AI_CHAT_CONFIG={config};</script>'.encode()
+
+    if head_match := _first_uncommented_match(content, _OPENING_HEAD_RE):
+        insertion_point = head_match.end()
+    elif script_match := _first_uncommented_match(content, _OPENING_SCRIPT_RE):
+        insertion_point = script_match.start()
+    else:
+        insertion_point = len(content)
+
+    return content[:insertion_point] + bootstrap + content[insertion_point:]
 
 
 async def _get_cache_dir() -> Path:
@@ -172,6 +219,9 @@ def create_web_app(
     html_source: str | Path | None = None,
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
     allowed_hosts: Sequence[str] | None = None,
+    *,
+    base_path: str | None = None,
+    api_path: str | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -206,17 +256,26 @@ def create_web_app(
             with a `421`, so that a website cannot reach the UI on your machine by pointing a
             hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host, only
             if something in front of the app already authenticates requests.
+        base_path: Public same-origin directory for conversation URLs and browser navigation.
+            Defaults to the request's ASGI `root_path`. This only configures browser URLs; it does
+            not mount the returned app at this path.
+        api_path: Public same-origin directory containing the `configure` and `chat` endpoints.
+            Defaults to `<root_path>/api/`. This only configures browser requests; it does not
+            change the returned app's internal `/api` routes.
 
     Returns:
         A configured Starlette application ready to be served
 
     Raises:
-        UserError: If an `allowed_hosts` entry is not a hostname, `*.example.com`, or `*`.
+        UserError: If an `allowed_hosts` entry is not a hostname, `*.example.com`, or `*`, or if a
+            public path override is not an absolute same-origin path.
     """
     # Normalized here rather than left to the middleware so a bad pattern is reported from this call
     # instead of from the first request: Starlette builds its middleware stack lazily. Normalizing is
     # idempotent, so the middleware doing it again over the same list is a no-op.
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
+    normalized_base_path = _normalize_public_path(base_path, 'base_path') if base_path is not None else None
+    normalized_api_path = _normalize_public_path(api_path, 'api_path') if api_path is not None else None
 
     api_app = create_api_app(
         agent=agent,
@@ -238,6 +297,12 @@ def create_web_app(
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
         content = await _get_ui_html(html_source)
+        root_path = _normalize_public_path(request.scope.get('root_path') or '/', 'root_path')
+        content = _inject_chat_config(
+            content,
+            base_path=normalized_base_path or root_path,
+            api_path=normalized_api_path or f'{root_path}api/',
+        )
 
         return HTMLResponse(
             content=content,

@@ -65,6 +65,13 @@ def _fake_cache_dir(path: Path) -> Callable[[], Awaitable[Path]]:
     return get_cache_dir
 
 
+def _chat_config(html: str) -> dict[str, str]:
+    prefix = 'window.PYDANTIC_AI_CHAT_CONFIG='
+    start = html.index(prefix) + len(prefix)
+    end = html.index(';</script>', start)
+    return json.loads(html[start:end])
+
+
 def test_agent_to_web():
     """Test the Agent.to_web() method."""
     agent = Agent('test')
@@ -287,7 +294,7 @@ def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _stub_cdn_fetch(monkeypatch, b'<html>Test UI</html>')
 
 
-def test_chat_app_index_endpoint(isolated_ui_cache: None):
+def test_chat_app_index_endpoint(isolated_ui_cache: None, tmp_path: Path):
     """Test that the index endpoint serves HTML with proper caching headers."""
     agent = Agent('test')
     app = create_web_app(agent)
@@ -299,6 +306,109 @@ def test_chat_app_index_endpoint(isolated_ui_cache: None):
         assert 'cache-control' in response.headers
         assert response.headers['cache-control'] == 'public, max-age=3600'
         assert len(response.content) > 0
+        assert _chat_config(response.text) == {'basePath': '/', 'apiPath': '/api/'}
+
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    assert cache_file.read_bytes() == b'<html>Test UI</html>'
+
+
+def test_chat_app_uses_mount_root_path(isolated_ui_cache: None):
+    agent = Agent('test')
+    outer_app = Starlette()
+    outer_app.mount('/demo', agent.to_web())
+
+    with TestClient(outer_app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/demo/conversation-id')
+        assert response.status_code == 200
+        assert _chat_config(response.text) == {'basePath': '/demo/', 'apiPath': '/demo/api/'}
+        assert client.get('/demo/api/configure').status_code == 200
+
+
+def test_chat_app_uses_proxy_root_path(isolated_ui_cache: None):
+    app = create_web_app(Agent('test'))
+
+    with TestClient(app, base_url=LOCAL_BASE_URL, root_path='/demo') as client:
+        response = client.get('/')
+        assert response.status_code == 200
+        assert _chat_config(response.text) == {'basePath': '/demo/', 'apiPath': '/demo/api/'}
+
+
+def test_agent_to_web_public_path_overrides(tmp_path: Path):
+    source = b"""<!doctype html>
+<html><head><script type="module" src="/assets/app.js"></script></head></html>"""
+    html_file = tmp_path / 'index.html'
+    html_file.write_bytes(source)
+    app = Agent('test').to_web(base_path='/chat', api_path='/services/agent-api', html_source=html_file)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL, root_path='/ignored') as client:
+        response = client.get('/')
+
+    assert _chat_config(response.text) == {'basePath': '/chat/', 'apiPath': '/services/agent-api/'}
+    assert response.text.index('window.PYDANTIC_AI_CHAT_CONFIG=') < response.text.index('type="module"')
+    assert html_file.read_bytes() == source
+
+
+def test_chat_app_public_path_overrides_are_independent(isolated_ui_cache: None):
+    app = create_web_app(Agent('test'), base_path='/browser')
+
+    with TestClient(app, base_url=LOCAL_BASE_URL, root_path='/proxy') as client:
+        response = client.get('/')
+
+    assert _chat_config(response.text) == {'basePath': '/browser/', 'apiPath': '/proxy/api/'}
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        'relative',
+        '//other.example/path',
+        'https://other.example/path',
+        '/path?query',
+        '/path#fragment',
+        '/path\\part',
+        '/\t/other.example/path',
+        '/\n/other.example/path',
+        '/\r/other.example/path',
+    ],
+)
+@pytest.mark.parametrize('parameter', ['base_path', 'api_path'])
+def test_chat_app_rejects_non_same_origin_path(parameter: Literal['base_path', 'api_path'], path: str):
+    with pytest.raises(UserError, match=f'Invalid `{parameter}`'):
+        if parameter == 'base_path':
+            create_web_app(Agent('test'), base_path=path)
+        else:
+            create_web_app(Agent('test'), api_path=path)
+
+
+def test_chat_app_bootstrap_serialization_is_script_safe(tmp_path: Path):
+    source = b'<!doctype html><script type="module">start()</script>'
+    html_file = tmp_path / 'index.html'
+    html_file.write_bytes(source)
+    path = '/</script><script>alert("unsafe")</script>'
+    app = create_web_app(Agent('test'), base_path=path, api_path=path, html_source=html_file)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/')
+
+    assert _chat_config(response.text) == {'basePath': f'{path}/', 'apiPath': f'{path}/'}
+    bootstrap = response.text.split('<script type="module">', 1)[0]
+    assert bootstrap.count('<script>') == 1
+    assert '</script><script>alert' not in bootstrap
+    assert '\\u003c/script\\u003e' in bootstrap
+
+
+def test_chat_app_bootstrap_ignores_html_comments(tmp_path: Path):
+    source = b'<!-- template uses <head> --><html><head><script type="module">start()</script></head></html>'
+    html_file = tmp_path / 'index.html'
+    html_file.write_bytes(source)
+    app = create_web_app(Agent('test'), html_source=html_file)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/')
+
+    assert _chat_config(response.text) == {'basePath': '/', 'apiPath': '/api/'}
+    assert response.text.index('-->') < response.text.index('window.PYDANTIC_AI_CHAT_CONFIG=')
+    assert response.text.index('window.PYDANTIC_AI_CHAT_CONFIG=') < response.text.index('type="module"')
 
 
 @pytest.mark.anyio

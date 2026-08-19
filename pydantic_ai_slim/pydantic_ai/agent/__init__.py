@@ -3803,6 +3803,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: str | None = None,
         html_source: str | Path | None = None,
         allowed_hosts: Sequence[str] | None = None,
+        base_path: str | None = None,
+        api_path: str | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -3841,9 +3843,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 with a `421`, so that a website cannot reach the UI on your machine by pointing a
                 hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host,
                 only if something in front of the app already authenticates requests.
+            base_path: Public same-origin directory for conversation URLs and browser navigation.
+                Defaults to the request's ASGI `root_path`. This only configures browser URLs; it
+                does not mount the returned app at this path.
+            api_path: Public same-origin directory containing the `configure` and `chat` endpoints.
+                Defaults to `<root_path>/api/`. This only configures browser requests; it does not
+                change the returned app's internal `/api` routes.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
+
+        Raises:
+            UserError: If a public path override is not an absolute same-origin path.
 
         Example:
             ```python
@@ -3872,6 +3883,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             html_source=html_source,
             allowed_hosts=allowed_hosts,
+            base_path=base_path,
+            api_path=api_path,
         )
 
 

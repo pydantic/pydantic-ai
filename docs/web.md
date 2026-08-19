@@ -134,6 +134,54 @@ Every route is checked, including `/api/health`. A health check or container pro
 
 Pass `allowed_hosts=['*']` to answer to any host, but only if something in front of the app already authenticates requests. Only list domains whose subdomains you control: a wildcard for a domain where anyone can obtain a subdomain re-opens the problem.
 
+## Mounting Below a Path Prefix
+
+When the web app is [mounted](https://www.starlette.io/routing/#submounting-routes) below a path, it
+uses the request's ASGI `root_path` for both browser navigation and API requests:
+
+```python
+from starlette.applications import Starlette
+
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+app = Starlette()
+app.mount('/demo', agent.to_web())
+```
+
+The UI is then available at `/demo/`. Conversation URLs remain below `/demo/`, and the browser
+requests `/demo/api/configure` and `/demo/api/chat`.
+
+A reverse proxy that strips the public prefix should set the equivalent ASGI `root_path`. For
+example, when the proxy maps public `/demo/` requests to this app's `/`, run Uvicorn with:
+
+```bash
+uvicorn my_module:app --root-path /demo
+```
+
+If the public UI and API paths cannot be represented by `root_path`, configure them independently:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+app = agent.to_web(
+    base_path='/chat/',
+    api_path='/services/agent-api/',
+)
+```
+
+Both overrides must be absolute same-origin paths. `api_path` is the complete public directory
+containing `configure` and `chat`; the example makes the browser request
+`/services/agent-api/configure` and `/services/agent-api/chat`.
+
+These settings describe public browser routing only. They do not mount the returned app or change
+its internal `/api` routes, so the surrounding application or proxy must route the configured
+public paths to the app. An omitted override continues to derive from `root_path`; without a mount,
+proxy prefix, or override, the existing `/` and `/api/` paths are unchanged.
+
 ## Reserved Routes
 
 All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under-a-hostname). The web UI app uses the following routes which should not be overwritten:
@@ -143,7 +191,8 @@ All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under
 - `/api/configure` - Frontend configuration (GET)
 - `/api/health` - Health check (GET)
 
-The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
+When mounted, each route is relative to the mount path. You can add additional routes to the app,
+but avoid conflicts with these reserved paths.
 
 ## Custom HTML Source
 
