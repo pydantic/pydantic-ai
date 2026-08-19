@@ -4079,3 +4079,19 @@ async def test_dbos_durability_continuation_resume_from_history(dbos: DBOS) -> N
     assert result.usage.output_tokens == 6
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
+    """`DBOSAgent.run_sync()` dispatches through its own workflow, not `AbstractAgent.run_sync()`, so it carries its own guard."""
+
+    def call_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delegate', '{}')])
+
+    outer_agent = Agent(FunctionModel(call_tool))
+
+    @outer_agent.tool_plain
+    def delegate() -> str:
+        return simple_dbos_agent.run_sync('hello').output
+
+    with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
+        await outer_agent.run('delegate')

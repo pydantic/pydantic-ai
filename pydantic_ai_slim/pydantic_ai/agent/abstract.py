@@ -743,6 +743,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
+        This method cannot be used inside a synchronous tool, output function, or other function called
+        during an agent run. To delegate to another agent, make the function `async def` and
+        `await` [`self.run`][pydantic_ai.agent.AbstractAgent.run] instead. See
+        [Agent delegation](../multi-agent-applications.md#agent-delegation).
+
         Example:
         ```python
         from pydantic_ai import Agent
@@ -787,6 +792,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
+        _utils.check_no_nested_sync_run()
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1203,6 +1210,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         iterator lifecycles in stable tasks.
         You therefore can't use this method inside async code or if there's an active event loop.
 
+        Like [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], this method cannot be used inside a
+        synchronous tool, output function, or other function called during an agent run. See
+        [Agent delegation](../multi-agent-applications.md#agent-delegation).
+
         The returned [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] is a synchronous
         context manager and should be used and closed on the thread where it was created. Use a `with` block
         so the stream is cleaned up when you're done.
@@ -1263,6 +1274,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
+        _utils.check_no_nested_sync_run()
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
