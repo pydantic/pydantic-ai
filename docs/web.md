@@ -173,6 +173,10 @@ navigation; `api_path` is the complete directory containing `configure` and `cha
 describe public routing: they do not mount or move the returned app's internal routes, so the outer
 application or proxy must route those public paths to the app accordingly.
 
+At the origin root, omitted settings are not injected. The UI keeps its own build defaults, including
+defaults provided by a custom `html_source`; an explicit setting overrides only its corresponding
+value.
+
 ## Reserved Routes
 
 All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under-a-hostname). The web UI app uses the following routes which should not be overwritten:

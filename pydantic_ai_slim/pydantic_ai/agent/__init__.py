@@ -3844,11 +3844,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host,
                 only if something in front of the app already authenticates requests.
             base_path: Absolute same-origin directory for browser navigation. By default, this is
-                derived from each request's ASGI `root_path`. This configures browser URLs only; it
-                does not mount the returned app at that path.
+                derived from a non-root ASGI `root_path`; at the origin root, the UI keeps its build
+                default. This configures browser URLs only; it does not mount the returned app at
+                that path.
             api_path: Absolute same-origin directory containing the `configure` and `chat` endpoints.
-                By default, this is the request's ASGI `root_path` followed by `/api/`. This configures
-                browser requests only; it does not change the app's internal `/api` mount.
+                By default, this is a non-root ASGI `root_path` followed by `/api/`; at the origin
+                root, the UI keeps its build default. This configures browser requests only; it does
+                not change the app's internal `/api` mount.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)

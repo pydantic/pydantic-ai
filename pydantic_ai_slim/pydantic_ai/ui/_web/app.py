@@ -3,13 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import tempfile
 import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, TypeVar
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import anyio
 import anyio.to_thread
@@ -50,9 +49,7 @@ OutputDataT = TypeVar('OutputDataT')
 # may reject replacing a destination file while another thread has it open for reading.
 _CACHE_FILE_LOCK = threading.Lock()
 
-_HEAD_TAG_PATTERN = re.compile(rb'<head(?:\s[^>]*)?>', re.IGNORECASE)
-_SCRIPT_TAG_PATTERN = re.compile(rb'<script(?:\s|>)', re.IGNORECASE)
-_ILLEGAL_PATH_CHARS = frozenset('\\?#\t\n\r')
+_HTML_WHITESPACE = b'\t\n\f\r '
 
 
 async def _get_cache_dir() -> Path:
@@ -172,13 +169,85 @@ async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
 
 def _normalize_same_origin_path(path: str, parameter: str) -> str:
     """Validate and normalize a same-origin directory path."""
-    if not path.startswith('/') or path.startswith('//') or _ILLEGAL_PATH_CHARS & set(path):
+    if (
+        not path.startswith('/')
+        or path.startswith('//')
+        or any(character in '\\?#' or ord(character) < 0x20 or ord(character) == 0x7F for character in path)
+        or any(unquote(segment) in ('.', '..') for segment in path.split('/'))
+    ):
         raise UserError(
             f'Invalid `{parameter}` {path!r}. '
             'Use an absolute same-origin path starting with exactly one `/`, '
-            'without backslashes, tabs, newlines, a query, or a fragment.'
+            'without control characters, backslashes, dot segments, a query, or a fragment.'
         )
     return path if path.endswith('/') else f'{path}/'
+
+
+def _path_config(root_path: str, base_path: str | None, api_path: str | None) -> dict[str, str]:
+    if root_path not in ('', '/'):
+        root_path = _normalize_same_origin_path(root_path, 'root_path')
+        return {
+            'basePath': base_path or root_path,
+            'apiPath': api_path or f'{root_path}api/',
+        }
+
+    config: dict[str, str] = {}
+    if base_path is not None:
+        config['basePath'] = base_path
+    if api_path is not None:
+        config['apiPath'] = api_path
+    return config
+
+
+def _inject_path_config(content: bytes, config: dict[str, str]) -> bytes:
+    serialized = json.dumps(config, ensure_ascii=True, separators=(',', ':'))
+    serialized = serialized.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
+    bootstrap = f'<script>window.PYDANTIC_AI_CHAT_CONFIG={serialized};</script>'.encode()
+    position = _document_start(content)
+    return content[:position] + bootstrap + content[position:]
+
+
+def _document_start(content: bytes) -> int:
+    """Return the end of the real doctype or `html` start tag after the document preamble."""
+    bom_end = 3 if content.startswith(b'\xef\xbb\xbf') else 0
+    position = bom_end
+
+    while True:
+        while position < len(content) and content[position] in _HTML_WHITESPACE:
+            position += 1
+        if not content.startswith(b'<!--', position):
+            break
+        comment_end = content.find(b'-->', position + 4)
+        if comment_end == -1:
+            return bom_end
+        position = comment_end + 3
+
+    return _document_tag_end(content, position) or bom_end
+
+
+def _document_tag_end(content: bytes, position: int) -> int | None:
+    """Return the end of an `html` or doctype tag without stopping inside a quoted value."""
+    if content[position : position + len(b'<!doctype')].lower() == b'<!doctype':
+        name_end = position + len(b'<!doctype')
+    elif content[position : position + len(b'<html')].lower() == b'<html':
+        name_end = position + len(b'<html')
+    else:
+        return None
+
+    if name_end < len(content) and content[name_end] not in _HTML_WHITESPACE + b'>/':
+        return None
+
+    quote_character: int | None = None
+    for index in range(name_end, len(content)):
+        character = content[index]
+        if quote_character is not None:
+            if character == quote_character:
+                quote_character = None
+        elif character in b'\'"':
+            quote_character = character
+        elif character == ord('>'):
+            return index + 1
+    return None
 
 
 def create_web_app(
@@ -191,6 +260,7 @@ def create_web_app(
     html_source: str | Path | None = None,
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
     allowed_hosts: Sequence[str] | None = None,
+    *,
     base_path: str | None = None,
     api_path: str | None = None,
 ) -> Starlette:
@@ -228,11 +298,13 @@ def create_web_app(
             hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host, only
             if something in front of the app already authenticates requests.
         base_path: Absolute same-origin directory for browser navigation. By default, this is
-            derived from each request's ASGI `root_path`. This configures browser URLs only; it
-            does not mount the returned app at that path.
+            derived from a non-root ASGI `root_path`; at the origin root, the UI keeps its build
+            default. This configures browser URLs only; it does not mount the returned app at that
+            path.
         api_path: Absolute same-origin directory containing the `configure` and `chat` endpoints.
-            By default, this is the request's ASGI `root_path` followed by `/api/`. This configures
-            browser requests only; it does not change the app's internal `/api` mount.
+            By default, this is a non-root ASGI `root_path` followed by `/api/`; at the origin root,
+            the UI keeps its build default. This configures browser requests only; it does not
+            change the app's internal `/api` mount.
 
     Returns:
         A configured Starlette application ready to be served
@@ -270,24 +342,9 @@ def create_web_app(
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
         content = await _get_ui_html(html_source)
-        root_path = _normalize_same_origin_path(quote(request.scope.get('root_path', '') or '/', safe='/'), 'root_path')
-        config = json.dumps(
-            {'basePath': base_path or root_path, 'apiPath': api_path or f'{root_path}api/'},
-            ensure_ascii=True,
-            separators=(',', ':'),
-        )
-        # A JSON string may contain `</script>`, so escape every character with special meaning in
-        # HTML before embedding it in an executable script element.
-        config = config.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
-        bootstrap = f'<script>window.PYDANTIC_AI_CHAT_CONFIG={config};</script>'.encode()
-
-        if match := _HEAD_TAG_PATTERN.search(content):
-            position = match.end()
-        elif match := _SCRIPT_TAG_PATTERN.search(content):
-            position = match.start()
-        else:
-            position = 0
-        content = content[:position] + bootstrap + content[position:]
+        root_path = quote(request.scope.get('root_path', ''), safe='/')
+        if config := _path_config(root_path, base_path, api_path):
+            content = _inject_path_config(content, config)
 
         return HTMLResponse(
             content=content,
