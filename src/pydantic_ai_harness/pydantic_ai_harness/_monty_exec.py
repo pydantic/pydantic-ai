@@ -159,12 +159,25 @@ class MontyExecutor:
             # there, `run`'s cleanup would never close it.
             for cid in list(self._pending):
                 self._pre_resolved[cid] = await _await_external(self._pending.pop(cid))
+            try:
+                call = self.dispatch(name, snapshot.kwargs)
+            except Exception as exc:
+                return snapshot.resume({'exception': exc})
             # The wrapped outcome (`{'return_value': ...}` / `{'exception': ...}`) is already
             # exactly the payload `resume` expects.
-            return snapshot.resume(await _await_external(self.dispatch(name, snapshot.kwargs)))
+            return snapshot.resume(await _await_external(call))
 
         # Deferred execution -- resolved later at FutureSnapshot.
-        call = self.dispatch(name, snapshot.kwargs)
+        try:
+            call = self.dispatch(name, snapshot.kwargs)
+        except Exception as exc:
+            # `dispatch` refused the call before building its coroutine (e.g. an exhausted
+            # per-snippet budget). Deliver the error at the sandbox call site, the same way a
+            # failure raised inside the coroutine is delivered, rather than letting it abort the
+            # feed: calls that already completed keep the results the host recorded for them, and
+            # the snippet can still return them. Nothing was scheduled, so there is no task to
+            # clean up and no further work is admitted.
+            return snapshot.resume({'exception': exc})
         if self.global_sequential:
             # Keep the bare coroutine unscheduled; it's awaited one-at-a-time to avoid interleaving.
             self._pending[snapshot.call_id] = call

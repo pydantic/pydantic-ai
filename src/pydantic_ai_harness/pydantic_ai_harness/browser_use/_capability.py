@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel
 from pydantic_ai.capabilities import AbstractCapability
@@ -15,6 +14,8 @@ from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 from pydantic_ai_harness.browser_use._toolset import (
     BrowserAgentFactory,
     BrowserUseToolset,
+    _normalize_allowed_domains,  # pyright: ignore[reportPrivateUsage]
+    _normalize_profile_allowed_domains,  # pyright: ignore[reportPrivateUsage]
     default_browser_agent,
 )
 
@@ -42,31 +43,6 @@ _INSTRUCTIONS = (
     'or the task needs judgement. For deterministic, known flows, prefer scripted browser tools if available. '
     + _UNTRUSTED_CONTENT_INSTRUCTIONS
 )
-
-
-def _normalize_allowed_domain(domain: str) -> str:
-    """Make a scheme-qualified host entry safe for browser-use's URL matching."""
-    parsed = urlsplit(domain)
-    if (
-        parsed.scheme in ('http', 'https')
-        and parsed.netloc
-        and not parsed.path
-        and not parsed.query
-        and not parsed.fragment
-        and '*' not in domain
-    ):
-        return f'{domain}/*'
-    return domain
-
-
-def _normalize_profile_allowed_domains(
-    allowed_domains: list[str] | set[str] | None,
-) -> list[str] | set[str] | None:
-    """Normalize a browser profile's allowed domains without losing set semantics."""
-    if allowed_domains is None:
-        return None
-    normalized: list[str] = [_normalize_allowed_domain(domain) for domain in allowed_domains]
-    return set(normalized) if isinstance(allowed_domains, set) else normalized
 
 
 def _has_wildcard_hostname(domain_pattern: str) -> bool:
@@ -269,17 +245,20 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
 
     def _validate_sensitive_data(self) -> None:
         """Validate the mutable secret configuration before creating its toolset."""
-        effective_allowed_domains = self.allowed_domains
-        if effective_allowed_domains is not None:
-            self.allowed_domains = [_normalize_allowed_domain(domain) for domain in effective_allowed_domains]
-            effective_allowed_domains = self.allowed_domains
+        if self.allowed_domains is not None:
+            self.allowed_domains = _normalize_allowed_domains(self.allowed_domains)
         elif self.browser_profile is not None:
+            # Only when `allowed_domains` is absent: `BrowserSession` lets a non-`None`
+            # one replace the profile's list, so validating an overridden profile
+            # allowlist would reject a configuration whose effective allowlist is safe.
             normalized_allowed_domains = _normalize_profile_allowed_domains(self.browser_profile.allowed_domains)
             if normalized_allowed_domains != self.browser_profile.allowed_domains:
                 self.browser_profile = self.browser_profile.model_copy(
                     update={'allowed_domains': normalized_allowed_domains}
                 )
-            effective_allowed_domains = normalized_allowed_domains
+        effective_allowed_domains = self.allowed_domains
+        if effective_allowed_domains is None and self.browser_profile is not None:
+            effective_allowed_domains = self.browser_profile.allowed_domains
         has_restrictive_allowlist = bool(effective_allowed_domains) and not any(
             _has_wildcard_hostname(domain) for domain in effective_allowed_domains
         )

@@ -10,6 +10,7 @@ and source edge cases are exercised through the public
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
@@ -294,7 +296,7 @@ class TestConversationSearch:
             TestModel(custom_output_text='ok'),
             capabilities=[
                 StepPersistence(store=store),
-                ConversationSearch(SnapshotHistorySource(store)),
+                ConversationSearch(SnapshotHistorySource(store), scope='conversation'),
                 SlidingWindowCompaction(max_messages=2),
             ],
         )
@@ -314,7 +316,7 @@ class TestConversationSearch:
             TestModel(custom_output_text='reply'),
             capabilities=[
                 StepPersistence(store=store),
-                ConversationSearch(SnapshotHistorySource(store)),
+                ConversationSearch(SnapshotHistorySource(store), scope='conversation'),
                 SummarizingCompaction(
                     max_messages=2,
                     keep_messages=1,
@@ -337,7 +339,9 @@ class TestConversationSearch:
 
     async def test_recall_through_agent_tool(self) -> None:
         store = InMemoryStepStore()
-        await _seed_run(store, 'past-run', [_user('the ZEBRA passphrase is secret')])
+        await _seed_run(
+            store, 'past-run', [_user('the ZEBRA passphrase is secret')], conversation_id='test-conversation'
+        )
         calls: list[int] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -349,9 +353,9 @@ class TestConversationSearch:
 
         agent: Agent[None, str] = Agent(
             FunctionModel(model_fn),
-            capabilities=[ConversationSearch(SnapshotHistorySource(store))],
+            capabilities=[ConversationSearch(SnapshotHistorySource(store), scope='conversation')],
         )
-        result = await agent.run('find it')
+        result = await agent.run('find it', conversation_id='test-conversation')
         returned = next(
             str(part.content)
             for message in result.all_messages()
@@ -362,7 +366,9 @@ class TestConversationSearch:
 
     async def test_capability_params_flow_into_the_toolset(self) -> None:
         store = InMemoryStepStore()
-        await _seed_run(store, 'r1', [_user(f'needle entry {i} filler') for i in range(5)])
+        await _seed_run(
+            store, 'r1', [_user(f'needle entry {i} filler') for i in range(5)], conversation_id='test-conversation'
+        )
         calls: list[int] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -373,9 +379,11 @@ class TestConversationSearch:
 
         agent: Agent[None, str] = Agent(
             FunctionModel(model_fn),
-            capabilities=[ConversationSearch(SnapshotHistorySource(store), max_matches=1, context_lines=0)],
+            capabilities=[
+                ConversationSearch(SnapshotHistorySource(store), scope='conversation', max_matches=1, context_lines=0)
+            ],
         )
-        result = await agent.run('recall')
+        result = await agent.run('recall', conversation_id='test-conversation')
         rendered = next(
             str(part.content)
             for message in result.all_messages()
@@ -401,9 +409,13 @@ class TestConversationSearch:
                 ),
             ],
         )
-        result = await writer.run('the CRIMSON marker is important')
-        result = await writer.run('second turn', message_history=result.all_messages())
-        result = await writer.run('third turn', message_history=result.all_messages())
+        result = await writer.run('the CRIMSON marker is important', conversation_id='test-conversation')
+        result = await writer.run(
+            'second turn', message_history=result.all_messages(), conversation_id='test-conversation'
+        )
+        result = await writer.run(
+            'third turn', message_history=result.all_messages(), conversation_id='test-conversation'
+        )
         live = ' '.join(str(part) for message in result.all_messages() for part in message.parts)
         assert 'SUMMARY TEXT' in live
 
@@ -417,9 +429,9 @@ class TestConversationSearch:
 
         searcher: Agent[None, str] = Agent(
             FunctionModel(model_fn),
-            capabilities=[ConversationSearch(SnapshotHistorySource(store))],
+            capabilities=[ConversationSearch(SnapshotHistorySource(store), scope='conversation')],
         )
-        recall = await searcher.run('what was the marker?')
+        recall = await searcher.run('what was the marker?', conversation_id='test-conversation')
         returned = next(
             str(part.content)
             for message in recall.all_messages()
@@ -431,8 +443,18 @@ class TestConversationSearch:
 
     def test_add_instructions_toggle(self) -> None:
         source = SnapshotHistorySource(InMemoryStepStore())
-        assert ConversationSearch(source).get_instructions() is not None
-        assert ConversationSearch(source, add_instructions=False).get_instructions() is None
+        assert ConversationSearch(source, scope='conversation').get_instructions() is not None
+        assert ConversationSearch(source, scope='conversation', add_instructions=False).get_instructions() is None
+
+    def test_instructions_follow_the_configured_scope(self) -> None:
+        """`all` must not inherit conversation-only wording that talks the model out of recall."""
+        source = SnapshotHistorySource(InMemoryStepStore())
+        scoped = ConversationSearch(source, scope='conversation').get_instructions()
+        store_wide = ConversationSearch(source, scope='all').get_instructions()
+        assert isinstance(scoped, str) and isinstance(store_wide, str)
+        assert 'same conversation' in scoped
+        assert 'same store' in store_wide
+        assert 'same conversation' not in store_wide
 
 
 class TestSearchTool:
@@ -484,9 +506,9 @@ class TestSearchScope:
         await _seed_run(store, 'r-bob', [_user('remind me about the passport thing')], conversation_id='conv-bob')
         return store
 
-    async def test_default_scope_spans_every_conversation(self) -> None:
+    async def test_all_scope_spans_every_conversation(self) -> None:
         source = SnapshotHistorySource(await self._two_conversation_store())
-        rendered = await _search(source, 'passport', conversation_id='conv-bob')
+        rendered = await _search(source, 'passport', scope='all', conversation_id='conv-bob')
         assert 'X99881234' in rendered
         assert 'conversation: conv-alice' in rendered
 
@@ -512,13 +534,27 @@ class TestSearchScope:
         assert 'passport' not in rendered.replace('Conversation-scoped', '')
         assert 'X99881234' not in rendered
 
+    async def test_empty_conversation_corpus_names_the_scope_without_naming_other_conversations(self) -> None:
+        """The default's common miss is a per-run id, not an unpaired `StepPersistence`."""
+        source = SnapshotHistorySource(await self._two_conversation_store())
+        rendered = await _search(source, 'passport', scope='conversation', conversation_id='conv-unseen')
+        assert 'No persisted history in this conversation yet' in rendered
+        assert '`conversation_id=`' in rendered
+        assert 'conv-alice' not in rendered
+        assert 'X99881234' not in rendered
+
+    async def test_empty_store_under_all_scope_points_at_step_persistence(self) -> None:
+        rendered = await _search(SnapshotHistorySource(InMemoryStepStore()), 'passport', scope='all')
+        assert 'No persisted conversation history to search yet' in rendered
+        assert '`StepPersistence`' in rendered
+
     async def test_conversation_scope_is_announced_in_the_tool_description(self) -> None:
         source = SnapshotHistorySource(InMemoryStepStore())
         scoped: ConversationSearchToolset[None] = ConversationSearchToolset(
             source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='conversation'
         )
         unscoped: ConversationSearchToolset[None] = ConversationSearchToolset(
-            source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
+            source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'
         )
         scoped_tools = await scoped.get_tools(_run_context())
         unscoped_tools = await unscoped.get_tools(_run_context())
@@ -527,8 +563,8 @@ class TestSearchScope:
         assert 'only the current conversation' in scoped_description
         assert 'only the current conversation' not in unscoped_description
 
-    async def test_capability_scope_reaches_the_tool(self) -> None:
-        """The end-to-end path: `ConversationSearch(scope=...)` through `Agent` to the tool result."""
+    async def test_capability_default_scope_reaches_the_tool(self) -> None:
+        """The end-to-end path defaults to keeping another conversation out of the tool result."""
         store = await self._two_conversation_store()
         agent = Agent(
             TestModel(call_tools=['search_conversation_history']),
@@ -546,8 +582,112 @@ class TestSearchScope:
         assert 'conv-alice' not in returned
         assert 'X99881234' not in returned
 
-    def test_scope_default_is_store_wide(self) -> None:
-        assert ConversationSearch(SnapshotHistorySource(InMemoryStepStore())).scope == 'all'
+    async def test_conversation_scope_follows_a_message_history_chain(self) -> None:
+        """A follow-up run inherits the id from `message_history`, so it reaches the run behind it.
+
+        Pins the resolution order the docs describe: explicit argument, then the most recent
+        `conversation_id` on `message_history`, then a fresh id. Without the inherited id the
+        follow-up would be its own conversation and recall nothing.
+        """
+        store = InMemoryStepStore()
+        capabilities = [
+            StepPersistence(store=store),
+            ConversationSearch(SnapshotHistorySource(store), scope='conversation'),
+        ]
+        writer = Agent(TestModel(), capabilities=capabilities)
+        first = await writer.run('the ZEBRA passphrase is secret')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(part.part_kind == 'tool-return' for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('search_conversation_history', {'query': 'ZEBRA'})])
+
+        reader = Agent(FunctionModel(model_fn), capabilities=capabilities)
+        threaded = await reader.run('find it', message_history=first.all_messages())
+        returned = [
+            str(part.content)
+            for message in threaded.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'search_conversation_history'
+        ]
+        assert any('ZEBRA' in rendered for rendered in returned)
+
+        detached = await reader.run('find it')
+        detached_returned = next(
+            str(part.content)
+            for message in detached.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'search_conversation_history'
+        )
+        assert 'ZEBRA' not in detached_returned
+
+    def test_unset_scope_resolves_to_conversation_and_warns(self) -> None:
+        """The default moved from `all` to `conversation`, and nothing else would say so.
+
+        A caller who relied on the old default keeps working with a narrower corpus rather
+        than erroring, so the change is invisible without the warning.
+        """
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with pytest.warns(HarnessDeprecationWarning) as record:
+            capability = ConversationSearch(source)
+        assert capability.scope is None
+        assert capability.effective_scope == 'conversation'
+        message = str(record[0].message)
+        assert "scope='all'" in message
+        assert "scope='conversation'" in message
+
+    def test_unset_scope_warns_once_per_instance(self) -> None:
+        """Per instance, not per search: warning on every tool invocation would be noise."""
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with pytest.warns(HarnessDeprecationWarning) as record:
+            capability = ConversationSearch(source)
+            capability.get_toolset()
+            capability.get_toolset()
+            capability.get_instructions()
+        assert len(record) == 1
+
+    def test_unset_toolset_scope_warns(self) -> None:
+        """The toolset is public and its default moved too, so it announces the same change."""
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with pytest.warns(HarnessDeprecationWarning):
+            ConversationSearchToolset[None](
+                source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
+            )
+
+    def test_explicit_scope_never_warns(self) -> None:
+        """Choosing either value opts out of the warning; neither value is deprecated."""
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')  # any warning at all fails this test
+            assert ConversationSearch(source, scope='conversation').effective_scope == 'conversation'
+            assert ConversationSearch(source, scope='all').effective_scope == 'all'
+            ConversationSearch(source, scope='conversation').get_toolset()
+            ConversationSearchToolset[None](
+                source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'
+            )
+
+    async def test_explicit_all_scope_still_searches_store_wide(self) -> None:
+        """The opt-out has to actually restore the old behavior, not just silence the warning."""
+        store = await self._two_conversation_store()
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(part.part_kind == 'tool-return' for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('search_conversation_history', {'query': 'passport'})])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[ConversationSearch(SnapshotHistorySource(store), scope='all')],
+        )
+        result = await agent.run('find the passport detail', conversation_id='conv-bob')
+        returned = next(
+            str(part.content)
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'search_conversation_history'
+        )
+        assert 'X99881234' in returned
+        assert 'conv-alice' in returned
 
     async def test_context_window_stays_within_run(self) -> None:
         store = InMemoryStepStore()
@@ -754,22 +894,22 @@ class TestConfigValidation:
     def test_invalid_tuning_is_rejected(self) -> None:
         source = SnapshotHistorySource(InMemoryStepStore())
         with pytest.raises(ValueError, match=re.escape('max_matches must be non-negative, got -1.')):
-            ConversationSearch(source, max_matches=-1).get_toolset()
+            ConversationSearch(source, scope='conversation', max_matches=-1).get_toolset()
         with pytest.raises(ValueError, match=re.escape('context_lines must be non-negative, got -1.')):
-            ConversationSearch(source, context_lines=-1).get_toolset()
+            ConversationSearch(source, scope='conversation', context_lines=-1).get_toolset()
         with pytest.raises(ValueError, match=re.escape('bm25_k1 must be a non-negative finite number, got -1.0.')):
-            ConversationSearch(source, bm25_k1=-1.0).get_toolset()
+            ConversationSearch(source, scope='conversation', bm25_k1=-1.0).get_toolset()
         # `nan` and `inf` pass an ordering check and would poison every score instead.
         with pytest.raises(ValueError, match='bm25_k1 must be a non-negative finite number'):
-            ConversationSearch(source, bm25_k1=float('nan')).get_toolset()
+            ConversationSearch(source, scope='conversation', bm25_k1=float('nan')).get_toolset()
         with pytest.raises(ValueError, match='bm25_k1 must be a non-negative finite number'):
-            ConversationSearch(source, bm25_k1=float('inf')).get_toolset()
+            ConversationSearch(source, scope='conversation', bm25_k1=float('inf')).get_toolset()
         with pytest.raises(ValueError, match=re.escape('bm25_b must be between 0.0 and 1.0, got nan.')):
-            ConversationSearch(source, bm25_b=float('nan')).get_toolset()
+            ConversationSearch(source, scope='conversation', bm25_b=float('nan')).get_toolset()
         with pytest.raises(ValueError, match=re.escape('bm25_b must be between 0.0 and 1.0, got 1.5.')):
-            ConversationSearch(source, bm25_b=1.5).get_toolset()
+            ConversationSearch(source, scope='conversation', bm25_b=1.5).get_toolset()
         with pytest.raises(ValueError, match=re.escape('bm25_b must be between 0.0 and 1.0, got -0.5.')):
-            ConversationSearch(source, bm25_b=-0.5).get_toolset()
+            ConversationSearch(source, scope='conversation', bm25_b=-0.5).get_toolset()
 
     async def test_negative_k1_would_have_divided_by_zero(self) -> None:
         # The guard's reason for existing: k1=-1 with b=0 zeroes the BM25 denominator
@@ -784,6 +924,7 @@ class TestConfigValidation:
                 context_lines=5,
                 bm25_k1=-1.0,
                 bm25_b=0.0,
+                scope='conversation',
             )
 
     async def test_negative_max_matches_no_longer_uncaps_output(self) -> None:

@@ -111,11 +111,11 @@ writes can read them. Two fields control what the subprocess sees:
 
 | Field | Effect |
 |---|---|
-| `env` | Explicit environment that replaces inheritance entirely. The subprocess sees exactly these variables and nothing else. |
+| `env` | Explicit environment that replaces inheritance for the subprocess's own environment. |
 | `denied_env_patterns` | Glob patterns (`fnmatch`) for variable names stripped from the base environment. Mirrors `denied_commands`. |
 
-`env` is a hard boundary for inherited environment variables: set it and inherited secrets cannot reach the
-subprocess at all (you supply `PATH` and anything else the command needs).
+`env` prevents inherited variables from appearing in the subprocess's own
+environment (you supply `PATH` and anything else the command needs).
 `denied_env_patterns` is a denylist over the inherited environment -- lighter to
 configure when you only need to drop a few known-sensitive names. The two
 compose: when both are set, patterns also filter the explicit `env`. Leaving
@@ -145,14 +145,14 @@ credentials, so it is opt-in.
 
 `env` is enforced at spawn, not applied as a post-hoc filter on a running
 process: the subprocess starts with exactly the resolved environment (your
-`env`, minus anything `denied_env_patterns` removes from it). That makes it a
-real boundary for inherited environment variables, unlike the best-effort command denylist. It is not a full
-security boundary: a command running under the same OS identity can still read
-host files -- use OS-level isolation for that. The flip side is that a
-pattern broad enough to strip `PATH` or `HOME`, or an `env` that omits them, can
-break command resolution. External commands may still run via the shell's
-built-in default `PATH` on some systems, but don't rely on it -- set `PATH`
-explicitly when you replace the environment.
+`env`, minus anything `denied_env_patterns` removes from it). Neither control is
+a security boundary. A command running under the same OS identity may still
+read the parent process's environment through system interfaces such as Linux
+procfs, as well as other host files. Use OS-level isolation when commands are
+untrusted. The flip side is that a pattern broad enough to strip `PATH` or
+`HOME`, or an `env` that omits them, can break command resolution. External
+commands may still run via the shell's built-in default `PATH` on some systems,
+but don't rely on it -- set `PATH` explicitly when you replace the environment.
 
 ## Background processes
 

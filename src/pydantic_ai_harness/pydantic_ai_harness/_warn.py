@@ -1,8 +1,10 @@
-"""Deprecation warning machinery for renamed modules and classes.
+"""Deprecation warning machinery for renamed APIs and changed defaults.
 
 Used by the compatibility shims left behind by the capability naming pass: a renamed
 module keeps a shim package at its old path, and a renamed class keeps a module-level
 `__getattr__` alias, both emitting `HarnessDeprecationWarning` through these helpers.
+`warn_default_changed` covers the other breaking shape: an option whose default moved,
+where existing callers keep working but get different behavior.
 """
 
 from __future__ import annotations
@@ -35,6 +37,28 @@ def warn_module_renamed(old: str, new: str) -> None:
         f'Update your imports; this compatibility shim will be removed in a future release.',
         category=HarnessDeprecationWarning,
         stacklevel=2,
+    )
+
+
+def warn_default_changed(*, owner: str, option: str, old: str, new: str, impact: str, stacklevel: int = 4) -> None:
+    """Emit a `HarnessDeprecationWarning` that `<owner>`'s `<option>` default changed.
+
+    For an option whose default moved to a value that changes behavior rather than breaking
+    the call: existing code still runs, so nothing surfaces unless it is said out loud. Call
+    this only when the caller left the option unset, so an explicit choice of either value
+    stays silent, and call it once per construction rather than per use.
+
+    `impact` states what the new default does differently; the rest of the message names the
+    value that restores the old behavior and the value that keeps the new one without warning.
+    `stacklevel` defaults to reporting the caller of a dataclass `__post_init__`.
+    """
+    warnings.warn(
+        f'`{owner}` now defaults to `{option}={new!r}`; it previously defaulted to `{option}={old!r}`. '
+        f'{impact} '
+        f'Pass `{option}={old!r}` to restore the previous behavior, or `{option}={new!r}` to keep '
+        f'the new one and silence this warning.',
+        category=HarnessDeprecationWarning,
+        stacklevel=stacklevel,
     )
 
 

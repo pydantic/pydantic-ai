@@ -1515,7 +1515,7 @@ class TestResolveEnv:
         assert resolved == {'FOO': 'bar'}
 
     def test_explicit_empty_env_is_not_inheritance(self, shell_dir: Path) -> None:
-        # {} is a hard boundary (no vars), distinct from None (inherit all).
+        # {} produces no child environment vars, distinct from None (inherit all).
         assert _env_toolset(shell_dir, env={})._resolve_env() == {}
 
     def test_patterns_strip_from_inherited(self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

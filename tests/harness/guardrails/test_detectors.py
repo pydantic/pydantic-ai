@@ -8,12 +8,16 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    BinaryContent,
+    CachePoint,
     ModelMessage,
     ModelResponse,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -502,10 +506,231 @@ class TestForToolResultText:
 
         assert verdict == GuardrailResult.replace('key: [redacted:openai_key]')
 
-    def test_an_unmodified_tool_return_is_allowed(self):
-        verdict = for_tool_result_text(redact_secrets)(self._info(ToolReturn('no secret')))
+    @pytest.mark.parametrize('content', [None, 'safe context'])
+    def test_an_unmodified_tool_return_is_allowed(self, content: str | None):
+        verdict = for_tool_result_text(redact_secrets)(self._info(ToolReturn('no secret', content=content)))
 
         assert verdict == GuardrailResult.allow()
+
+    def test_tool_return_content_reaches_the_detector(self):
+        """Parts that do not run into one another keep their own boundaries and metadata."""
+        image = BinaryContent(data=b'image', media_type='image/png')
+        result = ToolReturn(
+            'safe summary',
+            content=[f'key: {_OPENAI_KEY}\n', TextContent(content=f'context: {_OPENAI_KEY}', metadata={'m': 1}), image],
+        )
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn(
+                'safe summary',
+                content=[
+                    'key: [redacted:openai_key]\n',
+                    TextContent(content='context: [redacted:openai_key]', metadata={'m': 1}),
+                    image,
+                ],
+            )
+        )
+
+    def test_a_part_that_runs_into_the_next_is_sanitized_as_one_string(self):
+        """`{_OPENAI_KEY}context` is one token to the model, so the span cannot keep its boundaries."""
+        result = ToolReturn('safe summary', content=[f'key: {_OPENAI_KEY}', f'context: {_OPENAI_KEY}'])
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn('safe summary', content=['key: [redacted:openai_key]: [redacted:openai_key]'])
+        )
+
+    def test_a_redacted_fragment_cannot_hide_the_rest_of_a_match(self):
+        """Redacting the fragment holding `sk-` would strip the anchor and leave the tail exposed."""
+        head, tail = f'sk-{"a" * 20}', 'a' * 12
+        split = for_tool_result_text(redact_secrets)(self._info(ToolReturn('safe summary', content=[head, tail])))
+        whole = for_tool_result_text(redact_secrets)(self._info(ToolReturn('safe summary', content=head + tail)))
+
+        assert split == GuardrailResult.replace(ToolReturn('safe summary', content=['[redacted:openai_key]']))
+        assert whole == GuardrailResult.replace(ToolReturn('safe summary', content='[redacted:openai_key]'))
+
+    def test_a_redacted_fragment_cannot_hide_a_terminal_verdict(self):
+        """The joined pass reads the original span, so a rewrite cannot erase what would block."""
+
+        def redact_then_block(text: str) -> GuardrailResult:
+            if 'ZZ' in text:
+                return GuardrailResult.block('Blocked term.')
+            return GuardrailResult.replace(text.replace('aZ', '-')) if 'aZ' in text else GuardrailResult.allow()
+
+        verdict = for_tool_result_text(redact_then_block)(self._info(ToolReturn('safe summary', content=['aZ', 'Z'])))
+
+        assert verdict.action == 'block'
+
+    @pytest.mark.parametrize(
+        'content',
+        ['safe context', ['safe context'], ['safe context', BinaryContent(data=b'image', media_type='image/png')]],
+        ids=['string', 'one_part', 'one_part_beside_binary'],
+    )
+    def test_one_stretch_of_text_reaches_the_detector_once(self, content: str | list[UserContent]):
+        """A stretch of one part has no boundary to straddle, so a joined pass would only repeat it.
+
+        `TextDetector` is a public extension point, so a stateful or per-call-billed detector
+        would otherwise see these three equivalent shapes differently.
+        """
+        seen: list[str] = []
+
+        def record(text: str) -> GuardrailResult:
+            seen.append(text)
+            return GuardrailResult.allow()
+
+        for_tool_result_text(record)(self._info(ToolReturn('safe summary', content=content)))
+
+        assert seen == ['safe summary', 'safe context']
+
+    def test_adjacent_text_parts_add_a_single_joined_call(self):
+        """The joined pass runs once per stretch, over the per-part rewrites."""
+        seen: list[str] = []
+
+        def record(text: str) -> GuardrailResult:
+            seen.append(text)
+            return GuardrailResult.allow()
+
+        image = BinaryContent(data=b'image', media_type='image/png')
+        for_tool_result_text(record)(self._info(ToolReturn('safe summary', content=['a', 'b', image, 'c'])))
+
+        assert seen == ['safe summary', 'a', 'b', 'ab', 'c']
+
+    def test_a_secret_split_across_adjacent_parts_is_redacted(self):
+        """A model reads adjacent text parts as one span, so neither half matches on its own."""
+        image = BinaryContent(data=b'image', media_type='image/png')
+        result = ToolReturn('safe summary', content=[f'key: {_OPENAI_KEY[:20]}', _OPENAI_KEY[20:], image])
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn('safe summary', content=['key: [redacted:openai_key]', image])
+        )
+
+    def test_a_secret_split_around_a_cache_point_is_redacted(self):
+        """A `CachePoint` splits the parts but not the text, since providers without caching drop it."""
+        result = ToolReturn('safe summary', content=[f'key: {_OPENAI_KEY[:20]}', CachePoint(), _OPENAI_KEY[20:]])
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn('safe summary', content=[CachePoint(), 'key: [redacted:openai_key]'])
+        )
+
+    def test_a_cache_point_keeps_its_place_when_no_merge_is_needed(self):
+        result = ToolReturn('safe summary', content=[f'key: {_OPENAI_KEY}\n', CachePoint(), 'tail'])
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn('safe summary', content=['key: [redacted:openai_key]\n', CachePoint(), 'tail'])
+        )
+
+    @pytest.mark.parametrize(
+        ('content', 'expected'),
+        [
+            pytest.param(
+                [CachePoint(), f'key: {_OPENAI_KEY[:20]}', _OPENAI_KEY[20:]],
+                [CachePoint(), 'key: [redacted:openai_key]'],
+                id='leading_marker_stays_in_front',
+            ),
+            pytest.param(
+                [f'key: {_OPENAI_KEY[:20]}', CachePoint(), _OPENAI_KEY[20:]],
+                [CachePoint(), 'key: [redacted:openai_key]'],
+                id='interior_marker_moves_in_front',
+            ),
+            pytest.param(
+                [f'key: {_OPENAI_KEY[:20]}', _OPENAI_KEY[20:], CachePoint()],
+                ['key: [redacted:openai_key]', CachePoint()],
+                id='trailing_marker_stays_behind',
+            ),
+        ],
+    )
+    def test_a_merge_keeps_each_cache_point_on_a_side_it_still_has(
+        self, content: list[UserContent], expected: list[UserContent]
+    ):
+        """Only a marker between two merged texts lost its split; the outer ones still have a side.
+
+        Moving a trailing marker in front would push text that was already inside the cached
+        prefix back out of it, narrowing the caller's boundary for no reason.
+        """
+        verdict = for_tool_result_text(redact_secrets)(self._info(ToolReturn('safe summary', content=content)))
+
+        assert verdict == GuardrailResult.replace(ToolReturn('safe summary', content=expected))
+
+    def test_text_around_a_binary_part_is_not_joined(self):
+        """A `BinaryContent` is real content between the two texts, so joining them would invent adjacency."""
+        image = BinaryContent(data=b'image', media_type='image/png')
+        result = ToolReturn('safe summary', content=[f'key: {_OPENAI_KEY[:20]}', image, _OPENAI_KEY[20:]])
+
+        assert for_tool_result_text(redact_secrets)(self._info(result)) == GuardrailResult.allow()
+
+    def test_a_split_secret_keeps_the_metadata_of_the_part_it_merges_into(self):
+        result = ToolReturn(
+            'safe summary',
+            content=[
+                TextContent(content=f'key: {_OPENAI_KEY[:20]}', metadata={'source': 'vault'}),
+                TextContent(content=_OPENAI_KEY[20:]),
+            ],
+        )
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn(
+                'safe summary',
+                content=[TextContent(content='key: [redacted:openai_key]', metadata={'source': 'vault'})],
+            )
+        )
+
+    def test_a_blocked_term_split_across_adjacent_parts_is_blocked(self):
+        verdict = for_tool_result_text(blocked_keywords(['blocked']))(
+            self._info(ToolReturn('safe summary', content=['blo', 'cked context']))
+        )
+
+        assert verdict.action == 'block'
+
+    def test_content_that_starts_with_a_non_text_part_is_scanned(self):
+        """The text run opens after the image rather than at index 0."""
+        image = BinaryContent(data=b'image', media_type='image/png')
+        result = ToolReturn('safe summary', content=[image, f'key: {_OPENAI_KEY}'])
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn('safe summary', content=[image, 'key: [redacted:openai_key]'])
+        )
+
+    def test_unmodified_multipart_content_is_allowed(self):
+        result = ToolReturn('no secret', content=['safe context', TextContent(content='more context')])
+
+        assert for_tool_result_text(redact_secrets)(self._info(result)) == GuardrailResult.allow()
+
+    def test_a_return_value_detector_verdict_is_preserved(self):
+        verdict = for_tool_result_text(blocked_keywords(['blocked']))(
+            self._info(ToolReturn('blocked summary', content='safe context'))
+        )
+
+        assert verdict.action == 'block'
+
+    @pytest.mark.parametrize(
+        'content', ['blocked context', ['safe context', 'blocked context']], ids=['string', 'multipart']
+    )
+    def test_a_content_detector_verdict_is_preserved(self, content: str | list[str]):
+        verdict = for_tool_result_text(blocked_keywords(['blocked']))(
+            self._info(ToolReturn('safe summary', content=content))
+        )
+
+        assert verdict.action == 'block'
+
+    def test_a_content_detector_must_replace_with_text(self):
+        def invalid_detector(text: str) -> GuardrailResult:
+            return GuardrailResult.replace(42) if text == 'secret' else GuardrailResult.allow()
+
+        with pytest.raises(UserError, match='replace tool content with text'):
+            for_tool_result_text(invalid_detector)(self._info(ToolReturn('safe', content=['secret'])))
 
     @pytest.mark.parametrize('result', ['secret', ToolReturn('secret')])
     def test_a_text_detector_must_replace_with_text(self, result: object):
@@ -531,7 +756,7 @@ class TestForToolResultText:
 
         @agent.tool_plain
         def lookup() -> ToolReturn:
-            return ToolReturn(f'key: {_OPENAI_KEY}', content='keep this context', metadata=metadata)
+            return ToolReturn(f'key: {_OPENAI_KEY}', content=f'context: {_OPENAI_KEY}', metadata=metadata)
 
         result = await agent.run('hi')
         returns = [
@@ -541,7 +766,21 @@ class TestForToolResultText:
         assert [(part.content, part.metadata) for part in returns] == [
             ('key: [redacted:openai_key]', metadata),
         ]
-        assert 'keep this context' in str(result.all_messages())
+        assert f'context: {_OPENAI_KEY}' not in str(result.all_messages())
+        assert 'context: [redacted:openai_key]' in str(result.all_messages())
+
+    def test_allowing_a_non_text_result_skips_its_content_too(self):
+        """`on_other='allow'` is an opt-out for the whole result, not a partial scan.
+
+        A `ToolReturn` carrying a structured `return_value` is a non-text result, so its
+        `content` reaches the model unscanned. Callers who need that text checked keep
+        `on_other` at its default and guard a field of the output instead.
+        """
+        result = ToolReturn({'rows': 1}, content=f'key: {_OPENAI_KEY}')
+
+        verdict = for_tool_result_text(redact_secrets, on_other='allow')(self._info(result))
+
+        assert verdict == GuardrailResult.allow()
 
     async def test_a_non_text_tool_result_must_be_allowed_explicitly(self):
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

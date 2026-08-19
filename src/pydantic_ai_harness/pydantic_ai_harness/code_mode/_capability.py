@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import AbstractToolset
@@ -14,7 +14,7 @@ from pydantic_ai.messages import ModelResponse, NativeToolSearchReturnPart, Syst
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from typing_extensions import TypedDict
 
-from pydantic_ai_harness.code_mode._toolset import CodeModeMount, CodeModeOS, CodeModeToolset
+from pydantic_ai_harness.code_mode._toolset import CodeModeMount, CodeModeOS, CodeModeResourceLimits, CodeModeToolset
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
@@ -87,11 +87,28 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
+    max_tool_calls: int = 100
+    """Maximum nested tool calls dispatched by one `run_code` invocation.
+
+    Budget is reserved before each call is scheduled, so a snippet cannot allocate host tasks
+    beyond this many. Calls past the budget are refused at the sandbox call site.
+    """
+
     os_access: CodeModeOS | None = None
     """Give sandboxed code environment variables, the clock, and file I/O through a handler you provide; unset, they are unavailable."""
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
+
+    resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
+    """Sandbox execution limits, applied per Monty session.
+
+    `None` applies a 30-second execution and 256 MiB heap backstop. The guarantee is per snippet:
+    no single `run_code` snippet runs longer than `max_duration_secs`. It is not a run-wide budget,
+    since consecutive calls share one session allowance and any reset of the session (`restart:
+    true`, a crash, a type error, a host-side failure) starts a fresh one. `'unlimited'` removes
+    both caps.
+    """
 
     dynamic_catalog: bool = False
     """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
@@ -141,6 +158,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             wrapped=toolset,
             tool_selector=self.tools,
             max_retries=self.max_retries,
+            max_tool_calls=self.max_tool_calls,
+            resource_limits=self.resource_limits,
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
