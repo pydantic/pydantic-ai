@@ -1692,7 +1692,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # names from it — so this changes no current behavior. It keeps the filter honest against the
         # wire regardless, rather than silently dropping a block whenever the two sets diverge.
         available_tool_names = set(model_request_parameters.declared_tool_defs)
-        orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
         # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
         # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
         # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
@@ -1989,18 +1988,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == ToolSearchTool.kind:
-                                if tool_use_id in orphan_tool_search_call_ids:
-                                    # Anthropic occasionally emits a `tool_search_tool_*` server tool use
-                                    # in parallel with a client `tool_use` and ends the turn before
-                                    # delivering the corresponding `tool_search_tool_*_tool_result` block
-                                    # (see https://github.com/anthropics/anthropic-sdk-python/issues/1325). Direct API tolerates
-                                    # the unpaired call on resend (the result arrives in the next turn),
-                                    # but Bedrock 400s with `tool use ... was found without a corresponding
-                                    # tool_search_tool_*_tool_result block`. Drop the orphaned call from the
-                                    # wire payload — the model will re-search if it still wants to. We don't
-                                    # synthesize an empty result block because that would falsely tell the
-                                    # model the search ran and returned nothing.
-                                    continue
                                 # Round-trip the native variant (bm25/regex) so we don't
                                 # silently rewrite the algorithm. `_map_server_tool_use_block`
                                 # stashes it in `provider_details['strategy']`. Clients that don't
@@ -2185,6 +2172,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert_never(m)
 
+        _drop_unpaired_native_tool_calls(anthropic_messages)
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
 
@@ -3398,6 +3386,78 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     return content if isinstance(content, list) else []
 
 
+def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901
+    """Drop native tool calls that Anthropic will reject without a rendered result.
+
+    A result can arrive in a later response, or exist as a `NativeToolReturnPart` but fail to render.
+    Anthropic accepts an unpaired native call only while every later message is a user turn containing
+    only concurrent client-tool results.
+    """
+    returned_native_tool_call_ids: set[str] = set()
+    for message in anthropic_messages:
+        content = message['content']
+        assert isinstance(content, list)
+        for block in content:
+            if isinstance(block, BetaMCPToolResultBlock):
+                returned_native_tool_call_ids.add(block.tool_use_id)
+            elif is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
+                returned_native_tool_call_ids.add(tool_use_id)
+
+    suffix_is_tool_result_only = True
+    for index in range(len(anthropic_messages) - 1, -1, -1):
+        message = anthropic_messages[index]
+        content = message['content']
+        assert isinstance(content, list)
+        kept: list[BetaContentBlockParam] = []
+        for block in content:
+            # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
+            block_param = block
+            if isinstance(block, BetaMCPToolResultBlock) or not is_str_dict(block):
+                kept.append(block_param)
+                continue
+
+            unpaired = (
+                block['type'] in ('server_tool_use', 'mcp_tool_use')
+                and block['id'] not in returned_native_tool_call_ids
+            )
+            tool_search = block.get('name') in ('tool_search_tool_bm25', 'tool_search_tool_regex')
+            if unpaired and (not suffix_is_tool_result_only or tool_search):
+                # Tool search is retried instead of preserved in flight because Bedrock rejects
+                # that shape even though the direct Anthropic API accepts other native tools there.
+                # Keep a cache boundary on the nearest preceding cacheable block. Moving it
+                # forward would cache content the user placed outside the boundary. If no such
+                # block exists, the boundary disappears with the block that carried it.
+                if (cache_control := block.get('cache_control')) is not None:
+                    carriers: list[BetaContentBlockParam] = []
+                    for preceding_content in [
+                        preceding_message['content'] for preceding_message in anthropic_messages[:index]
+                    ] + [kept]:
+                        assert isinstance(preceding_content, list)
+                        for param in preceding_content:
+                            # Preserve the union type before `is_str_dict` narrows `param`.
+                            param_value = param
+                            if is_str_dict(param) and param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
+                                carriers.append(param_value)
+                    if carriers:
+                        _add_cache_control_param(carriers, cache_control)
+                continue
+            kept.append(block_param)
+
+        if len(kept) != len(content):
+            if not kept:
+                # Anthropic rejects empty messages; an assistant turn containing only the
+                # dropped call has nothing left to send.
+                del anthropic_messages[index]
+                continue
+            message['content'] = kept
+
+        suffix_is_tool_result_only = (
+            suffix_is_tool_result_only
+            and message['role'] == 'user'
+            and all(is_str_dict(block) and block['type'] == 'tool_result' for block in kept)
+        )
+
+
 def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
     """Give each `system` section a user turn to follow, if it doesn't already have one.
 
@@ -3483,31 +3543,6 @@ def _leave_cache_boundary_behind(anthropic_messages: list[BetaMessageParam], ind
     if (cache_control := last_block.pop('cache_control', None)) is None:
         return
     _add_cache_control_param(_last_message_content(anthropic_messages[:index]), cache_control)
-
-
-def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:
-    """Collect `tool_call_id`s of `NativeToolSearchCallPart`s without a paired return.
-
-    Anthropic occasionally emits a `tool_search_tool_*` server tool use alongside a
-    client `tool_use` and ends the turn before delivering the corresponding result
-    block. The result may arrive in a later `ModelResponse` (direct API), or never
-    at all (Bedrock). Anything truly unpaired must be dropped from the wire payload
-    on the next request, since Bedrock rejects orphans with `tool use ... was found
-    without a corresponding tool_search_tool_*_tool_result block`.
-
-    The pair lookup is by `tool_call_id` across *all* messages — a return part may
-    sit in a later assistant turn than the call.
-    """
-    call_ids: set[str] = set()
-    return_ids: set[str] = set()
-    for message in messages:
-        if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, NativeToolSearchCallPart) and part.tool_call_id:
-                    call_ids.add(part.tool_call_id)
-                elif isinstance(part, NativeToolSearchReturnPart) and part.tool_call_id:
-                    return_ids.add(part.tool_call_id)
-    return call_ids - return_ids
 
 
 def _normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str) -> ToolSearchArgs:
