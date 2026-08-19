@@ -2161,73 +2161,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert_never(m)
 
-        # Pair against the rendered blocks: a result can arrive in a later response, or exist as a
-        # `NativeToolReturnPart` but fail to render. Anthropic accepts an unpaired native call only
-        # while every later message is a user turn containing only concurrent client-tool results.
-        returned_native_tool_call_ids: set[str] = set()
-        for message in anthropic_messages:
-            content = message['content']
-            assert isinstance(content, list)
-            for block in content:
-                if isinstance(block, BetaMCPToolResultBlock):
-                    returned_native_tool_call_ids.add(block.tool_use_id)
-                elif is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
-                    returned_native_tool_call_ids.add(tool_use_id)
-
-        suffix_is_tool_result_only = True
-        for index in range(len(anthropic_messages) - 1, -1, -1):
-            message = anthropic_messages[index]
-            content = message['content']
-            assert isinstance(content, list)
-            kept: list[BetaContentBlockParam] = []
-            for block in content:
-                # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
-                block_param = block
-                if isinstance(block, BetaMCPToolResultBlock) or not is_str_dict(block):
-                    kept.append(block_param)
-                    continue
-
-                unpaired = (
-                    block['type'] in ('server_tool_use', 'mcp_tool_use')
-                    and block['id'] not in returned_native_tool_call_ids
-                )
-                tool_search = block.get('name') in ('tool_search_tool_bm25', 'tool_search_tool_regex')
-                if unpaired and (not suffix_is_tool_result_only or tool_search):
-                    # Tool search is retried instead of preserved in flight because Bedrock rejects
-                    # that shape even though the direct Anthropic API accepts other native tools there.
-                    # Keep a cache boundary on the nearest preceding cacheable block. Moving it
-                    # forward would cache content the user placed outside the boundary. If no such
-                    # block exists, the boundary disappears with the block that carried it.
-                    if (cache_control := block.get('cache_control')) is not None:
-                        carriers: list[BetaContentBlockParam] = []
-                        for preceding_content in [
-                            preceding_message['content'] for preceding_message in anthropic_messages[:index]
-                        ] + [kept]:
-                            assert isinstance(preceding_content, list)
-                            for param in preceding_content:
-                                # Preserve the union type before `is_str_dict` narrows `param`.
-                                param_value = param
-                                if is_str_dict(param) and param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
-                                    carriers.append(param_value)
-                        if carriers:
-                            _add_cache_control_param(carriers, cache_control)
-                    continue
-                kept.append(block_param)
-
-            if len(kept) != len(content):
-                if not kept:
-                    # Anthropic rejects empty messages; an assistant turn containing only the
-                    # dropped call has nothing left to send.
-                    del anthropic_messages[index]
-                    continue
-                message['content'] = kept
-
-            suffix_is_tool_result_only = (
-                suffix_is_tool_result_only
-                and message['role'] == 'user'
-                and all(is_str_dict(block) and block['type'] == 'tool_result' for block in kept)
-            )
-
+        _drop_unpaired_native_tool_calls(anthropic_messages)
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
 
@@ -3438,6 +3372,78 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     # Returned as-is, not copied: the caller attaches `cache_control` by mutating the block in place, so
     # it has to be the list the message actually holds.
     return content if isinstance(content, list) else []
+
+
+def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901
+    """Drop native tool calls that Anthropic will reject without a rendered result.
+
+    A result can arrive in a later response, or exist as a `NativeToolReturnPart` but fail to render.
+    Anthropic accepts an unpaired native call only while every later message is a user turn containing
+    only concurrent client-tool results.
+    """
+    returned_native_tool_call_ids: set[str] = set()
+    for message in anthropic_messages:
+        content = message['content']
+        assert isinstance(content, list)
+        for block in content:
+            if isinstance(block, BetaMCPToolResultBlock):
+                returned_native_tool_call_ids.add(block.tool_use_id)
+            elif is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
+                returned_native_tool_call_ids.add(tool_use_id)
+
+    suffix_is_tool_result_only = True
+    for index in range(len(anthropic_messages) - 1, -1, -1):
+        message = anthropic_messages[index]
+        content = message['content']
+        assert isinstance(content, list)
+        kept: list[BetaContentBlockParam] = []
+        for block in content:
+            # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
+            block_param = block
+            if isinstance(block, BetaMCPToolResultBlock) or not is_str_dict(block):
+                kept.append(block_param)
+                continue
+
+            unpaired = (
+                block['type'] in ('server_tool_use', 'mcp_tool_use')
+                and block['id'] not in returned_native_tool_call_ids
+            )
+            tool_search = block.get('name') in ('tool_search_tool_bm25', 'tool_search_tool_regex')
+            if unpaired and (not suffix_is_tool_result_only or tool_search):
+                # Tool search is retried instead of preserved in flight because Bedrock rejects
+                # that shape even though the direct Anthropic API accepts other native tools there.
+                # Keep a cache boundary on the nearest preceding cacheable block. Moving it
+                # forward would cache content the user placed outside the boundary. If no such
+                # block exists, the boundary disappears with the block that carried it.
+                if (cache_control := block.get('cache_control')) is not None:
+                    carriers: list[BetaContentBlockParam] = []
+                    for preceding_content in [
+                        preceding_message['content'] for preceding_message in anthropic_messages[:index]
+                    ] + [kept]:
+                        assert isinstance(preceding_content, list)
+                        for param in preceding_content:
+                            # Preserve the union type before `is_str_dict` narrows `param`.
+                            param_value = param
+                            if is_str_dict(param) and param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
+                                carriers.append(param_value)
+                    if carriers:
+                        _add_cache_control_param(carriers, cache_control)
+                continue
+            kept.append(block_param)
+
+        if len(kept) != len(content):
+            if not kept:
+                # Anthropic rejects empty messages; an assistant turn containing only the
+                # dropped call has nothing left to send.
+                del anthropic_messages[index]
+                continue
+            message['content'] = kept
+
+        suffix_is_tool_result_only = (
+            suffix_is_tool_result_only
+            and message['role'] == 'user'
+            and all(is_str_dict(block) and block['type'] == 'tool_result' for block in kept)
+        )
 
 
 def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
