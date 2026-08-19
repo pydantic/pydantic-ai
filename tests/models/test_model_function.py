@@ -1,11 +1,16 @@
+import functools
 import json
 import re
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import timezone
 
+import anyio
 import pydantic_core
 import pytest
+from anyio.abc import TaskStatus
+from anyio.to_thread import current_default_thread_limiter
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -141,6 +146,107 @@ def test_sync_function_returning_coroutine():
     agent = Agent(FunctionModel(sync_returning_coroutine))
     result = agent.run_sync('Hello')
     assert result.output == snapshot('coroutine awaited')
+
+
+class AsyncCallableFunction:
+    """A callable instance with an `async def __call__`, e.g. a custom model configured at construction."""
+
+    def __init__(self, text: str):
+        self.text = text
+
+    async def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.text)])
+
+
+class SyncCallableFunction:
+    def __init__(self, text: str):
+        self.text = text
+
+    def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.text)])
+
+
+class AsyncCallableStreamFunction:
+    def __init__(self, text: str):
+        self.text = text
+
+    async def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield self.text
+
+
+def test_init_callable_instance() -> None:
+    m = FunctionModel(function=AsyncCallableFunction('hello world'))
+    assert m.model_name == 'function:AsyncCallableFunction:'
+
+    m1 = FunctionModel(stream_function=AsyncCallableStreamFunction('hello world'))
+    assert m1.model_name == 'function::AsyncCallableStreamFunction'
+
+    m2 = FunctionModel(
+        function=AsyncCallableFunction('hello world'), stream_function=AsyncCallableStreamFunction('hello world')
+    )
+    assert m2.model_name == 'function:AsyncCallableFunction:AsyncCallableStreamFunction'
+
+
+@asynccontextmanager
+async def saturated_worker_threads() -> AsyncGenerator[None]:
+    """Hold every worker-thread token, so anything offloaded to a thread waits instead of running."""
+    limiter = current_default_thread_limiter()
+    total_tokens = limiter.total_tokens
+    limiter.total_tokens = 1
+
+    async def hold_token(*, task_status: TaskStatus[None]) -> None:
+        async with limiter:
+            task_status.started()
+            await anyio.sleep_forever()
+
+    try:
+        async with anyio.create_task_group() as tg:
+            await tg.start(hold_token)
+            try:
+                yield
+            finally:
+                tg.cancel_scope.cancel()
+    finally:
+        limiter.total_tokens = total_tokens
+
+
+async def test_async_callable_instance_does_not_need_a_worker_thread():
+    # A predicate that only recognizes `async def` sends an `async def __call__` to the executor, where a
+    # saturated thread pool blocks it indefinitely instead of running it on the event loop.
+    async with saturated_worker_threads():
+        agent = Agent(FunctionModel(AsyncCallableFunction('from the async instance')))
+        with anyio.fail_after(10):
+            result = await agent.run('Hello')
+        assert result.output == snapshot('from the async instance')
+
+        # The counterpart proves the pool really is saturated: a genuinely sync callable still needs a thread.
+        sync_agent = Agent(FunctionModel(SyncCallableFunction('from the sync instance')))
+        with pytest.raises(TimeoutError), anyio.fail_after(0.1):
+            await sync_agent.run('Hello')
+
+
+async def test_sync_callable_instance():
+    agent = Agent(FunctionModel(SyncCallableFunction('from the sync instance')))
+    result = await agent.run('Hello')
+    assert result.output == snapshot('from the sync instance')
+
+
+async def test_stream_callable_instance():
+    agent = Agent(FunctionModel(stream_function=AsyncCallableStreamFunction('hello world')))
+    async with agent.run_stream('Hello') as result:
+        assert await result.get_output() == snapshot('hello world')
+
+
+async def hello_named(_messages: list[ModelMessage], _agent_info: AgentInfo, *, name: str) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(f'hello {name}')])
+
+
+async def test_partial_function():
+    # `functools.partial` has no `__name__` either, so it hits the same fallback as a callable instance.
+    model = FunctionModel(functools.partial(hello_named, name='world'))
+    assert model.model_name == 'function:partial:'
+    result = await Agent(model).run('Hello')
+    assert result.output == snapshot('hello world')
 
 
 async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
