@@ -1916,9 +1916,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
-                        if (
-                            response_part.provider_name == self.system and response_part.signature is not None
-                        ):  # pragma: no branch
+                        # An empty signature (e.g. from an interrupted stream) is never valid,
+                        # so fall back to tagged text rather than triggering a 400 from the API.
+                        if response_part.provider_name == self.system and response_part.signature:
                             if response_part.id == 'redacted_thinking':
                                 assistant_content_params.append(
                                     BetaRedactedThinkingBlockParam(
