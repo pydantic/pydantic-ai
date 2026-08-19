@@ -838,7 +838,7 @@ async def test_deepseek_responses_replay_unsent_item_ids(allow_model_requests: N
     """Item IDs another provider minted never reach DeepSeek, so they don't pin the interleaved order."""
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx.Request) -> None:
+    async def capture_request(request: httpx2.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
     history = [
@@ -860,7 +860,7 @@ async def test_deepseek_responses_replay_unsent_item_ids(allow_model_requests: N
     ]
     original_history = deepcopy(history)
 
-    async with httpx.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
+    async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
         model = OpenAIResponsesModel(
             'deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=http_client)
         )
@@ -907,7 +907,7 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
     """DeepSeek accepts the grouped wire projection of complete portable history."""
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx.Request) -> None:
+    async def capture_request(request: httpx2.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
     history = [
@@ -928,7 +928,7 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
     ]
     original_history = deepcopy(history)
 
-    async with httpx.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
+    async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
         model = OpenAIResponsesModel(
             'deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=http_client)
         )
