@@ -608,7 +608,7 @@ def test_tool_return_media_is_not_silently_dropped(allow_model_requests: None):
         ]
     )
 
-    with pytest.raises(RuntimeError, match=re.escape('Cohere does not yet support multi-modal inputs.')):
+    with pytest.raises(UserError, match=re.escape('Cohere does not yet support multi-modal content in tool returns.')):
         list(CohereModel._map_user_message(request))  # pyright: ignore[reportPrivateUsage]
 
 

@@ -7,7 +7,7 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 
 from .. import ModelHTTPError, usage
 from .._utils import (
@@ -36,7 +36,6 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
-    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -385,7 +384,7 @@ class CohereModel(Model[AsyncClientV2]):
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
-        file_prompts: list[UserPromptPart] = []
+        has_multimodal_tool_return = False
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
@@ -394,7 +393,7 @@ class CohereModel(Model[AsyncClientV2]):
             elif isinstance(part, ToolReturnPart):
                 tool_text, tool_prompt = part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
                 if tool_prompt:
-                    file_prompts.append(tool_prompt)
+                    has_multimodal_tool_return = True
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
@@ -416,8 +415,8 @@ class CohereModel(Model[AsyncClientV2]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
-        for file_prompt in file_prompts:
-            yield cls._map_user_prompt(_render_tool_return_content_part(file_prompt))
+        if has_multimodal_tool_return:
+            raise UserError('Cohere does not yet support multi-modal content in tool returns.')
 
 
 def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
