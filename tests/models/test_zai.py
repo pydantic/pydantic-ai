@@ -14,6 +14,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -222,7 +223,8 @@ async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str
 
 async def test_zai_glm_5_3_reasoning_effort(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
     """On GLM-5.3, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`,
-    mapped to the levels the model accepts: `xhigh` goes out as `max`, which the model accepts.
+    mapped to the set the model accepts (`low`/`high`/`max`, per Z.AI's docs and the error message returned
+    when disabling thinking on it): `xhigh` goes out as `max`, which the model accepts.
 
     Recorded against the real Z.AI API; VCR matchers aren't sensitive to the request body, so the mapped
     wire value is asserted explicitly. The full level mapping is unit-tested in
@@ -239,8 +241,7 @@ async def test_zai_glm_5_3_reasoning_effort(allow_model_requests: None, zai_api_
         ]
     )
 
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
     assert request_body['reasoning_effort'] == 'max'
 
@@ -486,8 +487,9 @@ def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, 
     [('minimal', 'low'), ('low', 'low'), ('medium', 'high'), ('high', 'high'), ('xhigh', 'max')],
 )
 def test_zai_glm_5_3_reasoning_effort_mapping(thinking: ThinkingLevel, expected_effort: str):
-    """GLM-5.3 only accepts `low`/`high`/`max` for `reasoning_effort` (the API rejects the other unified
-    levels with error 1210), so its profile maps the unsupported levels to the nearest supported one.
+    """GLM-5.3 only accepts `low`/`high`/`max` for `reasoning_effort` (per Z.AI's docs and the error message
+    returned when disabling thinking on the model), so its profile maps the unsupported levels to the nearest
+    supported one.
 
     A unit test (not VCR) because VCR matchers aren't sensitive to the request body; the wire acceptance
     of a mapped value is covered by `test_zai_glm_5_3_reasoning_effort`.

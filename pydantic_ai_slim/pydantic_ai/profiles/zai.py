@@ -15,7 +15,8 @@ class ZaiModelProfile(ModelProfile, total=False):
     """Substitutions applied to the unified thinking effort level before it is sent as `reasoning_effort`.
 
     Levels not in the mapping are forwarded unchanged. GLM-5.2 accepts all unified levels, so it needs no
-    mapping; GLM-5.3 only accepts `low`/`high`/`max` and rejects the rest.
+    mapping; GLM-5.3 only accepts `low`/`high`/`max` (per the Z.AI docs and the error message returned when
+    disabling thinking on it), so its other unified levels are mapped.
     """
 
 
@@ -34,9 +35,10 @@ Like `_REASONING_EFFORT_MODEL_PREFIXES`, list concrete released ids only.
 """
 
 _GLM_5_3_REASONING_EFFORT_MAPPING = {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}
-"""GLM-5.3 only accepts `reasoning_effort` values `low`, `high`, and `max` (the API rejects the rest with
-error 1210), so the unified levels it doesn't accept map to the nearest supported one — the same fallback
-approach as Gemini's `MINIMAL` -> `LOW`. `xhigh` maps to `max`, which has no unified equivalent."""
+"""GLM-5.3 only accepts `reasoning_effort` values `low`, `high`, and `max` (per the Z.AI docs, and the
+'please use low, high, or max' text of the error Z.AI returns for `thinking.type: 'disabled'` on the model),
+so the unified levels it doesn't accept map to the nearest supported one — the same fallback approach as
+Gemini's `MINIMAL` -> `LOW`. `xhigh` maps to `max`, which has no unified equivalent."""
 
 
 def zai_model_profile(model_name: str) -> ModelProfile | None:
