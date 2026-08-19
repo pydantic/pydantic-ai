@@ -311,7 +311,8 @@ def create_web_app(
 
     Raises:
         UserError: If an `allowed_hosts` entry is invalid, or if `base_path` or `api_path` is not an
-            absolute same-origin directory path.
+            absolute same-origin directory path. A request whose ASGI `root_path` is neither empty
+            nor an absolute same-origin directory path also raises `UserError` (surfaced as a 500).
     """
     # Normalized here rather than left to the middleware so a bad pattern is reported from this call
     # instead of from the first request: Starlette builds its middleware stack lazily. Normalizing is

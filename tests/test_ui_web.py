@@ -609,6 +609,24 @@ def test_chat_app_uses_proxy_root_path(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.parametrize(
+    'root_path',
+    [
+        '//evil',
+        '/a/../b',
+    ],
+)
+def test_chat_app_malformed_root_path_is_server_error(monkeypatch: pytest.MonkeyPatch, root_path: str):
+    source = b'<html><head><script type="module"></script></head></html>'
+    monkeypatch.setattr(app_module, '_get_ui_html', AsyncMock(return_value=source))
+    app = create_web_app(Agent('test'))
+
+    with TestClient(app, base_url=LOCAL_BASE_URL, root_path=root_path, raise_server_exceptions=False) as client:
+        response = client.get('/')
+
+    assert response.status_code == 500
+
+
+@pytest.mark.parametrize(
     ('base_path', 'api_path', 'expected_config'),
     [
         ('/chat', None, '{"basePath":"/chat/","apiPath":"/proxy/api/"}'),
