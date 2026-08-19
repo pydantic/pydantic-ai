@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-WORKFLOW = Path(__file__).parents[1] / 'workflows' / 'docs-preview.yml'
+WORKFLOW = Path(__file__).parents[1] / 'workflows' / 'docs-navigation.yml'
 
 
 def test_privileged_dispatcher_never_executes_pull_request_code() -> None:
