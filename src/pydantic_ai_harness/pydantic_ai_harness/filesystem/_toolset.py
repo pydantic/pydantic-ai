@@ -28,6 +28,49 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
 # converts these so the agent can correct itself and continue.
 _RECOVERABLE_ERRORS = (PermissionError, FileNotFoundError, NotADirectoryError, IsADirectoryError, ValueError)
 
+_OUTSIDE_WORKSPACE = '<outside-workspace>'
+"""Shown instead of an absolute path that is not inside the workspace root."""
+
+_NOT_A_PATH = '<not-a-path>'
+"""Shown when an error's `filename` is not a path value at all."""
+
+
+def _model_safe_filename(filename: str | bytes, real_root: Path) -> str:
+    """Return the path relative to the workspace root.
+
+    Paths not inside the root become `_OUTSIDE_WORKSPACE`; values that are
+    not paths at all become `_NOT_A_PATH`.
+    """
+    try:
+        raw = os.fsdecode(filename)
+    except TypeError:
+        return _NOT_A_PATH
+    path = Path(raw)
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return path.relative_to(real_root).as_posix()
+    except ValueError:
+        pass
+    try:
+        return Path(os.path.realpath(path)).relative_to(real_root).as_posix()
+    except (ValueError, OSError):
+        return _OUTSIDE_WORKSPACE
+
+
+def _sanitize_recoverable_error(error: BaseException, real_root: Path) -> str:
+    """Render a recoverable error without exposing absolute host paths.
+
+    Errors without an OS-supplied `filename` keep their original message.
+    OS errors keep `errno` and `strerror`, with the path rewritten relative
+    to `real_root` (see `_model_safe_filename` for the fallback placeholders).
+    """
+    if not isinstance(error, OSError) or error.filename is None:
+        return str(error)
+
+    filename = _model_safe_filename(error.filename, real_root)
+    return f'[Errno {error.errno}] {error.strerror}: {filename!r}'
+
 
 def _recoverable(
     fn: Callable[Concatenate[FileSystemToolset, _P], Awaitable[str]],
@@ -39,7 +82,8 @@ def _recoverable(
         try:
             return await fn(self, *args, **kwargs)
         except _RECOVERABLE_ERRORS as e:
-            raise ModelRetry(str(e)) from e
+            real_root = self._real_root  # pyright: ignore[reportPrivateUsage]
+            raise ModelRetry(_sanitize_recoverable_error(e, real_root)) from e
 
     return wrapper
 
@@ -542,6 +586,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 parts.append(f'hash: {_content_hash(text)}')
 
         if is_link:
-            parts.append(f'symlink_target: {os.readlink(original)}')
+            target = _model_safe_filename(os.readlink(original), self._real_root)
+            parts.append(f'symlink_target: {target}')
 
         return '\n'.join(parts)
