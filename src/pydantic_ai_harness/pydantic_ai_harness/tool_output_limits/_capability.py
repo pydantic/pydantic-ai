@@ -24,6 +24,7 @@ from pydantic_ai_harness.tool_output_limits._bands import (
     Truncate,
 )
 from pydantic_ai_harness.tool_output_limits._payload import (
+    Serializer,
     is_binary,
     json_sketch,
     measure,
@@ -144,6 +145,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
     """Prompt template for `Summarize`. Must contain `{tool_name}` and `{output}`."""
 
+    serializer: Serializer | None = None
+    """Render a structured (non-string, non-binary) return to the text that is measured,
+    previewed, spilled, and read back. When unset, structured returns render as compact
+    JSON, which puts the whole value on one line; the `indented_json` and `json_lines`
+    presets make large spills pageable by line through `read_tool_result`. A return that
+    stays under every band threshold passes through as the original object, so the
+    serialized text is only model-visible once a band triggers."""
+
     _store: OverflowStore = field(init=False, repr=False)
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
@@ -223,7 +232,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return original
 
         bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(return_value, suffix='')
+        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
         value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
@@ -275,11 +284,24 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return spilled_out
         return value_text
 
-    def _make_unit(self, value: ToolReturnContent, *, suffix: str) -> _Unit:
+    def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""
         if is_binary(value):
             return _Unit(binary=True, text=None, data=to_bytes(value), value=value, suffix=suffix)
-        text = to_text(value)
+        if self.serializer is not None and not isinstance(value, str):
+            try:
+                text = _ensure_text(self.serializer(value))
+            except Exception:
+                # An after-hook exception would abort the run and lose the tool's output,
+                # so a broken serializer degrades to the default rendering instead.
+                warnings.warn(
+                    f'ToolOutputLimits: tool {tool_name!r} serializer raised or returned non-text; '
+                    f'falling back to compact JSON.',
+                    stacklevel=2,
+                )
+                text = to_text(value)
+        else:
+            text = to_text(value)
         if self.strip_ansi:
             text = strip_ansi(text)
         return _Unit(binary=False, text=text, data=text.encode('utf-8'), value=value, suffix=suffix)
@@ -317,7 +339,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if content is None:
             return None, None
         if isinstance(content, str):
-            return await self._reduce(ctx, call, bands, self._make_unit(content, suffix='.content'))
+            return await self._reduce(
+                ctx, call, bands, self._make_unit(content, tool_name=call.tool_name, suffix='.content')
+            )
 
         text = ''.join(part for part in content if isinstance(part, str))
         size = measure(text, over_tokens=self.over_tokens, tokenizer=self.tokenizer)
@@ -435,6 +459,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         )
         run = await agent.run(prompt, usage=ctx.usage)
         return run.output.strip()
+
+
+def _ensure_text(rendered: object) -> str:
+    """Reject non-`str` serializer output (e.g. `to_json` bytes without `.decode()`)."""
+    if not isinstance(rendered, str):
+        raise TypeError(f'serializer returned {type(rendered).__name__}')
+    return rendered
 
 
 def _select_action(bands: Sequence[Band], size: int) -> Action | None:

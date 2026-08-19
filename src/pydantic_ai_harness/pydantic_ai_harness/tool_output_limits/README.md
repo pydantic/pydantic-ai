@@ -107,6 +107,31 @@ callable for accuracy. `Truncate.max_chars` is always characters -- truncation i
 character operation regardless of the threshold unit. Set `strip_ansi=True` to strip ANSI
 escape sequences from text returns before measuring and reducing.
 
+## Pageable structured spills
+
+A spilled structured return is stored as compact JSON: one long line. `read_tool_result`
+pages by line, so page 1 returns the whole payload and page 2 is empty. Setting `serializer`
+stores the value in a layout with real lines instead:
+
+```python
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, indented_json, json_lines
+
+ToolOutputLimits(serializer=indented_json)  # one field per line
+ToolOutputLimits(serializer=json_lines)  # one record per line
+```
+
+Use `json_lines` for tools that return lists of records: line N is record N, so page offsets
+and `pattern` matches line up with whole records. Anything that is not a list-like sequence
+falls back to `indented_json` -- including a list wrapped in a dict, so return the list
+directly for per-record paging. Use `indented_json` for everything else.
+
+Any `(value) -> str` callable works too, but prefer the presets: they escape the Unicode
+line separators (U+0085/U+2028/U+2029) that would otherwise knock read-back offsets off the
+line grid. The serialized text is also what gets measured, so an indented layout can cross
+a size band that compact JSON would not. Strings and binary returns are never serialized,
+returns below the smallest band pass through untouched, and a serializer that raises or
+returns non-text warns and falls back to compact JSON rather than losing the tool output.
+
 ## Spill store
 
 Spilled payloads go through the narrow `OverflowStore` protocol. The default `LocalFileStore`

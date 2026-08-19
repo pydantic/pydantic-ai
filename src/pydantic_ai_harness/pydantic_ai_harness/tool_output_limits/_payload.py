@@ -72,6 +72,39 @@ def to_text(value: object) -> str:
     return to_json(value).decode('utf-8', errors='replace')
 
 
+# A serializer callable for structured (non-string, non-binary) tool returns:
+# `(value) -> text`, where the text is what gets measured, previewed, spilled, and read back.
+Serializer = Callable[[object], str]
+
+# `str.splitlines` treats these as line breaks, but JSON only requires escaping control
+# characters below 0x20, so `to_json` emits them raw inside string values. Escaping them
+# keeps read-back line slicing aligned with the lines the presets rendered.
+_LINE_SEPARATOR_ESCAPES = {0x85: '\\u0085', 0x2028: '\\u2028', 0x2029: '\\u2029'}
+
+
+def indented_json(value: object) -> str:
+    """Serializer preset: render `value` as indented JSON, one field per line.
+
+    A spilled payload rendered this way can be paged and `pattern`-filtered by line
+    through `read_tool_result`; compact JSON puts the whole value on one line.
+    """
+    return to_json(value, indent=2).decode('utf-8', errors='replace').translate(_LINE_SEPARATOR_ESCAPES)
+
+
+def json_lines(value: object) -> str:
+    """Serializer preset: render a sequence as JSON Lines, one compact JSON value per line.
+
+    Line N is item N, so `read_tool_result` offsets and limits map directly to items and a
+    `pattern` match returns whole items; an empty sequence renders as an empty string.
+    Values that are not sequences (or that are strings or byte payloads) fall back to
+    `indented_json`.
+    """
+    if _is_text_sequence(value):
+        rendered = '\n'.join(to_json(item).decode('utf-8', errors='replace') for item in value)
+        return rendered.translate(_LINE_SEPARATOR_ESCAPES)
+    return indented_json(value)
+
+
 def measure(text: str, *, over_tokens: bool, tokenizer: Callable[[str], int] | None) -> int:
     """Measure `text` in characters (default) or estimated tokens (`over_tokens=True`)."""
     if not over_tokens:
@@ -98,7 +131,7 @@ def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
 
 
 def _is_text_sequence(value: object) -> TypeGuard[Sequence[object]]:
-    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray, memoryview))
 
 
 def _sketch_mapping(mapping: Mapping[object, object]) -> str:
