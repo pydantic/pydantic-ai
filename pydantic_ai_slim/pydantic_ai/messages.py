@@ -350,7 +350,7 @@ class VideoUrl(FileUrl):
         """True if the URL has a YouTube domain."""
         parsed = urlparse(self.url)
         hostname = parsed.hostname
-        return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
+        return hostname in ('youtu.be', 'youtube.com') or (hostname is not None and hostname.endswith('.youtube.com'))
 
     @property
     def format(self) -> VideoFormat:
