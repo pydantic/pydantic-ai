@@ -11383,6 +11383,23 @@ async def test_run_level_one_off_capability_supersedes_the_agent_level_one() -> 
     assert offered == [['run_level']]
 
 
+async def test_two_one_off_capabilities_in_one_run_layer_collide() -> None:
+    """Everything passed to a single `run` is one layer, so duplicates there are the same mistake as
+    duplicates on `Agent(...)` — not an override of one by the other."""
+    agent = Agent(FunctionModel(lambda _messages, _info: make_text_response('done')))
+    with pytest.raises(UserError, match="Capability id 'thinking' is used by multiple capabilities"):
+        await agent.run('hi', capabilities=[Thinking(effort='low'), Thinking(effort='high')])
+
+
+async def test_capability_reused_across_layers_keeps_its_last_occurrence() -> None:
+    """The same instance may appear on the agent and be passed again for the run. Supersession is by
+    occurrence, so the final one survives instead of every occurrence being dropped."""
+    shared = Thinking(effort='low')
+    agent = Agent(FunctionModel(lambda _messages, _info: make_text_response('done')), capabilities=[shared])
+    with pytest.warns(CapabilityOverriddenWarning, match="Capability id 'thinking'"):
+        await agent.run('hi', capabilities=[shared])
+
+
 async def test_distinct_ids_keep_both_one_off_capabilities() -> None:
     """Naming them apart is the documented way to run two, and it must not warn."""
     offered: list[list[str]] = []

@@ -2901,18 +2901,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
         resolved_layers = await _utils.gather(*(cap.for_run(ctx) for cap in run_layers))
-        for layer in resolved_layers:
-            layer_capabilities: list[AbstractCapability[AgentDepsT]] = []
-            layer.apply(layer_capabilities.append)
-            _validate_capability_ids(layer_capabilities)
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        # Two layers, not one per capability: everything the agent carries, and everything supplied
+        # for this run. Ids must be unique *within* each — `run(capabilities=[Thinking(), Thinking()])`
+        # is as much a mistake as the same list on `Agent(...)` — while a run-level id supersedes an
+        # agent-level one.
+        layer_groups = [resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras]
+        for group in layer_groups:
+            _validate_capability_ids([leaf for layer in group for leaf in leaf_capabilities(layer)])
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
         )
-        run_capability = _compose_run_layers(resolved_layers)
+        run_capability = _compose_run_layers(layer_groups)
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -4032,7 +4035,7 @@ def _layer_model_settings(
 
 
 def _compose_run_layers(
-    layers: Sequence[AbstractCapability[AgentDepsT]],
+    layer_groups: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
 ) -> AbstractCapability[AgentDepsT]:
     """Compose the run's capability layers, letting a later layer's `id` supersede an earlier one.
 
@@ -4044,30 +4047,42 @@ def _compose_run_layers(
     composed tree agree, and matches the last-wins `unique_id` dedup already applied to native tools
     across layers.
 
-    Duplicates *within* a layer are rejected by `_validate_capability_ids` before this runs, so any
-    collision here spans layers and is the user's own composition. Pydantic AI's own injected
+    Supersession is tracked by *occurrence*, not by object: the same capability instance may appear
+    in more than one group, and only the occurrences before its last one are dropped. Every id
+    therefore keeps exactly one occurrence, so the result is never empty.
+
+    Duplicates *within* a group are rejected by `_validate_capability_ids` before this runs, so any
+    collision here spans groups and is the user's own composition. Pydantic AI's own injected
     capabilities can't reach it: each is added only when one of its type isn't already present.
     """
-    leaves_by_layer = [leaf_capabilities(layer) for layer in layers]
-    superseded: set[int] = set()
-    last_by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
-    for leaves in leaves_by_layer:
-        for leaf in leaves:
-            if leaf.id is None:
-                continue
-            if (previous := last_by_id.get(leaf.id)) is not None and previous is not leaf:
-                superseded.add(id(previous))
+    leaves_by_group = [[leaf for layer in group for leaf in leaf_capabilities(layer)] for group in layer_groups]
+    last_occurrence: dict[str, tuple[int, int]] = {
+        leaf.id: (group_index, leaf_index)
+        for group_index, leaves in enumerate(leaves_by_group)
+        for leaf_index, leaf in enumerate(leaves)
+        if leaf.id is not None
+    }
+
+    kept: list[AbstractCapability[AgentDepsT]] = []
+    superseded = False
+    for group_index, leaves in enumerate(leaves_by_group):
+        for leaf_index, leaf in enumerate(leaves):
+            if leaf.id is not None and last_occurrence[leaf.id] != (group_index, leaf_index):
+                superseded = True
                 warnings.warn(
                     f'Capability id {leaf.id!r} is used by a capability supplied for this run and by '
-                    f'one on the agent, so the agent-level {type(previous).__name__} is replaced. '
-                    f'Pass a distinct `id` to keep both, or `id=None` to derive separate ids.',
+                    f'one on the agent, so the agent-level {type(leaf).__name__} is replaced. Pass a '
+                    f'distinct `id` to keep both, or `id=None` to derive separate ids.',
                     exceptions.CapabilityOverriddenWarning,
                     stacklevel=2,
                 )
-            last_by_id[leaf.id] = leaf
+                continue
+            kept.append(leaf)
+
     if not superseded:
+        # Compose from the layers themselves so an untouched run keeps the exact structure it had.
+        layers = [layer for group in layer_groups for layer in group]
         return CombinedCapability(layers) if len(layers) > 1 else layers[0]
-    kept = [leaf for leaves in leaves_by_layer for leaf in leaves if id(leaf) not in superseded]
     return CombinedCapability(kept) if len(kept) > 1 else kept[0]
 
 
