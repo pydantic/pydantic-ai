@@ -176,6 +176,17 @@ jobs:
       # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
 
+  # Validate the exact PR revision with Unified Docs' production navigation
+  # compiler. This is deliberately separate from docs-assets: images can be
+  # valid while navigation points to a page supplied by another repository that
+  # has not landed yet.
+  unified-docs-contract:
+    if: github.event_name == 'pull_request'
+    uses: pydantic/unified-docs/.github/workflows/validate-upstream-docs.yml@eb7333758b7eed848adbe2fcd0c37b514450b366
+    with:
+      library: ai
+      source: pydantic/pydantic-ai@${{ github.event.pull_request.head.sha }}
+
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
@@ -563,6 +574,7 @@ jobs:
       - lint
       - mypy
       - docs-assets
+      - unified-docs-contract
       - test
       - test-lowest-versions
       - test-temporal-latest
