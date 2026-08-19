@@ -184,7 +184,7 @@ class ToolOutputAvailablePart(BaseUIPart):
     input: Any | None = None
     output: Any | None = None
     provider_executed: bool | None = None
-    call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
     approval: ToolApproval | None = None
 
@@ -200,7 +200,7 @@ class ToolOutputErrorPart(BaseUIPart):
     raw_input: Any | None = None
     error_text: str
     provider_executed: bool | None = None
-    call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
 
@@ -295,7 +295,7 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     input: Any
     output: Any
     provider_executed: bool | None = None
-    call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
     approval: ToolApproval | None = None
 
@@ -311,7 +311,7 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     input: Any
     error_text: str
     provider_executed: bool | None = None
-    call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
 

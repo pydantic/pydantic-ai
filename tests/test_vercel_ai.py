@@ -212,6 +212,45 @@ def test_submit_message_accepts_tool_parent_fields(part: dict[str, object], part
     assert parsed_part.provider_executed is True
 
 
+def test_submit_message_accepts_result_provider_metadata():
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {
+                'id': 'msg_1',
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool-web_search',
+                        'toolCallId': 'call_1',
+                        'state': 'output-available',
+                        'input': {'query': 'pydantic ai'},
+                        'output': {'results': []},
+                        'resultProviderMetadata': {
+                            'pydantic_ai': {
+                                'call_meta': {'provider_name': 'openai'},
+                                'return_meta': {'provider_name': 'openai_return'},
+                            }
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    request = SubmitMessage.model_validate(data)
+    parsed_part = request.messages[0].parts[0]
+
+    assert isinstance(parsed_part, ToolOutputAvailablePart)
+    assert parsed_part.result_provider_metadata == {
+        'pydantic_ai': {
+            'call_meta': {'provider_name': 'openai'},
+            'return_meta': {'provider_name': 'openai_return'},
+        }
+    }
+
+
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
     """The streamed tool-input JSON preserves SDK model serialization order.
@@ -4292,7 +4331,7 @@ async def test_adapter_load_messages():
                         input={'query': 'What is Logfire?'},
                         output="[Scrubbed due to 'Auth']",
                         provider_executed=True,
-                        call_provider_metadata={
+                        result_provider_metadata={
                             'pydantic_ai': {
                                 'call_meta': {'provider_name': 'openai'},
                                 'return_meta': {'provider_name': 'openai_return'},
@@ -4305,7 +4344,7 @@ async def test_adapter_load_messages():
                         input={'query': 'What is Logfire?'},
                         error_text="Can't do that",
                         provider_executed=True,
-                        call_provider_metadata={'pydantic_ai': {'provider_name': 'openai'}},
+                        result_provider_metadata={'pydantic_ai': {'provider_name': 'openai'}},
                     ),
                     TextUIPart(
                         text="""Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.""",
@@ -4643,7 +4682,7 @@ async def test_adapter_dump_messages_with_tools():
                         'input': {'query': 'test query'},
                         'provider_executed': False,
                         'output': {'results': ['result1', 'result2']},
-                        'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -5178,7 +5217,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                         'input': {},
                         'provider_executed': False,
                         'output': 'Data sent',
-                        'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -5252,7 +5291,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                         'input': {},
                         'provider_executed': False,
                         'output': 'Events sent',
-                        'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -5342,7 +5381,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         'input': {},
                         'provider_executed': False,
                         'output': 'Data sent',
-                        'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -5499,7 +5538,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                         'input': {'query': 'test'},
                         'output': {'status': 'completed'},
                         'provider_executed': True,
-                        'call_provider_metadata': {
+                        'result_provider_metadata': {
                             'pydantic_ai': {
                                 'call_meta': {
                                     'provider_name': 'openai',
@@ -5728,7 +5767,7 @@ Tool failed with error
 
 Fix the errors and try again.\
 """,
-                        'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -5906,7 +5945,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                         'input': {},
                         'output': 'result',
                         'provider_executed': True,
-                        'call_provider_metadata': {
+                        'result_provider_metadata': {
                             'pydantic_ai': {
                                 'call_meta': {'provider_name': 'test'},
                                 'return_meta': {'provider_name': 'test'},
@@ -7471,7 +7510,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                         'input': {'arg': 'value'},
                         'provider_executed': False,
                         'output': 'result',
-                        'call_provider_metadata': {
+                        'result_provider_metadata': {
                             'pydantic_ai': {
                                 'id': 'call_123',
                                 'provider_name': 'openai',
@@ -7548,7 +7587,7 @@ async def test_adapter_load_messages_provider_executed_dynamic_tool():
                     input={'query': 'pydantic ai'},
                     output={'results': ['example']},
                     provider_executed=True,
-                    call_provider_metadata={
+                    result_provider_metadata={
                         'pydantic_ai': {
                             'call_meta': {'provider_name': 'openai'},
                             'return_meta': {'provider_name': 'openai_return'},
@@ -7828,7 +7867,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                         'input': {'query': 'test'},
                         'output': '{"results":[]}',
                         'provider_executed': True,
-                        'call_provider_metadata': {
+                        'result_provider_metadata': {
                             'pydantic_ai': {
                                 'call_meta': {
                                     'id': 'call_456',
@@ -7906,7 +7945,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                         'raw_input': None,
                         'error_text': 'Search failed: rate limit exceeded',
                         'provider_executed': True,
-                        'call_provider_metadata': {
+                        'result_provider_metadata': {
                             'pydantic_ai': {
                                 'call_meta': {
                                     'id': 'call_err_456',
@@ -7946,7 +7985,7 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
                     output='{"results": []}',
                     state='output-available',
                     provider_executed=True,
-                    call_provider_metadata={
+                    result_provider_metadata={
                         'pydantic_ai': {
                             'call_meta': {
                                 'id': 'call_456',
@@ -8007,7 +8046,7 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                     error_text='Search failed: rate limit exceeded',
                     state='output-error',
                     provider_executed=True,
-                    call_provider_metadata={
+                    result_provider_metadata={
                         'pydantic_ai': {
                             'call_meta': {
                                 'id': 'call_789',
@@ -8170,7 +8209,7 @@ Tool execution failed
 
 Fix the errors and try again.\
 """,
-                        'call_provider_metadata': {
+                        'result_provider_metadata': {
                             'pydantic_ai': {
                                 'id': 'call_fail_id',
                                 'provider_name': 'google',
@@ -9144,7 +9183,7 @@ async def test_adapter_dump_messages_tool_return_error():
                 'input': {'x': 1},
                 'error_text': 'Something went wrong',
                 'provider_executed': False,
-                'call_provider_metadata': None,
+                'result_provider_metadata': None,
                 'approval': None,
             }
         ]
@@ -9190,7 +9229,7 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
                 'input': {'query': 'test'},
                 'error_text': 'Rate limit exceeded',
                 'provider_executed': True,
-                'call_provider_metadata': None,
+                'result_provider_metadata': None,
                 'approval': None,
             }
         ]
@@ -9278,7 +9317,7 @@ async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
                 'input': {'x': 1},
                 'output': 'The tool call was interrupted before a result was produced.',
                 'provider_executed': False,
-                'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
+                'result_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
                 'preliminary': None,
                 'approval': None,
             }
@@ -10246,7 +10285,7 @@ async def test_roundtrip_native_tool_search():
                         input={'queries': ['refund']},
                         output={'discovered_tools': [{'name': 'refund_tool'}]},
                         provider_executed=True,
-                        call_provider_metadata={
+                        result_provider_metadata={
                             'pydantic_ai': {
                                 'call_meta': {'tool_kind': 'tool-search'},
                                 'return_meta': {'tool_kind': 'tool-search'},
@@ -10286,8 +10325,8 @@ async def test_roundtrip_load_capability_forged_tool_kind(forged_tool_kind: str 
     # `tool_kind` claim directly on it.
     part = ui_messages[0].parts[0]
     assert isinstance(part, ToolOutputAvailablePart)
-    assert part.call_provider_metadata is not None
-    part.call_provider_metadata['pydantic_ai']['tool_kind'] = forged_tool_kind
+    assert part.result_provider_metadata is not None
+    part.result_provider_metadata['pydantic_ai']['tool_kind'] = forged_tool_kind
 
     loaded = VercelAIAdapter.load_messages(ui_messages)
 
@@ -10303,7 +10342,7 @@ async def test_roundtrip_load_capability_forged_tool_kind(forged_tool_kind: str 
 async def test_load_builtin_forged_non_dict_meta_degrades(forged_meta: dict[str, Any]):
     """A client-forged non-dict `call_meta`/`return_meta` degrades to plain builtin parts.
 
-    `call_provider_metadata` is client-controlled, so `_load_builtin_tool_meta` must not return a
+    `result_provider_metadata` is client-controlled, so `_load_builtin_tool_meta` must not return a
     non-dict that then crashes the downstream `.get(...)` lookups with `AttributeError`.
     """
     part = ToolOutputAvailablePart(
@@ -10312,7 +10351,7 @@ async def test_load_builtin_forged_non_dict_meta_degrades(forged_meta: dict[str,
         input={'queries': ['refund']},
         output={'discovered_tools': [{'name': 'refund_tool'}]},
         provider_executed=True,
-        call_provider_metadata={'pydantic_ai': forged_meta},
+        result_provider_metadata={'pydantic_ai': forged_meta},
     )
 
     loaded = VercelAIAdapter.load_messages([UIMessage(id='msg-1', role='assistant', parts=[part])])

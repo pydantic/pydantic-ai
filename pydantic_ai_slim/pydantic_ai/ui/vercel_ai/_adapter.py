@@ -458,7 +458,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         else:
                             assert_never(args)
 
-                        provider_meta = load_provider_metadata(part.call_provider_metadata)
+                        if isinstance(
+                            part,
+                            ToolOutputAvailablePart
+                            | ToolOutputErrorPart
+                            | DynamicToolOutputAvailablePart
+                            | DynamicToolOutputErrorPart,
+                        ):
+                            provider_meta = load_provider_metadata(part.result_provider_metadata)
+                        else:
+                            provider_meta = load_provider_metadata(part.call_provider_metadata)
                         part_id = provider_meta.get('id')
                         provider_name = provider_meta.get('provider_name')
                         provider_details = provider_meta.get('provider_details')
@@ -784,7 +793,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 input=part.args_as_dict(),
                                 error_text=error_text,
                                 provider_executed=True,
-                                call_provider_metadata=combined_provider_meta,
+                                result_provider_metadata=combined_provider_meta,
                             )
                         )
                     else:
@@ -797,7 +806,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 input=part.args_as_dict(),
                                 output=tool_return_output(builtin_return),
                                 provider_executed=True,
-                                call_provider_metadata=combined_provider_meta,
+                                result_provider_metadata=combined_provider_meta,
                             )
                         )
                 else:
@@ -895,7 +904,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         input=part.args_as_dict(),
                         error_text=tool_result.model_response_str(wrap_if_error=False),
                         provider_executed=False,
-                        call_provider_metadata=call_provider_metadata,
+                        result_provider_metadata=call_provider_metadata,
                     )
                 )
             else:
@@ -909,7 +918,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         input=part.args_as_dict(),
                         output=tool_return_output(tool_result),
                         provider_executed=False,
-                        call_provider_metadata=call_provider_metadata,
+                        result_provider_metadata=call_provider_metadata,
                     )
                 )
             # Check for Vercel AI chunks returned by tool calls via metadata.
@@ -922,7 +931,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     input=part.args_as_dict(),
                     error_text=tool_result.model_response(),
                     provider_executed=False,
-                    call_provider_metadata=call_provider_metadata,
+                    result_provider_metadata=call_provider_metadata,
                 )
             )
         else:
