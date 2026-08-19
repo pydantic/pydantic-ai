@@ -1,4 +1,4 @@
-"""Regression tests for the cross-repository docs preview dispatcher."""
+"""Regression tests for the cross-repository docs navigation dispatcher."""
 
 from pathlib import Path
 
@@ -11,17 +11,24 @@ def test_privileged_dispatcher_never_executes_pull_request_code() -> None:
 
     assert 'pull_request_target:' in workflow
     assert "github.event.label.name == 'trigger:docs'" in workflow
+    assert 'timeout-minutes: 5' in workflow
     assert 'actions/checkout@' not in workflow
     assert '/collaborators/${ACTOR}/permission' in workflow
     assert 'admin|maintain|write)' in workflow
     assert 'permission-contents: write' in workflow
-    assert workflow.index('Verify a maintainer triggered the preview') < workflow.index('Generate app token')
+    assert workflow.index('Verify a maintainer triggered the check') < workflow.index('Generate app token')
+    assert '-f "client_payload[library]=ai"' in workflow
+    assert '-f "client_payload[source_repo]=${REPO}"' in workflow
+    assert '-f "client_payload[source_sha]=${HEAD_SHA}"' in workflow
 
 
-def test_public_comments_do_not_disclose_private_workflow_links() -> None:
-    """Public comments should not link users to inaccessible private runs."""
+def test_public_comments_describe_data_only_navigation_validation() -> None:
+    """Public comments should describe the check without exposing private runs."""
     workflow = WORKFLOW.read_text()
 
     assert 'github.com/pydantic/unified-docs' not in workflow
-    assert 'The preview build for commit' in workflow
+    assert 'Docs Navigation Check — queued' in workflow
+    assert 'Navigation validation for commit' in workflow
     assert 'has been queued' in workflow
+    assert 'preview URL' not in workflow
+    assert '--paginate --slurp' in workflow
