@@ -323,7 +323,10 @@ StreamFunctionDef: TypeAlias = Callable[
 ]
 """A function used to generate a streamed response.
 
-Any callable with this signature works, including an instance whose `__call__` is an async generator.
+Any callable with this signature works: an async generator function, a plain `def` returning an async
+iterator, or an instance with a `__call__` of either kind. What matters is the value returned, not the
+callable — an `async def __call__` that *returns* an async iterator instead of yielding does not match,
+and its coroutine is never awaited.
 
 While this is defined as having return type of `AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinTools]`, it should
 really be considered as `AsyncIterator[str] | AsyncIterator[DeltaToolCalls] | AsyncIterator[DeltaThinkingCalls]`,

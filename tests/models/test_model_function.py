@@ -207,8 +207,46 @@ async def test_sync_callable_instance():
     assert result.output == snapshot('from the sync instance')
 
 
+class SyncCallableReturningCoroutine:
+    def __init__(self, text: str):
+        self.text = text
+
+    def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> Awaitable[ModelResponse]:
+        return self._respond()
+
+    async def _respond(self) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.text)])
+
+
+async def test_sync_callable_instance_returning_coroutine():
+    # The instance analogue of `sync_returning_coroutine`: `is_async_callable` is False either way, so this
+    # runs in the executor and `await_maybe` still has to resolve what it returned.
+    agent = Agent(FunctionModel(SyncCallableReturningCoroutine('coroutine awaited')))
+    result = await agent.run('Hello')
+    assert result.output == snapshot('coroutine awaited')
+
+
 async def test_stream_callable_instance():
     agent = Agent(FunctionModel(stream_function=AsyncCallableStreamFunction('hello world')))
+    async with agent.run_stream('Hello') as result:
+        assert await result.get_output() == snapshot('hello world')
+
+
+class SyncCallableStreamFunction:
+    def __init__(self, text: str):
+        self.text = text
+
+    def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        return self._stream()
+
+    async def _stream(self) -> AsyncIterator[str]:
+        yield self.text
+
+
+async def test_stream_sync_callable_instance():
+    # `request_stream` never inspects async-ness, so a sync `__call__` returning an async iterator streams
+    # just like an async-generator one -- the contract is about the returned value, not the callable.
+    agent = Agent(FunctionModel(stream_function=SyncCallableStreamFunction('hello world')))
     async with agent.run_stream('Hello') as result:
         assert await result.get_output() == snapshot('hello world')
 
