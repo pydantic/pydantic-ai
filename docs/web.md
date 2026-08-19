@@ -136,14 +136,57 @@ Pass `allowed_hosts=['*']` to answer to any host, but only if something in front
 
 ## Reserved Routes
 
-All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under-a-hostname). The web UI app uses the following routes which should not be overwritten:
+All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under-a-hostname). Relative to where the web UI app is mounted, it uses the following routes which should not be overwritten:
 
 - `/` and `/{id}` - Serves the chat UI
 - `/api/chat` - Chat endpoint (POST, OPTIONS). Requires `Content-Type: application/json`; other content types are rejected with `415`.
 - `/api/configure` - Frontend configuration (GET)
 - `/api/health` - Health check (GET)
 
-The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
+You can add additional routes to the app, but avoid conflicts with these reserved paths.
+
+## Mounting below a path prefix
+
+The web app derives its public browser and API paths from the request's ASGI `root_path`. This means
+you can mount it below a path such as `/demo` without additional configuration:
+
+```python
+from starlette.applications import Starlette
+from starlette.routing import Mount
+
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+chat_app = agent.to_web()
+app = Starlette(routes=[Mount('/demo', app=chat_app)])
+```
+
+Conversation URLs stay below `/demo/`, and the UI calls `/demo/api/configure` and
+`/demo/api/chat`. A reverse proxy that strips a public prefix should set the equivalent ASGI
+`root_path`; for example, use `uvicorn my_module:app --root-path /demo` when Uvicorn is responsible
+for supplying it.
+
+If the browser-facing routing does not match `root_path`, set `base_path` and `api_path` explicitly:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+app = agent.to_web(
+    base_path='/chat/',
+    api_path='/services/agent/',
+)
+```
+
+`base_path` is the same-origin directory for conversation URLs and navigation. `api_path` is the
+same-origin directory containing the `configure` and `chat` endpoints. Both values are normalized
+to end in `/` and must be absolute paths without an origin, query, or fragment.
+
+These options describe public browser paths; they do not mount the returned Starlette app or move
+its routes. Configure your ASGI application or reverse proxy to route those public paths to the
+corresponding UI and API routes. Each option is independent: an omitted value still derives from
+the request's non-root `root_path`. With no path prefix or explicit override, the UI keeps its own
+build defaults; this preserves custom builds whose UI path differs from `/`.
 
 ## Custom HTML Source
 

@@ -36,6 +36,7 @@ with try_import() as starlette_import_successful:
     import httpx2
     from starlette.applications import Starlette
     from starlette.responses import Response
+    from starlette.routing import Mount
     from starlette.testclient import TestClient
     from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -298,7 +299,177 @@ def test_chat_app_index_endpoint(isolated_ui_cache: None):
         assert response.headers['content-type'] == 'text/html; charset=utf-8'
         assert 'cache-control' in response.headers
         assert response.headers['cache-control'] == 'public, max-age=3600'
-        assert len(response.content) > 0
+        assert response.content == b'<html>Test UI</html>'
+
+
+def test_chat_app_root_custom_html_preserves_ui_defaults(tmp_path: Path):
+    """An unprefixed app leaves a custom build's own `basePath` and `apiPath` defaults intact."""
+    html = b'<html><script type="module">start()</script></html>'
+    html_file = tmp_path / 'ui.html'
+    html_file.write_bytes(html)
+    app = create_web_app(Agent('test'), html_source=html_file)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/')
+
+    assert response.content == html
+    assert 'PYDANTIC_AI_CHAT_CONFIG' not in response.text
+
+
+def test_chat_app_mounted_path_config(tmp_path: Path):
+    """A Starlette mount supplies the browser paths through request-scoped ASGI `root_path`."""
+    html_file = tmp_path / 'ui.html'
+    html_file.write_text('<!doctype html><html><head><script type="module">start()</script></head></html>')
+    chat_app = create_web_app(Agent('test'), html_source=html_file)
+    app = Starlette(routes=[Mount('/demo', app=chat_app)])
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/demo/conversation-id')
+        configure_response = client.get('/demo/api/configure')
+
+    assert response.status_code == 200
+    assert (
+        '<script>window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/demo/","apiPath":"/demo/api/"};</script>' in response.text
+    )
+    assert configure_response.status_code == 200
+
+
+def test_chat_app_proxy_root_path_config(tmp_path: Path):
+    """A stripped-prefix proxy can describe the public paths with ASGI `root_path`."""
+    html_file = tmp_path / 'ui.html'
+    html_file.write_text('<html><script type="module">start()</script></html>')
+    app = create_web_app(Agent('test'), html_source=html_file)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL, root_path='/proxy') as client:
+        response = client.get('/proxy/')
+        configure_response = client.get('/proxy/api/configure')
+
+    assert response.status_code == 200
+    assert (
+        '<script>window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/proxy/","apiPath":"/proxy/api/"};</script>'
+        in response.text
+    )
+    assert configure_response.status_code == 200
+
+
+def test_agent_to_web_explicit_path_config(tmp_path: Path):
+    """Explicit public paths override `root_path` without changing the app's own routes."""
+    html_file = tmp_path / 'ui.html'
+    html_file.write_text('<html><script type="module">start()</script></html>')
+    app = Agent('test').to_web(base_path='/browser', api_path='/services/agent', html_source=html_file)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/')
+        configure_response = client.get('/api/configure')
+        public_override_response = client.get('/services/agent/configure')
+
+    assert response.status_code == 200
+    assert (
+        '<script>window.PYDANTIC_AI_CHAT_CONFIG='
+        '{"basePath":"/browser/","apiPath":"/services/agent/"};</script>' in response.text
+    )
+    assert configure_response.status_code == 200
+    assert public_override_response.status_code == 404
+
+
+def test_chat_app_path_config_overrides_are_independent(tmp_path: Path):
+    html_file = tmp_path / 'ui.html'
+    html_file.write_text('<html><script type="module">start()</script></html>')
+    agent = Agent('test')
+    base_override_app = create_web_app(agent, html_source=html_file, base_path='/browser/')
+    api_override_app = create_web_app(agent, html_source=html_file, api_path='/service/')
+
+    with TestClient(base_override_app, base_url=LOCAL_BASE_URL, root_path='/proxy') as client:
+        base_override_response = client.get('/proxy/')
+    with TestClient(api_override_app, base_url=LOCAL_BASE_URL, root_path='/proxy') as client:
+        api_override_response = client.get('/proxy/')
+
+    assert (
+        'window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/browser/","apiPath":"/proxy/api/"}' in base_override_response.text
+    )
+    assert 'window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/proxy/","apiPath":"/service/"}' in api_override_response.text
+
+
+def test_chat_app_root_path_config_only_emits_explicit_overrides(tmp_path: Path):
+    html_file = tmp_path / 'ui.html'
+    html_file.write_text('<html><script type="module">start()</script></html>')
+    agent = Agent('test')
+    base_override_app = create_web_app(agent, html_source=html_file, base_path='/browser/')
+    api_override_app = create_web_app(agent, html_source=html_file, api_path='/service/')
+
+    with TestClient(base_override_app, base_url=LOCAL_BASE_URL) as client:
+        base_override_response = client.get('/')
+    with TestClient(api_override_app, base_url=LOCAL_BASE_URL) as client:
+        api_override_response = client.get('/')
+
+    assert 'window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/browser/"}' in base_override_response.text
+    assert 'apiPath' not in base_override_response.text
+    assert 'window.PYDANTIC_AI_CHAT_CONFIG={"apiPath":"/service/"}' in api_override_response.text
+    assert 'basePath' not in api_override_response.text
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        '',
+        'relative/',
+        '//other.example/path/',
+        'https://other.example/path/',
+        '/path/?query',
+        '/path/#fragment',
+        '/bad\\path/',
+    ],
+)
+def test_chat_app_path_config_rejects_non_same_origin_paths(path: str):
+    agent = Agent('test')
+
+    with pytest.raises(UserError, match='`base_path` must be an absolute same-origin path'):
+        create_web_app(agent, base_path=path)
+    with pytest.raises(UserError, match='`api_path` must be an absolute same-origin path'):
+        create_web_app(agent, api_path=path)
+
+
+def test_chat_app_path_config_bootstrap_is_safe_and_precedes_module(tmp_path: Path):
+    """The per-response bootstrap cannot close its script and leaves the source file unchanged."""
+    html = b'<script type="module">start()</script>'
+    html_file = tmp_path / 'ui.html'
+    html_file.write_bytes(html)
+    app = create_web_app(
+        Agent('test'),
+        html_source=html_file,
+        base_path='/demo/</script>/',
+        api_path='/api/&/',
+    )
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/')
+
+    assert response.status_code == 200
+    assert (
+        'window.PYDANTIC_AI_CHAT_CONFIG='
+        '{"basePath":"/demo/\\u003c/script\\u003e/","apiPath":"/api/\\u0026/"};' in response.text
+    )
+    assert '</script>/' not in response.text
+    assert response.text.index('window.PYDANTIC_AI_CHAT_CONFIG') < response.text.index('type="module"')
+    assert html_file.read_bytes() == html
+
+
+def test_chat_app_path_config_skips_leading_html_comments(tmp_path: Path):
+    """HTML-looking text inside a leading comment cannot swallow the injected bootstrap."""
+    html = (
+        b'\xef\xbb\xbf<!-- template element: <html> -->'
+        b'<!doctype html><html><script type="module">start()</script></html>'
+    )
+    html_file = tmp_path / 'ui.html'
+    html_file.write_bytes(html)
+    app = create_web_app(Agent('test'), html_source=html_file, base_path='/demo/')
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/')
+
+    config_index = response.text.index('window.PYDANTIC_AI_CHAT_CONFIG')
+    assert response.content.startswith(b'\xef\xbb\xbf')
+    assert response.text.index('-->') < config_index < response.text.index('type="module"')
 
 
 @pytest.mark.anyio
