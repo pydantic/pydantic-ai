@@ -607,7 +607,9 @@ try:
         # later test in the worker. A leaked *non-sampled* span is the nasty case: parent-based
         # sampling then marks all descendant spans unsampled and exporters silently drop them
         # (seen as `context_subtree()` returning an empty tree in `tests/evals/test_otel.py`).
-        # Run each test in a clean context so no test inherits another's.
+        # The detach below resets the context to its pre-test snapshot, so no leaked `attach`
+        # outlives its test. (The clean context itself only shields sync test bodies: async bodies
+        # run in anyio's runner task, whose context is copied before this fixture attaches.)
         token = otel_context.attach(otel_context.Context())
         try:
             yield
