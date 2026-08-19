@@ -219,6 +219,26 @@ async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str
     assert request_body['reasoning_effort'] == 'high'
 
 
+async def test_zai_glm_5_3_reasoning_effort(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    """On GLM-5.3, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`,
+    like on GLM-5.2.
+
+    Recorded against the real Z.AI API to confirm GLM-5.3 accepts the `reasoning_effort` parameter
+    (it supports `low`/`high`/`max` per the Z.AI docs); VCR matchers aren't sensitive to the request body.
+    At `low` effort the recorded response carries no `reasoning_content` for this trivial prompt.
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-5.3', provider=provider)
+    settings = ModelSettings(thinking='low')
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    assert response.parts == snapshot([TextPart(content='2 + 2 = 4')])
+
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
+    assert request_body['reasoning_effort'] == 'low'
+
+
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str):
     provider = ZaiProvider(api_key=zai_api_key)
     model = ZaiModel('glm-4.7', provider=provider)

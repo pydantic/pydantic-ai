@@ -26,6 +26,7 @@ except ImportError as _import_error:  # pragma: no cover
 __all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
 
 LatestZaiModelNames = Literal[
+    'glm-5.3',
     'glm-5.2',
     'glm-5.1',
     'glm-5',
@@ -154,7 +155,7 @@ def _zai_settings_to_openai_settings(
         model_settings: The 'ZaiModelSettings' object to transform.
         model_request_parameters: The request parameters carrying the resolved unified `thinking` value.
         supports_thinking: Whether the model supports thinking, gating the default `clear_thinking`.
-        supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2).
+        supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2 and GLM-5.3).
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.

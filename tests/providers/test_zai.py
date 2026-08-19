@@ -86,6 +86,14 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_5_2.get('supports_thinking') is True
     assert profile_5_2.get('zai_supports_reasoning_effort') is True
 
+    # GLM-5.3 always reasons and no longer supports disabling thinking.
+    profile_5_3 = provider.model_profile('glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
+    assert profile_5_3 is not None
+    assert profile_5_3.get('supports_thinking') is True
+    assert profile_5_3.get('thinking_always_enabled') is True
+    assert profile_5_3.get('zai_supports_reasoning_effort') is True
+
     profile_air = provider.model_profile('glm-4.5-air')
     zai_model_profile_mock.assert_called_with('glm-4.5-air')
     assert profile_air is not None
