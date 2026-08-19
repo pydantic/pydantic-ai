@@ -207,7 +207,7 @@ inlined, so it needs no network access beyond your own server:
 from pydantic_ai.ui import OFFLINE_HTML_URL
 
 print(OFFLINE_HTML_URL)  # Use this URL to download the self-contained UI HTML file
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/offline/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/offline/index.html
 ```
 
 Download it once from a machine that has internet access, then move it into the air-gapped
@@ -240,5 +240,5 @@ is unchanged and still uses the split build:
 from pydantic_ai.ui import DEFAULT_HTML_URL
 
 print(DEFAULT_HTML_URL)
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/dist/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/dist/index.html
 ```

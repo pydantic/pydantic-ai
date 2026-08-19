@@ -34,7 +34,7 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-CHAT_UI_VERSION = '2.1.0'
+CHAT_UI_VERSION = '2.3.0'
 DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
 # `dist/index.html` references its stylesheet and its lazily-imported chunks on the CDN, so a copy
 # downloaded for self-hosting still reaches the public internet at runtime. `offline/index.html` is
