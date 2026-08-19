@@ -1,16 +1,13 @@
 import functools
 import json
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import timezone
 
-import anyio
 import pydantic_core
 import pytest
-from anyio.abc import TaskStatus
-from anyio.to_thread import current_default_thread_limiter
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -187,41 +184,20 @@ def test_init_callable_instance() -> None:
     assert m2.model_name == 'function:AsyncCallableFunction:AsyncCallableStreamFunction'
 
 
-@asynccontextmanager
-async def saturated_worker_threads() -> AsyncGenerator[None]:
-    """Hold every worker-thread token, so anything offloaded to a thread waits instead of running."""
-    limiter = current_default_thread_limiter()
-    total_tokens = limiter.total_tokens
-    limiter.total_tokens = 1
-
-    async def hold_token(*, task_status: TaskStatus[None]) -> None:
-        async with limiter:
-            task_status.started()
-            await anyio.sleep_forever()
-
-    try:
-        async with anyio.create_task_group() as tg:
-            await tg.start(hold_token)
-            try:
-                yield
-            finally:
-                tg.cancel_scope.cancel()
-    finally:
-        limiter.total_tokens = total_tokens
-
-
 async def test_async_callable_instance_does_not_need_a_worker_thread():
     # A predicate that only recognizes `async def` sends an `async def __call__` to the executor, where a
-    # saturated thread pool blocks it indefinitely instead of running it on the event loop.
-    async with saturated_worker_threads():
-        agent = Agent(FunctionModel(AsyncCallableFunction('from the async instance')))
-        with anyio.fail_after(10):
-            result = await agent.run('Hello')
+    # saturated thread pool blocks it indefinitely instead of running it on the event loop. An executor that
+    # cannot accept work at all makes that routing observable: it's the *call* that gets submitted, so a
+    # thread-name assertion would not discriminate -- the coroutine's body awaits on the event loop either way.
+    executor = ThreadPoolExecutor(max_workers=1)
+    executor.shutdown(wait=True)
+    with Agent.using_thread_executor(executor):
+        result = await Agent(FunctionModel(AsyncCallableFunction('from the async instance'))).run('Hello')
         assert result.output == snapshot('from the async instance')
 
-        # The counterpart proves the pool really is saturated: a genuinely sync callable still needs a thread.
+        # The counterpart proves the executor really is unusable: a genuinely sync callable still needs it.
         sync_agent = Agent(FunctionModel(SyncCallableFunction('from the sync instance')))
-        with pytest.raises(TimeoutError), anyio.fail_after(0.1):
+        with pytest.raises(RuntimeError, match='cannot schedule new futures'):
             await sync_agent.run('Hello')
 
 
