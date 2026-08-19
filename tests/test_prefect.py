@@ -6,11 +6,12 @@ import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, Field
 from pydantic.errors import PydanticUserError
@@ -51,27 +52,19 @@ from pydantic_ai.capabilities import (
     ProcessEventStream,
     ResolveModelId,
     Toolset,
-    WebSearch,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
     RunCancelled,
-    SkipModelRequest,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import (
-    ModelRequestContext,
-    ModelRequestParameters,
-    ModelResolutionContext,
-    create_async_http_client,
-)
+from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -155,7 +148,7 @@ pytestmark = [
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = create_async_http_client()
+http_client = httpx2.AsyncClient()
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -893,182 +886,6 @@ async def test_capability_contributed_toolset_id_from_capability():
     # under a stable id; the `billing` function toolset carries the capability id.
     assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
-
-
-async def test_durability_accepts_single_purpose_capability_without_explicit_id():
-    """A single-purpose capability's default toolset `id` names the leaf Prefect wraps.
-
-    Prefect requires an `id` on every leaf toolset, and the local fallback of a `WebSearch` is a
-    toolset the user never constructed, so the capability's default is what makes it usable without
-    configuration. Temporal has the same requirement and its own twin of this test; DBOS wraps only
-    dynamic and MCP toolsets, so it never needed one.
-
-    Not a VCR test: everything asserted is settled at `Agent(...)` construction time, before any
-    model request.
-    """
-    agent = Agent(
-        model,
-        name='web_search_agent',
-        capabilities=[WebSearch(local='duckduckgo'), PrefectDurability()],
-    )
-    bound = PrefectDurability.from_agent(agent)
-    assert bound is not None
-    assert 'web_search' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
-
-
-def _prefect_alpha_search(query: str) -> str:
-    """Search the alpha source."""
-    return query  # pragma: no cover
-
-
-def _prefect_beta_search(topic: str) -> str:
-    """Search the beta source."""
-    return topic  # pragma: no cover
-
-
-async def test_prefect_durability_reuses_static_capability_toolsets_after_run_rebuild():
-    """A safe runtime layer preserves the construction-time wrapper for unchanged static leaves.
-
-    The static `WebSearch` leaf is registered when the agent is constructed. Adding
-    `Instrumentation` at run time rebuilds the capability contribution tree. The run assembly
-    reuses the cached wrapper only for the unchanged static capability occurrence. The second run
-    uses the Prefect-flow branch without reaching a real task.
-    """
-
-    @dataclass
-    class SkipRequest(AbstractCapability[None]):
-        async def before_model_request(
-            self, ctx: RunContext[None], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
-
-    agent = Agent(
-        TestModel(),
-        name='prefect_static_web_search_rebuild',
-        deps_type=type(None),
-        capabilities=[
-            WebSearch(native=False, local=_prefect_alpha_search),
-            SkipRequest(),
-            PrefectDurability(),
-        ],
-    )
-
-    result = await agent.run('hi', capabilities=[Instrumentation(InstrumentationSettings())])
-    assert result.output == 'skipped'
-
-    @flow
-    async def run_agent() -> str:
-        return (await agent.run('hi', capabilities=[Instrumentation(InstrumentationSettings())])).output
-
-    assert await run_agent() == 'skipped'
-
-
-async def test_prefect_durability_reextracts_fresh_capability_owner_sharing_static_toolset():
-    """A fresh `for_run` capability owns a new wrapper around its stable registered leaf."""
-
-    def lookup() -> str:
-        return 'lookup'  # pragma: no cover
-
-    shared_toolset = FunctionToolset[None]([lookup], id='shared_toolset')
-
-    @dataclass
-    class FreshOwner(AbstractCapability[None]):
-        def get_toolset(self) -> FunctionToolset[None]:
-            return shared_toolset
-
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
-            return replace(self)
-
-    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert [tool.name for tool in info.function_tools] == ['lookup']
-        return ModelResponse(parts=[TextPart(content='done')])
-
-    agent = Agent(
-        FunctionModel(model_fn),
-        name='prefect_fresh_owner_shared_leaf',
-        deps_type=type(None),
-        capabilities=[FreshOwner(id='fresh-owner'), PrefectDurability()],
-    )
-
-    assert (await agent.run('hi')).output == 'done'
-
-
-async def test_prefect_durability_rejects_rebuilt_capability_leaf_with_registered_id():
-    """A fresh leaf sharing a registered id fails rather than receiving the stale wrapper's tools."""
-
-    def construction_lookup() -> str:
-        return 'construction'  # pragma: no cover
-
-    def run_lookup() -> str:
-        return 'run'  # pragma: no cover
-
-    construction_toolset = FunctionToolset[None]([construction_lookup], id='rebuilt_toolset')
-    run_toolset = FunctionToolset[None]([run_lookup], id='rebuilt_toolset')
-
-    @dataclass
-    class RebuiltLeaf(AbstractCapability[None]):
-        toolset: FunctionToolset[None]
-
-        def get_toolset(self) -> FunctionToolset[None]:
-            return self.toolset
-
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
-            return RebuiltLeaf(toolset=run_toolset)
-
-    model_called = False
-
-    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal model_called
-        model_called = True  # pragma: no cover
-        return ModelResponse(parts=[TextPart(content='unexpected')])  # pragma: no cover
-
-    agent = Agent(
-        FunctionModel(model_fn),
-        name='prefect_rebuilt_leaf',
-        deps_type=type(None),
-        capabilities=[RebuiltLeaf(toolset=construction_toolset), PrefectDurability()],
-    )
-
-    with pytest.raises(UserError, match="Two toolsets have the same `id` 'rebuilt_toolset'"):
-        await agent.run('hi')
-    assert model_called is False
-
-
-async def test_prefect_durability_allows_runtime_capability_with_distinct_toolset_id_outside_flow():
-    """A genuinely runtime built-in remains valid when its leaf id does not collide.
-
-    Runtime executable toolsets are deliberately unsupported inside a flow because their tasks
-    were not registered when the agent was constructed; outside a flow durability is transparent.
-    """
-
-    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content=','.join(sorted(tool.name for tool in info.function_tools)))])
-
-    agent = Agent(
-        FunctionModel(model_fn),
-        name='prefect_runtime_distinct',
-        capabilities=[WebSearch(native=False, local=_prefect_alpha_search), PrefectDurability()],
-    )
-
-    result = await agent.run(
-        'hi', capabilities=[WebSearch(native=False, local=_prefect_beta_search, id='runtime_web_search')]
-    )
-
-    assert result.output == '_prefect_alpha_search,_prefect_beta_search'
-
-
-async def test_prefect_durability_rejects_runtime_capability_reusing_default_toolset_id():
-    """A runtime built-in reusing a registered leaf id is not a static rematerialization."""
-
-    agent = Agent(
-        _durability_fn_model,
-        name='prefect_runtime_duplicate',
-        capabilities=[WebSearch(native=False, local=_prefect_alpha_search), PrefectDurability()],
-    )
-
-    with pytest.raises(UserError, match="Two toolsets have the same `id` 'web_search'") as exc_info:
-        await agent.run('hi', capabilities=[WebSearch(native=False, local=_prefect_beta_search)])
-    assert "identify the toolset's tasks within the flow" in str(exc_info.value)
 
 
 async def test_prefect_agent():

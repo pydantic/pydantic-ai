@@ -137,6 +137,7 @@ jobs:
           UV_NO_SYNC: "1"
 
       - run: uv build --all-packages
+      - run: uv run python .github/scripts/check_http_dependencies.py
       - run: ls -lh dist/
       - run: uvx twine check --strict dist/*
 

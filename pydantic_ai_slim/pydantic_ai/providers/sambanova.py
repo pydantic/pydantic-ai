@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import os
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -21,7 +19,10 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 __all__ = ['SambaNovaProvider']
 
@@ -80,7 +81,7 @@ class SambaNovaProvider(_OpenAICompatibleProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Initialize SambaNova provider.
 
@@ -88,7 +89,7 @@ class SambaNovaProvider(_OpenAICompatibleProvider):
             api_key: SambaNova API key. If not provided, reads from SAMBANOVA_API_KEY env var.
             base_url: Custom API base URL. Defaults to https://api.sambanova.ai/v1
             openai_client: Optional pre-configured OpenAI client
-            http_client: Optional custom httpx.AsyncClient for making HTTP requests
+            http_client: Optional custom `httpx2.AsyncClient` or legacy `httpx.AsyncClient` for making HTTP requests.
 
         Raises:
             UserError: If API key is not provided and SAMBANOVA_API_KEY env var is not set

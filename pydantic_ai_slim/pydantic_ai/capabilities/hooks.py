@@ -20,7 +20,6 @@ agent = Agent('openai:gpt-5', capabilities=[hooks])
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
@@ -242,7 +241,7 @@ async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwar
     func = entry.func
     if entry.timeout is not None:
         try:
-            with anyio.fail_after(entry.timeout):
+            with anyio.fail_after(entry.timeout), _utils.abandon_threads_on_cancel():
                 return await _call_func(func, *args, **kwargs)
         except TimeoutError:
             raise HookTimeoutError(
@@ -254,11 +253,12 @@ async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwar
 
 
 async def _call_func(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Call a function, auto-wrapping sync functions."""
-    result = func(*args, **kwargs)
-    if inspect.isawaitable(result):
-        return await result
-    return result
+    """Call a function, running sync functions in a thread so they don't block the event loop."""
+    if _utils.is_async_callable(func):
+        return await func(*args, **kwargs)
+
+    # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+    return await _utils.await_maybe(await _utils.run_in_executor(func, *args, **kwargs))
 
 
 def _filter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart) -> list[_HookEntry[Any]]:

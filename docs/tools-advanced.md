@@ -783,6 +783,9 @@ You can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] fla
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
+!!! note "Sync tools run on a separate thread"
+    Because a sync function runs on a worker thread, a value it sets on a [`contextvars.ContextVar`][contextvars.ContextVar] is not visible outside the function, and asyncio APIs like `asyncio.get_running_loop()` raise an error, since the worker thread has no event loop. Reading context variables still works, but the write limitation also applies to libraries that use them internally, such as tracing and logging integrations. If your tool needs any of these, make it async. The same applies to any sync function the agent runs for you, including [hooks](hooks.md), system prompt functions, output functions, and history processors.
+
 #### Thread executor for long-running servers
 
 By default, sync functions are offloaded to threads using [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads on demand. In long-running servers (e.g. FastAPI), these threads can accumulate under sustained traffic, leading to memory growth.

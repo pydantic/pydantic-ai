@@ -49,7 +49,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,retries,logfire]=={{ version }}",
+    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,logfire]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -76,6 +76,7 @@ duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
 tavily = ["pydantic-ai-slim[tavily]=={{ version }}"]
 exa = ["pydantic-ai-slim[exa]=={{ version }}"]
 web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
+retries = ["pydantic-ai-slim[retries]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
 mcp-tasks = ["pydantic-ai-slim[mcp-tasks]=={{ version }}"]
@@ -187,11 +188,20 @@ pydantic-handlebars = false
 genai-prices = false
 logfire = false
 logfire-api = false
+# OpenAI 3.0 removes the SDK's transitive legacy HTTPX dependency and directly requires HTTPX2.
+# TODO(dsfaccini): Remove after 2026-08-19 01:56 UTC. https://github.com/pydantic/pydantic-ai/issues/7580
+# This admits only the reviewed 3.0.0 artifacts; later OpenAI artifacts remain quarantined.
+openai = "2026-08-12T01:55:49Z"
+# Google Gen AI 2.18.0 is the first release that accepts an injected HTTPX2 client.
+# TODO(dsfaccini): Remove after 2026-08-20 00:13 UTC. https://github.com/pydantic/pydantic-ai/issues/7580
+# This admits only the reviewed 2.18.0 artifacts; later Google Gen AI artifacts remain quarantined.
+google-genai = "2026-08-13T00:12:52Z"
 
 [dependency-groups]
 dev = [
     "anyio>=4.7.0",
     "asgi-lifespan>=2.1.0",
+    "httpx>=0.27",
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
@@ -383,6 +393,11 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
+    # `enable_otlp` is set as `tests/test_dbos.py` does.
+    # TODO(dsfaccini): Drop this once DBOS moves to the `opentelemetry-instrumentation-logging`
+    # handler. https://github.com/dbos-inc/dbos-transact-py/issues/821
+    "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     "ignore: Core Pydantic V1 functionality:UserWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule

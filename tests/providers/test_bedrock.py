@@ -159,6 +159,14 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
     assert anthropic_profile.get('bedrock_supports_effort', False) is True
 
+    # These models support structured output directly, but not through Bedrock Converse.
+    for model_name in ('claude-sonnet-5', 'claude-fable-5'):
+        anthropic_profile = provider.model_profile(f'global.anthropic.{model_name}')
+        anthropic_model_profile_mock.assert_called_with(model_name)
+        assert isinstance(anthropic_profile, dict)
+        assert anthropic_profile.get('supports_json_schema_output', False) is False
+        assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
     assert isinstance(anthropic_profile, dict)
