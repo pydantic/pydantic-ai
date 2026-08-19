@@ -22,11 +22,13 @@ from urllib.parse import parse_qs, urlparse
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 from pydantic_core import to_json
 
+from .._http import AsyncHTTPClient
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from .model import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
 
 if TYPE_CHECKING:
     import httpx
+    import httpx2
 
 
 class _ClientSecretResponse(BaseModel):
@@ -54,7 +56,7 @@ def parse_call_id(location: str | None) -> str | None:
     return None
 
 
-def _raise_for_status(response: httpx.Response, model_name: str) -> None:
+def _raise_for_status(response: httpx.Response | httpx2.Response, model_name: str) -> None:
     """Raise a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] on a non-2xx WebRTC signaling response.
 
     Signaling failures (401/403 auth, 429 rate limit, 5xx outages) are ordinary provider HTTP errors, not
@@ -77,7 +79,7 @@ def _raise_for_status(response: httpx.Response, model_name: str) -> None:
 
 async def mint_client_secret(
     *,
-    http_client: httpx.AsyncClient,
+    http_client: AsyncHTTPClient,
     client_secrets_url: str,
     headers: dict[str, str],
     model_name: str,
@@ -114,7 +116,9 @@ async def mint_client_secret(
     )
 
 
-def _webrtc_answer_from_response(response: httpx.Response, provider_name: str, model_name: str) -> WebRTCAnswer:
+def _webrtc_answer_from_response(
+    response: httpx.Response | httpx2.Response, provider_name: str, model_name: str
+) -> WebRTCAnswer:
     """Build a [`WebRTCAnswer`][pydantic_ai.realtime.WebRTCAnswer] from a `/realtime/calls` response.
 
     The created call's id comes back in the `Location` header (e.g. `/v1/realtime/calls/rtc_...`), not
@@ -141,7 +145,7 @@ def _webrtc_answer_from_response(response: httpx.Response, provider_name: str, m
 
 async def answer_webrtc_offer(
     *,
-    http_client: httpx.AsyncClient,
+    http_client: AsyncHTTPClient,
     calls_url: str,
     headers: dict[str, str],
     provider_name: str,
@@ -170,7 +174,7 @@ async def answer_webrtc_offer(
 
 async def relay_sdp_offer(
     *,
-    http_client: httpx.AsyncClient,
+    http_client: AsyncHTTPClient,
     calls_url: str,
     ephemeral_token: str,
     provider_name: str,

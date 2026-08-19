@@ -539,6 +539,9 @@ class ModelHTTPError(ModelAPIError):
     (e.g. gRPC-based providers or synthesised errors).
     """
 
+    suggested_model_id: str | None
+    """A close known model identifier suggested from a provider-confirmed model-name error."""
+
     def __init__(
         self,
         status_code: int,
@@ -546,18 +549,33 @@ class ModelHTTPError(ModelAPIError):
         body: object | None = None,
         *,
         headers: Mapping[str, str] | None = None,
+        suggested_model_id: str | None = None,
     ):
         self.status_code = status_code
         self.body = body
         self.headers = {k.lower(): v for k, v in headers.items()} if headers is not None else None
+        self.suggested_model_id = suggested_model_id
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
+        if suggested_model_id is not None:
+            message += f'. Did you mean {suggested_model_id!r}?'
         super().__init__(model_name=model_name, message=message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        return self.__class__, (self.status_code, self.model_name, self.body), {'headers': self.headers}
+        return (
+            self.__class__,
+            (self.status_code, self.model_name, self.body),
+            {
+                'headers': self.headers,
+                'suggested_model_id': self.suggested_model_id,
+            },
+        )
 
     def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         self.headers = state.get('headers')
+        self.suggested_model_id = state.get('suggested_model_id')
+        if self.suggested_model_id is not None:
+            self.message += f'. Did you mean {self.suggested_model_id!r}?'
+            self.args = (self.message,)
 
     @property
     def retry_after(self) -> float | None:

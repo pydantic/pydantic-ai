@@ -6,13 +6,15 @@ enabling streaming event-based communication for interactive AI applications.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterator, Iterable
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from uuid import uuid4
 
 from pydantic_core import to_json
 
 from ..._utils import now_utc
+from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
@@ -87,11 +89,54 @@ __all__ = [
 ]
 
 
+class _GeneratedID(str):
+    """An ID the stream minted for itself, as opposed to one the caller passed in.
+
+    Warning that a caller's ID lost to `run_input` means telling those two apart, and comparing
+    against the run input's ID can't: a generated ID differs from it too. Marking the generated one
+    keeps `thread_id` and `run_id` typed `str` and valid from construction, where an unset sentinel
+    would push a non-`str` into every event that emits them.
+    """
+
+
+def _generate_id() -> str:
+    return _GeneratedID(uuid7())
+
+
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
+
+    _: KW_ONLY
+
+    thread_id: str = field(default_factory=_generate_id)
+    """The AG-UI thread ID to report on `RUN_STARTED` and `RUN_FINISHED`.
+
+    A [`run_input`][pydantic_ai.ui.UIEventStream.run_input] takes precedence: when one is given, its
+    thread ID replaces whatever was passed here, with a `UserWarning`. Without a run input, set it to
+    the ID the conversation already has in your own transport, or leave it to default to a new UUID —
+    but note that the default is minted per stream, so a conversation that spans more than one run
+    needs to pass its own.
+
+    This identifies the conversation to the frontend. It is what
+    [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] maps onto the agent's `conversation_id` on the
+    request path, so passing the conversation ID the agent run itself uses keeps the frontend and
+    the agent's traces correlated.
+    """
+
+    run_id: str = field(default_factory=_generate_id)
+    """The AG-UI run ID to report on `RUN_STARTED` and `RUN_FINISHED`.
+
+    A [`run_input`][pydantic_ai.ui.UIEventStream.run_input] takes precedence: when one is given, its
+    run ID replaces whatever was passed here, with a `UserWarning`. Without a run input, set it to
+    the ID the run already has in your own transport, or leave it to default to a new UUID.
+
+    This is the protocol's run ID, not the agent run ID that
+    [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] takes as `run_id`; the two are
+    never wired together.
+    """
 
     _use_reasoning: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
@@ -103,6 +148,23 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
+        if (run_input := self.run_input) is not None:
+            # A request's own identity wins: the frontend picked these and correlates the run by them,
+            # so they're not something the server gets to substitute.
+            if overridden := [
+                name
+                for name, value in (('thread_id', self.thread_id), ('run_id', self.run_id))
+                if not isinstance(value, _GeneratedID)
+            ]:
+                names = ' and '.join(f'`{name}`' for name in overridden)
+                warnings.warn(
+                    f'{names} {"is" if len(overridden) == 1 else "are"} ignored when a `run_input` is given; '
+                    'the run input carries the identity the frontend correlates the run by.',
+                    UserWarning,
+                    stacklevel=3,
+                )
+            self.thread_id = run_input.thread_id
+            self.run_id = run_input.run_id
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -128,8 +190,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         yield RunStartedEvent(
-            thread_id=self.run_input.thread_id,
-            run_id=self.run_input.run_id,
+            thread_id=self.thread_id,
+            run_id=self.run_id,
             timestamp=self._get_timestamp(),
         )
 
@@ -148,8 +210,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # AG-UI has no cancelled outcome; revisit when the protocol fills this spec gap:
             # https://github.com/ag-ui-protocol/ag-ui/issues/880
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 timestamp=self._get_timestamp(),
             )
             return
@@ -160,15 +222,15 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # to omit it entirely.
         if HAS_INTERRUPTS:
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 outcome=self._build_outcome(),
                 timestamp=self._get_timestamp(),
             )
         else:
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 timestamp=self._get_timestamp(),
             )
 

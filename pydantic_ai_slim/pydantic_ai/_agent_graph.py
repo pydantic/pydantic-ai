@@ -1907,11 +1907,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
 
             is_empty = not self.model_response.parts
-            is_thinking_only = not is_empty and all(
-                isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
+            # A `TextPart` with empty content carries no text output; adapters preserve such parts
+            # (e.g. when a gateway returns a text item with `text: null`) so their IDs round-trip.
+            is_blank_text_only = not is_empty and all(
+                isinstance(p, _messages.TextPart) and not p.content for p in self.model_response.parts
+            )
+            is_thinking_only = (
+                not is_empty
+                and not is_blank_text_only
+                and all(
+                    isinstance(p, _messages.ThinkingPart) or (isinstance(p, _messages.TextPart) and not p.content)
+                    for p in self.model_response.parts
+                )
             )
 
-            if is_empty or is_thinking_only:
+            if is_empty or is_blank_text_only or is_thinking_only:
                 # No actionable output was returned by the model.
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.
@@ -1920,8 +1930,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
-                # Check for content filter on empty response
-                if is_empty and self.model_response.finish_reason == 'content_filter':
+                # Check for content filter on a response with no content
+                if (is_empty or is_blank_text_only) and self.model_response.finish_reason == 'content_filter':
                     details = self.model_response.provider_details or {}
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
 
@@ -1936,9 +1946,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                     raise exceptions.ContentFilterError(message, body=body)
 
-                # If the output type allows `None`, an empty or thinking-only response is a valid result:
-                # both signal that the model has no text output to give. Some models emit only thinking
-                # after completing the task via a tool call, and forcing a retry just makes them produce
+                # If the output type allows `None`, a response with no text output is a valid result:
+                # it signals that the model has nothing to say. Some models emit only thinking after
+                # completing the task via a tool call, and forcing a retry just makes them produce
                 # unnecessary follow-up text.
                 if output_schema.allows_none:
                     run_context = _build_output_run_context(ctx)
@@ -1959,7 +1969,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         )
                     return
 
-                # For empty or thinking-only responses, fall through to the normal retry prompt
+                # For responses with no text output, fall through to the normal retry prompt
                 # below. That prompt is built from the output schema and available tools, so it
                 # tells the model which kinds of output are actually valid (text, tool call,
                 # and/or image) rather than assuming text is always an option.
@@ -2919,10 +2929,7 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                 # turn -- a real regression -- just to preserve fields the model request node never reads.
             ):
                 parts = [*last_message.parts, *message.parts]
-                parts.sort(
-                    # Tool return parts always need to be at the start
-                    key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
-                )
+                parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,

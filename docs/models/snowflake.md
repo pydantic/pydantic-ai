@@ -64,10 +64,10 @@ agent = Agent(model)
 ...
 ```
 
-You can also customize the [`SnowflakeProvider`][pydantic_ai.providers.snowflake.SnowflakeProvider] with a custom `base_url` (e.g. when connecting through [private connectivity](https://docs.snowflake.com/en/user-guide/private-snowflake-service)) or `httpx.AsyncClient`:
+You can also customize the [`SnowflakeProvider`][pydantic_ai.providers.snowflake.SnowflakeProvider] with a custom `base_url` (e.g. when connecting through [private connectivity](https://docs.snowflake.com/en/user-guide/private-snowflake-service)) or `httpx2.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.snowflake import SnowflakeModel

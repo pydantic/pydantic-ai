@@ -40,6 +40,7 @@
 - Cross-reference alternatives and explain trade-offs when documenting overlapping features — Prevents users from missing better-suited options or implementing duplicate functionality when multiple approaches exist (e.g., `UsageLimits` vs rate-limiting, provider-specific implementations)
 <!-- rule:1112 -->
 - Document default behavior and use cases for all configurable features — helps users decide when to override defaults — Users can't make informed configuration choices without knowing what happens by default and when alternatives are appropriate
+- When docs contrast prior and current Pydantic AI behavior, name the first version with the current behavior. Do not repeat a version already supplied by the page or section. Do not add historical prose when current behavior alone is sufficient.
 <!-- rule:135 -->
 - Use actual, currently available model names in documentation examples — prevents user confusion and copy-paste errors with non-existent models — Ensures users can run documentation examples without modification and avoids frustration from referencing models that don't exist yet or are hypothetical
 <!-- rule:508 -->
@@ -56,3 +57,14 @@
 - When documenting alternative approaches, explain tradeoffs (limitations, requirements, benefits, use-cases) and warn about conflicts when combining them — Helps users make informed decisions and avoid subtle bugs from conflicting configurations
 
 <!-- /braindump -->
+
+# Front pages: docs/index.md and README.md sync contract
+
+The docs index and the repository README are one story on two surfaces. Whenever one changes, mirror the other in the same PR (enforced by `tests/test_docs_parity.py`):
+
+- `docs/index.md` uses relative links, tabs (`=== "..."`), numbered annotations (`(1)!`), and MkDocs-only markup. `README.md` uses absolute links (`https://ai.pydantic.dev/...` for core, `https://pydantic.dev/docs/ai/harness/...` for Harness), `###` sections instead of tabs, and plain one-line `#` comments instead of annotations (GitHub renders annotation markers literally).
+- The mirrored code examples (coding agent, data extraction, realtime voice, image generation, embeddings, `bank_support.py`) must stay code-identical across both surfaces; only comments/annotations and fence attributes may differ.
+- `README.md` is included in `tests/test_examples.py`'s `find_examples`, so its snippets are tested and linted. Snippets that cannot run here (`pydantic_ai_harness` imports, interactive realtime sessions) are excluded by content match in `find_filter_examples`, not by fence attributes, so README fences stay bare for GitHub rendering.
+- Wording that appears on both surfaces (paragraph one, the whatever-you-came-to-build line, the Why bullets, section intros) must match word for word modulo link form.
+- No em dashes anywhere in these files; use colons, semicolons, commas, parentheses, or sentence breaks instead.
+- The harness repo's front pages (`pydantic/pydantic-ai-harness` `docs/index.md` + `README.md`) carry the same positioning: when the tagline or Harness framing changes here, check those too (see `agent_docs/docs-conventions.md` in that repo).

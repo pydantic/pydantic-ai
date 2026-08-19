@@ -5,14 +5,18 @@ from __future__ import annotations as _annotations
 import os
 import re
 import weakref
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
-import httpx
+import httpx2
+from typing_extensions import TypeVar
 
+from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
 if TYPE_CHECKING:
+    import httpx
     from botocore.client import BaseClient
     from google.genai import Client as GoogleClient
     from groq import AsyncGroq
@@ -24,6 +28,9 @@ if TYPE_CHECKING:
 
 _gateway_providers: weakref.WeakSet[Provider[Any]] = weakref.WeakSet()
 
+_ProviderT = TypeVar('_ProviderT', bound='Provider[Any]')
+_HTTPClientT = TypeVar('_HTTPClientT', bound=AsyncHTTPClient)
+
 
 @overload
 def gateway_provider(
@@ -33,7 +40,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: AsyncHTTPClient | None = None,
 ) -> Provider[AsyncOpenAI]: ...
 
 
@@ -80,7 +87,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: AsyncHTTPClient | None = None,
 ) -> Provider[GoogleClient]: ...
 
 
@@ -126,7 +133,7 @@ def gateway_provider(
     api_key: str | None = None,
     base_url: str | None = None,
     # OpenAI, Groq, Anthropic & Gemini - Only Bedrock doesn't have an HTTPX client.
-    http_client: httpx.AsyncClient | None = None,
+    http_client: AsyncHTTPClient | None = None,
 ) -> Provider[Any]:
     """Create a new Gateway provider.
 
@@ -169,53 +176,97 @@ def gateway_provider(
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
         _gateway_providers.add(provider)
-        return provider
-
-    own_http_client = http_client is None
-    http_client = http_client or create_async_http_client()
-    _add_request_hook(http_client, _GatewayRequestHook(api_key))
-
-    def _http_client_factory() -> httpx.AsyncClient:
-        client = create_async_http_client()
-        _add_request_hook(client, _GatewayRequestHook(api_key))
-        return client
-
-    def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
-        if own_http_client:
-            provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
-            provider._http_client_factory = _http_client_factory  # pyright: ignore[reportPrivateUsage]
-        _gateway_providers.add(provider)
+        provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
         return provider
 
     if canonical in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
-        return _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
-    elif canonical == 'groq':
+        return _build_gateway_provider(
+            lambda client: OpenAIProvider(api_key=api_key, base_url=base_url, http_client=client),
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_httpx2_client,
+        )
+
+    if canonical == 'google-cloud':
+        # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
+        # server only exposes the Google Cloud (Vertex) route today.
+        from .google_cloud import GoogleCloudProvider
+
+        def build_google_provider(client: AsyncHTTPClient) -> GoogleCloudProvider:
+            provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=client)
+            _set_google_ws_gateway_auth(provider.client, api_key)
+            return provider
+
+        return _build_gateway_provider(
+            build_google_provider,
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_httpx2_client,
+        )
+
+    if isinstance(http_client, httpx2.AsyncClient):
+        raise UserError('`httpx2.AsyncClient` is only supported for OpenAI and Google Gateway routes.')
+
+    if canonical == 'groq':
         from .groq import GroqProvider
 
-        return _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        return _build_gateway_provider(
+            lambda client: GroqProvider(api_key=api_key, base_url=base_url, http_client=client),
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_http_client,
+        )
     elif canonical == 'anthropic':
         from anthropic import AsyncAnthropic
 
         from .anthropic import AnthropicProvider
 
-        return _with_http_client(
-            AnthropicProvider(
-                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
-            )
+        return _build_gateway_provider(
+            lambda client: AnthropicProvider(
+                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=client)
+            ),
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_http_client,
         )
-    elif canonical == 'google-cloud':
-        # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
-        # server only exposes the Google Cloud (Vertex) route today, so both shorthands
-        # land here via `normalize_gateway_provider`.
-        from .google_cloud import GoogleCloudProvider
-
-        provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client)
-        _set_google_ws_gateway_auth(provider.client, api_key)
-        return _with_http_client(provider)
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
+
+
+def _build_gateway_provider(
+    build_provider: Callable[[_HTTPClientT], _ProviderT],
+    *,
+    api_key: str,
+    http_client: _HTTPClientT | None,
+    create_http_client: Callable[[], _HTTPClientT],
+) -> _ProviderT:
+    """Build a provider on an HTTP client that carries the Gateway's auth hook.
+
+    Shared by every Gateway route that speaks HTTP (all but Bedrock, which goes through botocore): a
+    caller-provided client is hooked in place and stays the caller's to close, while a client we create is
+    owned by the provider, which recreates it — hook included — when it is re-entered after being closed.
+    """
+
+    def create_hooked_http_client() -> _HTTPClientT:
+        client = create_http_client()
+        _add_request_hook(client, _GatewayRequestHook(api_key))
+        return client
+
+    own_http_client = http_client is None
+    if http_client is None:
+        http_client = create_hooked_http_client()
+    else:
+        _add_request_hook(http_client, _GatewayRequestHook(api_key))
+
+    provider = build_provider(http_client)
+    if own_http_client:
+        provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
+        provider._http_client_factory = create_hooked_http_client  # pyright: ignore[reportPrivateUsage]
+    _gateway_providers.add(provider)
+    provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
+    return provider
 
 
 def is_gateway_provider(provider: Provider[Any]) -> bool:
@@ -264,7 +315,13 @@ class _GatewayRequestHook:
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
 
-    async def __call__(self, request: httpx.Request) -> httpx.Request:
+    @overload
+    async def __call__(self, request: httpx.Request) -> httpx.Request: ...
+
+    @overload
+    async def __call__(self, request: httpx2.Request) -> httpx2.Request: ...
+
+    async def __call__(self, request: httpx.Request | httpx2.Request) -> httpx.Request | httpx2.Request:
         from opentelemetry.propagate import inject
 
         headers: dict[str, Any] = {}
@@ -277,7 +334,7 @@ class _GatewayRequestHook:
         return request
 
 
-def _add_request_hook(http_client: httpx.AsyncClient, hook: _GatewayRequestHook) -> None:
+def _add_request_hook(http_client: AsyncHTTPClient, hook: _GatewayRequestHook) -> None:
     """Add a request hook without replacing caller-provided HTTPX hooks."""
     request_hooks = [
         existing_hook

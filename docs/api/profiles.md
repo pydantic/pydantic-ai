@@ -5,6 +5,8 @@
       members:
         - ModelProfile
         - ModelProfileSpec
+        - JsonSchemaTransformer
+        - InlineDefsJsonSchemaTransformer
         - merge_profile
         - DEFAULT_PROFILE
         - DEFAULT_PROMPTED_OUTPUT_TEMPLATE

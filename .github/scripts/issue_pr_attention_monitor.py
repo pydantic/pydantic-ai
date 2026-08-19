@@ -24,6 +24,7 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
+_RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
 _RECENT_CANDIDATE_LIMIT = _CANDIDATE_LIMIT // 2
@@ -54,7 +55,7 @@ _LIFECYCLE_LABELS = (*_STAGE_LABELS, _DELIVERED_LABEL)
 _LABELS = {
     _ACTION_LABEL: ('d4c5f9', 'The next meaningful action must come from a maintainer'),
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
-    _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request has been escalated after one reminder'),
+    _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
 }
 
@@ -322,23 +323,26 @@ def _rotated_search(
 
 
 def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
-    before = (now - _SLA).date().isoformat()
-    # An escalated item stays dormant until the reconcile sweep sees real
-    # activity and removes the marker; only then may a fresh lifecycle start.
+    cutoff_date = (now - _SLA).date()
+    # An escalated item cools down outside classification. Reconciliation
+    # either wakes it after new activity or returns it to the active queue.
     excluded = f'-label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
-    base_query = f'repo:{repo} is:open updated:<{before} {excluded}'
+    base_query = f'repo:{repo} is:open {excluded}'
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
-    recent_after = (now - _RECENT_ACTIVITY_WINDOW).date().isoformat()
+    recent_after = (now - _RECENT_ACTIVITY_WINDOW).date()
+    stale_through = cutoff_date - dt.timedelta(days=1)
     recent = _rotated_search(
         client,
-        f'{base_query} updated:>={recent_after}',
+        # GitHub Search does not intersect repeated `updated:` qualifiers; a
+        # single range is required or the lower bound silently wins.
+        f'{base_query} updated:{recent_after.isoformat()}..{stale_through.isoformat()}',
         order='desc',
         limit=_RECENT_CANDIDATE_LIMIT,
         slot=slot,
     )
     backlog = _rotated_search(
         client,
-        base_query,
+        f'{base_query} updated:<{recent_after.isoformat()}',
         order='asc',
         limit=_BACKLOG_CANDIDATE_LIMIT,
         slot=slot,
@@ -890,7 +894,7 @@ def _notice_if_current(
 
 
 def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int, *, new_delivery: bool = False) -> None:
-    """Finish a terminal delivery while preserving its dormant marker."""
+    """Finish an escalation delivery while preserving its cooldown marker."""
     labels = [_ESCALATED_LABEL, _DELIVERED_LABEL] if new_delivery else [_ESCALATED_LABEL]
     _add_labels(client, repo, number, labels)
     _remove_label(client, repo, number, _ACTION_LABEL)
@@ -927,6 +931,26 @@ def _finish_delivery_receipt(
     return False
 
 
+def _effective_stage(
+    client: GitHubClient, repo: str, number: int, labels: set[str], events: Sequence[dict[str, Any]]
+) -> Literal[0, 1, 2]:
+    stage = _stage(labels)
+    if stage != 2:
+        return stage
+    resurfaced = _transition(events, 0)
+    escalated = _transition(events, 2)
+    if resurfaced is None or escalated is None or resurfaced[0] <= escalated[0]:
+        return stage
+    # A resurface that added the action label but failed to remove the
+    # escalation marker would re-enter stage 2 and queue a duplicate
+    # escalation from the old transition. The newer action label is
+    # authoritative: shed the stale marker so its label event starts the
+    # restarted SLA instead.
+    _remove_label(client, repo, number, _ESCALATED_LABEL)
+    labels.discard(_ESCALATED_LABEL)
+    return _stage(labels)
+
+
 def _reconcile_item(
     client: GitHubClient,
     repo: str,
@@ -945,9 +969,9 @@ def _reconcile_item(
         return None
     if _ACTION_LABEL not in labels:
         return None
-    current_stage = _stage(labels)
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    current_stage = _effective_stage(client, repo, number, labels, events)
     transition = _transition(events, current_stage)
     if transition is None:
         raise RuntimeError('Could not find the current attention transition')
@@ -995,8 +1019,8 @@ def _reconcile_item(
     return (f'#{number}: queued channel {kind}', notice) if notice is not None else None
 
 
-def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str | None:
-    """Wake or retire one dormant escalated item."""
+def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> str | None:
+    """Wake, recycle, or retire one escalated item."""
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     labels = _labels(current)
     if _ACTION_LABEL in labels or _ESCALATED_LABEL not in labels:
@@ -1024,6 +1048,14 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str |
     ):
         _remove_label(client, repo, number, _ESCALATED_LABEL)
         return f'#{number}: restored attention eligibility after new activity'
+    if now - transition[0] >= _RESURFACE_AFTER:
+        # Add the active marker first so a partial GitHub failure cannot leave
+        # unresolved work in neither state. Its label event starts a fresh SLA.
+        _add_labels(client, repo, number, [_ACTION_LABEL])
+        _remove_label(client, repo, number, _ESCALATED_LABEL)
+        reactivated = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+        _ensure_recipients(client, repo, reactivated)
+        return f'#{number}: returned unresolved attention to the active queue'
     return None
 
 
@@ -1069,24 +1101,25 @@ def reconcile(
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
     if len(closed) == _CLOSED_CLEANUP_LIMIT or len(active) == _ACTIVE_OPEN_LIMIT:
         lines.append('additional attention items remain for a later rotated batch')
-    encoded_escalated = urllib.parse.quote(_ESCALATED_LABEL, safe='')
-    dormant = cast(
-        list[dict[str, Any]],
-        client.get(
-            # state=all so a dormant item closed while escalated still sheds
-            # its marker instead of carrying it forever.
-            f'/repos/{repo}/issues?state=all&labels={encoded_escalated}'
-            # Recent-first ensures that renewed activity on an old escalated
-            # issue cannot sit behind the oldest 25 dormant items.
-            f'&sort=updated&direction=desc&per_page={_RECONCILE_LIMIT}'
-        ),
+    dormant = _rotated_search(
+        client,
+        # No is:open qualifier so a dormant item closed while escalated still
+        # sheds its marker instead of carrying it forever.
+        f'repo:{repo} label:"{_ESCALATED_LABEL}"',
+        # Recent-first keeps renewed activity on an old escalated issue from
+        # sitting behind the oldest dormant items, while slot rotation still
+        # reaches every page so a full page of items inside the cooldown
+        # cannot strand older, already-eligible escalations indefinitely.
+        order='desc',
+        limit=_RECONCILE_LIMIT,
+        slot=slot,
     )
     for item in dormant:
         number = int(item['number'])
         if number in processed or _ACTION_LABEL in _labels(item):
             continue
         try:
-            if line := _sweep_escalated_item(client, repo, number):
+            if line := _sweep_escalated_item(client, repo, number, now=now):
                 lines.append(line)
         except (urllib.error.URLError, RuntimeError, ValueError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
@@ -1123,7 +1156,7 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
         payload = {
             'text': '\n'.join(
                 [
-                    '<!channel> *Maintainer attention requested*',
+                    f'<!channel> *Maintainer attention requested in {_slack_escape(repo)}*',
                     *details,
                     '',
                     '*Expected action:* Open each item and make its next maintainer decision there. Reply, review, '
