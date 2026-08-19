@@ -16,6 +16,14 @@ self-healing), and the tool returns a text result.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+!!! note "Which browser capability?"
+    This page covers the browser-use integration: one `browse_web` tool that
+    hands a goal to an autonomous agent. To have the host model drive the
+    browser itself with typed actions -- navigate, click, type, screenshot --
+    see [Playwright Browser](playwright.md). Give an agent one or the other:
+    each capability runs its own browser, so a session opened by one is not
+    visible to the other.
+
 ## The problem
 
 Low-level browser tools (goto, click a selector, extract text) work well when
@@ -349,21 +357,21 @@ factory, `default_browser_agent`, forwards all of `settings`). The factory
 must not start or stop the session itself; the tool owns the session
 lifecycle.
 
-## BrowserUse vs scripted browser tools
+## BrowserUse vs PlaywrightBrowser
 
-The two approaches complement each other rather than compete:
+An agent gets one of the two, so the choice is made up front:
 
-| | Scripted tools (Playwright-style) | `BrowserUse` |
+| | [`PlaywrightBrowser`](playwright.md) | `BrowserUse` |
 |---|---|---|
 | Who decides each action | the host model | the browser-use sub-agent |
-| Page addressing | CSS selectors / coordinates | indexed DOM elements |
+| Page addressing | CSS selectors, `aria-ref` handles, coordinates | indexed DOM elements |
 | Cost profile | one host-model call per action | one sub-agent call per step, plus the delegation |
 | Determinism | high | lower; self-healing LLM loop |
 | Best for | known, repeatable flows | fuzzy goals on unknown or changing pages |
 
-If your flow is fully known, scripted tools are cheaper and more predictable.
-Reach for `BrowserUse` when the task needs judgement about pages you have not
-seen.
+If your flow is fully known, `PlaywrightBrowser` is cheaper and more
+predictable. Reach for `BrowserUse` when the task needs judgement about pages
+you have not seen.
 
 ## Agent spec (YAML/JSON)
 

@@ -96,6 +96,10 @@ skills = [
 browser-use = [
     "browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'",
 ]
+playwright = [
+    "idna>=3.4",
+    "playwright>=1.61.0",
+]
 stackone = [
     "fastmcp>=3.4.5,<4",
     "pydantic-ai-slim[mcp]>=2.18.0",
