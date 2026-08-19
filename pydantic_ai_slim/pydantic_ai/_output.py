@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import json
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -717,7 +718,13 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
         if '{schema}' not in template:
             template = '\n\n'.join([template, '{schema}'])
 
-        return template.format(schema=json.dumps(schema))
+        # Only substitute the documented `{schema}` placeholder (honoring `{{`/`}}`
+        # escaping); leave every other literal brace untouched. Using `str.format` over
+        # the whole template treated a literal JSON example (e.g. `{"name": "x"}`) as a
+        # format field and raised `KeyError` before the model request. See #7485.
+        schema_json = json.dumps(schema)
+        replacements = {'{{': '{', '}}': '}', '{schema}': schema_json}
+        return re.sub(r'\{\{|\}\}|\{schema\}', lambda m: replacements[m.group(0)], template)
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):

@@ -14,6 +14,7 @@ from pydantic_ai import (
     TextOutput,
     ToolOutput,
 )
+from pydantic_ai._output import PromptedOutputSchema
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
@@ -751,3 +752,27 @@ async def test_output_type_description(output_type: type, expected_schema: dict[
 async def test_nested_output_type_description(output_type: type, expected_schema: dict[str, object]):
     agent: Agent[object, str] = Agent('test', output_type=output_type)
     assert remove_schema_descriptions(agent.output_json_schema()) == expected_schema
+
+
+def test_prompted_output_template_preserves_literal_braces():
+    """Regression test for #7485.
+
+    `PromptedOutput.template` documents `{schema}` as the only placeholder. A literal JSON
+    example in the template used to be interpreted as a `str.format` field and raised
+    `KeyError` before the model request. Only `{schema}` should be substituted; other
+    braces stay literal, and `{{`/`}}` escaping is still honored.
+    """
+    object_def = OutputObjectDefinition(
+        json_schema={'type': 'object', 'properties': {'name': {'type': 'string'}}}
+    )
+
+    # A literal JSON example must be preserved, and `{schema}` substituted.
+    result = PromptedOutputSchema.build_instructions(
+        'Return JSON {"name": "x"} matching {schema}', object_def
+    )
+    assert '{"name": "x"}' in result
+    assert json.dumps(object_def.json_schema) in result
+
+    # Escaped braces still unescape (backward compatibility).
+    escaped = PromptedOutputSchema.build_instructions('Use {{ and }} with {schema}', object_def)
+    assert 'Use { and } with' in escaped
