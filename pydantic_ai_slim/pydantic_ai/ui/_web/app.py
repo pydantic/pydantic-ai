@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Literal, TypeVar
+from urllib.parse import quote, unquote
 
 import anyio
 import anyio.to_thread
@@ -54,17 +55,16 @@ class _ChatConfigInsertionParser(HTMLParser):
     def __init__(self, source: str):
         super().__init__(convert_charrefs=False)
         self._line_starts = [0, *(index + 1 for index, character in enumerate(source) if character == '\n')]
-        self.head_end: int | None = None
-        self.script_start: int | None = None
+        self.doctype_end: int | None = None
+        self.first_tag_start: int | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        offset = self._offset()
-        if tag == 'head' and self.head_end is None:
-            start_tag = self.get_starttag_text()
-            assert start_tag is not None
-            self.head_end = offset + len(start_tag)
-        elif tag == 'script' and self.script_start is None:
-            self.script_start = offset
+        if self.first_tag_start is None:
+            self.first_tag_start = self._offset()
+
+    def handle_decl(self, decl: str) -> None:
+        if self.doctype_end is None and decl.lower().startswith('doctype'):
+            self.doctype_end = self._offset() + len(decl) + 3
 
     def _offset(self) -> int:
         line, column = self.getpos()
@@ -77,6 +77,8 @@ def _normalize_public_path(path: str, parameter: str) -> str:
             f"Invalid `{parameter}` {path!r}. Use an absolute same-origin path such as '/chat/' "
             'without a query or fragment.'
         )
+    if any(unquote(segment) in ('.', '..') for segment in path.split('/')):
+        raise UserError(f'Invalid `{parameter}` {path!r}. Path segments must not be `.` or `..`.')
     return f'{path.rstrip("/")}/'
 
 
@@ -93,7 +95,7 @@ def _inject_chat_config(content: bytes, *, base_path: str, api_path: str) -> byt
     parser = _ChatConfigInsertionParser(source)
     parser.feed(source)
     insertion_point = min(
-        (point for point in (parser.head_end, parser.script_start) if point is not None),
+        (point for point in (parser.doctype_end, parser.first_tag_start) if point is not None),
         default=len(content),
     )
 
@@ -303,7 +305,7 @@ def create_web_app(
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
         content = await _get_ui_html(html_source)
-        root_path = _normalize_public_path(request.scope.get('root_path') or '/', 'root_path')
+        root_path = _normalize_public_path(quote(request.scope.get('root_path') or '/', safe='/'), 'root_path')
         content = _inject_chat_config(
             content,
             base_path=normalized_base_path or root_path,

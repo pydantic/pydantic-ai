@@ -324,6 +324,17 @@ def test_chat_app_uses_mount_root_path(isolated_ui_cache: None):
         assert client.get('/demo/api/configure').status_code == 200
 
 
+def test_chat_app_percent_encodes_mount_root_path(isolated_ui_cache: None):
+    outer_app = Starlette()
+    outer_app.mount('/demo?x', create_web_app(Agent('test')))
+
+    with TestClient(outer_app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/demo%3Fx/')
+
+    assert response.status_code == 200
+    assert _chat_config(response.text) == {'basePath': '/demo%3Fx/', 'apiPath': '/demo%3Fx/api/'}
+
+
 def test_chat_app_uses_proxy_root_path(isolated_ui_cache: None):
     app = create_web_app(Agent('test'))
 
@@ -349,12 +360,16 @@ def test_agent_to_web_public_path_overrides(tmp_path: Path):
 
 
 def test_chat_app_public_path_overrides_are_independent(isolated_ui_cache: None):
-    app = create_web_app(Agent('test'), base_path='/browser')
+    app = create_web_app(Agent('test'), api_path='/services/agent-api')
 
     with TestClient(app, base_url=LOCAL_BASE_URL, root_path='/proxy') as client:
         response = client.get('/')
+        api_response = client.get('/proxy/api/configure')
+        public_path_response = client.get('/services/agent-api/configure')
 
-    assert _chat_config(response.text) == {'basePath': '/browser/', 'apiPath': '/proxy/api/'}
+    assert _chat_config(response.text) == {'basePath': '/proxy/', 'apiPath': '/services/agent-api/'}
+    assert api_response.status_code == 200
+    assert public_path_response.status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -366,6 +381,8 @@ def test_chat_app_public_path_overrides_are_independent(isolated_ui_cache: None)
         '/path?query',
         '/path#fragment',
         '/path\\part',
+        '/../api',
+        '/%2e%2e//other.example/api',
         '/\t/other.example/path',
         '/\n/other.example/path',
         '/\r/other.example/path',
@@ -422,6 +439,21 @@ def test_chat_app_bootstrap_ignores_script_contents(tmp_path: Path):
 
     assert _chat_config(response.text) == {'basePath': '/', 'apiPath': '/api/'}
     assert response.text.index('window.PYDANTIC_AI_CHAT_CONFIG=') < response.text.index('const template')
+
+
+@pytest.mark.parametrize('element', ['title', 'textarea', 'template'])
+def test_chat_app_bootstrap_precedes_inert_html_contents(tmp_path: Path, element: str):
+    source = f'<!doctype html><{element}>x<head>y</{element}><script type="module">start()</script>'.encode()
+    html_file = tmp_path / 'index.html'
+    html_file.write_bytes(source)
+    app = create_web_app(Agent('test'), html_source=html_file)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/')
+
+    assert _chat_config(response.text) == {'basePath': '/', 'apiPath': '/api/'}
+    assert response.text.index('<!doctype html>') < response.text.index('window.PYDANTIC_AI_CHAT_CONFIG=')
+    assert response.text.index('window.PYDANTIC_AI_CHAT_CONFIG=') < response.text.index(f'<{element}>')
 
 
 @pytest.mark.anyio
