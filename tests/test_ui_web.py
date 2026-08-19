@@ -411,6 +411,19 @@ def test_chat_app_bootstrap_ignores_html_comments(tmp_path: Path):
     assert response.text.index('window.PYDANTIC_AI_CHAT_CONFIG=') < response.text.index('type="module"')
 
 
+def test_chat_app_bootstrap_ignores_script_contents(tmp_path: Path):
+    source = b"""<!doctype html><script>const template = "<head>";</script><script type="module">start()</script>"""
+    html_file = tmp_path / 'index.html'
+    html_file.write_bytes(source)
+    app = create_web_app(Agent('test'), html_source=html_file)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/')
+
+    assert _chat_config(response.text) == {'basePath': '/', 'apiPath': '/api/'}
+    assert response.text.index('window.PYDANTIC_AI_CHAT_CONFIG=') < response.text.index('const template')
+
+
 @pytest.mark.anyio
 async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from CDN when filesystem cache misses."""

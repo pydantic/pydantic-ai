@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import tempfile
 import threading
 from collections.abc import Sequence
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -48,8 +48,27 @@ OutputDataT = TypeVar('OutputDataT')
 # Cache operations run in worker threads. Serialize reads and atomic replacement because Windows
 # may reject replacing a destination file while another thread has it open for reading.
 _CACHE_FILE_LOCK = threading.Lock()
-_OPENING_HEAD_RE = re.compile(rb'<head(?:\s[^>]*)?>', re.IGNORECASE)
-_OPENING_SCRIPT_RE = re.compile(rb'<script(?:\s|>)', re.IGNORECASE)
+
+
+class _ChatConfigInsertionParser(HTMLParser):
+    def __init__(self, source: str):
+        super().__init__(convert_charrefs=False)
+        self._line_starts = [0, *(index + 1 for index, character in enumerate(source) if character == '\n')]
+        self.head_end: int | None = None
+        self.script_start: int | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        offset = self._offset()
+        if tag == 'head' and self.head_end is None:
+            start_tag = self.get_starttag_text()
+            assert start_tag is not None
+            self.head_end = offset + len(start_tag)
+        elif tag == 'script' and self.script_start is None:
+            self.script_start = offset
+
+    def _offset(self) -> int:
+        line, column = self.getpos()
+        return self._line_starts[line - 1] + column
 
 
 def _normalize_public_path(path: str, parameter: str) -> str:
@@ -61,20 +80,6 @@ def _normalize_public_path(path: str, parameter: str) -> str:
     return f'{path.rstrip("/")}/'
 
 
-def _first_uncommented_match(content: bytes, pattern: re.Pattern[bytes]) -> re.Match[bytes] | None:
-    lower_content = content.lower()
-    search_from = 0
-    while match := pattern.search(content, search_from):
-        comment_start = lower_content.find(b'<!--', search_from)
-        if comment_start == -1 or match.start() < comment_start:
-            return match
-        comment_end = lower_content.find(b'-->', comment_start + 4)
-        if comment_end == -1:
-            return None
-        search_from = comment_end + 3
-    return None
-
-
 def _inject_chat_config(content: bytes, *, base_path: str, api_path: str) -> bytes:
     config = json.dumps(
         {'basePath': base_path, 'apiPath': api_path},
@@ -84,12 +89,13 @@ def _inject_chat_config(content: bytes, *, base_path: str, api_path: str) -> byt
     config = config.replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
     bootstrap = f'<script>window.PYDANTIC_AI_CHAT_CONFIG={config};</script>'.encode()
 
-    if head_match := _first_uncommented_match(content, _OPENING_HEAD_RE):
-        insertion_point = head_match.end()
-    elif script_match := _first_uncommented_match(content, _OPENING_SCRIPT_RE):
-        insertion_point = script_match.start()
-    else:
-        insertion_point = len(content)
+    source = content.decode('latin-1')
+    parser = _ChatConfigInsertionParser(source)
+    parser.feed(source)
+    insertion_point = min(
+        (point for point in (parser.head_end, parser.script_start) if point is not None),
+        default=len(content),
+    )
 
     return content[:insertion_point] + bootstrap + content[insertion_point:]
 
