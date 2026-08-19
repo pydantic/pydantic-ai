@@ -7,7 +7,7 @@ WORKFLOW = Path(__file__).parents[1] / 'workflows' / 'docs-navigation.yml'
 
 def test_privileged_dispatcher_never_executes_pull_request_code() -> None:
     """The secret-bearing public workflow must remain a dispatcher only."""
-    workflow = WORKFLOW.read_text()
+    workflow = WORKFLOW.read_text(encoding='utf-8')
 
     assert 'pull_request_target:' in workflow
     assert "github.event.label.name == 'trigger:docs'" in workflow
@@ -24,7 +24,7 @@ def test_privileged_dispatcher_never_executes_pull_request_code() -> None:
 
 def test_public_comments_describe_data_only_navigation_validation() -> None:
     """Public comments should describe the check without exposing private runs."""
-    workflow = WORKFLOW.read_text()
+    workflow = WORKFLOW.read_text(encoding='utf-8')
 
     assert 'github.com/pydantic/unified-docs' not in workflow
     assert 'Docs Navigation Check — queued' in workflow
