@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
+
 from . import ModelProfile
 
 
@@ -8,6 +10,13 @@ class ZaiModelProfile(ModelProfile, total=False):
 
     zai_supports_reasoning_effort: bool
     """Whether the model accepts a per-request `reasoning_effort` level (GLM-5.2 and GLM-5.3)."""
+
+    zai_reasoning_effort_mapping: Mapping[str, str]
+    """Substitutions applied to the unified thinking effort level before it is sent as `reasoning_effort`.
+
+    Levels not in the mapping are forwarded unchanged. GLM-5.2 accepts all unified levels, so it needs no
+    mapping; GLM-5.3 only accepts `low`/`high`/`max` and rejects the rest.
+    """
 
 
 _REASONING_EFFORT_MODEL_PREFIXES = ('glm-5.3', 'glm-5.2')
@@ -23,6 +32,11 @@ _ALWAYS_THINKING_MODEL_PREFIXES = ('glm-5.3',)
 
 Like `_REASONING_EFFORT_MODEL_PREFIXES`, list concrete released ids only.
 """
+
+_GLM_5_3_REASONING_EFFORT_MAPPING = {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}
+"""GLM-5.3 only accepts `reasoning_effort` values `low`, `high`, and `max` (the API rejects the rest with
+error 1210), so the unified levels it doesn't accept map to the nearest supported one — the same fallback
+approach as Gemini's `MINIMAL` -> `LOW`. `xhigh` maps to `max`, which has no unified equivalent."""
 
 
 def zai_model_profile(model_name: str) -> ModelProfile | None:
@@ -43,8 +57,11 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
     thinking_prefixes = ('glm-5', 'glm-4.7', 'glm-4.6', 'glm-4.5')
     if not model_lower.startswith(thinking_prefixes):
         return None
-    return ZaiModelProfile(
+    profile = ZaiModelProfile(
         supports_thinking=True,
         thinking_always_enabled=model_lower.startswith(_ALWAYS_THINKING_MODEL_PREFIXES),
         zai_supports_reasoning_effort=model_lower.startswith(_REASONING_EFFORT_MODEL_PREFIXES),
     )
+    if model_lower.startswith('glm-5.3'):
+        profile['zai_reasoning_effort_mapping'] = _GLM_5_3_REASONING_EFFORT_MAPPING
+    return profile

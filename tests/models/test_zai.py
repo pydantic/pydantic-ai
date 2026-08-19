@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -23,6 +23,7 @@ with try_import() as imports_successful:
         ZaiModelSettings,
         _zai_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.profiles.zai import ZaiModelProfile, zai_model_profile
     from pydantic_ai.providers.zai import ZaiProvider
 
 
@@ -221,22 +222,27 @@ async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str
 
 async def test_zai_glm_5_3_reasoning_effort(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
     """On GLM-5.3, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`,
-    like on GLM-5.2.
+    mapped to the levels the model accepts: `xhigh` goes out as `max`, which the model accepts.
 
-    Recorded against the real Z.AI API to confirm GLM-5.3 accepts the `reasoning_effort` parameter
-    (it supports `low`/`high`/`max` per the Z.AI docs); VCR matchers aren't sensitive to the request body.
-    At `low` effort the recorded response carries no `reasoning_content` for this trivial prompt.
+    Recorded against the real Z.AI API; VCR matchers aren't sensitive to the request body, so the mapped
+    wire value is asserted explicitly. The full level mapping is unit-tested in
+    `test_zai_glm_5_3_reasoning_effort_mapping`.
     """
     provider = ZaiProvider(api_key=zai_api_key)
     model = ZaiModel('glm-5.3', provider=provider)
-    settings = ModelSettings(thinking='low')
+    settings = ModelSettings(thinking='xhigh')
     response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
-    assert response.parts == snapshot([TextPart(content='2 + 2 = 4')])
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content='2 + 2 = 4'),
+        ]
+    )
 
     assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
-    assert request_body['reasoning_effort'] == 'low'
+    assert request_body['reasoning_effort'] == 'max'
 
 
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str):
@@ -473,3 +479,27 @@ def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, 
         supports_reasoning_effort=True,
     )
     assert transformed == expected
+
+
+@pytest.mark.parametrize(
+    'thinking,expected_effort',
+    [('minimal', 'low'), ('low', 'low'), ('medium', 'high'), ('high', 'high'), ('xhigh', 'max')],
+)
+def test_zai_glm_5_3_reasoning_effort_mapping(thinking: ThinkingLevel, expected_effort: str):
+    """GLM-5.3 only accepts `low`/`high`/`max` for `reasoning_effort` (the API rejects the other unified
+    levels with error 1210), so its profile maps the unsupported levels to the nearest supported one.
+
+    A unit test (not VCR) because VCR matchers aren't sensitive to the request body; the wire acceptance
+    of a mapped value is covered by `test_zai_glm_5_3_reasoning_effort`.
+    """
+    profile = cast(ZaiModelProfile, zai_model_profile('glm-5.3'))
+    transformed = _zai_settings_to_openai_settings(
+        ZaiModelSettings(),
+        ModelRequestParameters(thinking=thinking),
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+        reasoning_effort_mapping=profile.get('zai_reasoning_effort_mapping', {}),
+    )
+    assert transformed == {
+        'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': expected_effort}
+    }
