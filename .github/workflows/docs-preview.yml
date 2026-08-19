@@ -11,8 +11,8 @@ name: Docs Preview
 
 on:
   # zizmor: ignore[dangerous-triggers] -- pull_request_target is required so fork PRs can
-  # access the DOCS_APP credentials. The dispatch is gated on a maintainer adding the
-  # `trigger:docs` label, and this workflow does not check out or execute PR code.
+  # access the DOCS_APP credentials. The dispatch explicitly verifies that the label
+  # actor has write access, and this workflow does not check out or execute PR code.
   pull_request_target:
     types: [labeled]
 
@@ -32,6 +32,21 @@ jobs:
       pull-requests: write
 
     steps:
+      - name: Verify a maintainer triggered the preview
+        env:
+          ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          permission=$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" --jq .permission)
+          case "$permission" in
+            admin|maintain|write) ;;
+            *)
+              echo "${ACTOR} does not have permission to dispatch a docs preview" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Generate app token (for dispatching to unified-docs)
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -40,6 +55,7 @@ jobs:
           private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: unified-docs
+          permission-contents: write
 
       - name: Dispatch preview build
         env:
@@ -67,7 +83,7 @@ jobs:
           body=$(cat <<EOF
           ## Docs Preview — queued
 
-          The preview build for commit \`${sha7}\` has been dispatched to [pydantic/unified-docs](https://github.com/pydantic/unified-docs/actions/workflows/docs-preview.yml). This comment will be updated with the preview URL once the build completes.
+          The preview build for commit \`${sha7}\` has been queued. This comment will be updated with the preview URL once the build completes.
           EOF
           )
 
@@ -91,7 +107,7 @@ jobs:
           body=$(cat <<EOF
           ## Docs Preview — dispatch failed
 
-          The dispatch to pydantic/unified-docs failed. See [the workflow run](${RUN_URL}) for details.
+          The preview request could not be queued. See [the workflow run](${RUN_URL}) for details.
 
           <sub>Re-add the \`trigger:docs\` label to retry.</sub>
           EOF
