@@ -4,13 +4,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
-from pydantic.alias_generators import to_snake
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets._capability_owned import resolve_capability_id
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
@@ -33,12 +30,11 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     ```
 
     Or subclassed to set defaults by overriding `_default_native`, `_default_local`,
-    `_default_toolset_id`, and `_requires_native`.
+    and `_requires_native`.
     The built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch],
-    [`WebFetch`][pydantic_ai.capabilities.WebFetch],
-    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration],
-    [`XSearch`][pydantic_ai.capabilities.XSearch], and
-    [`MCP`][pydantic_ai.capabilities.MCP] capabilities are all subclasses.
+    [`WebFetch`][pydantic_ai.capabilities.WebFetch], and
+    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capabilities
+    are all subclasses.
     """
 
     native: AgentNativeTool[AgentDepsT] | bool = True
@@ -124,21 +120,6 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         """
         return None
 
-    def _default_toolset_id(self) -> str | None:
-        """The `id` to stamp on the contributed local toolset when the user didn't pass one.
-
-        Override in subclasses that cover a single fixed capability, so their local fallback works
-        with [durable execution](../durable_execution/overview.md) — which identifies leaf toolsets
-        by `id` — without the user naming something they never constructed. Kept separate from
-        [`id`][pydantic_ai.capabilities.AbstractCapability.id], which stays `None` so the run keeps
-        deriving the capability's own id (and keeps auto-resolving duplicates) as it does for every
-        other capability.
-
-        Returns `None` by default: direct `NativeOrLocalTool` use has no fixed identity, since what
-        it contributes depends on what the user passes as `local=`.
-        """
-        return None
-
     def _native_unique_id(self) -> str:
         """The unique_id used for `unless_native` on local tool definitions.
 
@@ -194,44 +175,21 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
         # local is Tool | AbstractToolset after __post_init__ resolution.
         # When wrapping a bare local callable, stamp the capability's `id` onto the toolset so it can
-        # be used with durable execution (which wraps leaf toolsets by `id`), falling back to the
-        # subclass's fixed default so single-purpose capabilities work there unconfigured. An
-        # `AbstractToolset` passed as `local=` keeps its own id and is never overwritten.
-        default_toolset_id = self._default_toolset_id()
+        # be used with durable execution (which wraps leaf toolsets by `id`). An `AbstractToolset`
+        # passed as `local=` keeps its own id and is never overwritten.
         toolset: AbstractToolset[AgentDepsT] = (
             cast(AbstractToolset[AgentDepsT], local)
             if isinstance(local, AbstractToolset)
-            else FunctionToolset(
-                [cast(Tool[AgentDepsT], local)],
-                id=self.id if self.id is not None else default_toolset_id,
-            )
+            else FunctionToolset([cast(Tool[AgentDepsT], local)], id=self.id)
         )
 
-        # Single-purpose built-ins provide a fixed leaf id for durable execution, while the run
-        # assigns distinct ids to otherwise-identical capabilities. Preserve both identities: the
-        # leaf id remains stable for durable dispatch, and generated local tool definitions use the
-        # run's deduplicated capability id so a plain agent never exposes ambiguous toolset ids.
-        use_capability_toolset_id = (
-            self.id is None
-            and not isinstance(local, AbstractToolset)
-            and default_toolset_id == to_snake(type(self).__name__)
-        )
-        uid = self._native_unique_id() if self.native is not False else None
-
-        if uid is not None or use_capability_toolset_id:
+        if self.native is not False:
+            uid = self._native_unique_id()
 
             async def _add_unless_native(
                 ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                capability_toolset_id = resolve_capability_id(ctx, self) if use_capability_toolset_id else None
-                return [
-                    replace(
-                        d,
-                        unless_native=uid if uid is not None else d.unless_native,
-                        toolset_id=capability_toolset_id if d.toolset_id is None else d.toolset_id,
-                    )
-                    for d in tool_defs
-                ]
+                return [replace(d, unless_native=uid) for d in tool_defs]
 
             return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
@@ -97,6 +97,15 @@ class Instrumentation(AbstractCapability[Any]):
     _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
     _variable_instructions: bool = field(default=False, repr=False, init=False)
+
+    _: KW_ONLY
+
+    id: str | None = 'instrumentation'
+    """One-off: an agent has a single instrumentation configuration, so the id is fixed by default.
+
+    Two instances in the same layer collide rather than being auto-disambiguated. Pass an explicit
+    `id` (or `id=None`) to opt out.
+    """
     """Whether agent-level instructions varied across requests in this run."""
     _message_json_cache: MessageJsonCache = field(default_factory=MessageJsonCache, repr=False, init=False)
     """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`).

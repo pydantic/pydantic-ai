@@ -99,7 +99,6 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
-from ..toolsets._capability_owned import CapabilityOwnedToolset, normalize_capability_toolset
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -732,9 +731,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
-        self._capability_toolset_occurrences: list[
-            tuple[AbstractCapability[AgentDepsT], CapabilityOwnedToolset[AgentDepsT]]
-        ] = []
         self._cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
         self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
@@ -747,11 +743,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # `self.toolsets`). The flip side is that `innermost` capabilities can't
         # contribute toolsets of their own.
         self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
-        for capability in self._root_capability.capabilities:
-            if (toolset := normalize_capability_toolset(capability)) is not None:
-                self._capability_toolset_occurrences.append((capability, toolset))
-        if self._capability_toolset_occurrences:
-            self._cap_toolsets = [CombinedToolset([toolset for _, toolset in self._capability_toolset_occurrences])]
+        cap_toolset = self._root_capability.get_toolset()
+        if cap_toolset is not None:
+            self._cap_toolsets = [cap_toolset]
         self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=True)
 
         if model is not None and not defer_model_check and not self._root_capability.has_resolve_model_id:
@@ -2892,12 +2886,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for the native-tool validation error's `source`.
         """
         run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
-        base_layer_index = 0
         # Prepend `Instrumentation` (outermost, so its spans wrap everything) unless the user already
         # added one themselves — mirroring the explicit-capability-wins precedence.
         if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
             run_layers.insert(0, instrumentation_cap)
-            base_layer_index = 1
 
         # Resolve `for_run` per layer instead of composing a `CombinedCapability` first (which would
         # gather over the same children): the `override(native_tools=...)` merge below needs the
@@ -2909,7 +2901,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
         resolved_layers = await _utils.gather(*(cap.for_run(ctx) for cap in run_layers))
-        resolved_base_capability = resolved_layers[base_layer_index]
+        for layer in resolved_layers:
+            layer_capabilities: list[AbstractCapability[AgentDepsT]] = []
+            layer.apply(layer_capabilities.append)
+            _validate_capability_ids(layer_capabilities)
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
@@ -2917,7 +2912,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
         )
-        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+        run_capability = _compose_run_layers(resolved_layers)
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -2942,32 +2937,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             source_cap: AbstractCapability[AgentDepsT] | None = run_capability
         else:
             source_cap = None
-        toolsets: list[AgentToolset[AgentDepsT]] | None
         if source_cap is not None:
             instructions = _instructions.normalize_instructions(source_cap.get_instructions())
             native_tools = list(source_cap.get_native_tools())
             model_settings = source_cap.get_model_settings()
-            assert isinstance(run_capability, CombinedCapability)
-            cached_toolsets_by_capability: dict[int, list[CapabilityOwnedToolset[AgentDepsT]]] = {}
-            if not base_is_override and isinstance(resolved_base_capability, CombinedCapability):
-                construction_toolsets_by_capability: dict[int, list[CapabilityOwnedToolset[AgentDepsT]]] = {}
-                for capability, toolset in self._capability_toolset_occurrences:
-                    construction_toolsets_by_capability.setdefault(id(capability), []).append(toolset)
-                for capability in resolved_base_capability.capabilities:
-                    if (construction_toolsets := construction_toolsets_by_capability.get(id(capability))) is not None:
-                        cached_toolsets_by_capability.setdefault(id(capability), []).append(
-                            construction_toolsets.pop(0)
-                        )
-
-            capability_toolsets: list[CapabilityOwnedToolset[AgentDepsT]] = []
-            for capability in run_capability.capabilities:
-                if (
-                    cached_toolsets := cached_toolsets_by_capability.get(id(capability))
-                ) is not None and cached_toolsets:
-                    capability_toolsets.append(cached_toolsets.pop(0))
-                elif (toolset := normalize_capability_toolset(capability)) is not None:
-                    capability_toolsets.append(toolset)
-            toolsets = [CombinedToolset(capability_toolsets)] if capability_toolsets else []
+            cap_toolset = source_cap.get_toolset()
+            toolsets: list[AgentToolset[AgentDepsT]] | None = [cap_toolset] if cap_toolset is not None else []
         else:
             instructions = None  # use init-time defaults
             native_tools = self._cap_native_tools
@@ -3955,10 +3930,18 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     """Validate capability `id`s and return the set of explicit ones.
 
     Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
-    one capability. Shared by two call sites: construction-time validation over the
-    statically-provided capabilities (so misconfiguration fails fast in `Agent(...)` rather than
-    on the first run), and run-time assembly in `_build_run_capabilities`, which also covers
-    capabilities supplied per-run or returned by `for_run` and so can't be checked at construction.
+    one capability *within a single layer*.
+
+    The layer distinction mirrors [`_validate_native_tool_ids`][pydantic_ai.agent._validate_native_tool_ids]:
+    two capabilities sharing an id in one layer are ambiguous, because the one that ends up in the
+    run registry is arbitrary. *Across* layers the reuse is the intentional override mechanism —
+    `agent.run(capabilities=[Thinking(effort='high')])` is how a run overrides an agent-level
+    `Thinking`, and the one-off capabilities carry a fixed default `id` precisely so that lines up.
+
+    Called at construction over the statically-provided capabilities (so misconfiguration fails fast
+    in `Agent(...)` rather than on the first run) and once per resolved layer in
+    `_resolve_run_capabilities`, which also covers capabilities supplied per-run or returned by
+    `for_run` and so can't be checked at construction.
     """
     explicit_ids: set[str] = set()
     for cap in capabilities:
@@ -4048,11 +4031,54 @@ def _layer_model_settings(
     return merged
 
 
+def _compose_run_layers(
+    layers: Sequence[AbstractCapability[AgentDepsT]],
+) -> AbstractCapability[AgentDepsT]:
+    """Compose the run's capability layers, letting a later layer's `id` supersede an earlier one.
+
+    Capabilities covering a single fixed concern carry a stable default `id`, so an agent-level one
+    and a run-level one arrive under the same key. Keeping both would leave the earlier capability
+    contributing tools and instructions while `_build_run_capabilities` maps its `id` to the later
+    one, orphaning it: `resolve_capability_id` would then fail to find it, and it would be missing
+    from `RunContext.available_capability_ids`. Dropping it instead makes the run registry and the
+    composed tree agree, and matches the last-wins `unique_id` dedup already applied to native tools
+    across layers.
+
+    Duplicates *within* a layer are rejected by `_validate_capability_ids` before this runs, so any
+    collision here spans layers and is the user's own composition. Pydantic AI's own injected
+    capabilities can't reach it: each is added only when one of its type isn't already present.
+    """
+    leaves_by_layer = [leaf_capabilities(layer) for layer in layers]
+    superseded: set[int] = set()
+    last_by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
+    for leaves in leaves_by_layer:
+        for leaf in leaves:
+            if leaf.id is None:
+                continue
+            if (previous := last_by_id.get(leaf.id)) is not None and previous is not leaf:
+                superseded.add(id(previous))
+                warnings.warn(
+                    f'Capability id {leaf.id!r} is used by a capability supplied for this run and by '
+                    f'one on the agent, so the agent-level {type(previous).__name__} is replaced. '
+                    f'Pass a distinct `id` to keep both, or `id=None` to derive separate ids.',
+                    exceptions.CapabilityOverriddenWarning,
+                    stacklevel=2,
+                )
+            last_by_id[leaf.id] = leaf
+    if not superseded:
+        return CombinedCapability(layers) if len(layers) > 1 else layers[0]
+    kept = [leaf for leaves in leaves_by_layer for leaf in leaves if id(leaf) not in superseded]
+    return CombinedCapability(kept) if len(kept) > 1 else kept[0]
+
+
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
-    explicit_ids = _validate_capability_ids(capabilities)
+    # Ids are validated per layer (see `_validate_capability_ids`), not over the composed tree, so a
+    # run-level capability may deliberately reuse an agent-level id to override it. Collect the
+    # explicit ones here only so a derived id can't shadow one.
+    explicit_ids = {cap.id for cap in capabilities if cap.id is not None}
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     for cap in capabilities:

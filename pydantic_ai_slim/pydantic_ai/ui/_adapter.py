@@ -26,6 +26,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
+from pydantic_ai.capabilities._ordering import has_capability_type
 from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
@@ -544,7 +545,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             )
 
         run_capabilities: list[AbstractCapability[AgentDepsT]] = []
-        if self.manage_system_prompt == 'server':
+        if self.manage_system_prompt == 'server' and not has_capability_type(
+            [self.agent.root_capability], ReinjectSystemPrompt
+        ):
+            # Only inject when the agent doesn't already reinject: `ReinjectSystemPrompt` carries a
+            # fixed default `id`, so adding a second one would supersede the user's own (and warn
+            # about a capability they never supplied here).
             run_capabilities.append(ReinjectSystemPrompt(replace_existing=True))
         if capabilities:
             run_capabilities.extend(capabilities)

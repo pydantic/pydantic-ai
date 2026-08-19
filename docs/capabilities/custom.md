@@ -4,6 +4,8 @@ To build your own [capability](overview.md), subclass [`AbstractCapability`][pyd
 
 Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-available capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
 
+Capabilities that cover a single fixed concern instead declare a stable default `id` — the built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch] uses `'web_search'`, [`Thinking`][pydantic_ai.capabilities.Thinking] uses `'thinking'`, and so on. Because the id is fixed, two of them in the same list collide instead of being disambiguated, which is usually a sign one was added twice; pass a distinct `id` if you really want both, or `id=None` to opt back into the derived-and-disambiguated ids. Passing one to [`run`][pydantic_ai.agent.AbstractAgent.run] *replaces* an agent-level capability of the same id rather than adding a second copy, and warns with [`CapabilityOverriddenWarning`][pydantic_ai.exceptions.CapabilityOverriddenWarning]. Give your own capability a default `id` when it is one-off in the same way.
+
 ```python {title="custom_capability_plain.py"}
 from typing import Any
 

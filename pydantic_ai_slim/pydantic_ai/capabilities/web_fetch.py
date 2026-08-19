@@ -52,7 +52,7 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
-        id: str | None = None,
+        id: str | None = 'web_fetch',
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
@@ -81,9 +81,6 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         if self.max_content_tokens is not None:
             kwargs['max_content_tokens'] = self.max_content_tokens
         return WebFetchTool(**kwargs)
-
-    def _default_toolset_id(self) -> str:
-        return 'web_fetch'
 
     def _native_unique_id(self) -> str:
         return WebFetchTool.kind

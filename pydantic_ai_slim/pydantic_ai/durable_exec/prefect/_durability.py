@@ -62,7 +62,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     )
 
     _durable_unit_noun = 'task'
-    _durable_unit_noun_plural = 'tasks'
     _durable_container_noun = 'flow'
     _tool_config_key = 'prefect'
 

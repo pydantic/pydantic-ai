@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
@@ -39,6 +39,15 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     """
 
     replace_existing: bool = False
+
+    _: KW_ONLY
+
+    id: str | None = 'reinject_system_prompt'
+    """One-off: an agent reinjects the system prompt one way, so the id is fixed by default.
+
+    Two instances in the same layer collide rather than being auto-disambiguated. Pass an explicit
+    `id` (or `id=None`) to opt out.
+    """
     """If `True`, strip any existing `SystemPromptPart`s from the history before prepending
     the agent's configured prompt. If `False` (the default), the capability is a no-op when
     any `SystemPromptPart` is already present."""
