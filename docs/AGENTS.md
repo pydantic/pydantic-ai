@@ -40,6 +40,7 @@
 - Cross-reference alternatives and explain trade-offs when documenting overlapping features — Prevents users from missing better-suited options or implementing duplicate functionality when multiple approaches exist (e.g., `UsageLimits` vs rate-limiting, provider-specific implementations)
 <!-- rule:1112 -->
 - Document default behavior and use cases for all configurable features — helps users decide when to override defaults — Users can't make informed configuration choices without knowing what happens by default and when alternatives are appropriate
+- When docs contrast prior and current Pydantic AI behavior, name the first version with the current behavior. Do not repeat a version already supplied by the page or section. Do not add historical prose when current behavior alone is sufficient.
 <!-- rule:135 -->
 - Use actual, currently available model names in documentation examples — prevents user confusion and copy-paste errors with non-existent models — Ensures users can run documentation examples without modification and avoids frustration from referencing models that don't exist yet or are hypothetical
 <!-- rule:508 -->

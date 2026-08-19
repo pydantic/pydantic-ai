@@ -43,13 +43,12 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 if TYPE_CHECKING:
-    import httpx
-
     # Only needed for typing: the provider supplies the concrete client at runtime, so importing the
     # protocol helpers below (e.g. from the xAI realtime provider) doesn't require the `openai` package.
     from openai import AsyncOpenAI
     from openai.types.realtime.realtime_truncation_param import RealtimeTruncationParam
 
+from .._http import AsyncHTTPClient
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import (
@@ -1050,7 +1049,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         return self._webrtc_url('realtime/client_secrets')
 
     @property
-    def _http_client(self) -> httpx.AsyncClient:
+    def _http_client(self) -> AsyncHTTPClient:
         return self._provider.client._client  # pyright: ignore[reportPrivateUsage]
 
     async def _webrtc_headers(self) -> dict[str, str]:
