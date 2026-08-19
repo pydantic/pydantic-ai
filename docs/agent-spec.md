@@ -112,6 +112,8 @@ Capabilities in specs support three forms:
 * `{'MyCapability': value}` — single positional argument, calls `MyCapability.from_spec(value)`
 * `{'MyCapability': {key: value, ...}}` — keyword arguments, calls `MyCapability.from_spec(**kwargs)`
 
+These built-in capabilities can be declared in specs: [`Thinking`][pydantic_ai.capabilities.Thinking], [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], [`MCP`][pydantic_ai.capabilities.MCP], [`ToolSearch`][pydantic_ai.capabilities.ToolSearch], [`PrefixTools`][pydantic_ai.capabilities.PrefixTools], [`NativeTool`][pydantic_ai.capabilities.NativeTool], [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas], [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError], and [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt]. The other [built-in capabilities](capabilities/overview.md#available-capabilities) take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
+
 ## Custom capabilities in specs
 
 See [Publishing capabilities](capabilities/custom.md#publishing-capabilities) for how to make custom capabilities work with agent specs.

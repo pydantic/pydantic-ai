@@ -8,8 +8,15 @@ pip/uv-add pydantic-ai
 
 (Requires Python 3.10+)
 
-This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), [Retries](models/http-request-retries.md), and [Logfire](logfire.md) integrations.
+This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), and [Logfire](logfire.md) integrations.
 To use any other models or integrations, add the relevant extras to your install command, e.g. `pydantic-ai[bedrock,temporal]`. Alternatively, you can install the [`pydantic-ai-slim`](#slim-install) package with only the extras you need.
+
+## TLS certificates
+
+Pydantic AI's own HTTP requests, and those of providers migrated to [`httpx2`](https://httpx2.pydantic.dev/), verify TLS certificates against the operating system trust store rather than shipping a `certifi` bundle.
+Minimal container images and corporate proxies that rely on a private CA therefore need those certificates installed in the image (for example the `ca-certificates` package, plus your proxy's root CA).
+Alternatively, pass such a provider an `httpx2.AsyncClient` you configured yourself through its `http_client` argument — see the [provider docs](models/overview.md) for the client each one accepts.
+Providers whose SDKs still use legacy `httpx` (such as Anthropic and Cohere) keep its `certifi`-based verification and take a legacy `httpx.AsyncClient` instead.
 
 ## Use with Pydantic Logfire
 
@@ -66,9 +73,9 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `cli` - installs [CLI](cli.md) dependencies `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
 * `mcp` - installs [MCP](mcp/client.md) dependency `fastmcp-slim[client]` [PyPI ↗](https://pypi.org/project/fastmcp-slim){:target="_blank"}
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
-* `web` - installs [Web UI](ui/overview.md) dependencies `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}, `httpx` [PyPI ↗](https://pypi.org/project/httpx){:target="_blank"}, and `uvicorn` [PyPI ↗](https://pypi.org/project/uvicorn){:target="_blank"}
+* `web` - installs [Web UI](ui/overview.md) dependencies `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"} and `uvicorn` [PyPI ↗](https://pypi.org/project/uvicorn){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
-* `retries` - installs [HTTP Retries](models/http-request-retries.md) dependency `tenacity` [PyPI ↗](https://pypi.org/project/tenacity){:target="_blank"}
+* `retries` - installs [HTTP Retries](models/http-request-retries.md) dependency `tenacity` [PyPI ↗](https://pypi.org/project/tenacity){:target="_blank"}, plus legacy `httpx` [PyPI ↗](https://pypi.org/project/httpx){:target="_blank"} support until Pydantic AI v3
 * `temporal` - installs [Temporal Durable Execution](durable_execution/temporal.md) dependency `temporalio` [PyPI ↗](https://pypi.org/project/temporalio){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}

@@ -1024,7 +1024,7 @@ assert combined.capabilities[1] is rate_limit_hooks
 
 ### Sharing state between capabilities
 
-Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar]: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first.
+Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar] set from an async function: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first. A sync [`Hooks`](../hooks.md) function can't be the writer: it runs on a separate thread, so values it sets are not visible to the rest of the run.
 
 ### Testing custom capabilities
 

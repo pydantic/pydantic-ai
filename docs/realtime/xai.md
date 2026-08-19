@@ -25,7 +25,7 @@ the connection requires the API key.
 Use a Grok Voice ID such as `grok-voice-latest` or a pinned `grok-voice-think-*` model.
 `grok-voice-latest` follows xAI's current flagship and can change underneath an application; pin a
 version when behavior must remain stable. Use the
-[official xAI voice documentation](https://docs.x.ai/docs/guides/voice-agent) for the canonical
+[official xAI voice documentation](https://docs.x.ai/docs/guides/voice) for the canonical
 model list.
 
 ## Settings
