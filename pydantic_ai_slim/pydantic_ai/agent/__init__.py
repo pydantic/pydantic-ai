@@ -3803,6 +3803,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: str | None = None,
         html_source: str | Path | None = None,
         allowed_hosts: Sequence[str] | None = None,
+        base_path: str | None = None,
+        api_path: str | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -3841,6 +3843,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 with a `421`, so that a website cannot reach the UI on your machine by pointing a
                 hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host,
                 only if something in front of the app already authenticates requests.
+            base_path: Absolute same-origin directory for browser navigation. By default, this is
+                derived from each request's ASGI `root_path`. This configures browser URLs only; it
+                does not mount the returned app at that path.
+            api_path: Absolute same-origin directory containing the `configure` and `chat` endpoints.
+                By default, this is the request's ASGI `root_path` followed by `/api/`. This configures
+                browser requests only; it does not change the app's internal `/api` mount.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -3872,6 +3880,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             html_source=html_source,
             allowed_hosts=allowed_hosts,
+            base_path=base_path,
+            api_path=api_path,
         )
 
 

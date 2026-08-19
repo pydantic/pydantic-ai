@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 import tempfile
 import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, TypeVar
+from urllib.parse import quote
 
 import anyio
 import anyio.to_thread
 import httpx2
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
@@ -45,6 +49,10 @@ OutputDataT = TypeVar('OutputDataT')
 # Cache operations run in worker threads. Serialize reads and atomic replacement because Windows
 # may reject replacing a destination file while another thread has it open for reading.
 _CACHE_FILE_LOCK = threading.Lock()
+
+_HEAD_TAG_PATTERN = re.compile(rb'<head(?:\s[^>]*)?>', re.IGNORECASE)
+_SCRIPT_TAG_PATTERN = re.compile(rb'<script(?:\s|>)', re.IGNORECASE)
+_ILLEGAL_PATH_CHARS = frozenset('\\?#\t\n\r')
 
 
 async def _get_cache_dir() -> Path:
@@ -162,6 +170,17 @@ async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
     return content
 
 
+def _normalize_same_origin_path(path: str, parameter: str) -> str:
+    """Validate and normalize a same-origin directory path."""
+    if not path.startswith('/') or path.startswith('//') or _ILLEGAL_PATH_CHARS & set(path):
+        raise UserError(
+            f'Invalid `{parameter}` {path!r}. '
+            'Use an absolute same-origin path starting with exactly one `/`, '
+            'without backslashes, tabs, newlines, a query, or a fragment.'
+        )
+    return path if path.endswith('/') else f'{path}/'
+
+
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
@@ -172,6 +191,8 @@ def create_web_app(
     html_source: str | Path | None = None,
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
     allowed_hosts: Sequence[str] | None = None,
+    base_path: str | None = None,
+    api_path: str | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -206,17 +227,28 @@ def create_web_app(
             with a `421`, so that a website cannot reach the UI on your machine by pointing a
             hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host, only
             if something in front of the app already authenticates requests.
+        base_path: Absolute same-origin directory for browser navigation. By default, this is
+            derived from each request's ASGI `root_path`. This configures browser URLs only; it
+            does not mount the returned app at that path.
+        api_path: Absolute same-origin directory containing the `configure` and `chat` endpoints.
+            By default, this is the request's ASGI `root_path` followed by `/api/`. This configures
+            browser requests only; it does not change the app's internal `/api` mount.
 
     Returns:
         A configured Starlette application ready to be served
 
     Raises:
-        UserError: If an `allowed_hosts` entry is not a hostname, `*.example.com`, or `*`.
+        UserError: If an `allowed_hosts` entry is invalid, or if `base_path` or `api_path` is not an
+            absolute same-origin directory path.
     """
     # Normalized here rather than left to the middleware so a bad pattern is reported from this call
     # instead of from the first request: Starlette builds its middleware stack lazily. Normalizing is
     # idempotent, so the middleware doing it again over the same list is a no-op.
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
+    if base_path is not None:
+        base_path = _normalize_same_origin_path(base_path, 'base_path')
+    if api_path is not None:
+        api_path = _normalize_same_origin_path(api_path, 'api_path')
 
     api_app = create_api_app(
         agent=agent,
@@ -238,6 +270,24 @@ def create_web_app(
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
         content = await _get_ui_html(html_source)
+        root_path = _normalize_same_origin_path(quote(request.scope.get('root_path', '') or '/', safe='/'), 'root_path')
+        config = json.dumps(
+            {'basePath': base_path or root_path, 'apiPath': api_path or f'{root_path}api/'},
+            ensure_ascii=True,
+            separators=(',', ':'),
+        )
+        # A JSON string may contain `</script>`, so escape every character with special meaning in
+        # HTML before embedding it in an executable script element.
+        config = config.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
+        bootstrap = f'<script>window.PYDANTIC_AI_CHAT_CONFIG={config};</script>'.encode()
+
+        if match := _HEAD_TAG_PATTERN.search(content):
+            position = match.end()
+        elif match := _SCRIPT_TAG_PATTERN.search(content):
+            position = match.start()
+        else:
+            position = 0
+        content = content[:position] + bootstrap + content[position:]
 
         return HTMLResponse(
             content=content,

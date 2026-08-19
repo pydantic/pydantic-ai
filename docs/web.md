@@ -134,6 +134,45 @@ Every route is checked, including `/api/health`. A health check or container pro
 
 Pass `allowed_hosts=['*']` to answer to any host, but only if something in front of the app already authenticates requests. Only list domains whose subdomains you control: a wildcard for a domain where anyone can obtain a subdomain re-opens the problem.
 
+## Mounting below a path
+
+The web app derives its public browser and API paths from each request's ASGI `root_path`. Mount it
+under a Starlette or FastAPI application and the UI stays below that mount automatically:
+
+```python
+from starlette.applications import Starlette
+from starlette.routing import Mount
+
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+web_app = agent.to_web()
+
+app = Starlette(routes=[Mount('/demo', app=web_app)])
+```
+
+This serves conversation pages below `/demo/` and calls the API below `/demo/api/`. A reverse proxy
+that strips a public prefix gets the same behavior when its ASGI integration sets `root_path` to that
+prefix.
+
+If the browser-visible paths do not match `root_path`, set them independently:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+app = agent.to_web(
+    base_path='/chat/',
+    api_path='/agent-api/',
+)
+```
+
+Both values must be absolute same-origin directory paths. `base_path` controls conversation URLs and
+navigation; `api_path` is the complete directory containing `configure` and `chat`. These settings
+describe public routing: they do not mount or move the returned app's internal routes, so the outer
+application or proxy must route those public paths to the app accordingly.
+
 ## Reserved Routes
 
 All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under-a-hostname). The web UI app uses the following routes which should not be overwritten:
@@ -143,7 +182,8 @@ All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under
 - `/api/configure` - Frontend configuration (GET)
 - `/api/health` - Health check (GET)
 
-The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
+You can add additional routes to the app, but avoid conflicts with these reserved paths. When the app
+is mounted below a path, the mount prefix is prepended to every route above.
 
 ## Custom HTML Source
 
