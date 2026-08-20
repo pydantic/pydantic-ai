@@ -794,9 +794,11 @@ async def test_google_model_mobile_youtube_video_url_input(
 ):
     """`m.youtube.com` share links resolve as a `file_uri`, like any other YouTube host.
 
-    The request body proves we send the URL rather than downloading it, and the recorded usage
-    proves Gemini resolved it to the video rather than to the watch page: it bills video and
-    audio prompt tokens, which a downloaded `text/html` page could not produce.
+    What catches a regression here is the cassette itself, not the request-body snapshot: drop
+    the host from `VideoUrl.is_youtube` and `_resolve_file` falls through to `download_item`,
+    whose live GET has no recorded interaction, so replay fails before the snapshot is reached.
+    The recorded usage is what proves Gemini resolved the URL to the video rather than to the
+    watch page — it bills video and audio prompt tokens, which a `text/html` page could not.
     """
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')

@@ -122,9 +122,12 @@ def test_youtube_video_url(url: str, is_youtube: bool):
 def test_music_youtube_video_url_is_not_youtube():
     """`music.youtube.com` is deliberately not a YouTube host.
 
-    Gemini rejects it as a `file_uri` with 400 INVALID_ARGUMENT, so recognizing it would hand
+    Google rejects it as a `file_uri` with 400 INVALID_ARGUMENT, so recognizing it would hand
     the provider a URL it cannot resolve. Staying unrecognized also means an extension-less
     watch URL has no media type to infer, which is what the raise below pins.
+
+    Not a VCR test: with the host unrecognized the `ValueError` is raised locally, before
+    anything reaches the wire, so there is no exchange to record.
     """
     video_url = VideoUrl(url='https://music.youtube.com/watch?v=lCdaVNyHtjU')
     assert video_url.is_youtube is False
