@@ -127,7 +127,7 @@ def transfer_funds(ctx: RunContext[int], amount: int) -> str:
 
 Reach for these features when the user needs more than a simple function tool:
 
-- `ToolReturn` for rich return values plus separate content/metadata
+- `ToolReturn` for rich return values, separate content/metadata, and `tools` names that reveal deferred tools
 - `prepare=` for dynamic tool definitions
 - `timeout=` for tool execution limits
 - `sequential=True` to make a tool a barrier — it runs alone (tools emitted before it finish first, tools after it start once it finishes) while other tools parallelize around it; works on function tools and on output tools via `ToolOutput(sequential=True)`
@@ -148,6 +148,10 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
         metadata={'coordinates': {'x': x, 'y': y}},
     )
 ```
+
+Set `tools=['tool_name']` when the call makes a tool declared with `defer_loading=True` available. The executor deduplicates names in first-occurrence order, omits names already revealed, and stores a `ToolAvailabilityDeltaPart` immediately after that call's `ToolReturnPart`. The recorded name remains revealed when history is resumed; an unknown or already-visible name is a no-op when rendered.
+
+Every searchable deferred tool stays in the search corpus after discovery. A `CompactionPart` resets prospective discovery at its exact position, so future requests reveal pre-boundary tools again. For a call in the response currently being dispatched, earlier evidence still counts when the serving provider did not honor that boundary on the request wire; otherwise a call without visible evidence is refused with a "not available yet" retry.
 
 ## Control Tool Execution When an Output Tool Is Called
 

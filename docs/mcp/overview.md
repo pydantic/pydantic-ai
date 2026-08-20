@@ -41,7 +41,7 @@ agent = Agent(
 
 Pass a URL as the first argument to enable both the local fallback and (with `native=True`) provider-native MCP. On the local side, `local=` accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input — a URL, FastMCP transport, pre-built `fastmcp.Client`, in-process `FastMCP` server, or local script path. See the [capability documentation](../capabilities/mcp.md) for the full set of inputs and configuration options.
 
-For lower-level access — managing the toolset lifecycle directly, sharing one MCP server across multiple agents, or passing advanced transport / client configuration that doesn't fit the capability shape — use `MCPToolset` directly via `toolsets=[...]`. See the [MCP client documentation](client.md) for details.
+For lower-level access — managing the toolset lifecycle directly, sharing one MCP server across multiple agents, or passing advanced transport or client configuration the [`MCP` capability](../capabilities/mcp.md) does not expose — use `MCPToolset` directly via `toolsets=[...]`. See the [MCP client documentation](client.md) for details.
 
 If you only need the model provider's native MCP support without a local fallback, you can use [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] as a [native tool](../native-tools.md#mcp-server-tool) directly.
 

@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
@@ -2838,6 +2839,7 @@ def test_deferred_tool_results_serializable():
                     'return_value': 1,
                     'content': 'The tool call was approved.',
                     'metadata': {'foo': 'bar'},
+                    'tools': None,
                     'kind': 'tool-return',
                 },
                 'tool-failed': {'message': 'The tool failed.', 'kind': 'tool-failed'},
@@ -3104,6 +3106,38 @@ async def test_tool_timeout_triggers_retry():
     assert len(retry_parts) == 1
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
     assert retry_parts[0].tool_name == 'slow_tool'
+
+
+@pytest.mark.anyio
+async def test_sync_tool_timeout_triggers_retry():
+    """A blocking `def` tool times out too: its worker thread is abandoned when the deadline expires."""
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_sync_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=0.01)
+    def slow_sync_tool() -> str:
+        time.sleep(0.1)
+        # The abandoned thread runs to completion, so this line is covered; only its result is discarded.
+        return 'done'
+
+    result = await agent.run('call slow_sync_tool')
+
+    retry_parts = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.01 seconds' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'slow_sync_tool'
 
 
 @pytest.mark.anyio
@@ -4873,9 +4907,8 @@ def test_include_return_schema_warning_empty_schema():
 
 
 def test_prepare_return_schemas():
-    """_prepare_return_schemas resolves and injects return schemas in a single pass."""
-    from pydantic_ai.models import ModelRequestParameters, _prepare_return_schemas
-    from pydantic_ai.profiles import ModelProfile
+    """`prepare_return_schemas` resolves and injects return schemas in a single pass."""
+    from pydantic_ai.models import ModelRequestParameters, prepare_return_schemas
     from pydantic_ai.tools import ToolDefinition
 
     td_with_schema = ToolDefinition(
@@ -4897,8 +4930,7 @@ def test_prepare_return_schemas():
     )
 
     # Non-native model: opted-in tool gets schema injected into description, non-opted-in gets cleared
-    profile_no_native = ModelProfile(supports_tool_return_schema=False)
-    result = _prepare_return_schemas(params, profile_no_native)
+    result = prepare_return_schemas(params, supports_tool_return_schema=False)
     assert result.function_tools[0].return_schema is None
     assert 'Return schema:' in (result.function_tools[0].description or '')
     assert 'A tool' in (result.function_tools[0].description or '')
@@ -4906,8 +4938,7 @@ def test_prepare_return_schemas():
     assert 'Return schema:' not in (result.function_tools[1].description or '')
 
     # Native model: opted-in tool keeps schema, non-opted-in gets cleared
-    profile_native = ModelProfile(supports_tool_return_schema=True)
-    result = _prepare_return_schemas(params, profile_native)
+    result = prepare_return_schemas(params, supports_tool_return_schema=True)
     assert result.function_tools[0].return_schema == {'type': 'string'}
     assert result.function_tools[1].return_schema is None
 
@@ -4916,7 +4947,7 @@ def test_prepare_return_schemas():
     params_no_desc = ModelRequestParameters(
         function_tools=[td_no_desc], output_tools=[], output_mode='auto', output_object=None
     )
-    result = _prepare_return_schemas(params_no_desc, profile_no_native)
+    result = prepare_return_schemas(params_no_desc, supports_tool_return_schema=False)
     assert result.function_tools[0].description is not None
     assert result.function_tools[0].description.startswith('Return schema:')
 
