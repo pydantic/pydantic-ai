@@ -5454,6 +5454,67 @@ async def test_parallel_ordered_events_are_not_stranded_by_a_failing_sibling() -
                 _ = [e async for e in session]
 
 
+async def test_tool_can_cancel_realtime_session() -> None:
+    """A fake connection makes the absence of a provider-bound tool result directly assertable."""
+    agent = Agent[None, str](deps_type=type(None))
+
+    @agent.tool
+    def cancel(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        return 'must be discarded'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='cancel', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+
+    session: _RealtimeSession | None = None
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.realtime(model).session() as session:
+            _ = [e async for e in session]
+
+    assert session is not None
+    assert session.closed
+    parts = [part for message in exc_info.value.all_messages() for part in message.parts]
+    assert any(isinstance(part, ToolCallPart) for part in parts)
+    assert any(isinstance(part, ToolReturnPart) and part.outcome == 'interrupted' for part in parts)
+    assert not any(isinstance(item, ToolResult) for item in conn.sent)
+
+
+async def test_realtime_cancellation_does_not_wait_for_sync_tool_worker() -> None:
+    """A unit test because a recording cannot observe whether the local worker thread outlives the session."""
+    worker_started = ThreadEvent()
+    worker_release = ThreadEvent()
+    worker_finished = ThreadEvent()
+    agent = Agent[None, str](deps_type=type(None))
+
+    @agent.tool
+    def cancel_and_block(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        worker_started.set()
+        worker_release.wait()
+        worker_finished.set()
+        return 'must be discarded'
+
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='cancel_and_block', args='{}'), ResponseDone()]
+    )
+
+    async def consume() -> None:
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            _ = [event async for event in session]
+
+    task = asyncio.create_task(consume())
+    await asyncio.to_thread(worker_started.wait)
+    try:
+        with pytest.raises(RunCancelled):
+            await asyncio.wait_for(asyncio.shield(task), timeout=1)
+        assert not worker_finished.is_set()
+        assert not any(isinstance(item, ToolResult) for item in conn.sent)
+    finally:
+        worker_release.set()
+        assert await asyncio.to_thread(worker_finished.wait, 5)
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_nested_run_cancellation_is_isolated_into_a_failed_tool_return() -> None:
     # A sub-agent run awaited inside a tool that cancels *itself* must not take the session with it.
     # The graph isolates exactly this into a failed tool return (#7199); the session's own cancellation

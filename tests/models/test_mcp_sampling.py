@@ -20,8 +20,8 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from mcp import CreateMessageResult
-    from mcp.types import TextContent
+    # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
+    from mcp.types import CreateMessageResult, TextContent
 
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 

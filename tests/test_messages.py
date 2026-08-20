@@ -107,6 +107,8 @@ def test_video_url():
         pytest.param('https://youtu.be/lCdaVNyHtjU', True, id='youtu.be'),
         pytest.param('https://www.youtube.com/lCdaVNyHtjU', True, id='www.youtube.com'),
         pytest.param('https://youtube.com/lCdaVNyHtjU', True, id='youtube.com'),
+        pytest.param('https://m.youtube.com/watch?v=lCdaVNyHtjU', True, id='m.youtube.com'),
+        pytest.param('https://youtube.com.example.com/video.mp4', False, id='youtube.com.example.com'),
         pytest.param('https://dummy.com/video.mp4', False, id='dummy.com'),
     ],
 )
@@ -115,6 +117,26 @@ def test_youtube_video_url(url: str, is_youtube: bool):
     assert video_url.is_youtube is is_youtube
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
+
+
+def test_music_youtube_video_url_is_not_youtube():
+    """`music.youtube.com` is deliberately not a YouTube host.
+
+    Google rejects it as a `file_uri` with 400 INVALID_ARGUMENT, so recognizing it would hand
+    the provider a URL it cannot resolve. Staying unrecognized also means an extension-less
+    watch URL has no media type to infer, which is what the raise below pins.
+
+    Not a VCR test: with the host unrecognized the `ValueError` is raised locally, before
+    anything reaches the wire, so there is no exchange to record.
+    """
+    video_url = VideoUrl(url='https://music.youtube.com/watch?v=lCdaVNyHtjU')
+    assert video_url.is_youtube is False
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape('Could not infer media type from video URL: https://music.youtube.com/watch?v=lCdaVNyHtjU'),
+    ):
+        video_url.media_type
 
 
 @pytest.mark.parametrize(

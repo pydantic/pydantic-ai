@@ -17,14 +17,15 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args, overload
 
-from httpx import Timeout
+from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Never, Protocol, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._http import legacy_httpx
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
@@ -114,7 +115,7 @@ from . import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
-    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
@@ -123,6 +124,13 @@ from . import (
     get_user_agent,
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
+
+if TYPE_CHECKING:
+    from httpx import Timeout
+else:
+    # Legacy HTTPX is optional: without it `_normalize_openai_timeout`'s `isinstance` check falls back
+    # to the HTTPX2 type the SDK already accepts, so the conversion just rebuilds an equivalent value.
+    Timeout = legacy_httpx.Timeout if legacy_httpx is not None else HTTPX2Timeout
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
@@ -203,14 +211,40 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+def _normalize_openai_timeout(timeout: float | Timeout | NotGiven) -> float | HTTPX2Timeout | NotGiven:
+    if isinstance(timeout, Timeout):
+        return HTTPX2Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
+    return timeout
+
+
+def _preload_openai_sdk_resource_modules(model: OpenAIChatModel | OpenAIResponsesModel, client: AsyncOpenAI) -> None:
+    """Load deferred OpenAI SDK modules before request handling.
+
+    The provider client only triggers process-wide module loading; it need not be the exact client later used by
+    an OpenAI-compatible model subclass.
+    """
+    if isinstance(model, OpenAIChatModel):
+        _ = client.chat.completions
+    else:
+        _ = client.responses
+
+
 @contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
+def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
+            body: object | None = e.body
+            suggested_model_id = None
+            if _utils.is_str_dict(body) and body.get('code') == 'model_not_found':
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.response.headers)
+                status_code=status_code,
+                model_name=model_name,
+                body=body,
+                headers=dict(e.response.headers),
+                suggested_model_id=suggested_model_id,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
@@ -947,6 +981,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         validate_openai_profile(self.profile)
 
+        _preload_openai_sdk_resource_modules(self, self._provider.client)
+
     @property
     def client(self) -> AsyncOpenAI:
         return self._provider.client
@@ -1105,7 +1141,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         _drop_unsupported_params(profile, model_settings)
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
                 extra_headers = dict(model_settings.get('extra_headers', {}))
                 extra_headers.setdefault('User-Agent', get_user_agent())
@@ -1127,7 +1163,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stop=model_settings.get('stop_sequences', OMIT),
                     max_completion_tokens=max_tokens if supports_max_completion_tokens else OMIT,
                     max_tokens=OMIT if supports_max_completion_tokens else max_tokens,
-                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    timeout=_normalize_openai_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
@@ -1305,7 +1341,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         peekable_response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]] = (
             _utils.PeekableAsyncStream(response)
         )
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -1322,6 +1358,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _model_profile=self.profile,
             _response=peekable_response,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _model_settings=model_settings,
         )
@@ -1925,6 +1962,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
+    # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
+    # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
+    # compaction actually compact here.
+    #
+    # The compaction item is an opaque blob the API decrypts; without it there is nothing to send in
+    # place of the history the boundary would hide.
+    compaction_requires_encrypted_content = True
+    # `SystemPromptPart`s render as `system` input items *inside* the compacted window, and the item
+    # keeps serving them: a latent directive that never fired before the boundary still governs
+    # post-compaction replies without being re-sent (live-verified).
+    compaction_retains_standing_prompt = True
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -1957,6 +2005,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
+
+        _preload_openai_sdk_resource_modules(self, self._provider.client)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -1996,7 +2046,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and response.provider_response_id
             and response.provider_name == self.system
         ):
-            with _map_api_errors(self.model_name):
+            with _map_api_errors(self.model_name, self._provider.model_id_namespace):
                 await self.client.responses.cancel(response.provider_response_id)
 
     def continuation_delay(self, response: ModelResponse) -> float | None:
@@ -2095,9 +2145,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `standing_prompt_retained=False` (here and in the mapping below): blob-of-blob retention
         # decayed in probing, so the window sent for re-compaction plants the standing prompt
         # explicitly rather than relying on the previous compaction item to carry it forward.
-        messages = _trim_messages_before_compaction(
-            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=False
-        )
+        messages = self._trim_before_compaction(messages, standing_prompt_retained=False)
         instructions, openai_messages = await self._map_messages(
             messages,
             model_settings,
@@ -2182,7 +2230,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
 
         extra_headers, timeout = self._build_request_options(settings)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             response = await self.client.responses.input_tokens.count(
                 model=request_params.model,
                 input=request_params.input,
@@ -2473,7 +2521,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         peekable_response: _utils.PeekableAsyncStream[
             responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
@@ -2506,6 +2554,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _model_settings=model_settings,
             _response=peekable_response,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
@@ -2539,9 +2588,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `_resolve_server_side_state`, which recovers conversation/response IDs from responses the
         # trim would drop; `_map_messages` applies the same idempotent trim to whatever slice that
         # resolution hands it.
-        trimmed_messages = _trim_messages_before_compaction(
-            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=True
-        )
+        trimmed_messages = self._trim_before_compaction(messages)
         # Call-time import mirroring `models/__init__.py`'s `_tool_search` import: the toolsets
         # package imports `messages` while adapters load, so a module-level import would cycle.
         from ..toolsets._tool_search import parse_discovered_tools
@@ -2641,10 +2688,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @staticmethod
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
-    ) -> tuple[dict[str, str], float | Timeout | NotGiven]:
+    ) -> tuple[dict[str, str], float | HTTPX2Timeout | NotGiven]:
         extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
-        timeout = model_settings.get('timeout', NOT_GIVEN)
+        timeout = _normalize_openai_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
     @overload
@@ -2691,7 +2738,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
         prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
                 return await self.client.responses.create(
                     model=request_params.model,
@@ -2805,7 +2852,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Retrieve a background response by ID, optionally streaming."""
         include = self._build_include(model_settings, is_retrieve=True)
         extra_headers, timeout = self._build_request_options(model_settings)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
                 return await self.client.responses.retrieve(
                     response_id=response_id,
@@ -3196,9 +3243,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # window's leading `system` items (single hop, live-verified), so re-sending them would
         # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
         # across a second compaction in probing, so each freshly built window plants it explicitly.
-        messages = _trim_messages_before_compaction(
-            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=standing_prompt_retained
-        )
+        messages = self._trim_before_compaction(messages, standing_prompt_retained=standing_prompt_retained)
         profile = self.profile
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
@@ -3215,7 +3260,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
-        for message in messages:
+        for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
@@ -3309,7 +3354,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
-                for item in message.parts:
+                response_parts: Sequence[ModelResponsePart] = message.parts
+                if not profile.get('openai_responses_supports_interleaved_function_calls', True):
+                    response_parts = _group_settled_portable_function_calls(
+                        messages,
+                        message_index,
+                        message,
+                        client_tool_search_active=client_tool_search_active,
+                    )
+                for item in response_parts:
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
@@ -3793,6 +3846,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_profile: OpenAIModelProfile
     _response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
@@ -3804,7 +3858,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             async for chunk in self._validate_response():
                 if self._provider_timestamp is None and chunk.created:
                     self._provider_timestamp = number_to_datetime(chunk.created)
@@ -4051,6 +4105,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _model_settings: OpenAIResponsesModelSettings
     _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _tool_call_ids_are_response_scoped: bool
     _provider_timestamp: datetime | None = None
@@ -4080,7 +4135,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}
             # Track `phase` (commentary | final_answer) on assistant message items, captured
@@ -5012,6 +5067,88 @@ def _map_provider_details(
         provider_details['finish_reason'] = raw_finish_reason
 
     return provider_details or None
+
+
+def _group_settled_portable_function_calls(
+    messages: list[ModelMessage],
+    message_index: int,
+    message: ModelResponse,
+    *,
+    client_tool_search_active: bool,
+) -> Sequence[ModelResponsePart]:
+    """Reorder one assistant turn's settled function calls to the end of their segment.
+
+    Only for endpoints whose profile clears `openai_responses_supports_interleaved_function_calls`.
+    Such an endpoint folds each call into the assistant message next to it, so an assistant item
+    sitting between two calls splits them into separate messages, each carrying an unanswered call.
+    Item IDs are deliberately *not* consulted: an endpoint that merges items this way derives an
+    item's position from the surrounding sequence rather than its identity, so an ID pins nothing
+    (verified against DeepSeek: the grouped order is accepted with reasoning, message and
+    `function_call` IDs all present on the wire, while the interleaved order is rejected with them).
+
+    Reordering is skipped when the turn carries a native or compaction item the provider owns, or
+    when any of its calls is still unanswered — an unanswered call is rejected in either order, so
+    grouping cannot rescue it.
+
+    "Answered" is deliberately wire-local and stricter than `_agent_graph._dangling_tool_calls_by_response`:
+    only the requests between this response and the next one count, and repeated call IDs are
+    counted rather than shadowed. A model must not import the graph layer, and the two answer
+    different questions, so they are allowed to disagree — but only in the direction where this one
+    declines to reorder. Keep any change on that side.
+    """
+    parts = message.parts
+    if any(isinstance(part, (NativeToolCallPart, NativeToolReturnPart, CompactionPart)) for part in parts):
+        return parts
+
+    unsettled_call_counts: dict[str, int] = {}
+    for part in parts:
+        if isinstance(part, ToolCallPart) and not (
+            client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+        ):
+            unsettled_call_counts[part.tool_call_id] = unsettled_call_counts.get(part.tool_call_id, 0) + 1
+    for following_message_index in range(message_index + 1, len(messages)):
+        following_message = messages[following_message_index]
+        if isinstance(following_message, ModelResponse):
+            break
+        for part in following_message.parts:
+            if (
+                (
+                    isinstance(part, ToolReturnPart)
+                    and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
+                )
+                or (
+                    isinstance(part, RetryPromptPart)
+                    and part.tool_name is not None
+                    and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
+                )
+            ) and (count := unsettled_call_counts.get(part.tool_call_id)):
+                if count == 1:
+                    del unsettled_call_counts[part.tool_call_id]
+                else:
+                    unsettled_call_counts[part.tool_call_id] = count - 1
+    if unsettled_call_counts:
+        return parts
+
+    grouped_parts: list[ModelResponsePart] = []
+    segment: list[ModelResponsePart] = []
+
+    def flush_segment() -> None:
+        grouped_parts.extend(part for part in segment if not isinstance(part, ToolCallPart))
+        grouped_parts.extend(part for part in segment if isinstance(part, ToolCallPart))
+        segment.clear()
+
+    for part in parts:
+        if (
+            client_tool_search_active
+            and isinstance(part, ToolCallPart)
+            and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+        ):
+            flush_segment()
+            grouped_parts.append(part)
+        else:
+            segment.append(part)
+    flush_segment()
+    return grouped_parts
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:

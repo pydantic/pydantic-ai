@@ -644,7 +644,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
     | Driving the graph yourself via [`agent.iter()`][pydantic_ai.agent.Agent.iter] | [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
     | The environment cancelled you (`asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], shutdown) | *(you don't call anything)* | [`CancelledError`][asyncio.CancelledError] |
 
-    The first four are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has the two shapes, covered next.
+    The first four are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has two kinds, covered next.
 
 When the surrounding environment cancels the run -- for example through `asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], or application shutdown -- the [`CancelledError`][asyncio.CancelledError] remains unchanged. [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] provides the attached run state:
 
@@ -733,6 +733,9 @@ async def main():
         print(f'Cancelled after {len(exc.all_messages())} messages')
         #> Cancelled after 2 messages
 ```
+
+!!! note "Cancellation is cooperative"
+    Pydantic AI requests cancellation of in-flight work, discards results that arrive after cancellation, and closes the resources it owns. Async tools receive `CancelledError` at a suspension point. A synchronous (`def`) tool runs in a worker thread, which Python cannot safely terminate; depending on the run mode, cancellation may wait for the worker or let it finish in the background. Either way, its result is discarded, but any side effects are not rolled back. Cancelling provider-side model generation is best-effort and depends on the provider.
 
 You may not control which way cancellation will arrive: a caller wraps `agent.run()` in a task for a stop gesture, while a tool -- perhaps from another library -- calls `ctx.cancel()` internally. Handle each on its own terms -- consume the first-party `RunCancelled`, but let an external `CancelledError` keep propagating so timeouts and task groups still tear down correctly, capturing its state first if you need it:
 

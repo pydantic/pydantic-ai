@@ -2,7 +2,11 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import os
 import re
+import subprocess
+import sys
+import textwrap
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,7 +16,7 @@ from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
@@ -2045,7 +2049,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'test error',
-            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': 'test error'},
         )
     )
@@ -2060,7 +2064,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),
         )
     )
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -2075,7 +2079,7 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAIResponses.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),
         )
     )
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
@@ -5610,7 +5614,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body=body,
         )
     )
@@ -5671,7 +5675,7 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
     mock_client = MockOpenAIResponses.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
         )
     )
@@ -5718,7 +5722,7 @@ def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
         )
     )
@@ -5736,7 +5740,7 @@ def test_azure_400_non_dict_body(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body='Raw string body',
         )
     )
@@ -5754,7 +5758,7 @@ def test_azure_400_malformed_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'something_else': 'foo'},  # No 'error' key
         )
     )
@@ -6447,3 +6451,32 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
         }
     )
     assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {INVALID_JSON_KEY: bad_args}
+
+
+def test_model_construction_preloads_lazy_dependencies():
+    """Constructing a model resolves the deferred imports that stalled the first request's event loop (#7405).
+
+    No cassette, and a subprocess: import state is process-global and the rest of the suite has
+    already imported these modules, so only a fresh interpreter can observe what construction triggers.
+    """
+    script = textwrap.dedent(
+        """
+        import sys
+
+        from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        assert 'openai.resources.chat.completions' not in sys.modules, 'chat resources loaded too early'
+        assert 'genai_prices.data' not in sys.modules, 'pricing data loaded too early'
+
+        OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test'))
+        assert 'openai.resources.chat.completions' in sys.modules, 'chat resources not preloaded'
+        assert 'genai_prices.data' in sys.modules, 'pricing data not preloaded'
+
+        OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test'))
+        assert 'openai.resources.responses' in sys.modules, 'responses resources not preloaded'
+        """
+    )
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    process = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120, env=env)
+    assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'

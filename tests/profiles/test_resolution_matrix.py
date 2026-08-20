@@ -150,6 +150,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_server_side_tool_invocations': False,
     'google_supported_mime_types_in_tool_returns': (),
     'google_supports_thinking_level': False,
+    'google_supports_minimal_thinking_level': True,
     'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
@@ -554,6 +555,7 @@ def test_deepseek_provider_deepseek_chat():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_responses_supports_interleaved_function_calls': False,
         }
     )
 
@@ -572,6 +574,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_responses_supports_interleaved_function_calls': False,
             'openai_supports_tool_choice_required': False,
         }
     )

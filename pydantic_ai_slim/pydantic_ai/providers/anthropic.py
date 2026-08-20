@@ -5,9 +5,8 @@ import warnings
 from dataclasses import dataclass
 from typing import TypeAlias, overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import AsyncHTTPClient
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
@@ -30,6 +29,9 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
+# Below the guard on purpose: `anthropic` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 AsyncAnthropicClient: TypeAlias = (
     AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -165,7 +167,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 self._http_client_factory = create_async_http_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert isinstance(http_client, httpx.AsyncClient)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
