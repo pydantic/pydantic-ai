@@ -22,8 +22,9 @@ contents from the count. For a feature or behavior change, use this order:
 2. **New public surface** — List each new maintained symbol. Write `none` when there is none.
 3. **User-visible behavior** — Show the smallest before-and-after example. Replace it with a
    call-path diff when the changed call chain explains the behavior; do not include both.
-4. **Verification** — Link the exact proving tests from the PR diff. Put a minimal runnable
-   playground in `<details>` only when it helps reviewers reproduce the behavior.
+4. **Verification** — Link the exact proving tests from the PR's Files changed tab so links survive
+   later pushes. Put a minimal runnable playground in `<details>` only when it helps reviewers
+   reproduce the behavior.
 5. **What changes for existing users** — State the effect in one sentence. `Nothing` is valid.
 
 Use one collapsed `<details>` section per goal only when the PR has multiple independent goals.
