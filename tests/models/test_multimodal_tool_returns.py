@@ -1041,7 +1041,8 @@ async def test_xai_tool_return_images_keep_call_provenance(allow_model_requests:
     )
 
 
-@pytest.mark.anyio
+@pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
+@pytest.mark.skipif(not google_available(), reason='google dependencies not installed')
 async def test_tool_return_source_replays_across_provider_mappers() -> None:
     agent = Agent(TestModel(call_tools=['get_image']))
 
