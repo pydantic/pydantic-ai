@@ -647,6 +647,49 @@ def test_cache_control_last_cacheable_param_allows_empty_params():
     assert params == []
 
 
+def test_cache_point_after_replayed_mcp_tool_result_does_not_crash():
+    """A leading `CachePoint` behind a replayed MCP tool result must not crash mapping.
+
+    The replayed result renders as a `BetaMCPToolResultBlock` Pydantic model (not a TypedDict),
+    so `_add_cache_control_param` used to raise `TypeError` while subscripting it. The boundary is
+    attached to the block itself, which is what the request-side param type accepts. Unit test, not
+    VCR, because it never reaches a mocked HTTP call.
+    """
+    import asyncio
+
+    from pydantic_ai.messages import CachePoint, ModelRequest, ModelResponse, NativeToolReturnPart, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.native_tools import MCPServerTool
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Search the docs.')]),
+        ModelResponse(
+            parts=[
+                NativeToolReturnPart(
+                    tool_name=f'{MCPServerTool.kind}:docs',
+                    content={'content': [{'type': 'text', 'text': '8.1'}], 'is_error': False},
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'And the 2-year?'])]),
+    ]
+
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+    _, anthropic_messages = asyncio.run(model._map_message(history, ModelRequestParameters(), AnthropicModelSettings()))  # pyright: ignore[reportPrivateUsage]
+
+    assistant_content = anthropic_messages[1]['content']
+    assert isinstance(assistant_content, list)
+    result_block = assistant_content[-1]
+    assert isinstance(result_block, BaseModel)
+    assert getattr(result_block, 'type') == 'mcp_tool_result'
+    assert getattr(result_block, 'cache_control') == {'type': 'ephemeral', 'ttl': '5m'}
+
+
 def test_build_cache_control_includes_ttl():
     """Test that _build_cache_control includes TTL for all clients, including Bedrock."""
     from unittest.mock import MagicMock

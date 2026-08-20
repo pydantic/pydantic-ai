@@ -3362,9 +3362,15 @@ def _add_cache_control_param(
             'To cache system instructions or tool definitions, use the `anthropic_cache_instructions` or `anthropic_cache_tool_definitions` settings instead.'
         )
 
-    # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic models)
-    # that don't support dict operations, even though at runtime we only have request Param types (TypedDicts).
-    last_param = cast(dict[str, Any], params[-1])
+    # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic
+    # models) that don't support dict operations. A replayed MCP tool result leaves one of those as
+    # the last block (`BetaMCPToolResultBlock`), and its request-side counterpart declares
+    # `cache_control`, so attach the boundary on the block instead of crashing on a model instance.
+    last_param = params[-1]
+    if not is_str_dict(last_param):
+        if not hasattr(last_param, 'cache_control'):
+            last_param.cache_control = cache_control  # pyright: ignore[reportAttributeAccessIssue]
+        return
     if last_param['type'] not in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
         raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
 
