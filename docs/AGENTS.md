@@ -58,6 +58,10 @@
 
 <!-- /braindump -->
 
+## Plain language
+
+Use "shape" only for concrete structure or wire representation. Otherwise name the concept, such as configuration, signature, setup, or sequence.
+
 # Front pages: docs/index.md and README.md sync contract
 
 The docs index and the repository README are one story on two surfaces. Whenever one changes, mirror the other in the same PR (enforced by `tests/test_docs_parity.py`):

@@ -151,7 +151,7 @@ print(result.output)
 #> {"sum":0}
 ```
 
-Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
+Pydantic AI does not validate tool arguments here; it passes them as keyword arguments.
 
 ## Strict Mode {#strict-mode}
 
