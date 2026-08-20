@@ -24,8 +24,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  lint:
-    name: lint
+  quality:
+    name: quality checks
     runs-on: ubuntu-latest
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
@@ -91,7 +91,7 @@ jobs:
       # Every check except lock freshness reads the tree alone, so run them on `main`
       # too. Two independently-green PRs can still merge into a drifted `main` — the
       # classic case being one that bumps the gh-aw compiler while another adds a lock
-      # at the old version — and without this the drift first surfaces as a red `lint`
+      # at the old version — and without this the drift first surfaces as a red `quality checks`
       # on whichever contributor next opens a PR, about workflows they never touched.
       - name: Check agentic workflow policy
         env:
@@ -138,7 +138,7 @@ jobs:
           # re-sync the venv and drop the out-of-band harness install above.
           UV_NO_SYNC: "1"
 
-      # Run inside `lint`, which finishes several minutes before the test/coverage critical path.
+      # Run inside `quality checks`, which finishes several minutes before the test/coverage critical path.
       - name: Check public API compatibility with the latest release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -162,7 +162,7 @@ jobs:
       - run: ls -lh dist/
       - run: uvx twine check --strict dist/*
 
-  # mypy and lint are a bit slower than other jobs, so we run them separately
+  # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     runs-on: ubuntu-latest
     steps:
@@ -581,7 +581,7 @@ jobs:
   check:
     if: always()
     needs:
-      - lint
+      - quality
       - mypy
       - docs-assets
       - test
