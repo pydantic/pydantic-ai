@@ -52,6 +52,16 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
 
+# `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
+# (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
+# that first import happens inside an async test with the detector configured below armed, the read
+# is reported as blocking and aborts the import, leaving a partially initialized `pandas` in
+# `sys.modules` that every later import in the session trips over. Importing it here means the
+# detector never sees a first import. The read genuinely blocks, so this stays regardless of what
+# BlockBuster reports: https://github.com/pydantic/pydantic-ai/issues/7446.
+with suppress(ImportError):
+    import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+
 T = TypeVar('T')
 
 __all__ = (
@@ -347,7 +357,7 @@ def anyio_backend():
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # coverage reads Python source files while collecting coverage data. Remove these once
-    # https://github.com/cbornet/blockbuster/pull/63 is released in a compatible version.
+    # https://github.com/cbornet/blockbuster/pull/69 is released in a compatible version.
     ('os.stat', 'coverage/python.py', 'get_python_source'),
     ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
