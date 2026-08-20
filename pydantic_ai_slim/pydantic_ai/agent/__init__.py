@@ -3377,6 +3377,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             try:
                 yield
+            except exceptions.RunCancelled as exc:
+                # Match classic runs: a nested run carries its own history, but this session's
+                # caller must receive the outer conversation it can actually resume.
+                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
             except asyncio.CancelledError as exc:
                 cancelled = _run_cancelled('The agent run was cancelled.')
                 if cancellation.resolve():

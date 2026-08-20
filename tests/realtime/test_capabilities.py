@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
@@ -35,6 +36,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -863,6 +865,8 @@ async def test_run_context_exposes_realtime_session_and_merged_settings() -> Non
 
 
 async def test_before_run_can_cancel_realtime_session() -> None:
+    """A unit test because cancellation before connection setup has no provider exchange to record."""
+
     class CancelBeforeRun(AbstractCapability[None]):
         async def before_run(self, ctx: RunContext[None]) -> None:
             ctx.cancel()
@@ -878,7 +882,50 @@ async def test_before_run_can_cancel_realtime_session() -> None:
     assert model.instructions is None
 
 
+async def test_cancel_on_finished_realtime_context_is_noop() -> None:
+    """A retained context cannot cancel the task that happened to own an already-finished session."""
+    contexts: list[RunContext[None]] = []
+
+    class RetainContext(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            contexts.append(ctx)
+
+    agent = Agent(capabilities=[RetainContext()], deps_type=type(None))
+    async with agent.realtime(_RecordingModel(connection_events=[ResponseDone()])).session() as session:
+        _ = [event async for event in session]
+
+    (ctx,) = contexts
+    ctx.cancel()
+    assert await asyncio.sleep(0, result='unrelated work') == 'unrelated work'
+
+
+async def test_nested_run_cancellation_in_before_run_uses_realtime_history() -> None:
+    """A unit test because the behavior is lifecycle exception translation before any provider exchange."""
+    inner_agent = Agent[None, str](TestModel(call_tools=['cancel_inner']), deps_type=type(None))
+
+    @inner_agent.tool
+    def cancel_inner(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        return 'discarded'
+
+    class RunNested(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await inner_agent.run('inner')
+
+    outer_history = [ModelRequest(parts=[UserPromptPart('outer')])]
+    outer_agent = Agent(capabilities=[RunNested()], deps_type=type(None))
+
+    with pytest.raises(RunCancelled) as exc_info:
+        async with outer_agent.realtime(_RecordingModel(), message_history=outer_history).session():
+            pass
+
+    assert exc_info.value.all_messages() == outer_history
+    assert isinstance(exc_info.value.__cause__, RunCancelled)
+
+
 async def test_run_error_hook_cannot_recover_realtime_cancellation() -> None:
+    """A unit test because cancellation recovery is in-process lifecycle control flow, not provider behavior."""
+
     class RecoverCancellation(AbstractCapability[None]):
         async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
             return AgentRunResult(output='recovered')
