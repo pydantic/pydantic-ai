@@ -1575,7 +1575,7 @@ def test_tool_failed():
     assert len(tool_returns) == 1
     assert tool_returns[0].outcome == 'failed'
     assert tool_returns[0].content == 'Disk full'
-    assert not any(isinstance(p, RetryPromptPart) for p in parts)
+    assert not any(isinstance(p, ToolReturnPart) and p.outcome == 'retried' for p in parts)
 
 
 def test_tool_failed_parallel():
@@ -3152,11 +3152,11 @@ async def test_sync_tool_timeout_triggers_retry():
 
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.01 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.01 seconds' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'slow_sync_tool'
 
 

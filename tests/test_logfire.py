@@ -15,9 +15,9 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai._utils import get_traceparent
@@ -1679,9 +1679,9 @@ def test_raw_mode_validation_failure_emits_span(
 ) -> None:
     """Sandboxed dispatch (`handle_call(wrap_validation_errors=False)`) still emits the failure span.
 
-    The raw exception surfaces to the dispatching code rather than the model: no
-    `RetryPromptPart` enters message history, so the span's recorded retry prompt is a
-    rendered description of the failure, not a message the model received.
+    The raw exception surfaces to the dispatching code rather than the model: no retry enters
+    message history at all, so the span's recorded retry prompt is a rendered description of the
+    failure, not a message the model received.
     """
 
     def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
@@ -1717,7 +1717,11 @@ def test_raw_mode_validation_failure_emits_span(
     assert len(failure_spans) == 1
     assert failure_spans[0]['logfire.level_num'] == 17
     assert failure_spans[0]['logfire.msg'] == 'invalid tool call: double'
-    assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+    assert not any(
+        isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        for message in result.all_messages()
+        for part in message.parts
+    )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
