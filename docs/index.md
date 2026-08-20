@@ -123,7 +123,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     #> label='positive' score=0.9
     ```
 
-    The [`@agent.tool`](tools.md) function receives a [`RunContext`][pydantic_ai.tools.RunContext] that carries your [dependencies](dependencies.md) in; the rest of its signature and its docstring become the tool schema, arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape.
+    The [`@agent.tool`](tools.md) function receives a [`RunContext`][pydantic_ai.tools.RunContext] that carries your [dependencies](dependencies.md) in; the rest of its signature and its docstring become the tool schema, arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the returned type.
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 
@@ -383,7 +383,7 @@ async def main():
 5. Dynamic [instructions](agent.md#instructions) can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
 6. The [`tool`](tools.md) decorator registers a function whose signature becomes a tool the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext]; any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
-8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), the same shape as an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
+8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), like an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
 9. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
 10. Here we configure the agent to use [OpenAI's GPT-5.6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
 11. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
