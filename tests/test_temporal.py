@@ -7296,13 +7296,7 @@ def test_durability_activity_config_not_mutated():
 
 
 def test_temporal_agent_retry_policy_non_retryable_errors():
-    """The deprecated wrapper's base config carries the same non-retryable errors as the capability.
-
-    `TemporalAgent` used to build this list by hand, and it drifted: it never picked up the
-    `UnexpectedModelBehavior` and `FallbackExceptionGroup` entries #6978 added to
-    `with_non_retryable_errors`, so a continuation-ceiling error retried the whole (paid) model
-    request forever instead of failing the workflow (#7163).
-    """
+    """The deprecated wrapper normalizes its base activity retry policy with `with_non_retryable_errors`."""
     temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='retry_policy_probe_agent'),
     )
