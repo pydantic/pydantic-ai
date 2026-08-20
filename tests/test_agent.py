@@ -12411,7 +12411,7 @@ async def test_agent_blank_text_response_retries_without_none_output():
     """Test that a response with only empty text still triggers an output retry for plain `str`.
 
     Empty text is treated as no text output; when `None` is not an allowed output type, the
-    agent asks the model to try again rather than accepting an empty answer. The retry prompt
+    agent asks the model to try again rather than accepting an empty answer. The retry feedback
     content is pinned so a retry issued for the wrong reason fails the test.
     """
 
@@ -12429,9 +12429,9 @@ async def test_agent_blank_text_response_retries_without_none_output():
     assert isinstance(retry_request, ModelRequest)
     assert retry_request.parts == snapshot(
         [
-            RetryPromptPart(
+            RetryFeedbackPart(
                 content='Please return text.',
-                tool_call_id=IsStr(),
+                cause='no_output',
                 timestamp=IsNow(tz=timezone.utc),
             )
         ]

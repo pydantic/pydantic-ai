@@ -3923,7 +3923,7 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         wire_tools.append(sorted(tool.name for tool in info.function_tools))
-        if list(iter_message_parts(messages, ModelRequest, RetryPromptPart)):
+        if [part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried']:
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
 
@@ -3936,10 +3936,18 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
     result = await agent.run('guess the hidden tool')
 
     assert result.output == 'done'
-    returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
-    assert returns == []
-    retries = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
-    assert [str(part.content) for part in retries] == snapshot(
+    executions = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome != 'retried'
+    ]
+    assert executions == []
+    refusals = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ]
+    assert [str(part.content) for part in refusals] == snapshot(
         [
             "Tool 'hidden_tool' is not available yet: search for it first, then call it again once you've seen its schema."
         ]
@@ -14235,7 +14243,7 @@ def _assert_failed_tool_result(result: AgentRunResult[Any], expected_message: st
     tool_return = next(part for part in parts if isinstance(part, ToolReturnPart))
     assert tool_return.outcome == 'failed'
     assert tool_return.content == expected_message
-    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+    assert not any(isinstance(part, ToolReturnPart) and part.outcome == 'retried' for part in parts)
 
 
 class TestToolFailedFromHooks:
