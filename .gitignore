@@ -58,9 +58,6 @@ AGENTS.override.md
 !.claude/skills/address-feedback/
 .claude/skills/address-feedback/*
 !.claude/skills/address-feedback/SKILL.md
-!.claude/skills/pre-push-review/
-.claude/skills/pre-push-review/*
-!.claude/skills/pre-push-review/SKILL.md
 !.claude/skills/testing-skill/
 .claude/skills/testing-skill/*
 !.claude/skills/testing-skill/SKILL.md

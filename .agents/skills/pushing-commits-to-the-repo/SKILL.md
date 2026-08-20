@@ -1,7 +1,7 @@
 ---
 name: pushing-commits-to-the-repo
-description: Open and advance a PR — write a current title and body, label it, review before every
-  push, watch CI, and triage every comment. Use whenever you open a PR or push a commit to one.
+description: Open and advance a PR — write a current title and body, label it, watch CI, and triage
+  every comment. Use whenever you open a PR or push a commit to one.
 ---
 
 # pushing-commits-to-the-repo
@@ -54,8 +54,6 @@ applied automatically — don't set them.
 ## Before you push
 - Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless
   the user's instructions override this.
-- Run `pre-push-review`. Address every finding, commit the fixes, and repeat the review until it
-  returns no findings. This applies before the first PR push and between every later PR iteration.
 - Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
   maintainers can squash them when merging.
 - Attempt the push. If it fails, read the real error — do not preemptively decide you lack
