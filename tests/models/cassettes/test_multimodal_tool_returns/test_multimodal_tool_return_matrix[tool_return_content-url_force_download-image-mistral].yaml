@@ -8,21 +8,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '463'
+      - '376'
       content-type:
       - application/json
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -33,7 +30,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -45,11 +41,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '508'
+      - '438'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-c240-741a-8fc7-ec277d0e028f
+      - 019c486d-20c6-75fc-b727-f20130829e93
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -65,20 +61,17 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: 3KO3ZU9qd
+            id: 7nmzvoAlW
             index: 0
-            type: function
-      created: 1786387022
-      id: 42c91388377f450d96335cec857349b1
+      created: 1770741637
+      id: aea51b550db14ca6bf4af79e588cc3e9
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        prompt_tokens: 76
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 82
+        num_cached_tokens: 32
+        prompt_tokens: 64
+        total_tokens: 70
     status:
       code: 200
       message: OK
@@ -88,7 +81,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - identity, gzip
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       host:
@@ -2091,7 +2084,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '26'
+      - '85774'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2107,7 +2100,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Tue, 10 Aug 2027 18:36:37 GMT
+      - Tue, 09 Feb 2027 16:51:03 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2126,14 +2119,16 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '152022'
+      - '151935'
       content-type:
       - application/json
+      cookie:
+      - __cf_bm=vPUCmmkCYBkOvPyHEfprgL7L2O.Iuvp7II97sfJ4_wg-1770741637-1.0.1.1-EXrO5eW9Dq7WL_.XdyDPixfsb9MFnB1g.prjIfGswy4JZnuErXuRJM51L3XCdiz49s.VVAwfqFzSdZ81kSsNXDW8D.nt0hDylQioi4S5Ziw;
+        _cfuvid=ouz4_jp0ySUZINr5QLvCHb5hz4vvRESUWqK2mKXxV4g-1770741637545-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
@@ -2144,12 +2139,12 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: 3KO3ZU9qd
+          id: 7nmzvoAlW
           index: 0
           type: function
       - content: File attached
         role: tool
-        tool_call_id: 3KO3ZU9qd
+        tool_call_id: 7nmzvoAlW
       - content:
         - text: OK
           type: text
@@ -2162,8 +2157,6 @@ interactions:
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -2174,7 +2167,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -2186,11 +2178,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '904'
+      - '799'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-c606-7c4b-90e8-3e27eff1627a
+      - 019c486d-23d1-7916-8775-a7a3bbf3492a
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -2200,25 +2192,21 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: The image I received is of a beautiful, vibrant rose. The rose has a mix of warm colors, primarily orange
-            and yellow, with hints of pink on the outer petals. The petals are slightly curled and have a soft, velvety appearance.
-            There are also some water droplets on the petals, giving the impression that the rose is fresh and possibly covered
-            in morning dew. The stem and leaves are visible, adding a natural touch to the image. The background is plain
-            white, which accentuates the colors of the rose.
+          content: The image shows a beautiful rose in the process of blooming. The rose has vibrant petals with a gradient
+            of colors, transitioning from a deep orange at the center to a softer yellow-orange toward the edges. Some of
+            the outer petals have a delicate pinkish hue, and there are water droplets on one of the petals, giving it a fresh
+            and dewy appearance. The stem and leaves are also visible, adding to the natural and serene aesthetic of the flower.
           role: assistant
           tool_calls: null
-      created: 1786387024
-      id: 44ce2c9b00fc4c248769f1433eb3d2fe
+      created: 1770741638
+      id: 3e613d5e035446cd8f12c66c5134b2cf
       model: mistral-medium-latest
       object: chat.completion
       usage:
-        completion_tokens: 110
-        prompt_tokens: 266
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 376
+        completion_tokens: 99
+        num_cached_tokens: 48
+        prompt_tokens: 254
+        total_tokens: 353
     status:
       code: 200
       message: OK
-version: 1

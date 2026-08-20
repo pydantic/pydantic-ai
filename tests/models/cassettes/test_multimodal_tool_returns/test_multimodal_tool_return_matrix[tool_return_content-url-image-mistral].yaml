@@ -8,21 +8,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '463'
+      - '376'
       content-type:
       - application/json
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -33,7 +30,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -45,11 +41,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '508'
+      - '438'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-a657-7516-9d02-8c41906e6d0a
+      - 019c486c-fb61-72ce-9a8f-82ce0eacc4ba
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -65,20 +61,17 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: 4koxzPtVn
+            id: 3EpsLcLQ3
             index: 0
-            type: function
-      created: 1786387015
-      id: 022bd775207944019024980956037587
+      created: 1770741627
+      id: 07528890a60e446aa52a0f8e2fc3893f
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        prompt_tokens: 76
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 82
+        num_cached_tokens: 32
+        prompt_tokens: 64
+        total_tokens: 70
     status:
       code: 200
       message: OK
@@ -91,14 +84,16 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '923'
+      - '836'
       content-type:
       - application/json
+      cookie:
+      - __cf_bm=eHGwcmgPa5n0L_Vgqigm3wQdRj2VZ2sQWN2kQDmDu14-1770741627-1.0.1.1-6ksfjzz7JQLBer.GCWUw.gE56cGUKaaDCnO4TuBVhzi5EQaz9JlsUtEoz8RHWz7ia5AEZToJNmPIamu8Ck6PI_i3YBf6lfc3PRkCH8FOsbk;
+        _cfuvid=SvwL4wJqCe5KGl2ySFlzlv9RRdxZtIsTc3bqFbkwXPQ-1770741627955-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
@@ -109,12 +104,12 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: 4koxzPtVn
+          id: 3EpsLcLQ3
           index: 0
           type: function
       - content: File attached
         role: tool
-        tool_call_id: 4koxzPtVn
+        tool_call_id: 3EpsLcLQ3
       - content:
         - text: OK
           type: text
@@ -127,8 +122,6 @@ interactions:
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -139,7 +132,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -151,11 +143,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '904'
+      - '783'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-a820-74a1-b325-9d559bb7f09b
+      - 019c486c-fd53-7ff2-8368-e3d95bbad6a4
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -165,25 +157,21 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: The image I received is of a beautiful, vibrant rose. The rose has a mix of warm colors, primarily orange
-            and yellow, with hints of pink on the outer petals. The petals are slightly curled and have a soft, velvety appearance.
-            There are also some water droplets on the petals, giving the impression that the rose is fresh and possibly covered
-            in morning dew. The stem and leaves are visible, adding a natural touch to the image. The background is plain
-            white, which accentuates the colors of the rose.
+          content: The image shows a beautiful rose in the process of blooming. The rose has vibrant petals with a gradient
+            of colors, transitioning from a warm yellow at the base to a soft orange and pink toward the edges. The outer
+            petals are slightly curled, and there are delicate water droplets on the petals, giving the rose a fresh and dewy
+            appearance. The stem and small leaves are also visible, adding to the natural elegance of the flower.
           role: assistant
           tool_calls: null
-      created: 1786387015
-      id: 779a986f1459420fb8bb5354ae313895
+      created: 1770741628
+      id: e710e7a5b8c84928b4cc755cb44ed263
       model: mistral-medium-latest
       object: chat.completion
       usage:
-        completion_tokens: 110
-        prompt_tokens: 266
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 376
+        completion_tokens: 93
+        num_cached_tokens: 48
+        prompt_tokens: 254
+        total_tokens: 347
     status:
       code: 200
       message: OK
-version: 1

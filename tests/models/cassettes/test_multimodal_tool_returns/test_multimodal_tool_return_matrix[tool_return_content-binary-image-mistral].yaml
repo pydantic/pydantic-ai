@@ -8,21 +8,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '463'
+      - '376'
       content-type:
       - application/json
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -33,7 +30,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -45,11 +41,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '508'
+      - '437'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-8f61-7e70-8f80-3e03fb809f3a
+      - 019c486c-e650-772b-a0ba-b303d39b3f1f
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -65,20 +61,17 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: E4R2XRNJ3
+            id: rdTFb4fPc
             index: 0
-            type: function
-      created: 1786387009
-      id: 6a4311647a334ce1b47305db771652c4
+      created: 1770741622
+      id: 181895b4c47f4c2da10cefcf5028957f
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        prompt_tokens: 76
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 82
+        num_cached_tokens: 0
+        prompt_tokens: 64
+        total_tokens: 70
     status:
       code: 200
       message: OK
@@ -91,14 +84,16 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132335'
+      - '132248'
       content-type:
       - application/json
+      cookie:
+      - __cf_bm=bmi.S4L62..08jbB4nqHlJTCQAg888_1E6NY3C0_DFM-1770741622-1.0.1.1-ELGvURcS5Fbwd3yq1LJ4yD8Zu74voj6y7TuRu5JBnY_VT_J2TDqnmHThhtay0H7ICaVd1ouc7QzDDuu1Dk3sGinTy0NjocKSOcQxdYFQol8;
+        _cfuvid=RdEvUEz6oZXRnlms1lTWBClDCSoDN0WU4q3TUy2.Veg-1770741622663-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
@@ -109,12 +104,12 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: E4R2XRNJ3
+          id: rdTFb4fPc
           index: 0
           type: function
       - content: File attached
         role: tool
-        tool_call_id: E4R2XRNJ3
+        tool_call_id: rdTFb4fPc
       - content:
         - text: OK
           type: text
@@ -127,8 +122,6 @@ interactions:
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -139,7 +132,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -151,11 +143,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1111'
+      - '722'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-9123-71c8-9646-ae522582cafa
+      - 019c486c-e94b-7ebb-90f4-57484670f206
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -165,30 +157,21 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: |-
-            The image I received is a cross-section of a **kiwi fruit**. Here's a detailed description:
-
-            1. **Appearance**: The kiwi is cut in half, revealing its vibrant green flesh with a bright, circular white center.
-            2. **Seeds**: The flesh is speckled with tiny, black edible seeds arranged in a radial pattern around the white core.
-            3. **Texture**: The flesh looks juicy and slightly fibrous, typical of a ripe kiwi.
-            4. **Skin**: The outer edge of the kiwi shows a thin, fuzzy brown skin, which is characteristic of this fruit.
-            5. **Background**: The kiwi is placed against a plain white background, making its colors stand out prominently.
-
-            This is a classic representation of the inside of a kiwi fruit.
+          content: The image shows a cross-section of a kiwi fruit. The cross-section reveals the vibrant green flesh of the
+            kiwi, which is speckled with tiny black seeds arranged in a circular pattern around the center. The center itself
+            is a lighter, almost white color. The outer edge of the kiwi has a thin, brownish, fuzzy skin. The overall appearance
+            is fresh and visually appealing.
           role: assistant
           tool_calls: null
-      created: 1786387010
-      id: 014e083cdaff490c91664e9247b407f9
+      created: 1770741623
+      id: 82e8def4f9d045629d6ffff047d56b53
       model: mistral-medium-latest
       object: chat.completion
       usage:
-        completion_tokens: 162
-        prompt_tokens: 573
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 735
+        completion_tokens: 81
+        num_cached_tokens: 0
+        prompt_tokens: 561
+        total_tokens: 642
     status:
       code: 200
       message: OK
-version: 1

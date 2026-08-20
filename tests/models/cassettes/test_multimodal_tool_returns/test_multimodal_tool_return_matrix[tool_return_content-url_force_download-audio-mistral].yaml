@@ -8,21 +8,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '463'
+      - '376'
       content-type:
       - application/json
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -33,7 +30,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -45,11 +41,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '508'
+      - '438'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-dc9b-7b61-835f-5eab10472973
+      - 019c486d-3ecd-7151-928b-08870f296aab
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -65,21 +61,17 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: LE3a0To0f
+            id: eDhOvT2fR
             index: 0
-            type: function
-      created: 1786387029
-      id: 9453a97b2d4d4f129dc126c32978867d
+      created: 1770741645
+      id: 9af13990df79451397d3728bb06c8c24
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        prompt_tokens: 76
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 82
+        num_cached_tokens: 32
+        prompt_tokens: 64
+        total_tokens: 70
     status:
       code: 200
       message: OK
-version: 1

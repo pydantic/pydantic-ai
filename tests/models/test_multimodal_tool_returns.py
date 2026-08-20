@@ -67,7 +67,7 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
-    from mistralai.client.models import TextChunk, ToolMessage
+    from mistralai.client.models import AssistantMessage, TextChunk, ToolMessage, UserMessage
 
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
@@ -173,9 +173,9 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('groq', 'document'): ExpectError(match=r'(?:DocumentUrl|images are supported).*Groq user prompts'),
     ('groq', 'audio'): ExpectError(match=r'(?:AudioUrl|images are supported).*Groq user prompts'),
     ('groq', 'video'): ExpectError(match=r'(?:VideoUrl|images are supported).*Groq user prompts'),
-    # Mistral: images and documents in_tool_result, audio/video unsupported
-    ('mistral', 'image'): 'in_tool_result',
-    ('mistral', 'document'): 'in_tool_result',
+    # Mistral: images and documents as_user_content, audio/video unsupported
+    ('mistral', 'image'): 'as_user_content',
+    ('mistral', 'document'): 'as_user_content',
     ('mistral', 'audio'): ExpectError(
         match=r'(?:AudioUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
     ),
@@ -214,14 +214,6 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
         ModelHTTPError, r'document\.source\.type: Field required'
     ),
     # Nova doesn't support documents/videos with S3 sources inside tool results
-    # Mistral now renders tool-returned media natively in the tool message, so an unsupported type
-    # is rejected by the tool-return mapper instead of the user-prompt one it used to spill through.
-    ('mistral', 'audio', None, 'direct'): ExpectError(
-        match=r'(?:AudioUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral tool returns'
-    ),
-    ('mistral', 'video', None, 'direct'): ExpectError(
-        match=r'(?:VideoUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral tool returns'
-    ),
     ('bedrock_nova', 'document', 'uploaded_file', 'direct'): ExpectError(
         ModelHTTPError, r'extraneous key \[toolResult\]'
     ),
@@ -833,18 +825,20 @@ async def test_non_pdf_document_url_mistral() -> None:
 
     assert mapped == snapshot(
         [
-            ToolMessage(
+            ToolMessage(content='See file fb8964.', tool_call_id='call1'),
+            AssistantMessage(content=[TextChunk(text='OK')]),
+            UserMessage(
                 content=[
+                    TextChunk(text='This is file fb8964:'),
                     TextChunk(
                         text="""\
 -----BEGIN FILE id="fb8964" type="text/plain"-----
 Dummy TXT file
 -----END FILE id="fb8964"-----\
 """
-                    )
-                ],
-                tool_call_id='call1',
-            )
+                    ),
+                ]
+            ),
         ]
     )
 

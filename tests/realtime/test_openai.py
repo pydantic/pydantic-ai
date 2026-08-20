@@ -1783,7 +1783,7 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                     'type': 'message',
                     'role': 'user',
                     'content': [
-                        {'type': 'input_text', 'text': 'This is file result.png, returned by the inspect tool:'},
+                        {'type': 'input_text', 'text': 'This is file result.png:'},
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,cmVzdWx0LWltYWdl'},
                     ],
                 },

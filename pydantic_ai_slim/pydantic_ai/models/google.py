@@ -1195,9 +1195,7 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                fallback_parts.append(
-                    {'text': f'This is file {file.identifier}, returned by the {part.tool_name} tool:'}
-                )
+                fallback_parts.append({'text': f'This is file {file.identifier}:'})
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 

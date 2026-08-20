@@ -1094,7 +1094,7 @@ async def test_image_tool_return_is_forwarded_as_user_message():
             {
                 'role': 'user',
                 'content': [
-                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df, returned by the get_image tool:'},
+                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
                     {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
                 ],
             },

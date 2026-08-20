@@ -1249,9 +1249,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                     tool_result_content.append(file_block)
                                 else:
                                     tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                    media_note: ContentBlockUnionTypeDef = {
-                                        'text': f'This is file {item.identifier}, returned by the {part.tool_name} tool:'
-                                    }
+                                    media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
                                     if kind in colocatable_content:
                                         # This model allows the media alongside the `toolResult`; keep it in the same turn.
                                         colocated_media_content.append(media_note)

@@ -6449,7 +6449,7 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'This is file d003ad, returned by the get_photo tool:'},
+                    {'text': 'This is file d003ad:'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
                 ],
             },
@@ -6505,9 +6505,9 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'This is file d003ad, returned by the get_photo tool:'},
+                    {'text': 'This is file d003ad:'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': 'This is file d003ad, returned by the get_photo tool:'},
+                    {'text': 'This is file d003ad:'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
                 ],
             },
@@ -6553,7 +6553,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'status': 'success',
                         }
                     },
-                    {'text': 'This is file 49d492, returned by the get_report tool:'},
+                    {'text': 'This is file 49d492:'},
                     {
                         'document': {
                             'name': 'Document 1',

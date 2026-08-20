@@ -8,21 +8,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '466'
+      - '379'
       content-type:
       - application/json
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -33,7 +30,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -45,11 +41,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '508'
+      - '437'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-9998-7884-abfe-467e670861a5
+      - 019c486c-f054-72ea-90e1-02457eba8419
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -65,20 +61,17 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: KFcz9F8Z8
+            id: 6SmIVvgTb
             index: 0
-            type: function
-      created: 1786387012
-      id: 439d3c8e2cbc433a81af90f5fa41a59e
+      created: 1770741624
+      id: ec07d1310ca44cd58f98ffae4ecef187
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        prompt_tokens: 76
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 82
+        num_cached_tokens: 0
+        prompt_tokens: 64
+        total_tokens: 70
     status:
       code: 200
       message: OK
@@ -91,14 +84,16 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '18596'
+      - '18509'
       content-type:
       - application/json
+      cookie:
+      - __cf_bm=IohS7rWNX4TLO7e7sTbOSsPYdmkkPUGmk_9sZnsNIPc-1770741625-1.0.1.1-vrLrQw4D4JL4Lkn3.xBMuXZ_v2rGCMu6Sw.QJcVuPTzU2IU3D7V3r0hIbHe5NruT4ayfeQ.ym4cNP1tTOINA_4FPR14aW.SpzaeSzLdsZdw;
+        _cfuvid=_GnaNWVMzg0blzG131jrhreLyjRKll1ohEcaoW2W1bA-1770741625145-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
-      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
@@ -109,12 +104,12 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: KFcz9F8Z8
+          id: 6SmIVvgTb
           index: 0
           type: function
       - content: File attached
         role: tool
-        tool_call_id: KFcz9F8Z8
+        tool_call_id: 6SmIVvgTb
       - content:
         - text: OK
           type: text
@@ -126,8 +121,6 @@ interactions:
         role: user
       model: mistral-medium-latest
       n: 1
-      presence_penalty: null
-      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -138,7 +131,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -150,11 +142,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '725'
+      - '510'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019fecf6-9b77-777b-8dd1-14190752ab9e
+      - 019c486c-f28b-78ba-b7b3-4a794d6044c4
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -165,27 +157,22 @@ interactions:
         index: 0
         message:
           content: |-
-            The file I received is a **dummy PDF file**. It appears to be a placeholder or test file, as it only contains the text:
+            The retrieved document is a **dummy PDF file** and does not contain any meaningful or detailed content. It only includes the text:
 
             ```
             Dummy PDF file
             ```
-
-            There is no additional content, metadata, or meaningful data in this file. It seems to be a minimal or empty PDF file, possibly used for testing or demonstration purposes.
           role: assistant
           tool_calls: null
-      created: 1786387012
-      id: 6426ce4c8a484915a77205163e35117d
+      created: 1770741625
+      id: 63022bf20725402aa3433f16b8d22af4
       model: mistral-medium-latest
       object: chat.completion
       usage:
-        completion_tokens: 69
-        prompt_tokens: 106
-        prompt_tokens_details:
-          cached_tokens: 0
-        service_tier: standard
-        total_tokens: 175
+        completion_tokens: 33
+        num_cached_tokens: 48
+        prompt_tokens: 94
+        total_tokens: 127
     status:
       code: 200
       message: OK
-version: 1
