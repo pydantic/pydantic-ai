@@ -173,9 +173,12 @@ navigation; `api_path` is the complete directory containing `configure` and `cha
 describe public routing: they do not mount or move the returned app's internal routes, so the outer
 application or proxy must route those public paths to the app accordingly.
 
-At the origin root, omitted settings are not injected. The UI keeps its own build defaults, including
-defaults provided by a custom `html_source`; an explicit setting overrides only its corresponding
-value.
+At the origin root, omitted settings are not injected, and the UI keeps its own build defaults.
+
+When settings are injected, three sources are layered, each overriding the one before it: the paths
+derived from `root_path`, then a `window.PYDANTIC_AI_CHAT_CONFIG` that a custom
+[`html_source`](#custom-html-source) sets for itself, then `base_path` and `api_path`. So a custom
+HTML file keeps control of any path it configures unless you pass that path explicitly.
 
 `clai web` always serves at the origin root; to serve below a prefix, build the app with
 `agent.to_web()` and mount or proxy it yourself.

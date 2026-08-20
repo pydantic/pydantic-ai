@@ -49,8 +49,6 @@ OutputDataT = TypeVar('OutputDataT')
 # may reject replacing a destination file while another thread has it open for reading.
 _CACHE_FILE_LOCK = threading.Lock()
 
-_HTML_WHITESPACE = b'\t\n\f\r '
-
 
 async def _get_cache_dir() -> Path:
     """Get the cache directory for storing UI HTML files.
@@ -183,71 +181,43 @@ def _normalize_same_origin_path(path: str, parameter: str) -> str:
     return path if path.endswith('/') else f'{path}/'
 
 
-def _path_config(root_path: str, base_path: str | None, api_path: str | None) -> dict[str, str]:
+def _path_config(root_path: str, base_path: str | None, api_path: str | None) -> tuple[dict[str, str], dict[str, str]]:
+    """Return the paths derived from the ASGI `root_path`, and the paths configured explicitly."""
+    derived: dict[str, str] = {}
     if root_path not in ('', '/'):
         root_path = _normalize_same_origin_path(root_path, 'root_path')
-        return {
-            'basePath': base_path or root_path,
-            'apiPath': api_path or f'{root_path}api/',
-        }
+        derived = {'basePath': root_path, 'apiPath': f'{root_path}api/'}
 
-    config: dict[str, str] = {}
+    explicit: dict[str, str] = {}
     if base_path is not None:
-        config['basePath'] = base_path
+        explicit['basePath'] = base_path
     if api_path is not None:
-        config['apiPath'] = api_path
-    return config
+        explicit['apiPath'] = api_path
+    return derived, explicit
 
 
-def _inject_path_config(content: bytes, config: dict[str, str]) -> bytes:
+def _serialize_config(config: dict[str, str]) -> str:
     serialized = json.dumps(config, ensure_ascii=True, separators=(',', ':'))
-    serialized = serialized.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
-    bootstrap = f'<script>window.PYDANTIC_AI_CHAT_CONFIG={serialized};</script>'.encode()
-    position = _document_start(content)
-    return content[:position] + bootstrap + content[position:]
+    return serialized.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
 
 
-def _document_start(content: bytes) -> int:
-    """Return the end of the real doctype or `html` start tag after the document preamble."""
-    bom_end = 3 if content.startswith(b'\xef\xbb\xbf') else 0
-    position = bom_end
+def _inject_path_config(content: bytes, derived: dict[str, str], explicit: dict[str, str]) -> bytes:
+    """Append a bootstrap that seeds the UI config with `derived` and overrides it with `explicit`.
 
-    while True:
-        while position < len(content) and content[position] in _HTML_WHITESPACE:
-            position += 1
-        if not content.startswith(b'<!--', position):
-            break
-        comment_end = content.find(b'-->', position + 4)
-        if comment_end == -1:
-            return bom_end
-        position = comment_end + 3
+    Position within the document is free: the UI only reads the config from a deferred
+    `type="module"` script, so this parser-blocking classic script runs first wherever it sits.
+    Appending also leaves the document preamble untouched, where anything inserted ahead of the
+    doctype would put the page in quirks mode.
 
-    return _document_tag_end(content, position) or bom_end
-
-
-def _document_tag_end(content: bytes, position: int) -> int | None:
-    """Return the end of an `html` or doctype tag without stopping inside a quoted value."""
-    if content[position : position + len(b'<!doctype')].lower() == b'<!doctype':
-        name_end = position + len(b'<!doctype')
-    elif content[position : position + len(b'<html')].lower() == b'<html':
-        name_end = position + len(b'<html')
-    else:
-        return None
-
-    if name_end < len(content) and content[name_end] not in _HTML_WHITESPACE + b'>/':
-        return None
-
-    quote_character: int | None = None
-    for index in range(name_end, len(content)):
-        character = content[index]
-        if quote_character is not None:
-            if character == quote_character:
-                quote_character = None
-        elif character in b'\'"':
-            quote_character = character
-        elif character == ord('>'):
-            return index + 1
-    return None
+    `Object.assign` gives a custom `html_source` that carries its own configuration precedence over
+    the derived paths, while explicit `base_path`/`api_path` arguments still win over both.
+    """
+    bootstrap = (
+        f'<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
+        f'{_serialize_config(derived)},window.PYDANTIC_AI_CHAT_CONFIG,{_serialize_config(explicit)}'
+        f');</script>'
+    ).encode()
+    return content + bootstrap
 
 
 def create_web_app(
@@ -344,8 +314,9 @@ def create_web_app(
         """Serve the chat UI from filesystem cache or CDN."""
         content = await _get_ui_html(html_source)
         root_path = quote(request.scope.get('root_path', ''), safe='/')
-        if config := _path_config(root_path, base_path, api_path):
-            content = _inject_path_config(content, config)
+        derived, explicit = _path_config(root_path, base_path, api_path)
+        if derived or explicit:
+            content = _inject_path_config(content, derived, explicit)
 
         return HTMLResponse(
             content=content,

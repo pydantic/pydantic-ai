@@ -573,7 +573,8 @@ def test_chat_app_uses_mount_root_path(monkeypatch: pytest.MonkeyPatch):
 
     assert index_response.status_code == 200
     assert (
-        '<script>window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/demo/","apiPath":"/demo/api/"};</script>'
+        '<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
+        '{"basePath":"/demo/","apiPath":"/demo/api/"},window.PYDANTIC_AI_CHAT_CONFIG,{});</script>'
         in index_response.text
     )
     assert configure_response.status_code == 200
@@ -589,8 +590,9 @@ def test_chat_app_url_encodes_mount_root_path(monkeypatch: pytest.MonkeyPatch):
 
     assert response.status_code == 200
     assert (
-        '<script>window.PYDANTIC_AI_CHAT_CONFIG='
-        '{"basePath":"/demo%3Fx/","apiPath":"/demo%3Fx/api/"};</script>' in response.text
+        '<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
+        '{"basePath":"/demo%3Fx/","apiPath":"/demo%3Fx/api/"},window.PYDANTIC_AI_CHAT_CONFIG,{});</script>'
+        in response.text
     )
 
 
@@ -604,7 +606,8 @@ def test_chat_app_uses_proxy_root_path(monkeypatch: pytest.MonkeyPatch):
 
     assert response.status_code == 200
     assert (
-        '<script>window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/demo/","apiPath":"/demo/api/"};</script>' in response.text
+        '<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
+        '{"basePath":"/demo/","apiPath":"/demo/api/"},window.PYDANTIC_AI_CHAT_CONFIG,{});</script>' in response.text
     )
 
 
@@ -627,10 +630,10 @@ def test_chat_app_malformed_root_path_is_server_error(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.parametrize(
-    ('base_path', 'api_path', 'expected_config'),
+    ('base_path', 'api_path', 'expected_explicit'),
     [
-        ('/chat', None, '{"basePath":"/chat/","apiPath":"/proxy/api/"}'),
-        (None, '/agent-api', '{"basePath":"/proxy/","apiPath":"/agent-api/"}'),
+        ('/chat', None, '{"basePath":"/chat/"}'),
+        (None, '/agent-api', '{"apiPath":"/agent-api/"}'),
         ('/chat', '/agent-api', '{"basePath":"/chat/","apiPath":"/agent-api/"}'),
     ],
 )
@@ -638,7 +641,7 @@ def test_agent_to_web_path_overrides(
     monkeypatch: pytest.MonkeyPatch,
     base_path: str | None,
     api_path: str | None,
-    expected_config: str,
+    expected_explicit: str,
 ):
     source = b'<html><head><script type="module"></script></head></html>'
     monkeypatch.setattr(app_module, '_get_ui_html', AsyncMock(return_value=source))
@@ -648,7 +651,11 @@ def test_agent_to_web_path_overrides(
         response = client.get('/')
 
     assert response.status_code == 200
-    assert f'<script>window.PYDANTIC_AI_CHAT_CONFIG={expected_config};</script>' in response.text
+    assert (
+        f'<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
+        f'{{"basePath":"/proxy/","apiPath":"/proxy/api/"}},window.PYDANTIC_AI_CHAT_CONFIG,{expected_explicit});</script>'
+        in response.text
+    )
 
 
 def test_chat_app_path_overrides_do_not_mount_routes(monkeypatch: pytest.MonkeyPatch):
@@ -716,8 +723,8 @@ def test_chat_app_safely_injects_custom_html_per_response(tmp_path: Path):
     assert '"apiPath":"/first/api/"' in first_response.text
     assert '"apiPath":"/second/api/"' in second_response.text
     assert '</script><script>alert(1)</script>' not in first_response.text
-    assert first_response.text.index('window.PYDANTIC_AI_CHAT_CONFIG') < first_response.text.index(
-        '<script type="module"'
+    assert first_response.text.index('<script type="module"') < first_response.text.index(
+        'window.PYDANTIC_AI_CHAT_CONFIG'
     )
     assert html_source.read_bytes() == source
 
@@ -733,69 +740,37 @@ def test_chat_app_root_injects_only_explicit_overrides(monkeypatch: pytest.Monke
     with TestClient(api_app, base_url=LOCAL_BASE_URL) as client:
         api_response = client.get('/')
 
-    assert 'window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/browser/"}' in base_response.text
+    assert (
+        'window.PYDANTIC_AI_CHAT_CONFIG=Object.assign({},window.PYDANTIC_AI_CHAT_CONFIG,{"basePath":"/browser/"});'
+        in base_response.text
+    )
     assert 'apiPath' not in base_response.text
-    assert 'window.PYDANTIC_AI_CHAT_CONFIG={"apiPath":"/service/"}' in api_response.text
+    assert (
+        'window.PYDANTIC_AI_CHAT_CONFIG=Object.assign({},window.PYDANTIC_AI_CHAT_CONFIG,{"apiPath":"/service/"});'
+        in api_response.text
+    )
     assert 'basePath' not in api_response.text
 
 
-def test_chat_app_path_config_handles_bom_and_leading_comments(tmp_path: Path):
+def test_chat_app_path_config_layers_over_custom_html(tmp_path: Path):
     source = (
-        b'\xef\xbb\xbf<!-- template element: <html> -->'
-        + b'<!-- --><!-- -->' * 100
-        + b'<!doctype html><html><script type="module">start()</script></html>'
+        b'<!doctype html>'
+        b'<script>window.PYDANTIC_AI_CHAT_CONFIG={"basePath":"/from-html/","apiPath":"/from-html/api/"};</script>'
+        b'<script type="module">start()</script>'
     )
     html_source = tmp_path / 'index.html'
     html_source.write_bytes(source)
-    app = create_web_app(Agent('test'), html_source=html_source, base_path='/demo/')
+    app = create_web_app(Agent('test'), html_source=html_source, api_path='/agent-api/')
 
-    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL, root_path='/demo') as client:
         response = client.get('/')
 
-    config_index = response.text.index('window.PYDANTIC_AI_CHAT_CONFIG')
-    assert response.content.startswith(b'\xef\xbb\xbf')
-    assert response.text.index('-->') < config_index < response.text.index('type="module"')
-    assert html_source.read_bytes() == source
-
-
-def test_chat_app_path_config_precedes_unclosed_leading_comment(tmp_path: Path):
-    source = b'\xef\xbb\xbf \n<!-- unclosed comment with <script type="module">'
-    html_source = tmp_path / 'index.html'
-    html_source.write_bytes(source)
-    app = create_web_app(Agent('test'), html_source=html_source, base_path='/demo/')
-
-    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
-        response = client.get('/')
-
-    assert response.content.startswith(b'\xef\xbb\xbf<script>window.PYDANTIC_AI_CHAT_CONFIG=')
-    assert response.text.index('PYDANTIC_AI_CHAT_CONFIG') < response.text.index('<!--')
-    assert html_source.read_bytes() == source
-
-
-def test_chat_app_path_config_handles_quoted_tag_end(tmp_path: Path):
-    source = b'<html data-template=">"> <script type="module">start()</script></html>'
-    html_source = tmp_path / 'index.html'
-    html_source.write_bytes(source)
-    app = create_web_app(Agent('test'), html_source=html_source, base_path='/demo/')
-
-    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
-        response = client.get('/')
-
-    config_index = response.text.index('window.PYDANTIC_AI_CHAT_CONFIG')
-    assert response.text.index('data-template=">"') < config_index < response.text.index('type="module"')
-    assert html_source.read_bytes() == source
-
-
-@pytest.mark.parametrize('source', [b'<htmlx><script type="module">start()</script>', b'<html data-template="unclosed'])
-def test_chat_app_path_config_precedes_malformed_document_tag(tmp_path: Path, source: bytes):
-    html_source = tmp_path / 'index.html'
-    html_source.write_bytes(source)
-    app = create_web_app(Agent('test'), html_source=html_source, base_path='/demo/')
-
-    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
-        response = client.get('/')
-
-    assert response.content.startswith(b'<script>window.PYDANTIC_AI_CHAT_CONFIG=')
+    assert response.content == (
+        source
+        + b'<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
+        + b'{"basePath":"/demo/","apiPath":"/demo/api/"},window.PYDANTIC_AI_CHAT_CONFIG,'
+        + b'{"apiPath":"/agent-api/"});</script>'
+    )
     assert html_source.read_bytes() == source
 
 
