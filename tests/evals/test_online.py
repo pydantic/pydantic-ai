@@ -324,25 +324,9 @@ async def test_evaluate_decorator_async_basic():
 
 @pytest.mark.anyio
 async def test_evaluate_decorator_async_callable_instance():
-    """A callable instance whose `__call__` is `async def` gets the async wrapper, so evaluators see the resolved output."""
-    collected: list[tuple[list[EvaluationResult[Any]], list[EvaluatorFailure], EvaluatorContext[Any, Any, Any]]] = []
-
-    async def collect(
-        results: Sequence[EvaluationResult[Any]],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext[Any, Any, Any],
-    ) -> None:
-        collected.append((list(results), list(failures), context))
-
-    config = OnlineEvalConfig(default_sink=CallbackSink(collect))
-
-    seen_awaitable: list[bool] = []
-
-    @dataclass
-    class CaptureAwaitable(Evaluator):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            seen_awaitable.append(inspect.isawaitable(ctx.output))
-            return True
+    """An async callable instance is awaited; this local wrapper dispatch has no provider boundary to record."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
 
     class AsyncCallable:
         async def __call__(self, x: int) -> int:
@@ -350,7 +334,7 @@ async def test_evaluate_decorator_async_callable_instance():
 
     # `target` is passed explicitly because a callable instance has no `__name__`.
     wrapped = config.evaluate(
-        OnlineEvaluator(evaluator=CaptureAwaitable()),
+        OutputEquals(value=42),
         target='async-callable',
         msg_template='Calling async callable',
     )(AsyncCallable())
@@ -360,11 +344,11 @@ async def test_evaluate_decorator_async_callable_instance():
 
     await wait_for_evaluations()
 
-    assert len(collected) == 1
-    _, _, ctx = collected[0]
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert results[0].value is True
     assert ctx.output == 42
     assert inspect.isawaitable(ctx.output) is False
-    assert seen_awaitable == [False]
 
 
 @pytest.mark.anyio

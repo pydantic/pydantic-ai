@@ -974,12 +974,12 @@ async def _run_task(
                 context_subtree() as span_tree_,
             ):
                 t0 = time.perf_counter()
+                task_output_: OutputT
                 if is_async_callable(task):
-                    # `is_async_callable`'s `TypeIs` narrowing doesn't type the call's return as awaitable.
-                    task_output_ = await cast('Callable[[InputsT], Awaitable[OutputT]]', task)(case.inputs)
+                    task_output_ = await await_maybe(task(case.inputs))
                 else:
                     # A plain `def` may still return an awaitable, which `to_thread.run_sync` would leave un-awaited.
-                    task_output_ = cast(OutputT, await await_maybe(await to_thread.run_sync(task, case.inputs)))
+                    task_output_ = await await_maybe(await to_thread.run_sync(task, case.inputs))
                 fallback_duration = time.perf_counter() - t0
             duration_ = _get_span_duration(task_span, fallback_duration)
             return task_run_, task_output_, duration_, span_tree_
