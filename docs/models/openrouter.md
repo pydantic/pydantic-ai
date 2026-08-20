@@ -222,15 +222,25 @@ result = agent.run_sync('What is the latest news in AI?')
 
 ### Web Search Parameters
 
-You can configure search context, approximate user location, domain filters, and a limit on searches with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]:
+You can configure search context, approximate user location, domain filters, and a limit on searches with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]. Use [`OpenRouterWebSearchToolSettings`][pydantic_ai.models.openrouter.OpenRouterWebSearchToolSettings] for OpenRouter-specific engine options:
 
 ```python {title="web_search_openrouter.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.models.openrouter import (
+    OpenRouterModel,
+    OpenRouterWebSearchToolSettings,
+)
 from pydantic_ai.native_tools import WebSearchTool
 
 tool = WebSearchTool(
+    settings=OpenRouterWebSearchToolSettings(
+        engine='exa',
+        mode='auto',
+        max_results=5,
+        max_total_results=10,
+        max_characters=5_000,
+    ),
     search_context_size='high',
     user_location={'city': 'London', 'country': 'GB'},
     allowed_domains=['pydantic.dev'],
@@ -265,7 +275,36 @@ for annotation in annotations:
 ```
 
 !!! note "Only non-native search reports its sources"
-    Models whose downstream provider runs the search natively — OpenAI and Anthropic among them — return no annotations at all, so `provider_details` has no `annotations` entry for those. The normal OpenRouter provider details remain available. Which engine OpenRouter picks is not currently configurable from Pydantic AI.
+    Models whose downstream provider runs the search natively — OpenAI and Anthropic among them — return no annotations at all, so `provider_details` has no `annotations` entry for those. The normal OpenRouter provider details remain available. Set `settings=OpenRouterWebSearchToolSettings(engine='exa')` on `WebSearchTool` to use OpenRouter's search engine and receive source annotations.
 
 !!! note "Engine-specific parameters"
-    A recorded request verifies only that OpenRouter accepts these parameter names. The per-engine effects below come from OpenRouter's [Beta server-tool documentation](https://openrouter.ai/docs/guides/features/server-tools/web-search), not from responses recorded in this project: native provider search ignores `search_context_size`; `user_location` works only with native search; and domain-filter support varies (native OpenAI ignores `excluded_domains`). The server tool can make zero or several searches when it is available to the model. `max_uses` caps a request when OpenRouter uses a non-native search engine or Anthropic's native search; other native providers, including the OpenAI model in this example, ignore it. OpenRouter does not support [`WebSearchTool.external_web_access`][pydantic_ai.native_tools.WebSearchTool.external_web_access].
+    Engine behavior comes from OpenRouter's [Beta server-tool documentation](https://openrouter.ai/docs/guides/features/server-tools/web-search): native provider search ignores `search_context_size`; `user_location` works only with native search; and domain-filter support varies (native OpenAI ignores `excluded_domains`). The server tool can make zero or several searches when it is available to the model. `max_uses` caps a request when OpenRouter uses a non-native search engine or Anthropic's native search; other native providers, including the OpenAI model in this example, ignore it. OpenRouter does not support [`WebSearchTool.external_web_access`][pydantic_ai.native_tools.WebSearchTool.external_web_access].
+
+## Advisor
+
+OpenRouter's [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] normally sends only the prompt from
+the tool call to the advisor. Use
+[`OpenRouterAdvisorToolSettings`][pydantic_ai.models.openrouter.OpenRouterAdvisorToolSettings]
+to forward the full parent conversation instead:
+
+```python {title="advisor_openrouter.py"}
+from pydantic_ai import AdvisorTool, Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.openrouter import OpenRouterAdvisorToolSettings
+
+agent = Agent(
+    'openrouter:openai/gpt-5.2',
+    capabilities=[
+        NativeTool(
+            AdvisorTool(
+                model='anthropic/claude-opus-4.8',
+                settings=OpenRouterAdvisorToolSettings(forward_transcript=True),
+            )
+        )
+    ],
+)
+```
+
+Forwarding the transcript gives the advisor more context, but also sends more input tokens. See the
+[OpenRouter advisor documentation](https://openrouter.ai/docs/guides/features/server-tools/advisor)
+for details.

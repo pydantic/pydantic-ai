@@ -12,6 +12,7 @@ from pydantic_ai.native_tools import (
     MemoryTool,
     WebFetchTool,
     WebSearchTool,
+    WebSearchToolSettings,
     WebSearchUserLocation,
 )
 from pydantic_ai.output import StructuredOutputMode
@@ -19,6 +20,10 @@ from pydantic_ai.output import StructuredOutputMode
 from .._inline_snapshot import snapshot
 
 ta = TypeAdapter(ModelRequestParameters)
+
+
+class CustomWebSearchToolSettings(WebSearchToolSettings, total=False):
+    custom_option: str
 
 
 def test_model_request_parameters_are_serializable():
@@ -94,6 +99,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'web_search',
                     'optional': False,
+                    'settings': None,
                     'search_context_size': 'medium',
                     'user_location': {'city': 'New York', 'country': 'US'},
                     'blocked_domains': None,
@@ -105,6 +111,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'web_fetch',
                     'optional': False,
+                    'settings': None,
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -181,6 +188,16 @@ def test_model_request_parameters_are_serializable():
             'thinking': None,
         }
     )
+    assert ta.validate_python(dumped) == params
+
+
+def test_provider_native_tool_settings_are_serializable():
+    params = ModelRequestParameters(
+        native_tools=[WebSearchTool(settings=CustomWebSearchToolSettings(custom_option='value'))]
+    )
+
+    dumped = ta.dump_python(params)
+
     assert ta.validate_python(dumped) == params
 
 

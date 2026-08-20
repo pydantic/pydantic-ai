@@ -599,6 +599,44 @@ result = agent.run_sync(
 !!! note
     Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.
 
+## Web tool settings
+
+Anthropic's newer web tool versions have a few settings that are not shared by other providers. Pass
+the matching typed settings to each native tool:
+
+```python {title="anthropic_web_tool_options.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.anthropic import (
+    AnthropicWebFetchToolSettings,
+    AnthropicWebSearchToolSettings,
+)
+from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        NativeTool(
+            WebSearchTool(
+                settings=AnthropicWebSearchToolSettings(response_inclusion='excluded')
+            )
+        ),
+        NativeTool(
+            WebFetchTool(
+                settings=AnthropicWebFetchToolSettings(
+                    use_cache=False,
+                    response_inclusion='excluded',
+                )
+            )
+        ),
+    ],
+)
+```
+
+Setting any option selects Anthropic's `web_search_20260318` or `web_fetch_20260318` tool version.
+These options require a model and client that support the newer versions. Without them, Pydantic AI
+keeps using the existing model- and client-specific web tool versions.
+
 ## Code Execution Tool Version
 
 By default, Pydantic AI chooses a compatible Anthropic code execution tool version for the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:

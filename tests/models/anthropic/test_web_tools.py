@@ -22,6 +22,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool,
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
 from ...conftest import IsStr, TestEnv, try_import
+from ..conftest import AnthropicModelFactory, RequestCapture
 from ..test_anthropic import (
     MockAnthropic,
     _mock_anthropic_client,  # pyright: ignore[reportPrivateUsage]
@@ -55,7 +56,12 @@ with try_import() as imports_successful:
         BetaWebFetchToolResultBlock,
     )
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        AnthropicModelSettings,
+        AnthropicWebFetchToolSettings,
+        AnthropicWebSearchToolSettings,
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if not imports_successful():  # pragma: lax no cover
@@ -173,6 +179,155 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
     tools, _, beta_features = m._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert [tool.get('type') for tool in tools] == case.expected_tool_types
     assert sorted(beta_features) == case.expected_betas
+
+
+@pytest.mark.parametrize(
+    'tool_kind',
+    [
+        'search',
+        'fetch',
+    ],
+)
+def test_anthropic_20260318_web_tools_enable_implicit_code_execution(tool_kind: str):
+    """Anthropic retains implicit code-execution blocks produced by `20260318` web tools.
+
+    This whitelist controls response filtering and is not visible in the outgoing request, so the
+    test exercises the helper that supplies it to streamed and non-streamed response processing.
+    """
+    tool: AbstractNativeTool
+    if tool_kind == 'search':
+        tool = WebSearchTool(settings=AnthropicWebSearchToolSettings(response_inclusion='full'))
+    else:
+        tool = WebFetchTool(settings=AnthropicWebFetchToolSettings(use_cache=False))
+
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    params = ModelRequestParameters(native_tools=[tool])
+
+    enabled_names = m._get_enabled_server_tool_names(  # pyright: ignore[reportPrivateUsage]
+        params, AnthropicModelSettings()
+    )
+
+    assert {'code_execution', 'bash_code_execution', 'text_editor_code_execution'} <= enabled_names
+
+
+@pytest.mark.vcr()
+async def test_anthropic_20260318_web_search_response_inclusion(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """Anthropic accepts response exclusion and omits search results consumed by code execution."""
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(WebSearchTool(settings=AnthropicWebSearchToolSettings(response_inclusion='excluded')))
+        ],
+    )
+
+    result = await agent.run(
+        "In code execution, use web_search with the query 'site:ai.pydantic.dev Pydantic AI' "
+        'and reply with the first result title.'
+    )
+
+    assert result.output
+    assert request_capture.body('/v1/messages')['tools'] == snapshot(
+        [
+            {
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'max_uses': None,
+                'name': 'web_search',
+                'response_inclusion': 'excluded',
+                'type': 'web_search_20260318',
+                'user_location': None,
+            }
+        ]
+    )
+    assert not any(
+        isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_search'
+        for message in result.all_messages()
+        for part in message.parts
+    )
+
+
+@pytest.mark.parametrize(
+    ('setting_name', 'expected_setting'),
+    [
+        ('use_cache', {'use_cache': False}),
+        ('response_inclusion', {'response_inclusion': 'excluded'}),
+    ],
+)
+def test_anthropic_web_fetch_settings_map_to_20260318(setting_name: str, expected_setting: dict[str, object]):
+    """Each Anthropic web fetch setting selects and maps to the `20260318` wire tool."""
+    provider = AnthropicProvider(
+        anthropic_client=_mock_anthropic_client(AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws')
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=provider)
+    if setting_name == 'use_cache':
+        settings = AnthropicWebFetchToolSettings(use_cache=False)
+    else:
+        settings = AnthropicWebFetchToolSettings(response_inclusion='excluded')
+    params = ModelRequestParameters(native_tools=[WebFetchTool(settings=settings)])
+
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+        [], params, AnthropicModelSettings()
+    )
+
+    assert tools == [
+        {
+            'name': 'web_fetch',
+            'type': 'web_fetch_20260318',
+            'max_uses': None,
+            'allowed_domains': None,
+            'blocked_domains': None,
+            'citations': None,
+            'max_content_tokens': None,
+            **expected_setting,
+        },
+    ]
+
+
+@pytest.mark.vcr()
+async def test_anthropic_20260318_web_fetch_settings(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """Anthropic accepts the tool settings and excludes the consumed fetch result."""
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebFetchTool(settings=AnthropicWebFetchToolSettings(use_cache=False, response_inclusion='excluded'))
+            )
+        ],
+    )
+
+    result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')
+
+    assert result.output
+    assert request_capture.body('/v1/messages')['tools'] == snapshot(
+        [
+            {
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'citations': None,
+                'max_content_tokens': None,
+                'max_uses': None,
+                'name': 'web_fetch',
+                'response_inclusion': 'excluded',
+                'type': 'web_fetch_20260318',
+                'use_cache': False,
+            }
+        ]
+    )
+    assert not any(
+        isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_fetch'
+        for message in result.all_messages()
+        for part in message.parts
+    )
 
 
 def test_anthropic_explicit_profile_instance_narrows_web_tools():

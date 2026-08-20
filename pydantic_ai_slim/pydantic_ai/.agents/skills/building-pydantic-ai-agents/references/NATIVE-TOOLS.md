@@ -35,6 +35,33 @@ Reach for these when the provider supports them:
 - `FileSearchTool`
 - `AdvisorTool` (Anthropic, OpenRouter; lets a faster executor model consult a stronger advisor model mid-generation)
 
+## Provider-Specific Settings
+
+Put settings shared by providers directly on the native tool. For provider-only options, pass the
+provider's typed settings dictionary to the tool's `settings` field:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.anthropic import AnthropicWebSearchToolSettings
+from pydantic_ai.native_tools import WebSearchTool
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        NativeTool(
+            WebSearchTool(
+                settings=AnthropicWebSearchToolSettings(response_inclusion='excluded')
+            )
+        )
+    ],
+)
+```
+
+This follows the model-settings pattern: the native tool accepts a shared base settings type, and
+provider modules expose typed subclasses such as `AnthropicWebSearchToolSettings`. Only the matching
+provider adapter reads those settings.
+
 ## Dynamic Native Tool Configuration
 
 Prepare native tools from `RunContext` when configuration depends on the current user or request. Wrap the prepare function in `NativeTool(...)`.

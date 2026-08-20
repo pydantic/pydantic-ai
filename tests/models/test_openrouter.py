@@ -56,8 +56,10 @@ with try_import() as imports_successful:
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import (
+        OpenRouterAdvisorToolSettings,
         OpenRouterModel,
         OpenRouterModelSettings,
+        OpenRouterWebSearchToolSettings,
         _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
         _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
@@ -1054,11 +1056,11 @@ async def test_openrouter_supported_native_tools() -> None:
 
 
 async def test_openrouter_web_search_tool_request(allow_model_requests: None) -> None:
-    """`WebSearchTool` maps portable settings to an `openrouter:web_search` server tool.
+    """`WebSearchTool` maps portable and provider settings without mixing their namespaces.
 
     A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
-    VCR test despite the module-level `vcr` mark; the provider-acceptance side is covered by the
-    VCR test.
+    VCR test despite the module-level `vcr` mark. The undeclared key emulates untyped input and
+    proves provider settings cannot override the portable field.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
@@ -1067,6 +1069,17 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
         capabilities=[
             NativeTool(
                 WebSearchTool(
+                    settings=cast(
+                        OpenRouterWebSearchToolSettings,
+                        {
+                            'engine': 'exa',
+                            'mode': 'auto',
+                            'max_results': 5,
+                            'max_total_results': 8,
+                            'max_characters': 5_000,
+                            'search_context_size': 'low',
+                        },
+                    ),
                     search_context_size='high',
                     user_location={'city': 'London', 'country': 'GB', 'region': 'England', 'timezone': 'Europe/London'},
                     allowed_domains=['pydantic.dev'],
@@ -1097,6 +1110,11 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
                 'allowed_domains': ['pydantic.dev'],
                 'excluded_domains': ['example.com'],
                 'max_uses': 2,
+                'engine': 'exa',
+                'mode': 'auto',
+                'max_results': 5,
+                'max_total_results': 8,
+                'max_characters': 5_000,
             },
         }
     ]
@@ -1295,9 +1313,8 @@ async def test_openrouter_advisor_tool_request(
     """`AdvisorTool` maps to an `openrouter:advisor` server-tool entry in the request `tools` array.
 
     Unit test with a mocked client because our cassette matchers aren't sensitive to the request
-    body, so a VCR test wouldn't pin the mapped payload. `forward_transcript` remains `False` so
-    OpenRouter uses its default context behavior until provider-specific native tool parameters
-    can expose this choice to users.
+    body, so a VCR test wouldn't pin the mapped payload. The separate settings test pins the
+    provider-specific `forward_transcript` option.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel(executor, provider=OpenRouterProvider(openai_client=mock_client))
@@ -1308,6 +1325,34 @@ async def test_openrouter_advisor_tool_request(
     assert result.output == 'done'
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['tools'] == [{'type': 'openrouter:advisor', 'parameters': expected_parameters}]
+
+
+async def test_openrouter_advisor_tool_settings(allow_model_requests: None) -> None:
+    """OpenRouter advisor settings control the provider's advisor parameters."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                AdvisorTool(
+                    model='anthropic/claude-opus-4.8',
+                    settings=OpenRouterAdvisorToolSettings(forward_transcript=True),
+                )
+            )
+        ],
+    )
+
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == [
+        {
+            'type': 'openrouter:advisor',
+            'parameters': {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': True},
+        }
+    ]
 
 
 @pytest.mark.parametrize('field_kwargs', [{'caching': '5m'}, {'max_uses': 3}])
