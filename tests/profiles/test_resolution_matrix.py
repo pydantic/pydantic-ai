@@ -555,6 +555,7 @@ def test_deepseek_provider_deepseek_chat():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_responses_supports_interleaved_function_calls': False,
         }
     )
 
@@ -573,6 +574,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_responses_supports_interleaved_function_calls': False,
             'openai_supports_tool_choice_required': False,
         }
     )

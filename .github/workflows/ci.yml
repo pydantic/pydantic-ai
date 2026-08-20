@@ -68,6 +68,7 @@ jobs:
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_agentic_workflow_guard.py
           .github/scripts/test_agent_spend_report.py
+          .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
 
       # The tests above import the shim inside this job's workspace venv, which is not

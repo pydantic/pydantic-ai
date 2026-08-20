@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
 import json
 import math
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -395,6 +396,51 @@ async def test_evaluate_sync(
             'trace_id': _any_trace_id,
         }
     )
+
+
+async def test_evaluate_async_callable_instance(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """An async callable instance is awaited; this local task dispatch has no provider boundary to record."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    class AsyncCallable:
+        async def __call__(self, inputs: TaskInput) -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+    report = await example_dataset.evaluate(AsyncCallable(), progress=False)
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert inspect.isawaitable(report.cases[0].output) is False
+    assert len(report.failures) == 0
+
+
+async def test_evaluate_sync_callable_returning_awaitable(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """A sync task's awaitable result is awaited; this local dispatch has no provider boundary to record."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    def task(inputs: TaskInput) -> Awaitable[TaskOutput]:
+        async def result() -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+        return result()
+
+    report = await example_dataset.evaluate(task, progress=False)
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert len(report.failures) == 0
 
 
 @pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
