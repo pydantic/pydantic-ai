@@ -497,6 +497,9 @@ def test_json_schema_test_data():
         my_lit_ints: Literal[1, 2, 3]
         my_lit_str: Literal['a']
         my_lit_strs: Literal['a', 'b', 'c']
+        my_lit_empty: Literal['']
+        my_lit_false: Literal[False]
+        my_lit_zero: Literal[0]
         my_any: Any
         nested: NestedModel
         union: int | list[int]
@@ -535,6 +538,9 @@ def test_json_schema_test_data():
             'my_lit_ints': 1,
             'my_lit_str': 'a',
             'my_lit_strs': 'a',
+            'my_lit_empty': '',
+            'my_lit_false': False,
+            'my_lit_zero': 0,
             'my_any': 'g',
             'union': 6,
             'optional': 'g',
@@ -596,6 +602,22 @@ def test_max_items():
     }
     data = _JsonSchemaTestData(json_schema).generate()
     assert data == snapshot([])
+
+
+def test_falsy_const_tool_args() -> None:
+    """Regression test for #7629: falsy JSON Schema `const` values must be generated as-is."""
+
+    agent = Agent()
+    calls: list[dict[str, Any]] = []
+
+    @agent.tool_plain
+    def my_tool(empty: Literal[''], flag: Literal[False], zero: Literal[0]) -> str:
+        calls.append({'empty': empty, 'flag': flag, 'zero': zero})
+        return 'ok'
+
+    result = agent.run_sync('hello', model=TestModel())
+    assert result.output == snapshot('{"my_tool":"ok"}')
+    assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
 
 
 @pytest.mark.parametrize(
