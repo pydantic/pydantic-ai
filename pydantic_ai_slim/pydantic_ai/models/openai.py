@@ -326,6 +326,7 @@ class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
     """Provider details for OpenAI Responses API continuation."""
 
     last_sequence_number: int
+    instructions_input_message_count: int
 
 
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
@@ -572,6 +573,7 @@ class _ResponsesRequestParams:
     text: responses.ResponseTextConfigParam | Omit
     truncation: Literal['auto', 'disabled'] | Omit
     context_management: list[ContextManagement] | Omit
+    instructions_input_message_count: int | None = None
 
 
 class OpenAIPromptCacheOptions(TypedDict, total=False):
@@ -631,6 +633,15 @@ def _can_move_instructions_into_input(
         and not model_settings.get('openai_conversation_id')
         and not any(message.get('type') == 'compaction' for message in openai_messages)
     )
+
+
+def _mark_instructions_in_input(response: ModelResponse | StreamedResponse, input_message_count: int | None) -> None:
+    """Remember when a stored response will replay instructions from its input messages."""
+    if input_message_count is not None:
+        response.provider_details = {
+            **(response.provider_details or {}),
+            'instructions_input_message_count': input_message_count,
+        }
 
 
 def _add_instruction_cache_breakpoint(
@@ -742,15 +753,15 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Whether to add a prompt cache breakpoint after the last static instruction.
 
     Supported by GPT-5.6 and later models; other models ignore it. OpenAI applies the request-wide
-    `ttl` from `openai_prompt_cache_options`. OpenAI writes at most four breakpoints per request and
-    drops the earliest first, so if `CachePoint` markers push a request over that limit, the
-    instruction breakpoint is the first one dropped.
+    `ttl` from `openai_prompt_cache_options`. OpenAI creates at most four new cache writes per
+    request, using the latest breakpoints first, so if `CachePoint` markers exceed that budget, the
+    instruction breakpoint is the first one not written. It remains available for cache reads.
 
     On the Responses API the instructions are sent as leading input messages, because the top-level
     `instructions` field cannot carry a breakpoint. When `openai_previous_response_id` or
-    `openai_conversation_id` is set, or the history has been compacted, the instructions stay in the
-    top-level field and no breakpoint is added: those modes replay earlier input messages from
-    stored state, so moved instructions would be sent twice.
+    `openai_conversation_id` is set, or the history has been compacted, this cache-specific
+    relocation is skipped and no breakpoint is added: those modes replay earlier input messages
+    from stored state, so moved instructions could be sent twice.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -2236,15 +2247,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
         if info := self._get_continuation_info(messages, settings):
-            response_id, _, _ = info
+            response_id, _, _, instructions_input_message_count = info
             response = await self._responses_retrieve(response_id, settings)
         else:
-            response = await self._responses_create(messages, False, settings, model_request_parameters)
+            response, instructions_input_message_count = await self._responses_create(
+                messages, False, settings, model_request_parameters
+            )
 
         if isinstance(response, ModelResponse):
             return response
 
-        return self._process_response(response, settings, model_request_parameters)
+        model_response = self._process_response(response, settings, model_request_parameters)
+        _mark_instructions_in_input(model_response, instructions_input_message_count)
+        return model_response
 
     async def count_tokens(
         self,
@@ -2314,16 +2329,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
         if info := self._get_continuation_info(messages, settings):
-            response_id, last_sequence_number, previous_model_name = info
+            response_id, last_sequence_number, previous_model_name, instructions_input_message_count = info
             expected_response_id = response_id
             if last_sequence_number is None:
                 # Some background responses were not previously streamed and have no resumable
                 # sequence cursor. `retrieve(stream=True)` can block for a long time in this case,
                 # so fall back to non-stream retrieve and return a static streamed wrapper.
                 response = await self._responses_retrieve(response_id, settings)
+                model_response = self._process_response(response, settings, model_request_parameters)
+                _mark_instructions_in_input(model_response, instructions_input_message_count)
                 sr: StreamedResponse = _ModelResponseStreamedResponse(
                     model_request_parameters=model_request_parameters,
-                    _model_response=self._process_response(response, settings, model_request_parameters),
+                    _model_response=model_response,
                 )
                 yield sr
                 return
@@ -2333,7 +2350,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             previous_model_name = None
             expected_response_id = None
-            response = await self._responses_create(messages, True, settings, model_request_parameters)
+            response, instructions_input_message_count = await self._responses_create(
+                messages, True, settings, model_request_parameters
+            )
         if isinstance(response, ModelResponse):
             yield _ModelResponseStreamedResponse(
                 model_request_parameters=model_request_parameters,
@@ -2348,6 +2367,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
             )
+            _mark_instructions_in_input(sr, instructions_input_message_count)
             yield sr
 
     def _process_response(  # noqa: C901
@@ -2674,6 +2694,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, wire_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
+        instructions_input_message_count = None
 
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         if (
@@ -2694,6 +2715,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         for part in instruction_parts
                     ]
                     instructions = OMIT
+                    instructions_input_message_count = len(self._trim_before_compaction(messages))
                 _add_instruction_cache_breakpoint(openai_messages[index], 'input_text')
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -2716,6 +2738,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
                 )
                 instructions = OMIT
+                # This response can be rebuilt safely only when it did not start from server-side
+                # state that is absent from local history.
+                if previous_response_id is None and conversation_id is None:
+                    instructions_input_message_count = len(self._trim_before_compaction(messages))
 
         if verbosity := model_settings.get('openai_text_verbosity'):
             text_with_verbosity: responses.ResponseTextConfigParam = text if isinstance(text, dict) else {}
@@ -2747,6 +2773,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             text=text,
             truncation=model_settings.get('openai_truncation', OMIT),
             context_management=model_settings.get('openai_context_management', OMIT),
+            instructions_input_message_count=instructions_input_message_count,
         )
 
     @staticmethod
@@ -2765,7 +2792,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: Literal[False],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response: ...
+    ) -> tuple[responses.Response | ModelResponse, int | None]: ...
 
     @overload
     async def _responses_create(
@@ -2774,7 +2801,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: Literal[True],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+    ) -> tuple[AsyncStream[responses.ResponseStreamEvent] | ModelResponse, int | None]: ...
 
     async def _responses_create(
         self,
@@ -2782,7 +2809,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
+    ) -> tuple[responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse, int | None]:
         profile = self.profile
 
         include = self._build_include(model_settings)
@@ -2804,7 +2831,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name):
             try:
-                return await self.client.responses.create(
+                response = await self.client.responses.create(
                     model=request_params.model,
                     input=request_params.input,
                     instructions=request_params.instructions,
@@ -2835,14 +2862,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
                 )
+                return response, request_params.instructions_input_message_count
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                    return model_response
+                    return model_response, None
                 raise
 
     def _get_continuation_info(
         self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
-    ) -> tuple[str, int | None, OpenAIModelName | None] | None:
+    ) -> tuple[str, int | None, OpenAIModelName | None, int | None] | None:
         """If the last message is a suspended response from this provider, return continuation metadata."""
         if not messages:  # pragma: lax no cover
             return None
@@ -2861,6 +2889,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             last.provider_response_id,
             last_sequence_number,
             cast(OpenAIModelName | None, last.model_name),
+            details.get('instructions_input_message_count'),
         )
 
     def _build_include(
@@ -3187,6 +3216,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages, allow_no_new_messages=allow_no_new_messages
         )
         if auto_id is not None:
+            for index, message in enumerate(messages):
+                if isinstance(message, ModelResponse) and message.provider_response_id == auto_id:
+                    details = message.provider_details or {}
+                    if (input_message_count := details.get('instructions_input_message_count')) is not None:
+                        replayable_message_count = len(self._trim_before_compaction(messages[:index]))
+                        if replayable_message_count != input_message_count:
+                            raise UserError(
+                                'Cannot switch to `openai_previous_response_id` after instructions were moved '
+                                'into input because the provided message history is incomplete. Pass the complete '
+                                'message history from that request, or enable server-side state from the first request.'
+                            )
+                        # The stored response already replays instructions from `input`. Rebuild from
+                        # complete local history so they are not received twice.
+                        return None, messages
             return auto_id, trimmed
         if setting == 'auto' or self._is_at_compaction_boundary(messages):
             return None, messages
@@ -4199,7 +4242,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
-                self.provider_details = {'timestamp': self._provider_timestamp}
+                self.provider_details = {**(self.provider_details or {}), 'timestamp': self._provider_timestamp}
 
             async for chunk in self._response:
                 self._last_sequence_number = chunk.sequence_number
