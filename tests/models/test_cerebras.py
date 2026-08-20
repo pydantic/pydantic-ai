@@ -38,6 +38,18 @@ async def test_cerebras_model_simple(allow_model_requests: None, cerebras_api_ke
     assert '4' in result.output
 
 
+async def test_cerebras_profile_preserves_supported_openai_settings():
+    """Cerebras-supported OpenAI settings are not removed before serialization.
+
+    This profile assertion is intentionally a unit test because cassette playback does not match on these request fields.
+    """
+    provider = CerebrasProvider(api_key='mock-api-key')
+    profile = provider.model_profile('gpt-oss-120b')
+
+    assert profile is not None
+    assert not profile.get('openai_unsupported_model_settings')
+
+
 async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str, vcr: Cassette):
     """The deprecated `cerebras_disable_reasoning` still disables reasoning, now via `reasoning_effort='none'`.
 
