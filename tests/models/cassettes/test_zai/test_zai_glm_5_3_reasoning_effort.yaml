@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -27,14 +27,14 @@ interactions:
     uri: https://api.z.ai/api/paas/v4/chat/completions
   response:
     headers:
+      alt-svc:
+      - h3=":443"; ma=3600
       connection:
       - keep-alive
       content-length:
-      - '1332'
+      - '995'
       content-type:
       - application/json; charset=UTF-8
-      keep-alive:
-      - timeout=6
       strict-transport-security:
       - max-age=31536000; includeSubDomains
       transfer-encoding:
@@ -54,33 +54,106 @@ interactions:
         message:
           content: 2 + 2 = 4
           reasoning_content: |-
-            The user is asking me a simple arithmetic question: what is 2 + 2?
+            The user is asking a simple arithmetic question: What is 2 + 2?
 
-            This is a very basic math question. The answer is 4.
+            The answer is 4. This is a basic addition fact that doesn't require any elaborate reasoning.
 
-            Let me think about how to respond. This is such a simple question that a brief, direct answer is appropriate. There's no need for extensive explanation, headers, bullet points, or anything elaborate. The question "What is 2 + 2?" has one clear answer: 4.
+            The question is extremely simple, so my response should be correspondingly brief and direct. There's no need for lengthy explanation, hedging, or unnecessary elaboration. A direct answer is best here.
 
-            I could just say "4" or "2 + 2 = 4" or "2 + 2 equals 4."
-
-            The most natural response would be something short and direct like "2 + 2 = 4" or simply "4."
-
-            I shouldn't overthink this or add unnecessary padding. A concise, direct answer is best here. Maybe just "4" or "2 + 2 = 4."
-
-            Format considerations: This should be extremely brief. One sentence or even just the number. No markdown needed, no elaboration needed. Just answer the question directly.
+            I could just say "4" or "2 + 2 = 4". The latter is slightly more complete and clear. Either works. Given the simplicity, keeping it short is ideal.
           role: assistant
-      created: 1787150599
-      id: 202608192243157c937dd0b2b84088
+      created: 1787259738
+      id: 2026082105021459b8578d40894aa9
       model: glm-5.3
       object: chat.completion
-      request_id: 202608192243157c937dd0b2b84088
+      request_id: 2026082105021459b8578d40894aa9
       usage:
-        completion_tokens: 219
+        completion_tokens: 125
         completion_tokens_details:
-          reasoning_tokens: 210
+          reasoning_tokens: 116
         prompt_tokens: 20
         prompt_tokens_details:
           cached_tokens: 0
-        total_tokens: 239
+        total_tokens: 145
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '137'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3
+      stream: false
+      thinking:
+        clear_thinking: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '977'
+      content-type:
+      - application/json; charset=UTF-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            The user is asking a simple arithmetic question: What is 2 + 2?
+
+            This is one of the most basic math questions. The answer is 4.
+
+            How should I format this? The question is extremely simple and deserves a direct, concise answer. There's no need for lengthy explanations, headers, bullet points, or markdown formatting. A single sentence or even just the number would suffice, though a brief complete sentence is more natural and conversational.
+
+            2 + 2 = 4
+
+            That's it. No need to overthink this.
+          role: assistant
+      created: 1787259742
+      id: 20260821050219787b1f0e32e04586
+      model: glm-5.3
+      object: chat.completion
+      request_id: 20260821050219787b1f0e32e04586
+      usage:
+        completion_tokens: 120
+        completion_tokens_details:
+          reasoning_tokens: 111
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 140
     status:
       code: 200
       message: OK

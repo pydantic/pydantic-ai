@@ -8,14 +8,15 @@ from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
-from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsStr, try_import
+from .conftest import RequestCapture
 
 with try_import() as imports_successful:
     from pydantic_ai.models import ModelRequestParameters
@@ -221,16 +222,17 @@ async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str
     assert request_body['reasoning_effort'] == 'high'
 
 
-async def test_zai_glm_5_3_reasoning_effort(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
-    """On GLM-5.3, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`,
-    mapped to the set the model accepts (`low`/`high`/`max`, per Z.AI's docs and the error message returned
-    when disabling thinking on it): `xhigh` goes out as `max`, which the model accepts.
+async def test_zai_glm_5_3_reasoning_effort(
+    allow_model_requests: None, zai_api_key: str, request_capture: RequestCapture
+):
+    """GLM-5.3 maps effort levels to its accepted set and ignores attempts to disable thinking.
 
-    Recorded against the real Z.AI API; VCR matchers aren't sensitive to the request body, so the mapped
-    wire value is asserted explicitly. The full level mapping is unit-tested in
-    `test_zai_glm_5_3_reasoning_effort_mapping`.
+    Both requests are recorded against the real Z.AI API. The request hook observes the payload produced
+    during playback, since VCR matchers aren't sensitive to the body. The full effort mapping is unit-tested
+    in `test_zai_glm_5_3_reasoning_effort_mapping`.
     """
-    provider = ZaiProvider(api_key=zai_api_key)
+    with pytest.warns(PydanticAIDeprecationWarning, match='httpx2.AsyncClient'):
+        provider = ZaiProvider(api_key=zai_api_key, http_client=request_capture.client)
     model = ZaiModel('glm-5.3', provider=provider)
     settings = ModelSettings(thinking='xhigh')
     response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
@@ -241,9 +243,19 @@ async def test_zai_glm_5_3_reasoning_effort(allow_model_requests: None, zai_api_
         ]
     )
 
-    request_body = single_request_body(vcr)
-    assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
-    assert request_body['reasoning_effort'] == 'max'
+    await model_request(
+        model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=ModelSettings(thinking=False)
+    )
+
+    assert [
+        {key: body[key] for key in ('thinking', 'reasoning_effort') if key in body}
+        for body in request_capture.bodies('/chat/completions')
+    ] == snapshot(
+        [
+            {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'max'},
+            {'thinking': {'clear_thinking': False}},
+        ]
+    )
 
 
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str):
