@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -1065,6 +1066,23 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     # Without suppressing griffe logging, we get:
     # assert caplog.messages == snapshot(['<module>:4: No type or annotation for returned value 1'])
     assert caplog.messages == snapshot([])
+
+
+def test_griffe_parse_failure_does_not_change_root_log_level(monkeypatch: pytest.MonkeyPatch):
+    root = logging.getLogger()
+    monkeypatch.setattr(root, 'level', root.level)
+    root.setLevel(logging.INFO)
+
+    def fail_parse(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError('simulated Griffe parser failure')
+
+    monkeypatch.setattr('pydantic_ai._griffe.Docstring.parse', fail_parse)
+
+    agent = Agent(FunctionModel(get_json_schema))
+    with pytest.raises(RuntimeError, match='simulated Griffe parser failure'):
+        agent.tool_plain(tool_without_return_annotation_in_docstring)
+
+    assert root.level == logging.INFO
 
 
 async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: no cover
