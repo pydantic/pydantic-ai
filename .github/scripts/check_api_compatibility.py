@@ -44,7 +44,7 @@ class Finding:
 
     @property
     def fingerprint(self) -> str:
-        value = f'{self.package}\0{self.message}'.encode()
+        value = f'{self.package}\0{self.path}\0{self.message}'.encode()
         return hashlib.sha256(value).hexdigest()
 
 

@@ -8,12 +8,14 @@ import pytest
 from check_api_compatibility import Finding, emit_annotation, load_waivers, parse_findings
 
 
-def test_fingerprint_ignores_source_location():
+def test_fingerprint_identifies_the_exact_finding():
     first = Finding('pydantic_ai', 'old.py', 1, 'Thing.method(arg): Parameter was added as required')
-    moved = Finding('pydantic_ai', 'new.py', 99, first.message)
+    moved = Finding('pydantic_ai', 'new.py', first.line, first.message)
+    shifted = Finding(first.package, first.path, 99, first.message)
     other_package = Finding('pydantic_graph', first.path, first.line, first.message)
 
-    assert first.fingerprint == moved.fingerprint
+    assert first.fingerprint != moved.fingerprint
+    assert first.fingerprint == shifted.fingerprint
     assert first.fingerprint != other_package.fingerprint
 
 
