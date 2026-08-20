@@ -108,6 +108,33 @@ async def test_openai_embedding_model_blocks_requests_when_disabled():
             await model.embed('hello', input_type='query')
 
 
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_embed_preserves_input_order():
+    """Regression test: embeddings must align with inputs even when the API returns items out of order."""
+    mock_client = AsyncMock()
+
+    item_b = MagicMock()
+    item_b.embedding = [0.4, 0.5, 0.6]
+    item_b.index = 1
+
+    item_a = MagicMock()
+    item_a.embedding = [0.1, 0.2, 0.3]
+    item_a.index = 0
+
+    mock_response = MagicMock()
+    mock_response.data = [item_b, item_a]  # intentionally reversed
+    mock_response.usage = None
+    mock_response.model = 'test-model'
+
+    mock_client.embeddings.create.return_value = mock_response
+
+    provider = OpenAIProvider(openai_client=mock_client)
+    model = OpenAIEmbeddingModel('test-model', provider=provider)
+
+    result = await model.embed(['first', 'second'], input_type='query')
+    assert result.embeddings == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+
+
 @pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
 async def test_cohere_embedding_model_blocks_requests_when_disabled():
     model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
