@@ -545,6 +545,8 @@ class _JsonSchemaTestData:
                 minimum = exc_min + 1
 
         if minimum is not None and maximum is not None:
+            if maximum == minimum:
+                return minimum
             return minimum + self.seed % (maximum - minimum)
         elif minimum is not None:
             return minimum + self.seed
