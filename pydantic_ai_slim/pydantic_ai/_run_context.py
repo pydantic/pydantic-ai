@@ -476,7 +476,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], preserving everything that
         completed before the cancellation took effect in message history. Idempotent; a no-op once
         the run has finished. Cancellation is terminal: capability hooks may observe it and clean
-        up, but cannot recover the run to success.
+        up, but cannot recover the run to success. Cancellation cannot forcibly stop synchronous
+        code running in a worker thread; it may continue and perform side effects, although its
+        result is discarded.
 
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent (e.g. the synthetic
