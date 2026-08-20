@@ -348,9 +348,11 @@ class VideoUrl(FileUrl):
     @property
     def is_youtube(self) -> bool:
         """True if the URL has a YouTube domain."""
-        parsed = urlparse(self.url)
-        hostname = parsed.hostname
-        return hostname in ('youtu.be', 'youtube.com') or (hostname is not None and hostname.endswith('.youtube.com'))
+        # Exact hosts, not a `.youtube.com` suffix match: Gemini rejects
+        # `music.youtube.com` as a `file_uri` with 400 INVALID_ARGUMENT, so a suffix
+        # match would hand it a URL it cannot resolve. Add a host here only once the
+        # provider has been observed to accept it.
+        return urlparse(self.url).hostname in ('youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com')
 
     @property
     def format(self) -> VideoFormat:

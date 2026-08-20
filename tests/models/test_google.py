@@ -87,6 +87,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
@@ -785,6 +786,56 @@ async def test_google_model_youtube_video_url_input(allow_model_requests: None, 
     )
     assert result.output == snapshot(
         'This video demonstrates using an AI agent to analyze recent 404 HTTP responses from a service. The user asks the agent, "Logfire," to identify patterns in these errors. The agent then queries a Logfire database, extracts relevant information like URL paths, HTTP methods, and timestamps, and presents a detailed analysis covering common error-prone endpoints, request patterns, timeline-related issues, and potential configuration or authentication problems. Finally, it offers a list of actionable recommendations to address these issues.'
+    )
+
+
+async def test_google_model_mobile_youtube_video_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """`m.youtube.com` share links resolve as a `file_uri`, like any other YouTube host.
+
+    The request body proves we send the URL rather than downloading it, and the recorded usage
+    proves Gemini resolved it to the video rather than to the watch page: it bills video and
+    audio prompt tokens, which a downloaded `text/html` page could not produce.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video in a few sentences',
+            VideoUrl(url='https://m.youtube.com/watch?v=lCdaVNyHtjU'),
+        ]
+    )
+    assert single_request_body(vcr) == snapshot(
+        {
+            'contents': [
+                {
+                    'parts': [
+                        {'text': 'Explain me this video in a few sentences'},
+                        {'fileData': {'fileUri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU', 'mimeType': 'video/mp4'}},
+                    ],
+                    'role': 'user',
+                }
+            ],
+            'generationConfig': {'responseModalities': ['TEXT']},
+            'systemInstruction': {'parts': [{'text': 'You are a helpful chatbot.'}], 'role': 'user'},
+        }
+    )
+    assert result.output == snapshot(
+        'This video demonstrates an AI assistant within a code editor analyzing recent 404 HTTP responses from a logfile database. The AI queries the database, identifies common patterns related to specific endpoints, request types, timeline issues, and authentication problems. Finally, it provides a detailed analysis of these patterns along with actionable recommendations to resolve the identified issues.'
+    )
+    assert result.usage.details == snapshot(
+        {
+            'cached_content_tokens': 17379,
+            'thoughts_tokens': 821,
+            'text_prompt_tokens': 16,
+            'video_prompt_tokens': 15780,
+            'audio_prompt_tokens': 1917,
+            'audio_cache_tokens': 1881,
+            'text_cache_tokens': 15,
+            'video_cache_tokens': 15483,
+        }
     )
 
 
