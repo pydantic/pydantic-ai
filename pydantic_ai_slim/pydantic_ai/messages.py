@@ -960,7 +960,7 @@ UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
 @dataclass(repr=False, kw_only=True)
-class ToolReturnSource:
+class ToolReturnProvenance:
     """The tool call that produced content carried outside its native tool result."""
 
     tool_name: str
@@ -969,8 +969,8 @@ class ToolReturnSource:
     tool_call_id: str
     """The identifier of the tool call that produced the content."""
 
-    kind: Literal['tool-return-source'] = 'tool-return-source'
-    """Source type identifier.
+    kind: Literal['tool-return-provenance'] = 'tool-return-provenance'
+    """Provenance type identifier.
 
     Deliberately not `'tool-return'`, which is already the tag of
     [`ToolReturn`][pydantic_ai.messages.ToolReturn] and is routed on as a discriminator elsewhere.
@@ -981,7 +981,7 @@ class ToolReturnSource:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _tool_return_content_marker(source: ToolReturnSource) -> str:
+def _tool_return_content_marker(source: ToolReturnProvenance) -> str:
     """Render the fixed fallback marker for tool-origin content."""
     return (
         f'<pydantic_ai:tool_return tool_name="{html.escape(source.tool_name, quote=True)}" '
@@ -1023,7 +1023,7 @@ def _tool_return_str_and_rendered_prompt(  # pyright: ignore[reportUnusedFunctio
     tool_response, user_content = part.model_response_str_and_user_content(wrap_if_error=wrap_if_error)
     if not user_content:
         return tool_response, None
-    source = ToolReturnSource(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+    source = ToolReturnProvenance(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
     return tool_response, _render_tool_return_content_part(UserPromptPart(content=user_content, source=source))
 
 
@@ -1161,7 +1161,7 @@ class UserPromptPart:
 
     _: KW_ONLY
 
-    source: Annotated[ToolReturnSource | None, pydantic.Field(exclude_if=lambda source: source is None)] = None
+    source: Annotated[ToolReturnProvenance | None, pydantic.Field(exclude_if=lambda source: source is None)] = None
     """The semantic origin of content that was not written by the user.
 
     Stored history stays model-neutral: the field records only which tool call produced the content.

@@ -49,7 +49,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UnexpectedModelBehavior,
     UsageLimits,
     UserError,
@@ -7178,7 +7178,7 @@ class TestMultipleToolCalls:
                 ),
                 UserPromptPart(
                     content='extra context',
-                    source=ToolReturnSource(tool_name='good_tool', tool_call_id='call_good'),
+                    source=ToolReturnProvenance(tool_name='good_tool', tool_call_id='call_good'),
                     timestamp=IsDatetime(),
                 ),
             ]
@@ -9197,7 +9197,7 @@ def test_multimodal_tool_response():
                             ImageUrl(url='https://example.com/chart.jpg', identifier='672a5c'),
                             'The chart shows positive trends.',
                         ],
-                        source=ToolReturnSource(tool_name='analyze_data', tool_call_id=IsStr()),
+                        source=ToolReturnProvenance(tool_name='analyze_data', tool_call_id=IsStr()),
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],

@@ -52,7 +52,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -2854,7 +2854,7 @@ def test_dump_load_roundtrip_uploaded_file() -> None:
     assert reloaded == expected
 
 
-def test_dump_load_roundtrip_tool_return_source() -> None:
+def test_dump_load_roundtrip_tool_return_provenance() -> None:
     """Tool-return provenance is deliberately NOT restored on reload.
 
     `UserPromptPart.source` is server-authored and `sanitize_messages` strips a client-supplied
@@ -2866,7 +2866,7 @@ def test_dump_load_roundtrip_tool_return_source() -> None:
             parts=[
                 UserPromptPart(
                     content=['tool attachment'],
-                    source=ToolReturnSource(tool_name='get_file', tool_call_id='call_1'),
+                    source=ToolReturnProvenance(tool_name='get_file', tool_call_id='call_1'),
                 ),
             ]
         ),

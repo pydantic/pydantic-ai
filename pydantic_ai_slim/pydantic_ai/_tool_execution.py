@@ -771,7 +771,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     assert isinstance(tool_part, _messages.ToolReturnPart)
                     user_parts_by_index[index] = _messages.UserPromptPart(
                         content=tool_user_content,
-                        source=_messages.ToolReturnSource(
+                        source=_messages.ToolReturnProvenance(
                             tool_name=tool_part.tool_name, tool_call_id=tool_part.tool_call_id
                         ),
                     )
@@ -1210,7 +1210,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                     assert isinstance(tool_part, _messages.ToolReturnPart)
                                     function_user_parts[index] = _messages.UserPromptPart(
                                         content=tool_user_content,
-                                        source=_messages.ToolReturnSource(
+                                        source=_messages.ToolReturnProvenance(
                                             tool_name=tool_part.tool_name, tool_call_id=tool_part.tool_call_id
                                         ),
                                     )

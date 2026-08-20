@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UserPromptPart,
 )
 from pydantic_ai.models import (
@@ -562,7 +562,7 @@ def test_prepare_messages_system_prompt_wrapping(
     assert _request_parts(model.prepare_messages(messages)) == expected
 
 
-def test_prepare_messages_renders_tool_return_source() -> None:
+def test_prepare_messages_renders_tool_return_provenance() -> None:
     first_image = BinaryContent(data=b'first', media_type='image/png')
     second_image = BinaryContent(data=b'second', media_type='image/png')
     messages: list[ModelMessage] = [
@@ -571,11 +571,11 @@ def test_prepare_messages_renders_tool_return_source() -> None:
                 UserPromptPart(content=[user_image := BinaryContent(data=b'user', media_type='image/png')]),
                 UserPromptPart(
                     content=[first_image],
-                    source=ToolReturnSource(tool_name='get_file', tool_call_id='call_1'),
+                    source=ToolReturnProvenance(tool_name='get_file', tool_call_id='call_1'),
                 ),
                 UserPromptPart(
                     content=[second_image],
-                    source=ToolReturnSource(tool_name='get_file', tool_call_id='call_2'),
+                    source=ToolReturnProvenance(tool_name='get_file', tool_call_id='call_2'),
                 ),
             ]
         )
@@ -601,7 +601,7 @@ def test_prepare_messages_renders_tool_return_source() -> None:
     assert isinstance(original_request, ModelRequest)
     original_part = original_request.parts[1]
     assert isinstance(original_part, UserPromptPart)
-    assert original_part.source == ToolReturnSource(tool_name='get_file', tool_call_id='call_1')
+    assert original_part.source == ToolReturnProvenance(tool_name='get_file', tool_call_id='call_1')
 
 
 def test_prepare_messages_leaves_text_only_tool_return_content_unmarked() -> None:
@@ -610,7 +610,7 @@ def test_prepare_messages_leaves_text_only_tool_return_content_unmarked() -> Non
     Marking it would change the prompt for every `ToolReturn.content` user on every provider,
     including the ones whose tool results carry media natively and never spill.
     """
-    source = ToolReturnSource(tool_name='note', tool_call_id='call_1')
+    source = ToolReturnProvenance(tool_name='note', tool_call_id='call_1')
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[

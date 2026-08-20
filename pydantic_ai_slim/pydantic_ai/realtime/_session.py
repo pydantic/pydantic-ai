@@ -62,7 +62,7 @@ from ..messages import (
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UserContent,
     UserPromptPart,
     _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
@@ -1600,7 +1600,7 @@ class RealtimeSession:
             request_parts.append(
                 UserPromptPart(
                     content=content,
-                    source=ToolReturnSource(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id),
+                    source=ToolReturnProvenance(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id),
                 )
             )
         self._insert_tool_return(call_part, self._new_request(request_parts))
@@ -2181,7 +2181,7 @@ class RealtimeSession:
             # Rendered as one part so the whole spill shares a single marker, and so the media gate
             # lives only in `_render_tool_return_content_part`. The content is a list going in, so it
             # is a list coming out; only the declared `str | Sequence[UserContent]` needs narrowing.
-            source = ToolReturnSource(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id)
+            source = ToolReturnProvenance(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id)
             rendered_content = _render_tool_return_content_part(
                 UserPromptPart(content=wire_content, source=source)
             ).content

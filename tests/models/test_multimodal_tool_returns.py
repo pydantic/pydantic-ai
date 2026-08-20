@@ -37,7 +37,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UploadedFile,
     UploadedFileProviderName,
     UserPromptPart,
@@ -1043,7 +1043,7 @@ async def test_xai_tool_return_images_keep_call_provenance(allow_model_requests:
 
 @pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
 @pytest.mark.skipif(not google_available(), reason='google dependencies not installed')
-async def test_tool_return_source_replays_across_provider_mappers() -> None:
+async def test_tool_return_provenance_replays_across_provider_mappers() -> None:
     agent = Agent(TestModel(call_tools=['get_image']))
 
     @agent.tool_plain
@@ -1071,7 +1071,7 @@ async def test_tool_return_source_replays_across_provider_mappers() -> None:
         for part in message.parts
         if isinstance(part, UserPromptPart) and part.source is not None
     )
-    expected_source = ToolReturnSource(tool_name=tool_call.tool_name, tool_call_id=tool_call.tool_call_id)
+    expected_source = ToolReturnProvenance(tool_name=tool_call.tool_name, tool_call_id=tool_call.tool_call_id)
     assert tool_prompt.source == expected_source
 
     openai_model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))

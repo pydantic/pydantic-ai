@@ -58,7 +58,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -4806,10 +4806,10 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     )
 
 
-async def test_adapter_dump_load_roundtrip_tool_return_source() -> None:
+async def test_adapter_dump_load_roundtrip_tool_return_provenance() -> None:
     """Tool-return provenance is deliberately NOT restored on reload.
 
-    The Vercel twin of `tests/test_ag_ui.py::test_dump_load_roundtrip_tool_return_source`. Both
+    The Vercel twin of `tests/test_ag_ui.py::test_dump_load_roundtrip_tool_return_provenance`. Both
     adapters document this loss; asserting it keeps an accidental restore of client-supplied
     provenance from passing silently, since `sanitize_messages` exists to drop exactly that.
     """
@@ -4818,7 +4818,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_source() -> None:
             parts=[
                 UserPromptPart(
                     content=['tool attachment'],
-                    source=ToolReturnSource(tool_name='get_file', tool_call_id='call_1'),
+                    source=ToolReturnProvenance(tool_name='get_file', tool_call_id='call_1'),
                 )
             ]
         ),

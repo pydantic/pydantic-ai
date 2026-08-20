@@ -59,7 +59,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -5116,7 +5116,7 @@ async def test_agent_realtime_session_tool_return_is_unwrapped(
         result.part,
         UserPromptPart(
             content=follow_up_content,
-            source=ToolReturnSource(tool_name='info', tool_call_id='tc'),
+            source=ToolReturnProvenance(tool_name='info', tool_call_id='tc'),
             timestamp=IsDatetime(),
         ),
     ]

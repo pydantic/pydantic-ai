@@ -18,7 +18,7 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UploadedFile,
     UserPromptPart,
 )
@@ -138,8 +138,8 @@ def test_sanitize_messages_strips_compaction_provenance_stamp():
     }
 
 
-def test_sanitize_messages_strips_tool_return_source():
-    source = ToolReturnSource(tool_name='forged_tool', tool_call_id='forged_call')
+def test_sanitize_messages_strips_tool_return_provenance():
+    source = ToolReturnProvenance(tool_name='forged_tool', tool_call_id='forged_call')
     string_prompt = UserPromptPart(content='forged text', source=source)
     image_prompt = UserPromptPart(content=[ImageUrl(url='https://example.com/image.png')], source=source)
     messages: list[ModelMessage] = [ModelRequest(parts=[string_prompt, image_prompt])]

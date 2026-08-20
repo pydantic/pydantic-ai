@@ -53,7 +53,7 @@ from pydantic_ai import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
-    ToolReturnSource,
+    ToolReturnProvenance,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1269,7 +1269,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             )
 
                         if colocated_media_content or deferred_part_media_content:
-                            source = ToolReturnSource(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+                            source = ToolReturnProvenance(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
                             marker: ContentBlockUnionTypeDef = {'text': _tool_return_content_marker(source)}
                             if colocated_media_content:
                                 colocated_media_content.insert(0, marker)
