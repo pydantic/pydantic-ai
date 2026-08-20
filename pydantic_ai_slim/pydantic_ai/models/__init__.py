@@ -780,7 +780,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
-        messages = _render_tool_return_content(messages)
+        messages = _render_tool_return_markers(messages)
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
@@ -2200,7 +2200,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     return new_messages if changed else messages
 
 
-def _render_tool_return_content(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _render_tool_return_markers(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Render model-neutral tool-content provenance without changing stored history.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip

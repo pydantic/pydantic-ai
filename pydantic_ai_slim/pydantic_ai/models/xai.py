@@ -419,8 +419,8 @@ class XaiModel(Model[AsyncClient]):
             file_prompts: list[UserPromptPart] = []
             for part in tool_results:
                 if isinstance(part, ToolReturnPart):
-                    text, file_prompt = _tool_return_str_and_rendered_prompt(part)
-                    xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
+                    tool_text, file_prompt = _tool_return_str_and_rendered_prompt(part)
+                    xai_messages.append(tool_result(tool_text, tool_call_id=part.tool_call_id))
                     if file_prompt:
                         file_prompts.append(file_prompt)
                 else:

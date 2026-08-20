@@ -52,6 +52,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    ToolReturnSource,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -2851,6 +2852,40 @@ def test_dump_load_roundtrip_uploaded_file() -> None:
     _sync_timestamps(expected, reloaded)
 
     assert reloaded == expected
+
+
+def test_dump_load_roundtrip_tool_return_source() -> None:
+    """Tool-return provenance is deliberately NOT restored on reload.
+
+    `UserPromptPart.source` is server-authored and `sanitize_messages` strips a client-supplied
+    value, so recovering it here would re-trust exactly what the sanitizer drops. Asserting the loss
+    keeps an accidental restore from passing silently.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=['tool attachment'],
+                    source=ToolReturnSource(tool_name='get_file', tool_call_id='call_1'),
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+    expected: list[ModelMessage] = [
+        # A single-item text list collapses to a bare string on reload; only `source` is at issue here.
+        ModelRequest(parts=[UserPromptPart(content='tool attachment')]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(expected, reloaded)
+
+    assert reloaded == expected
+    reloaded_prompt = reloaded[0].parts[0]
+    assert isinstance(reloaded_prompt, UserPromptPart)
+    assert reloaded_prompt.source is None
 
 
 def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:

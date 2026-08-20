@@ -969,6 +969,15 @@ class ToolReturnSource:
     tool_call_id: str
     """The identifier of the tool call that produced the content."""
 
+    kind: Literal['tool-return-source'] = 'tool-return-source'
+    """Source type identifier.
+
+    Deliberately not `'tool-return'`, which is already the tag of
+    [`ToolReturn`][pydantic_ai.messages.ToolReturn] and is routed on as a discriminator elsewhere.
+    Carried from the first release so that widening the field to a tagged union later does not
+    strand histories written before the tag existed.
+    """
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -988,7 +997,7 @@ def _render_tool_return_content_part(part: UserPromptPart) -> UserPromptPart:
     provider, including those whose tool results carry media natively and never spill.
     """
     source = part.source
-    if source is None or not part.content:
+    if source is None:
         return part
 
     content = part.content

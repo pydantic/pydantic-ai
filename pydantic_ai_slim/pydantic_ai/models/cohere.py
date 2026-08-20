@@ -379,7 +379,7 @@ class CohereModel(Model[AsyncClientV2]):
             elif isinstance(item, CachePoint):
                 continue
             else:
-                raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+                raise RuntimeError('The Cohere integration does not yet support multi-modal user prompts.')
         return UserChatMessageV2(role='user', content=cohere_content)
 
     @classmethod

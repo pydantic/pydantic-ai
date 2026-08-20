@@ -67,8 +67,14 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
-    from mistralai.client.models import AssistantMessage, ImageURL, ImageURLChunk, TextChunk, ToolMessage
-    from mistralai.client.models.usermessage import UserMessage
+    from mistralai.client.models import (
+        AssistantMessage,
+        ImageURL,
+        ImageURLChunk,
+        TextChunk,
+        ToolMessage,
+        UserMessage,
+    )
 
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.profiles.mistral import MistralModelProfile
@@ -885,7 +891,12 @@ async def test_mistral_tool_return_media_honors_profile_flag(supports_media_in_t
                     tool_name='get_image',
                     content=[BinaryContent(data=b'img', media_type='image/png', identifier='shot')],
                     tool_call_id='call1',
-                )
+                ),
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=[BinaryContent(data=b'img2', media_type='image/png', identifier='shot2')],
+                    tool_call_id='call2',
+                ),
             ]
         )
     ]
@@ -898,19 +909,31 @@ async def test_mistral_tool_return_media_honors_profile_flag(supports_media_in_t
                 ToolMessage(
                     content=[ImageURLChunk(image_url=ImageURL(url='data:image/png;base64,aW1n'))],
                     tool_call_id='call1',
-                )
+                ),
+                ToolMessage(
+                    content=[ImageURLChunk(image_url=ImageURL(url='data:image/png;base64,aW1nMg=='))],
+                    tool_call_id='call2',
+                ),
             ]
         )
     else:
         assert mapped == snapshot(
             [
                 ToolMessage(content='["See file shot."]', tool_call_id='call1'),
+                ToolMessage(content='["See file shot2."]', tool_call_id='call2'),
                 AssistantMessage(content=[TextChunk(text='OK')]),
                 UserMessage(
                     content=[
                         TextChunk(text='<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call1" />'),
                         TextChunk(text='This is file shot:'),
                         ImageURLChunk(image_url=ImageURL(url='data:image/png;base64,aW1n')),
+                    ]
+                ),
+                UserMessage(
+                    content=[
+                        TextChunk(text='<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call2" />'),
+                        TextChunk(text='This is file shot2:'),
+                        ImageURLChunk(image_url=ImageURL(url='data:image/png;base64,aW1nMg==')),
                     ]
                 ),
             ]

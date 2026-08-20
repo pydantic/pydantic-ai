@@ -586,6 +586,7 @@ class MistralModel(Model[Mistral]):
         return _MISTRAL_REASONING_EFFORT_MAP[thinking]
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
+        file_prompts: list[UserPromptPart] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
@@ -593,11 +594,14 @@ class MistralModel(Model[Mistral]):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 if part.files and not self.profile.get('mistral_supports_media_in_tool_returns', True):
+                    # Spilled media is held back until every tool result in this request has been
+                    # emitted: a `tool` message may not follow a `user` message, and the assistant
+                    # filler inserted below to separate them carries no `tool_calls` to attach to.
                     tool_text, file_prompt = _tool_return_str_and_rendered_prompt(part)
                     # `part.files` is non-empty, so the split always yields a prompt for them.
                     assert file_prompt is not None
+                    file_prompts.append(file_prompt)
                     yield MistralToolMessage(tool_call_id=part.tool_call_id, content=tool_text)
-                    yield await self._map_user_prompt(file_prompt)
                 else:
                     yield MistralToolMessage(
                         tool_call_id=part.tool_call_id,
@@ -618,6 +622,8 @@ class MistralModel(Model[Mistral]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
+        for file_prompt in file_prompts:
+            yield await self._map_user_prompt(file_prompt)
 
     async def _map_tool_return_content(self, part: ToolReturnPart) -> str | list[MistralContentChunk]:
         if not part.files:
@@ -715,7 +721,9 @@ class MistralModel(Model[Mistral]):
                     content.append(await self._map_file_to_content_chunk(item, 'user prompts'))
         return MistralUserMessage(content=content)
 
-    async def _map_file_to_content_chunk(self, item: MultiModalContent, context: str) -> MistralContentChunk:  # noqa: C901
+    @staticmethod
+    async def _map_file_to_content_chunk(item: MultiModalContent, context: str) -> MistralContentChunk:  # noqa: C901
+        """Map a multimodal file item to its Mistral API content chunk."""
         if isinstance(item, ImageUrl):
             if item.force_download:
                 downloaded = await download_item(item, data_format='base64_uri')

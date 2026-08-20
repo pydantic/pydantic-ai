@@ -12,10 +12,11 @@ class MistralModelProfile(ModelProfile, total=False):
     mistral_supports_media_in_tool_returns: bool
     """Whether the model accepts a content-chunk array as `ToolMessage.content`. Default: `True`.
 
-    Mistral's API schema accepts either a string or a chunk array for every model, and the docs
-    state no per-model constraint, so this defaults on; it is verified live against
-    `mistral-medium-latest`. Set it to `False` for a model found to reject chunked tool content,
-    which sends the media as prompt content behind the provenance marker instead.
+    Mistral's OpenAPI schema types `ToolMessage.content` as `string | null | ContentChunk[]` with no
+    model discriminator, so this defaults on for every model; the chunk array is verified live
+    against `mistral-medium-latest`. Turning it off sends the media as prompt content behind the
+    provenance marker instead, which is how providers without native tool-result media carry it —
+    note that this is a different rendering, not a way to restore pre-provenance output.
     """
 
 

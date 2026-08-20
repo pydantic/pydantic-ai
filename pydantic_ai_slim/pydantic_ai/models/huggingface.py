@@ -472,9 +472,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_prompt = _tool_return_str_and_rendered_prompt(part)
-                if tool_prompt:
-                    file_prompts.append(tool_prompt)
+                tool_text, file_prompt = _tool_return_str_and_rendered_prompt(part)
+                if file_prompt:
+                    file_prompts.append(file_prompt)
                 yield ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                     {
                         'role': 'tool',

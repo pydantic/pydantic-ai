@@ -1595,12 +1595,14 @@ class RealtimeSession:
     ) -> list[RealtimeEvent]:
         request_parts: list[ModelRequestPart] = [result_part]
         if content:
-            source = (
-                ToolReturnSource(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id)
-                if isinstance(result_part, ToolReturnPart)
-                else None
+            # Content only ever accompanies a successful return: every retry path leaves it unset.
+            assert isinstance(result_part, ToolReturnPart)
+            request_parts.append(
+                UserPromptPart(
+                    content=content,
+                    source=ToolReturnSource(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id),
+                )
             )
-            request_parts.append(UserPromptPart(content=content, source=source))
         self._insert_tool_return(call_part, self._new_request(request_parts))
         return [FunctionToolResultEvent(part=result_part, content=content)]
 
