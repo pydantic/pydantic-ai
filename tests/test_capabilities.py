@@ -567,6 +567,10 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'settings': {
+                            'anyOf': [{'$ref': '#/$defs/AdvisorToolSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'model': {
                             'anyOf': [
                                 {
@@ -603,6 +607,12 @@ def test_model_json_schema_with_capabilities():
                     },
                     'required': ['model'],
                     'title': 'AdvisorTool',
+                    'type': 'object',
+                },
+                'AdvisorToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {},
+                    'title': 'AdvisorToolSettings',
                     'type': 'object',
                 },
                 'AgentRetries': {
@@ -1574,6 +1584,10 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'settings': {
+                            'anyOf': [{'$ref': '#/$defs/WebFetchToolSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1599,10 +1613,20 @@ def test_model_json_schema_with_capabilities():
                     'title': 'WebFetchTool',
                     'type': 'object',
                 },
+                'WebFetchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {},
+                    'title': 'WebFetchToolSettings',
+                    'type': 'object',
+                },
                 'WebSearchTool': {
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'settings': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchToolSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'search_context_size': {
                             'default': 'medium',
                             'enum': ['low', 'medium', 'high'],
@@ -1635,6 +1659,12 @@ def test_model_json_schema_with_capabilities():
                         },
                     },
                     'title': 'WebSearchTool',
+                    'type': 'object',
+                },
+                'WebSearchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {},
+                    'title': 'WebSearchToolSettings',
                     'type': 'object',
                 },
                 'WebSearchUserLocation': {

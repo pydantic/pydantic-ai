@@ -14,10 +14,13 @@ from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
+    'NativeToolSettings',
+    'WebSearchToolSettings',
     'WebSearchTool',
     'WebSearchUserLocation',
     'XSearchTool',
     'CodeExecutionTool',
+    'WebFetchToolSettings',
     'WebFetchTool',
     'ImageGenerationModelName',
     'ImageGenerationTool',
@@ -26,6 +29,7 @@ __all__ = (
     'MCPServerTool',
     'FileSearchTool',
     'AdvisorModelName',
+    'AdvisorToolSettings',
     'AdvisorTool',
     'NATIVE_TOOL_TYPES',
     'SUPPORTED_NATIVE_TOOLS',
@@ -125,6 +129,17 @@ class AbstractNativeTool(ABC):
         return handler(tools_type)
 
 
+class NativeToolSettings(TypedDict, total=False):
+    """Base settings for provider-specific native tool options."""
+
+    # Provider settings need to survive serialization through this shared base type.
+    __pydantic_config__ = pydantic.ConfigDict(extra='allow')  # pyright: ignore[reportGeneralTypeIssues]
+
+
+class WebSearchToolSettings(NativeToolSettings, total=False):
+    """Base settings for provider-specific web search options."""
+
+
 @dataclass(kw_only=True)
 class WebSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search the web for information.
@@ -142,6 +157,14 @@ class WebSearchTool(AbstractNativeTool):
     * Google
     * xAI
     * OpenRouter
+    """
+
+    settings: WebSearchToolSettings | None = None
+    """Provider-specific web search settings.
+
+    Pass the typed settings class for the model provider, such as
+    [`AnthropicWebSearchToolSettings`][pydantic_ai.models.anthropic.AnthropicWebSearchToolSettings]
+    or [`OpenRouterWebSearchToolSettings`][pydantic_ai.models.openrouter.OpenRouterWebSearchToolSettings].
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
@@ -369,6 +392,10 @@ class CodeExecutionTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+class WebFetchToolSettings(NativeToolSettings, total=False):
+    """Base settings for provider-specific web fetch options."""
+
+
 @dataclass(kw_only=True)
 class WebFetchTool(AbstractNativeTool):
     """Allows your agent to access contents from URLs.
@@ -379,6 +406,13 @@ class WebFetchTool(AbstractNativeTool):
 
     * Anthropic
     * Google
+    """
+
+    settings: WebFetchToolSettings | None = None
+    """Provider-specific web fetch settings.
+
+    Pass the typed settings class for the model provider, such as
+    [`AnthropicWebFetchToolSettings`][pydantic_ai.models.anthropic.AnthropicWebFetchToolSettings].
     """
 
     max_uses: int | None = None
@@ -676,6 +710,10 @@ class FileSearchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+class AdvisorToolSettings(NativeToolSettings, total=False):
+    """Base settings for provider-specific advisor options."""
+
+
 @dataclass(kw_only=True)
 class AdvisorTool(AbstractNativeTool):
     """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
@@ -688,6 +726,13 @@ class AdvisorTool(AbstractNativeTool):
 
     * Anthropic
     * OpenRouter
+    """
+
+    settings: AdvisorToolSettings | None = None
+    """Provider-specific advisor settings.
+
+    Pass the typed settings class for the model provider, such as
+    [`OpenRouterAdvisorToolSettings`][pydantic_ai.models.openrouter.OpenRouterAdvisorToolSettings].
     """
 
     model: AdvisorModelName

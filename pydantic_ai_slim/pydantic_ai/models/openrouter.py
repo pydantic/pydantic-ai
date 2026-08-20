@@ -20,7 +20,7 @@ from ..messages import (
     UserContent,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
+from ..native_tools import AbstractNativeTool, AdvisorTool, AdvisorToolSettings, WebSearchTool, WebSearchToolSettings
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
@@ -251,6 +251,32 @@ class OpenRouterUsageConfig(TypedDict, total=False):
     """Configuration for OpenRouter usage."""
 
     include: bool
+
+
+class OpenRouterWebSearchToolSettings(WebSearchToolSettings, total=False):
+    """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
+
+    engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity']
+    """The search engine OpenRouter should use."""
+
+    mode: Literal['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced']
+    """The engine-specific search mode."""
+
+    max_results: int
+    """The maximum results returned by each search call."""
+
+    max_total_results: int
+    """The maximum results returned across all search calls in one request."""
+
+    max_characters: int
+    """The maximum content characters returned for each result."""
+
+
+class OpenRouterAdvisorToolSettings(AdvisorToolSettings, total=False):
+    """OpenRouter-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
+
+    forward_transcript: bool
+    """Whether OpenRouter should include the conversation transcript in the advisor request."""
 
 
 class OpenRouterModelSettings(ModelSettings, total=False):
@@ -958,17 +984,17 @@ class OpenRouterModel(OpenAIChatModel):
         # Append server tools after the cache block so the tool-definitions cache breakpoint stays on the last function tool.
         advisor = next((t for t in model_request_parameters.native_tools if isinstance(t, AdvisorTool)), None)
         if advisor is not None:
+            advisor_settings = cast(OpenRouterAdvisorToolSettings, advisor.settings or {})
             parameters: dict[str, Any] = {
                 'model': advisor.model,
-                # TODO: Allow provider-specific native tool parameters so users can opt into forwarding the transcript.
-                # https://github.com/pydantic/pydantic-ai/pull/6605#discussion_r3640554790
-                'forward_transcript': False,
+                'forward_transcript': advisor_settings.get('forward_transcript', False),
                 **({'max_completion_tokens': advisor.max_tokens} if advisor.max_tokens is not None else {}),
             }
             tools.append(cast(chat.ChatCompletionToolParam, {'type': 'openrouter:advisor', 'parameters': parameters}))
 
         web_search = next((t for t in model_request_parameters.native_tools if isinstance(t, WebSearchTool)), None)
         if web_search is not None:
+            web_search_settings = cast(OpenRouterWebSearchToolSettings, web_search.settings or {})
             parameters: dict[str, Any] = {'search_context_size': web_search.search_context_size}
             if (user_location := web_search.user_location) is not None:
                 parameters['user_location'] = {'type': 'approximate', **user_location}
@@ -978,6 +1004,13 @@ class OpenRouterModel(OpenAIChatModel):
                 parameters['excluded_domains'] = blocked_domains
             if (max_uses := web_search.max_uses) is not None:
                 parameters['max_uses'] = max_uses
+            parameters.update(
+                {
+                    key: value
+                    for key in ('engine', 'mode', 'max_results', 'max_total_results', 'max_characters')
+                    if (value := web_search_settings.get(key)) is not None
+                }
+            )
             tools.append(
                 cast(chat.ChatCompletionToolParam, {'type': 'openrouter:web_search', 'parameters': parameters})
             )

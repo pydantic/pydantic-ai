@@ -26,6 +26,13 @@ These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTo
 !!! tip "Provider-adaptive capabilities"
     For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation, so your agent works across providers without code changes.
 
+Provider-independent options are fields on the native tool. When a provider has extra options,
+pass its typed settings dictionary to the tool's `settings` field. This mirrors
+[model settings](agent.md#model-run-settings): the shared tool accepts a base settings type, while
+provider modules expose typed subclasses. See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),
+[OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
+[OpenRouter advisor settings](models/openrouter.md#advisor).
+
 ### Google tool combinations
 
 [Gemini 3 models](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) support combining native tools with function tools, including [output tools](output.md#tool-output), and [`NativeOutput`][pydantic_ai.output.NativeOutput]. Earlier Gemini models cannot use these combinations; use [`PromptedOutput`][pydantic_ai.output.PromptedOutput] for structured output alongside native tools.
@@ -171,6 +178,8 @@ _(This example is complete, it can be run "as is")_
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `settings.response_inclusion` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `settings.engine`, `mode`, `max_results`, `max_total_results`, `max_characters` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 * Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
 
@@ -178,7 +187,8 @@ _(This example is complete, it can be run "as is")_
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 !!! note "Anthropic Web Search Tool Versions"
-    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
+    Anthropic-specific web search settings select `web_search_20260318`. Without those settings,
+    Pydantic AI does not expose a `dynamic_filtering` option and selects
     the web search tool version from the model profile and Anthropic client: `web_search_20260209`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_search_20250305` otherwise.
@@ -670,12 +680,15 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ✅ | ❌ |
 | `enable_citations` | ✅ | ❌ |
 | `max_content_tokens` | ✅ | ❌ |
+| `settings.use_cache` | ✅ | ❌ |
+| `settings.response_inclusion` | ✅ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 !!! note "Anthropic Web Fetch Tool Versions"
-    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
+    Anthropic-specific web fetch settings select `web_fetch_20260318`. Without those settings,
+    Pydantic AI does not expose a `dynamic_filtering` option and selects
     the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_fetch_20250910` otherwise.
@@ -811,7 +824,7 @@ result = agent.run_sync('Design a caching strategy for our API. Consult your adv
 print(result.output)
 ```
 
-For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. Pydantic AI sends `forward_transcript=false`; `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
 
 With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
 
@@ -823,6 +836,7 @@ With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in
 | `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
 | `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
+| `settings.forward_transcript` | ❌ | ✅ (forward the parent conversation to the advisor) |
 
 ## MCP Server Tool
 
