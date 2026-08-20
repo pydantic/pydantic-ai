@@ -19,6 +19,7 @@ from uuid import UUID
 
 import anyio
 import pytest
+from blockbuster import BlockBuster
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -60,6 +61,7 @@ from pydantic_ai.capabilities import (
     XSearch,
 )
 from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
+from pydantic_ai.capabilities._pending_messages import PendingMessageDrainCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -17419,6 +17421,76 @@ async def test_enqueue_from_agent_run():
             ),
         ]
     )
+
+
+async def test_sync_enqueue_waits_for_pending_message_drain(blockbuster: BlockBuster | None):
+    """A sync-tool enqueue cannot be lost while a drain replaces the queue contents."""
+
+    loop = asyncio.get_running_loop()
+    iter_started = asyncio.Event()
+    release_iter = threading.Event()
+
+    class BlockingPendingMessages(list[PendingMessage]):
+        def __iter__(self):
+            loop.call_soon_threadsafe(iter_started.set)
+            assert release_iter.wait(timeout=1)
+            return super().__iter__()
+
+    queue = BlockingPendingMessages()
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        pending_messages=queue,
+        _pending_messages_lock=threading.Lock(),
+        _event_stream_buffer=[],
+    )
+    request_context = ModelRequestContext(
+        model=TestModel(),
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    capability = PendingMessageDrainCapability()
+    drain_errors: list[BaseException] = []
+
+    def drain() -> None:
+        try:
+            asyncio.run(capability.before_model_request(ctx, request_context))
+        except BaseException as exc:  # pragma: no cover - assertion below reports unexpected errors
+            drain_errors.append(exc)
+
+    if blockbuster is not None:
+        blockbuster.deactivate()
+    try:
+        drain_thread = threading.Thread(target=drain)
+        drain_thread.start()
+        await asyncio.wait_for(iter_started.wait(), timeout=1)
+
+        enqueue_started = asyncio.Event()
+        enqueue_finished = threading.Event()
+
+        def enqueue() -> None:
+            loop.call_soon_threadsafe(enqueue_started.set)
+            ctx.enqueue('from sync tool')
+            enqueue_finished.set()
+
+        enqueue_thread = threading.Thread(target=enqueue)
+        enqueue_thread.start()
+        await asyncio.wait_for(enqueue_started.wait(), timeout=1)
+        assert not enqueue_finished.is_set()
+
+        release_iter.set()
+        await asyncio.to_thread(drain_thread.join, 1)
+        await asyncio.to_thread(enqueue_thread.join, 1)
+        assert not drain_errors
+        assert not drain_thread.is_alive()
+        assert not enqueue_thread.is_alive()
+        assert enqueue_finished.is_set()
+        assert len(queue) == 1
+    finally:
+        if blockbuster is not None:
+            blockbuster.activate()
 
 
 async def test_bare_async_for_drains_pending_messages():

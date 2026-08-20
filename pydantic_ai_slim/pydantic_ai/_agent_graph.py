@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import _thread
 import asyncio
 import dataclasses
 import inspect
@@ -419,6 +420,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
+
+    _pending_messages_lock: _thread.LockType
+    """Private per-run lock shared by pending-message producers and the drain capability."""
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -2362,6 +2366,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _pending_messages_lock=ctx.deps._pending_messages_lock,  # pyright: ignore[reportPrivateUsage]
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,

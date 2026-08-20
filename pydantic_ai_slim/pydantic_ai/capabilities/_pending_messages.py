@@ -56,6 +56,48 @@ def _stamped_messages(
     return messages
 
 
+def _drain_at_end(
+    ctx: RunContext[Any],
+    result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
+) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
+    """Drain both priorities and build the end-of-run redirect."""
+    assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
+    # Pi-mono parity: drain `'asap'` first so anything that arrived during the
+    # final step (e.g. a background task completing while the model produced
+    # its final response) gets delivered before `'when_idle'` messages, and the
+    # agent gets another turn rather than terminating with the message lost.
+    leftover_asap = _drain_by_priority(ctx.pending_messages, 'asap')
+    when_idle = _drain_by_priority(ctx.pending_messages, 'when_idle')
+    if not leftover_asap and not when_idle:
+        return result
+
+    drained = [*leftover_asap, *when_idle]
+    stamped = [
+        (
+            pending,
+            _stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
+        )
+        for pending in drained
+    ]
+    messages = [message for _, pending_messages in stamped for message in pending_messages]
+    # `final` becomes the redirect node's request; `_stamped_messages` already
+    # stamped it, which is harmless because the lifecycle stamps it again.
+    final = messages[-1]
+    if not isinstance(final, ModelRequest):
+        raise UserError(
+            'Enqueued content must end with a `ModelRequest` so the agent has a request to respond to, '
+            f'but the last queued message is a `{type(final).__name__}`.'
+        )
+    for pending, pending_messages in stamped:
+        for message in pending_messages:
+            if message is not final:
+                ctx.messages.append(message)
+        ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
+            EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
+        )
+    return ModelRequestNode(request=final)
+
+
 class PendingMessageDrainCapability(AbstractCapability[Any]):
     """Drains the pending message queue at appropriate times.
 
@@ -100,14 +142,15 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         messages exactly as delivered here.
         """
         assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
-        drained = _drain_by_priority(ctx.pending_messages, 'asap')
-        for pending in drained:
-            messages = _stamped_messages(
-                pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
-            )
-            request_context.messages.extend(messages)
-            ctx.messages.extend(messages)
-            ctx._emit_event(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages)))  # pyright: ignore[reportPrivateUsage]
+        with ctx._pending_messages_guard():  # pyright: ignore[reportPrivateUsage]
+            drained = _drain_by_priority(ctx.pending_messages, 'asap')
+            for pending in drained:
+                messages = _stamped_messages(
+                    pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
+                )
+                request_context.messages.extend(messages)
+                ctx.messages.extend(messages)
+                ctx._emit_event(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages)))  # pyright: ignore[reportPrivateUsage]
         return request_context
 
     async def after_node_run(
@@ -136,43 +179,5 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not isinstance(result, End):
             return result
 
-        assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
-        # Pi-mono parity: drain `'asap'` first so anything that arrived during the
-        # final step (e.g. a background task completing while the model produced
-        # its final response) gets delivered before `'when_idle'` messages, and the
-        # agent gets another turn rather than terminating with the message lost.
-        leftover_asap = _drain_by_priority(ctx.pending_messages, 'asap')
-        when_idle = _drain_by_priority(ctx.pending_messages, 'when_idle')
-        if not leftover_asap and not when_idle:
-            return result
-
-        drained = [*leftover_asap, *when_idle]
-        stamped = [
-            (
-                pending,
-                _stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
-            )
-            for pending in drained
-        ]
-        messages = [message for _, pending_messages in stamped for message in pending_messages]
-        # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
-        # will re-stamp it during the graph lifecycle. `_stamped_messages` already
-        # stamped it, which is harmless (the lifecycle stamp overwrites). `from_content`
-        # guarantees each `PendingMessage` ends in a `ModelRequest`, but a producer can
-        # construct `PendingMessage` (or mutate `RunContext.pending_messages`) directly, so
-        # we check rather than assert. Every message except `final` is appended to history
-        # before the redirect.
-        final = messages[-1]
-        if not isinstance(final, ModelRequest):
-            raise UserError(
-                'Enqueued content must end with a `ModelRequest` so the agent has a request to respond to, '
-                f'but the last queued message is a `{type(final).__name__}`.'
-            )
-        for pending, pending_messages in stamped:
-            for message in pending_messages:
-                if message is not final:
-                    ctx.messages.append(message)
-            ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
-                EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
-            )
-        return ModelRequestNode(request=final)
+        with ctx._pending_messages_guard():  # pyright: ignore[reportPrivateUsage]
+            return _drain_at_end(ctx, result)

@@ -5,6 +5,7 @@ import contextvars
 import dataclasses
 import functools
 import inspect
+import threading
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
@@ -1477,6 +1478,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
         # Build the initial state
+        pending_messages_lock = threading.Lock()
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],
             usage=usage,
@@ -1552,6 +1554,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             else DEFAULT_INSTRUMENTATION_VERSION,
             run_step=0,
             pending_messages=state.pending_messages,
+            _pending_messages_lock=pending_messages_lock,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
@@ -1740,6 +1743,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            _pending_messages_lock=pending_messages_lock,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
