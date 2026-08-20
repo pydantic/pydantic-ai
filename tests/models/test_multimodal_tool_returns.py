@@ -31,15 +31,20 @@ from pydantic_ai.messages import (
     DocumentUrl,
     ImageUrl,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelResponse,
+    ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolReturnSource,
     UploadedFile,
     UploadedFileProviderName,
     UserPromptPart,
     VideoUrl,
 )
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 from tests.cassette_utils import CassetteContext
 
@@ -82,6 +87,11 @@ with try_import() as mistral_available:
 
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.providers.xai import XaiProvider
+
+    from .mock_xai import MockXai, create_response, create_usage, get_mock_chat_create_kwargs
+
+    XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 
 pytestmark = [
     pytest.mark.anyio,
@@ -878,6 +888,269 @@ Dummy TXT file
             ToolMessage(content='No document', tool_call_id='call2'),
         ]
     )
+
+
+@pytest.mark.skipif(not groq_available(), reason='groq dependencies not installed')
+async def test_tool_return_images_keep_call_provenance() -> None:
+    """Each spilled tool return becomes its own marked user message.
+
+    Unit test, not VCR: this provider's matrix cassettes predate the marker and cannot be
+    re-recorded yet (see `MARKER_RECORDED` in `test_multimodal_tool_returns.py`), and the VCR
+    matcher keys on method and path, so a stale recording would replay green regardless.
+    """
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='x'))
+    request = ModelRequest(
+        parts=[
+            UserPromptPart(content=[ImageUrl(url='https://example.com/user.png')]),
+            ToolReturnPart(
+                tool_name='get_image',
+                content=ImageUrl(url='https://example.com/tool-1.png'),
+                tool_call_id='call_1',
+            ),
+            ToolReturnPart(
+                tool_name='get_image',
+                content=ImageUrl(url='https://example.com/tool-2.png'),
+                tool_call_id='call_2',
+            ),
+        ]
+    )
+
+    mapped = [
+        message
+        async for message in model._map_user_message(request)  # pyright: ignore[reportPrivateUsage]
+    ]
+
+    assert mapped == snapshot(
+        [
+            {'role': 'user', 'content': [{'image_url': {'url': 'https://example.com/user.png'}, 'type': 'image_url'}]},
+            {'role': 'tool', 'tool_call_id': 'call_1', 'content': 'See file 1a49cc.'},
+            {'role': 'tool', 'tool_call_id': 'call_2', 'content': 'See file 12cddc.'},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_1" />', 'type': 'text'},
+                    {'text': 'This is file 1a49cc:', 'type': 'text'},
+                    {'image_url': {'url': 'https://example.com/tool-1.png'}, 'type': 'image_url'},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_2" />', 'type': 'text'},
+                    {'text': 'This is file 12cddc:', 'type': 'text'},
+                    {'image_url': {'url': 'https://example.com/tool-2.png'}, 'type': 'image_url'},
+                ],
+            },
+        ]
+    )
+
+
+@pytest.mark.skipif(not xai_available(), reason='xai dependencies not installed')
+async def test_xai_tool_return_images_keep_call_provenance(allow_model_requests: None):
+    """Each spilled tool return becomes its own marked user message.
+
+    Captures the rendered request rather than recording one: xAI is not on httpx, so there is no
+    transport to tap, and its matrix cassettes predate the marker (see `MARKER_RECORDED` in
+    `test_multimodal_tool_returns.py`).
+    """
+    response = create_response(content='done', usage=create_usage(prompt_tokens=20, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/user.png')])]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_1'),
+                ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_2'),
+            ],
+            finish_reason='tool_call',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=ImageUrl(url='https://example.com/tool-1.png'),
+                    tool_call_id='call_1',
+                ),
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=ImageUrl(url='https://example.com/tool-2.png'),
+                    tool_call_id='call_2',
+                ),
+            ]
+        ),
+    ]
+
+    await model.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': 'grok-4-fast-non-reasoning',
+                'messages': [
+                    {
+                        'content': [
+                            {'image_url': {'image_url': 'https://example.com/user.png', 'detail': 'DETAIL_AUTO'}}
+                        ],
+                        'role': 'ROLE_USER',
+                    },
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {
+                                'id': 'call_1',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'get_image', 'arguments': '{}'},
+                            },
+                            {
+                                'id': 'call_2',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'get_image', 'arguments': '{}'},
+                            },
+                        ],
+                    },
+                    {'content': [{'text': 'See file 1a49cc.'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'call_1'},
+                    {'content': [{'text': 'See file 12cddc.'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'call_2'},
+                    {
+                        'content': [
+                            {'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_1" />'},
+                            {'text': 'This is file 1a49cc:'},
+                            {'image_url': {'image_url': 'https://example.com/tool-1.png', 'detail': 'DETAIL_AUTO'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    },
+                    {
+                        'content': [
+                            {'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_2" />'},
+                            {'text': 'This is file 12cddc:'},
+                            {'image_url': {'image_url': 'https://example.com/tool-2.png', 'detail': 'DETAIL_AUTO'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    },
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_tool_return_source_replays_across_provider_mappers() -> None:
+    agent = Agent(TestModel(call_tools=['get_image']))
+
+    @agent.tool_plain
+    def get_image() -> ToolReturn:
+        return ToolReturn(
+            return_value='image returned',
+            content=[BinaryContent(data=b'tool image', media_type='image/png')],
+        )
+
+    result = await agent.run([BinaryContent(data=b'user image', media_type='image/png')])
+    history = result.all_messages()
+    replayed = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+
+    tool_call = next(
+        part
+        for message in replayed
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    )
+    tool_prompt = next(
+        part
+        for message in replayed
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.source is not None
+    )
+    expected_source = ToolReturnSource(tool_name=tool_call.tool_name, tool_call_id=tool_call.tool_call_id)
+    assert tool_prompt.source == expected_source
+
+    openai_model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+    openai_messages = await openai_model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        openai_model.prepare_messages(replayed), ModelRequestParameters()
+    )
+    google_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    _, google_contents = await google_model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        google_model.prepare_messages(replayed), ModelRequestParameters()
+    )
+
+    assert openai_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'image_url': {'url': 'data:image/png;base64,dXNlciBpbWFnZQ=='}, 'type': 'image_url'}],
+            },
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [
+                    {
+                        'id': 'pyd_ai_tool_call_id__get_image',
+                        'type': 'function',
+                        'function': {'name': 'get_image', 'arguments': '{}'},
+                    }
+                ],
+            },
+            {'role': 'tool', 'tool_call_id': 'pyd_ai_tool_call_id__get_image', 'content': 'image returned'},
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="pyd_ai_tool_call_id__get_image" />',
+                        'type': 'text',
+                    },
+                    {'image_url': {'url': 'data:image/png;base64,dG9vbCBpbWFnZQ=='}, 'type': 'image_url'},
+                ],
+            },
+            {'role': 'assistant', 'content': '{"get_image":"image returned"}'},
+        ]
+    )
+    assert google_contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'inline_data': {'data': b'user image', 'mime_type': 'image/png'}}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'function_call': {'name': 'get_image', 'args': {}, 'id': 'pyd_ai_tool_call_id__get_image'},
+                        'thought_signature': b'skip_thought_signature_validator',
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'get_image',
+                            'response': {'return_value': 'image returned'},
+                            'id': 'pyd_ai_tool_call_id__get_image',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="pyd_ai_tool_call_id__get_image" />'
+                    },
+                    {'inline_data': {'data': b'tool image', 'mime_type': 'image/png'}},
+                ],
+            },
+            {'role': 'model', 'parts': [{'text': '{"get_image":"image returned"}'}]},
+        ]
+    )
+    # Re-checked after mapping: `prepare_messages` copies, it must never mutate stored history.
+    assert tool_prompt.source == expected_source
 
 
 @pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')

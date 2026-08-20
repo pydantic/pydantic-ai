@@ -633,60 +633,6 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
         assert result.is_complete
 
 
-async def test_tool_return_images_keep_call_provenance() -> None:
-    """Each spilled tool return becomes its own marked user message.
-
-    Unit test, not VCR: this provider's matrix cassettes predate the marker and cannot be
-    re-recorded yet (see `MARKER_RECORDED` in `test_multimodal_tool_returns.py`), and the VCR
-    matcher keys on method and path, so a stale recording would replay green regardless.
-    """
-    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='x'))
-    request = ModelRequest(
-        parts=[
-            UserPromptPart(content=[ImageUrl(url='https://example.com/user.png')]),
-            ToolReturnPart(
-                tool_name='get_image',
-                content=ImageUrl(url='https://example.com/tool-1.png'),
-                tool_call_id='call_1',
-            ),
-            ToolReturnPart(
-                tool_name='get_image',
-                content=ImageUrl(url='https://example.com/tool-2.png'),
-                tool_call_id='call_2',
-            ),
-        ]
-    )
-
-    mapped = [
-        message
-        async for message in model._map_user_message(request)  # pyright: ignore[reportPrivateUsage]
-    ]
-
-    assert mapped == snapshot(
-        [
-            {'role': 'user', 'content': [{'image_url': {'url': 'https://example.com/user.png'}, 'type': 'image_url'}]},
-            {'role': 'tool', 'tool_call_id': 'call_1', 'content': 'See file 1a49cc.'},
-            {'role': 'tool', 'tool_call_id': 'call_2', 'content': 'See file 12cddc.'},
-            {
-                'role': 'user',
-                'content': [
-                    {'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_1" />', 'type': 'text'},
-                    {'text': 'This is file 1a49cc:', 'type': 'text'},
-                    {'image_url': {'url': 'https://example.com/tool-1.png'}, 'type': 'image_url'},
-                ],
-            },
-            {
-                'role': 'user',
-                'content': [
-                    {'text': '<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call_2" />', 'type': 'text'},
-                    {'text': 'This is file 12cddc:', 'type': 'text'},
-                    {'image_url': {'url': 'https://example.com/tool-2.png'}, 'type': 'image_url'},
-                ],
-            },
-        ]
-    )
-
-
 async def test_no_delta(allow_model_requests: None):
     stream = chunk([]), text_chunk('hello '), text_chunk('world')
     mock_client = MockGroq.create_mock_stream(stream)
