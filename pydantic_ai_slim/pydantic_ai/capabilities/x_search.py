@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai._utils import await_maybe
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
@@ -160,22 +159,4 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         self,
     ) -> XSearchTool | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]:
         """Get the XSearchTool for the fallback, with capability-level overrides applied."""
-        overrides = self._xsearch_kwargs()
-        if isinstance(self.native, XSearchTool):
-            return replace(self.native, **overrides) if overrides else self.native
-
-        if self.native is False:
-            return XSearchTool(**overrides)
-
-        native_factory = self.native
-        assert callable(native_factory)
-
-        async def resolve_native(ctx: RunContext[AgentDepsT]) -> XSearchTool | None:
-            native_tool = await await_maybe(native_factory(ctx))
-            if native_tool is None:
-                native_tool = XSearchTool()
-            else:
-                assert isinstance(native_tool, XSearchTool)
-            return replace(native_tool, **overrides) if overrides else native_tool
-
-        return resolve_native
+        return self._resolve_native_with_overrides(XSearchTool, self._xsearch_kwargs())

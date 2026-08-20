@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
@@ -11,7 +10,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
-from pydantic_ai.tools import RunContext, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 
 XSearchFallbackModelFunc = Callable[
     [RunContext[Any]],
@@ -26,9 +25,20 @@ strings are resolved to a model at call time.
 XSearchFallbackModel = Model | KnownModelName | str | XSearchFallbackModelFunc | None
 """Type for the fallback model: a model, model name, factory callable, or None."""
 
+XSearchNativeToolFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT]],
+    Awaitable[XSearchTool | None] | XSearchTool | None,
+]
+"""Callable that resolves the native X search tool dynamically per-run."""
+
+XSearchNativeTool: TypeAlias = XSearchTool | XSearchNativeToolFunc[AgentDepsT]
+"""Type for the native tool: an `XSearchTool` instance or a factory callable."""
+
 __all__ = (
     'XSearchFallbackModel',
     'XSearchFallbackModelFunc',
+    'XSearchNativeTool',
+    'XSearchNativeToolFunc',
     'XSearchSubagentTool',
     'x_search_tool',
 )
@@ -46,7 +56,7 @@ class XSearchSubagentTool:
     model: Model | KnownModelName | str | XSearchFallbackModelFunc
     """The model to use for X search, or a callable that returns one."""
 
-    native_tool: XSearchTool | Callable[[RunContext[Any]], Awaitable[XSearchTool | None] | XSearchTool | None]
+    native_tool: XSearchNativeTool[Any]
     """The X search tool configuration or outer-run factory to pass to the subagent."""
 
     instructions: str = 'Search X/Twitter based on the user query. Return a comprehensive summary of the results.'
@@ -61,10 +71,7 @@ class XSearchSubagentTool:
         """
         model = self.model
         if callable(model):
-            result = model(ctx)
-            if inspect.isawaitable(result):
-                result = await result
-            model = result
+            model = await await_maybe(model(ctx))
 
         native_tool = self.native_tool
         if callable(native_tool):
@@ -87,7 +94,7 @@ class XSearchSubagentTool:
 
 def x_search_tool(
     model: Model | KnownModelName | str | XSearchFallbackModelFunc,
-    native_tool: XSearchTool | Callable[[RunContext[Any]], Awaitable[XSearchTool | None] | XSearchTool | None],
+    native_tool: XSearchNativeTool[Any],
     *,
     instructions: str = 'Search X/Twitter based on the user query. Return a comprehensive summary of the results.',
 ) -> Tool[Any]:

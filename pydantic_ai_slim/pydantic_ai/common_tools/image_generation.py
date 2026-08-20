@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
@@ -12,7 +11,7 @@ from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserErro
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
 from pydantic_ai.native_tools import ImageGenerationTool
-from pydantic_ai.tools import RunContext, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 
 ImageGenerationFallbackModelFunc = Callable[
     [RunContext[Any]],
@@ -27,9 +26,20 @@ strings are resolved to a model at call time.
 ImageGenerationFallbackModel = Model | KnownModelName | str | ImageGenerationFallbackModelFunc | None
 """Type for the fallback model: a model, model name, factory callable, or None."""
 
+ImageGenerationNativeToolFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT]],
+    Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None,
+]
+"""Callable that resolves the native image generation tool dynamically per-run."""
+
+ImageGenerationNativeTool: TypeAlias = ImageGenerationTool | ImageGenerationNativeToolFunc[AgentDepsT]
+"""Type for the native tool: an `ImageGenerationTool` instance or a factory callable."""
+
 __all__ = (
     'ImageGenerationFallbackModel',
     'ImageGenerationFallbackModelFunc',
+    'ImageGenerationNativeTool',
+    'ImageGenerationNativeToolFunc',
     'ImageGenerationSubagentTool',
     'image_generation_tool',
 )
@@ -71,10 +81,7 @@ class ImageGenerationSubagentTool:
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
 
-    native_tool: (
-        ImageGenerationTool
-        | Callable[[RunContext[Any]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
-    )
+    native_tool: ImageGenerationNativeTool[Any]
     """The image generation configuration or outer-run factory to pass to the subagent."""
 
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.'
@@ -89,10 +96,7 @@ class ImageGenerationSubagentTool:
         """
         model = self.model
         if callable(model):
-            result = model(ctx)
-            if inspect.isawaitable(result):
-                result = await result
-            model = result
+            model = await await_maybe(model(ctx))
 
         if isinstance(model, str) and callable(self.model):
             # Only check at call time for dynamically resolved models;
@@ -120,8 +124,7 @@ class ImageGenerationSubagentTool:
 
 def image_generation_tool(
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc,
-    native_tool: ImageGenerationTool
-    | Callable[[RunContext[Any]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None],
+    native_tool: ImageGenerationNativeTool[Any],
     *,
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.',
 ) -> Tool[Any]:

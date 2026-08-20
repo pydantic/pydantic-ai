@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -12,6 +13,8 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .abstract import AbstractCapability
+
+NativeToolT = TypeVar('NativeToolT', bound=AbstractNativeTool)
 
 
 @dataclass(init=False)
@@ -193,3 +196,31 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
             return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset
+
+    def _resolve_native_with_overrides(
+        self, tool_cls: type[NativeToolT], overrides: dict[str, Any]
+    ) -> NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[NativeToolT | None] | NativeToolT | None]:
+        """Resolve the native tool for the fallback subagent, with capability-level overrides applied.
+
+        Handles all three `native` shapes: an instance (overridden via `dataclasses.replace`),
+        `False` (a default instance with overrides), or a factory (wrapped so its per-run result
+        is overridden the same way, with a default instance substituted when it returns `None`).
+        """
+        if isinstance(self.native, tool_cls):
+            return replace(self.native, **overrides) if overrides else self.native
+
+        if self.native is False:
+            return tool_cls(**overrides)
+
+        native_factory = self.native
+        assert callable(native_factory)
+
+        async def resolve_native(ctx: RunContext[AgentDepsT]) -> NativeToolT | None:
+            native_tool = await await_maybe(native_factory(ctx))
+            if native_tool is None:
+                native_tool = tool_cls()
+            else:
+                assert isinstance(native_tool, tool_cls)
+            return replace(native_tool, **overrides) if overrides else native_tool
+
+        return resolve_native
