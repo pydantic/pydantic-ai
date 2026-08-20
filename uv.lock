@@ -22,18 +22,15 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-mcp-types = "2026-07-30T00:00:00Z"
 logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
-openai = "2026-08-12T01:55:49Z"
+anthropic = "2026-08-20T19:58:59Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
-google-genai = "2026-08-13T00:12:52Z"
 logfire-api = false
-anthropic = "2026-08-20T19:58:59Z"
 
 [manifest]
 members = [
