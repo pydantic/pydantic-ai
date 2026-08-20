@@ -234,7 +234,12 @@ dev = [
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
     "blockbuster>=1.5.26,<1.6",
 ]
-lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
+lint = [
+    "griffecli>=2.1.0,<3",
+    "mypy>=1.11.2",
+    "pyright>=1.1.408",
+    "ruff>=0.14.14",
+]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
 exclude = ["/pydantic_ai_slim/pydantic_ai/.agents"]
@@ -257,7 +262,9 @@ include = [
     "tests/**/*.py",
     "docs/**/*.py",
     ".github/scripts/ci_duration.py",
+    ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
@@ -319,7 +326,9 @@ quote-style = "single"
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
 ".github/scripts/ci_duration.py" = ["D"]
+".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
+".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
@@ -342,7 +351,9 @@ include = [
     "examples",
     "clai",
     ".github/scripts/ci_duration.py",
+    ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
@@ -360,6 +371,7 @@ executionEnvironments = [
     # the test file, not under the project root) the same way the runtime
     # `sys.path.insert(...)` at the top of the test does.
     { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
