@@ -87,10 +87,12 @@ class DeferredToolRequests:
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
-        resolved_ids = set(results.approvals) | set(results.calls)
+        call_result_ids = set(results.calls)
+        approval_result_ids = set(results.approvals)
+        resolved_ids = call_result_ids | approval_result_ids  # metadata cleanup only
         remaining = DeferredToolRequests(
-            calls=[c for c in self.calls if c.tool_call_id not in resolved_ids],
-            approvals=[c for c in self.approvals if c.tool_call_id not in resolved_ids],
+            calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
+            approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
             metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
