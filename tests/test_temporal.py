@@ -4524,6 +4524,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
+        '_pending_messages_lock',  # runtime-only thread lock protecting the workflow-side queue; cannot cross the activity boundary
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())

@@ -41,12 +41,20 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # Fields that `serialize_run_context` doesn't carry but that are still readable inside an activity,
 # as `None` unless the framework attaches something: `agent` and `root_capability` are re-attached
 # from the worker's agent instance, `pending_messages` is replaced by an `EnqueueGuard` so
-# `ctx.enqueue()` raises an explanation, and `tool_manager` is documented to be `None` inside
+# `ctx.enqueue()` raises an explanation, `_pending_messages_lock` is `None` because there is no
+# live workflow-side queue to protect, and `tool_manager` is documented to be `None` inside
 # activities — `available_tool_names` then reads the snapshot serialized at dispatch time (see
 # the property override below), or falls back to `discovered_tool_names` without one.
 # `realtime_session` is a live session object that cannot cross the boundary, and its contract
 # already makes `None` mean "not available here".
-_NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_manager', 'realtime_session')
+_NONE_UNLESS_ATTACHED = (
+    'agent',
+    'root_capability',
+    'pending_messages',
+    '_pending_messages_lock',
+    'tool_manager',
+    'realtime_session',
+)
 
 # Defaulted rather than guarded when a payload doesn't carry it. Unlike the guarded fields, the
 # dataclass default can't be mistaken for real run state here: empty means "no anchored evidence",
