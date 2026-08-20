@@ -738,6 +738,12 @@ async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_reques
 
 
 async def test_xai_tool_return_images_keep_call_provenance(allow_model_requests: None):
+    """Each spilled tool return becomes its own marked user message.
+
+    Captures the rendered request rather than recording one: xAI is not on httpx, so there is no
+    transport to tap, and its matrix cassettes predate the marker (see `MARKER_RECORDED` in
+    `test_multimodal_tool_returns.py`).
+    """
     response = create_response(content='done', usage=create_usage(prompt_tokens=20, completion_tokens=5))
     mock_client = MockXai.create_mock([response])
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))

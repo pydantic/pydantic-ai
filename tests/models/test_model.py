@@ -599,7 +599,9 @@ def test_prepare_messages_renders_tool_return_source() -> None:
         ]
     )
     assert all(part.source is None for part in prepared_request.parts if isinstance(part, UserPromptPart))
-    assert model.prepare_messages(prepared) == prepared
+    # Identity, not equality: `_make_request` skips a redundant `_clean_message_history` pass when
+    # `prepare_messages` hands back the same list, so `==` would pass an implementation that rebuilds.
+    assert model.prepare_messages(prepared) is prepared
     original_request = messages[0]
     assert isinstance(original_request, ModelRequest)
     original_part = original_request.parts[1]

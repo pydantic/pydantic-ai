@@ -634,6 +634,12 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
 
 async def test_tool_return_images_keep_call_provenance() -> None:
+    """Each spilled tool return becomes its own marked user message.
+
+    Unit test, not VCR: this provider's matrix cassettes predate the marker and cannot be
+    re-recorded yet (see `MARKER_RECORDED` in `test_multimodal_tool_returns.py`), and the VCR
+    matcher keys on method and path, so a stale recording would replay green regardless.
+    """
     model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='x'))
     request = ModelRequest(
         parts=[

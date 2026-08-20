@@ -128,6 +128,8 @@ def transfer_funds(ctx: RunContext[int], amount: int) -> str:
 Reach for these features when the user needs more than a simple function tool:
 
 - `ToolReturn` for rich return values, provenance-preserving separate content/metadata, and `tools` names that reveal deferred tools
+  - media that travels as prompt content rather than inside the tool result is prefixed on the wire with a fixed
+    `<pydantic_ai:tool_return tool_name="..." tool_call_id="..." />` marker; text is not marked
 - `prepare=` for dynamic tool definitions
 - `timeout=` for tool execution limits
 - `sequential=True` to make a tool a barrier — it runs alone (tools emitted before it finish first, tools after it start once it finishes) while other tools parallelize around it; works on function tools and on output tools via `ToolOutput(sequential=True)`

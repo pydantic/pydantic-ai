@@ -192,6 +192,25 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ),
 }
 
+MARKER_RECORDED: set[tuple[ProviderName, ContentSource, FileType, ReturnStyle]] = {
+    ('openai_chat', 'binary', 'image', 'direct'),
+    ('google_2_5', 'binary', 'image', 'direct'),
+    ('bedrock_nova', 'binary', 'document', 'direct'),
+    ('mistral', 'binary', 'image', 'tool_return_content'),
+}
+"""The matrix cells whose cassette was recorded after the provenance marker landed.
+
+An allowlist rather than an exclusion list: every other spilling cell still replays a body recorded
+before the marker existed, so asserting it there would fail on a stale recording instead of on a real
+regression. Groq and xAI spill too — `test_tool_return_images_keep_call_provenance` in `test_groq.py`
+and `test_xai.py` pins their wire shape against the mapper meanwhile. Re-record a cell and add it here.
+
+Two entries are not `('provider', 'binary', 'image', 'direct')` and both are deliberate. Mistral carries
+directly-returned media inside the tool result, so its marker shows up under `tool_return_content` — a
+separate message by definition, which spills on every provider. Bedrock Nova takes `image` natively but
+not `document`, so only the document cell falls back to a marker block beside the `toolResult`.
+"""
+
 # Overrides for specific (provider, file_type, content_source, return_style) combos where
 # the behavior differs from the general SUPPORT_MATRIX entry. Keys use None to match all
 # values of that dimension.
@@ -634,12 +653,8 @@ async def test_multimodal_tool_return_matrix(
             cassette_ctx.verify_contains(pattern)
         if SUPPORT_MATRIX[(provider, file_type)] == 'as_user_content' and return_style == 'direct':
             cassette_ctx.verify_contains('See file')
-            # Groq and xAI are excluded because their cassettes predate the marker and haven't been
-            # re-recorded; `test_tool_return_images_keep_call_provenance` in `test_groq.py` and
-            # `test_xai.py` pins their wire shape against the mapper instead. Drop the exclusion once
-            # those cassettes are re-recorded.
-            if provider not in ('groq', 'xai') and content_source == 'binary' and file_type == 'image':
-                cassette_ctx.verify_contains('pydantic_ai:tool_return')
+        if (provider, content_source, file_type, return_style) in MARKER_RECORDED:
+            cassette_ctx.verify_contains('pydantic_ai:tool_return')
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)

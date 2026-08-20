@@ -77,3 +77,25 @@ agent = Agent(model)
 ```
 
 The Mistral provider also accepts a legacy `httpx.AsyncClient` during Pydantic AI v2, but emits a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
+
+## Multi-modal tool returns
+
+Mistral accepts media inside a tool result, so a tool returning an image or a document sends it in the
+`tool` message rather than as a separate user message. If you hit a model that rejects a content-chunk
+array there, turn the capability off and the media travels as prompt content instead, behind the
+[tool-return provenance marker](../tools-advanced.md#tool-return-provenance):
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.mistral import MistralModel
+from pydantic_ai.profiles.mistral import MistralModelProfile
+
+model = MistralModel(
+    'mistral-small-latest',
+    profile=MistralModelProfile(mistral_supports_media_in_tool_returns=False),
+)
+agent = Agent(model)
+...
+```
+
+See [`MistralModelProfile.mistral_supports_media_in_tool_returns`][pydantic_ai.profiles.mistral.MistralModelProfile.mistral_supports_media_in_tool_returns].

@@ -598,6 +598,11 @@ def test_cache_point_silently_skipped_user_prompt_part(allow_model_requests: Non
 
 
 def test_tool_return_media_is_not_silently_dropped(allow_model_requests: None):
+    """Cohere raises rather than flattening tool-returned media away.
+
+    Unit test, not VCR: the mapper raises before any request is built, so there is no wire
+    exchange to record.
+    """
     request = ModelRequest(
         parts=[
             ToolReturnPart(

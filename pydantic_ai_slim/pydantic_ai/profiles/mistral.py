@@ -17,6 +17,11 @@ class MistralModelProfile(ModelProfile, total=False):
     against `mistral-medium-latest`. Turning it off sends the media as prompt content behind the
     provenance marker instead, which is how providers without native tool-result media carry it —
     note that this is a different rendering, not a way to restore pre-provenance output.
+
+    A `bool` rather than the allow-list its Google and Bedrock counterparts use
+    ([`google_supported_mime_types_in_tool_returns`][pydantic_ai.profiles.google.GoogleModelProfile.google_supported_mime_types_in_tool_returns],
+    `bedrock_supported_media_kinds_in_tool_returns`): those enumerate a per-model split their
+    providers publish, and Mistral publishes none, so there is nothing to enumerate.
     """
 
 

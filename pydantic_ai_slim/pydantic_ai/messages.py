@@ -3067,6 +3067,9 @@ def sanitize_messages(
       provenance is server-authored, so a client-supplied value is dropped rather than trusted. Note
       that this keeps forged provenance out of the stored part; it does not make the rendered marker
       unforgeable, since that marker is ordinary prompt text a client can also type into `content`.
+      Unlike the strips above, this one is silent: the UI adapters never send `source` to a client,
+      so a value arriving here is either forged or a server-authored part the caller round-tripped
+      through its own history, and warning would fire on the legitimate second case.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.

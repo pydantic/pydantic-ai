@@ -115,13 +115,21 @@ print(result.output)
 
 This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic. For multimodal content that should be sent natively in the tool result (when supported by the model), return it directly from the tool function or include it in `return_value` (see [Tool Output](#function-tool-output) above).
 
-Where a provider's tool-result API accepts media, supported values stay inside the tool result. Where it does not, the media travels as prompt content on the outgoing request, prefixed with a fixed marker naming the call it came from:
+### Tool-return provenance
+
+Media a tool returns directly, or through `return_value`, stays inside the tool result wherever the provider's tool-result API accepts it. Media passed through `content` is a separate message by definition, so it always travels as prompt content — as does directly-returned media on a provider whose tool result cannot carry it.
+
+Whenever media travels that way, Pydantic AI prefixes it on the outgoing request with a fixed marker naming the call it came from:
 
 ```text
 <pydantic_ai:tool_return tool_name="click_and_capture" tool_call_id="call_1" />
 ```
 
-Only media is marked. Text passed through `content` is already attributed by the tool result it accompanies, so it reaches the model unchanged. Pydantic AI never adds this marker to user-authored content, but the marker is ordinary text in the prompt rather than a separate channel: it records where content came from and is not something the model can verify, since nothing prevents a user or a tool from writing the same string. Where Pydantic AI's mapper for a provider can carry the media neither in the tool result nor as prompt content, it raises an error rather than silently dropping it.
+Only media is marked. Text is already attributed by the tool result it accompanies, so it reaches the model unchanged.
+
+Pydantic AI never adds this marker to user-authored content, but the marker is ordinary text in the prompt rather than a separate channel: it records where content came from and is not something the model can verify, since nothing prevents a user or a tool from writing the same string.
+
+Where Pydantic AI's mapper for a provider can carry the media neither in the tool result nor as prompt content, it raises an error rather than silently dropping it.
 
 ## Custom Tool Schema
 
