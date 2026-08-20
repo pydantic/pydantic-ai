@@ -77,7 +77,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -1733,7 +1733,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_prompt = part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
+                tool_text, tool_prompt = _tool_return_str_and_rendered_prompt(part)
                 if tool_prompt:
                     file_prompts.append(tool_prompt)
                 yield chat.ChatCompletionToolMessageParam(
@@ -1758,7 +1758,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             else:
                 assert_never(part)
         for file_prompt in file_prompts:
-            yield await self._map_user_prompt(_render_tool_return_content_part(file_prompt))
+            yield await self._map_user_prompt(file_prompt)
 
     async def _map_image_url_item(self, item: ImageUrl) -> ChatCompletionContentPartImageParam:
         """Map an ImageUrl to a chat completion image content part."""

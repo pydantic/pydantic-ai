@@ -73,6 +73,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import ModelRequestParameters
 
@@ -411,13 +412,13 @@ async def _seed_request_parts(
             if content:
                 parts.append(genai_types.Part(text=content))
         elif isinstance(part, ToolReturnPart):
-            output, user_prompt = part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
+            output, user_prompt = _tool_return_str_and_rendered_prompt(part)
             parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))
             if user_prompt:
                 parts.extend(
                     _genai_user_parts(
                         await seed_user_content(
-                            part=_render_tool_return_content_part(user_prompt),
+                            part=user_prompt,
                             provider_name=provider_name,
                             supports_images=supports_images,
                         )

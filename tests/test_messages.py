@@ -50,8 +50,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDenied,
     ToolReturn,
-    ToolReturnContentSource,
     ToolReturnPart,
+    ToolReturnSource,
     UploadedFile,
     UserError,
     UserPromptPart,
@@ -1377,18 +1377,18 @@ def test_uploaded_file_serialization_roundtrip():
     assert deserialized == messages
 
 
-def test_tool_return_content_source_serialization_roundtrip():
+def test_tool_return_source_serialization_roundtrip():
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 UserPromptPart(content=[ImageUrl(url='https://example.com/user.png')]),
                 UserPromptPart(
                     content=[ImageUrl(url='https://example.com/tool-1.png')],
-                    source=ToolReturnContentSource(tool_name='get_image', tool_call_id='call_1'),
+                    source=ToolReturnSource(tool_name='get_image', tool_call_id='call_1'),
                 ),
                 UserPromptPart(
                     content=[ImageUrl(url='https://example.com/tool-2.png')],
-                    source=ToolReturnContentSource(tool_name='get_image', tool_call_id='call_2'),
+                    source=ToolReturnSource(tool_name='get_image', tool_call_id='call_2'),
                 ),
             ]
         )

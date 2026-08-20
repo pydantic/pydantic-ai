@@ -63,8 +63,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
-    ToolReturnContentSource,
     ToolReturnPart,
+    ToolReturnSource,
     ToolsetTool,
     UserContent,
     UserPromptPart,
@@ -4987,7 +4987,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                     ),
                     UserPromptPart(
                         content='extra content for model',
-                        source=ToolReturnContentSource(tool_name='analyze_data', tool_call_id=IsStr()),
+                        source=ToolReturnSource(tool_name='analyze_data', tool_call_id=IsStr()),
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -4997,7 +4997,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=64, output_tokens=3),
+                usage=RequestUsage(input_tokens=57, output_tokens=3),
                 model_name='function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -9949,7 +9949,7 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
                     ),
                     UserPromptPart(
                         content='extra content for model',
-                        source=ToolReturnContentSource(tool_name='durability_analyze_data', tool_call_id=IsStr()),
+                        source=ToolReturnSource(tool_name='durability_analyze_data', tool_call_id=IsStr()),
                         timestamp=IsDatetime(),
                     ),
                 ],

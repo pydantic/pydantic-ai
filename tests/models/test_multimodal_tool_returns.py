@@ -67,9 +67,11 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
-    from mistralai.client.models import TextChunk, ToolMessage
+    from mistralai.client.models import AssistantMessage, ImageURL, ImageURLChunk, TextChunk, ToolMessage
+    from mistralai.client.models.usermessage import UserMessage
 
     from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.profiles.mistral import MistralModelProfile
     from pydantic_ai.providers.mistral import MistralProvider
 
 with try_import() as xai_available:
@@ -626,6 +628,10 @@ async def test_multimodal_tool_return_matrix(
             cassette_ctx.verify_contains(pattern)
         if SUPPORT_MATRIX[(provider, file_type)] == 'as_user_content' and return_style == 'direct':
             cassette_ctx.verify_contains('See file')
+            # Groq and xAI are excluded because their cassettes predate the marker and haven't been
+            # re-recorded; `test_tool_return_images_keep_call_provenance` in `test_groq.py` and
+            # `test_xai.py` pins their wire shape against the mapper instead. Drop the exclusion once
+            # those cassettes are re-recorded.
             if provider not in ('groq', 'xai') and content_source == 'binary' and file_type == 'image':
                 cassette_ctx.verify_contains('pydantic_ai:tool_return')
 
@@ -851,6 +857,64 @@ Dummy TXT file
             ToolMessage(content='No document', tool_call_id='call2'),
         ]
     )
+
+
+@pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')
+@pytest.mark.parametrize('supports_media_in_tool_returns', [True, False])
+async def test_mistral_tool_return_media_honors_profile_flag(supports_media_in_tool_returns: bool) -> None:
+    """Pin both sides of `mistral_supports_media_in_tool_returns`.
+
+    Unit test, not VCR: the cassette matcher keys only on method/path, so a changed tool-message
+    shape would still replay green against the recorded body.
+
+    Flag on (the default), media rides inside the `ToolMessage`. Flag off, the tool result stays
+    text and the media spills into a user message behind the provenance marker — the same fallback
+    the providers with no native tool-result media use. The `'OK'` assistant turn in the flag-off
+    snapshot is Mistral's pre-existing workaround for `Unexpected role 'user' after role 'tool'`,
+    and its presence is what shows the spill produces a request shape Mistral accepts.
+    """
+    m = MistralModel(
+        'mistral-medium-latest',
+        provider=MistralProvider(api_key='test-key'),
+        profile=MistralModelProfile(mistral_supports_media_in_tool_returns=supports_media_in_tool_returns),
+    )
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=[BinaryContent(data=b'img', media_type='image/png', identifier='shot')],
+                    tool_call_id='call1',
+                )
+            ]
+        )
+    ]
+
+    mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    if supports_media_in_tool_returns:
+        assert mapped == snapshot(
+            [
+                ToolMessage(
+                    content=[ImageURLChunk(image_url=ImageURL(url='data:image/png;base64,aW1n'))],
+                    tool_call_id='call1',
+                )
+            ]
+        )
+    else:
+        assert mapped == snapshot(
+            [
+                ToolMessage(content='["See file shot."]', tool_call_id='call1'),
+                AssistantMessage(content=[TextChunk(text='OK')]),
+                UserMessage(
+                    content=[
+                        TextChunk(text='<pydantic_ai:tool_return tool_name="get_image" tool_call_id="call1" />'),
+                        TextChunk(text='This is file shot:'),
+                        ImageURLChunk(image_url=ImageURL(url='data:image/png;base64,aW1n')),
+                    ]
+                ),
+            ]
+        )
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')

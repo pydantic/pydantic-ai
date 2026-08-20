@@ -38,8 +38,8 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
-    ToolReturnContentSource,
     ToolReturnPart,
+    ToolReturnSource,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1219,7 +1219,7 @@ class GoogleModel(Model[Client]):
 
         result: list[PartDict] = [{'function_response': function_response_dict}]
         if fallback_parts:
-            source = ToolReturnContentSource(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+            source = ToolReturnSource(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
             result.append({'text': _tool_return_content_marker(source)})
         result.extend(fallback_parts)
 

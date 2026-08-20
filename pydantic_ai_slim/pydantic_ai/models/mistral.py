@@ -49,6 +49,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..profiles import ModelProfileSpec
@@ -591,10 +592,17 @@ class MistralModel(Model[Mistral]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                yield MistralToolMessage(
-                    tool_call_id=part.tool_call_id,
-                    content=await self._map_tool_return_content(part),
-                )
+                if part.files and not self.profile.get('mistral_supports_media_in_tool_returns', True):
+                    tool_text, file_prompt = _tool_return_str_and_rendered_prompt(part)
+                    # `part.files` is non-empty, so the split always yields a prompt for them.
+                    assert file_prompt is not None
+                    yield MistralToolMessage(tool_call_id=part.tool_call_id, content=tool_text)
+                    yield await self._map_user_prompt(file_prompt)
+                else:
+                    yield MistralToolMessage(
+                        tool_call_id=part.tool_call_id,
+                        content=await self._map_tool_return_content(part),
+                    )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield MistralUserMessage(content=part.model_response())

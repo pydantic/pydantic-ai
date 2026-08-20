@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturnContentSource,
+    ToolReturnSource,
     UserPromptPart,
 )
 from pydantic_ai.models import (
@@ -567,18 +567,20 @@ def test_prepare_messages_system_prompt_wrapping(
     assert _request_parts(model.prepare_messages(messages)) == expected
 
 
-def test_prepare_messages_renders_tool_return_content_source() -> None:
+def test_prepare_messages_renders_tool_return_source() -> None:
+    first_image = BinaryContent(data=b'first', media_type='image/png')
+    second_image = BinaryContent(data=b'second', media_type='image/png')
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                UserPromptPart(content='user upload'),
+                UserPromptPart(content=[user_image := BinaryContent(data=b'user', media_type='image/png')]),
                 UserPromptPart(
-                    content='first tool attachment',
-                    source=ToolReturnContentSource(tool_name='get_file', tool_call_id='call_1'),
+                    content=[first_image],
+                    source=ToolReturnSource(tool_name='get_file', tool_call_id='call_1'),
                 ),
                 UserPromptPart(
-                    content='second tool attachment',
-                    source=ToolReturnContentSource(tool_name='get_file', tool_call_id='call_2'),
+                    content=[second_image],
+                    source=ToolReturnSource(tool_name='get_file', tool_call_id='call_2'),
                 ),
             ]
         )
@@ -589,22 +591,51 @@ def test_prepare_messages_renders_tool_return_content_source() -> None:
 
     prepared_request = prepared[0]
     assert isinstance(prepared_request, ModelRequest)
-    assert [part.content for part in prepared_request.parts if isinstance(part, UserPromptPart)] == [
-        'user upload',
-        '<pydantic_ai:tool_return tool_name="get_file" tool_call_id="call_1" />\nfirst tool attachment',
-        '<pydantic_ai:tool_return tool_name="get_file" tool_call_id="call_2" />\nsecond tool attachment',
-    ]
+    assert [part.content for part in prepared_request.parts if isinstance(part, UserPromptPart)] == snapshot(
+        [
+            [user_image],
+            ['<pydantic_ai:tool_return tool_name="get_file" tool_call_id="call_1" />', first_image],
+            ['<pydantic_ai:tool_return tool_name="get_file" tool_call_id="call_2" />', second_image],
+        ]
+    )
     assert all(part.source is None for part in prepared_request.parts if isinstance(part, UserPromptPart))
     assert model.prepare_messages(prepared) == prepared
     original_request = messages[0]
     assert isinstance(original_request, ModelRequest)
     original_part = original_request.parts[1]
     assert isinstance(original_part, UserPromptPart)
-    assert original_part.source == ToolReturnContentSource(tool_name='get_file', tool_call_id='call_1')
+    assert original_part.source == ToolReturnSource(tool_name='get_file', tool_call_id='call_1')
+
+
+def test_prepare_messages_leaves_text_only_tool_return_content_unmarked() -> None:
+    """Text a tool returns is already attributed by the tool result it accompanies.
+
+    Marking it would change the prompt for every `ToolReturn.content` user on every provider,
+    including the ones whose tool results carry media natively and never spill.
+    """
+    source = ToolReturnSource(tool_name='note', tool_call_id='call_1')
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='plain tool text', source=source),
+                UserPromptPart(content=['a list', 'of plain strings'], source=source),
+            ]
+        )
+    ]
+    model = TestModel()
+
+    prepared = model.prepare_messages(messages)
+
+    prepared_request = prepared[0]
+    assert isinstance(prepared_request, ModelRequest)
+    assert [part.content for part in prepared_request.parts if isinstance(part, UserPromptPart)] == snapshot(
+        ['plain tool text', ['a list', 'of plain strings']]
+    )
+    assert all(part.source is None for part in prepared_request.parts if isinstance(part, UserPromptPart))
 
 
 @pytest.mark.anyio
-async def test_tool_return_content_source_replays_across_provider_mappers() -> None:
+async def test_tool_return_source_replays_across_provider_mappers() -> None:
     agent = Agent(TestModel(call_tools=['get_image']))
 
     @agent.tool_plain
@@ -632,7 +663,7 @@ async def test_tool_return_content_source_replays_across_provider_mappers() -> N
         for part in message.parts
         if isinstance(part, UserPromptPart) and part.source is not None
     )
-    expected_source = ToolReturnContentSource(tool_name=tool_call.tool_name, tool_call_id=tool_call.tool_call_id)
+    expected_source = ToolReturnSource(tool_name=tool_call.tool_name, tool_call_id=tool_call.tool_call_id)
     assert tool_prompt.source == expected_source
 
     openai_model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
@@ -711,6 +742,7 @@ async def test_tool_return_content_source_replays_across_provider_mappers() -> N
             {'role': 'model', 'parts': [{'text': '{"get_image":"image returned"}'}]},
         ]
     )
+    # Re-checked after mapping: `prepare_messages` copies, it must never mutate stored history.
     assert tool_prompt.source == expected_source
 
 

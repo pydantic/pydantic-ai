@@ -384,20 +384,18 @@ class CohereModel(Model[AsyncClientV2]):
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
-        has_multimodal_tool_return = False
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_prompt = part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
-                if tool_prompt:
-                    has_multimodal_tool_return = True
+                if part.files:
+                    raise UserError('The Cohere integration does not yet support multi-modal content in tool returns.')
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=tool_text,
+                    content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -415,8 +413,6 @@ class CohereModel(Model[AsyncClientV2]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
-        if has_multimodal_tool_return:
-            raise UserError('Cohere does not yet support multi-modal content in tool returns.')
 
 
 def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:

@@ -58,8 +58,8 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ToolCallPart,
     ToolReturn,
-    ToolReturnContentSource,
     ToolReturnPart,
+    ToolReturnSource,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -5074,10 +5074,16 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
 @pytest.mark.parametrize(
     ('follow_up_content', 'expected_wire_content'),
     [
+        # Text-only follow-up content is already attributed by the tool result it rides with, so it
+        # goes out unmarked; only media that could pass for a user upload earns the marker.
         ('extra context', ['extra context']),
         (
             ['extra context', BinaryContent(data=b'image', media_type='image/png')],
-            ['extra context', BinaryContent(data=b'image', media_type='image/png')],
+            [
+                '<pydantic_ai:tool_return tool_name="info" tool_call_id="tc" />',
+                'extra context',
+                BinaryContent(data=b'image', media_type='image/png'),
+            ],
         ),
     ],
 )
@@ -5104,22 +5110,13 @@ async def test_agent_realtime_session_tool_return_is_unwrapped(
     assert result.part.content == {'value': 42}
     assert result.part.metadata == {'source': 'tool'}
     assert result.content == follow_up_content
-    assert conn.sent == [
-        ToolResult(
-            tool_call_id='tc',
-            output='{"value":42}',
-            content=[
-                '<pydantic_ai:tool_return tool_name="info" tool_call_id="tc" />',
-                *expected_wire_content,
-            ],
-        )
-    ]
+    assert conn.sent == [ToolResult(tool_call_id='tc', output='{"value":42}', content=expected_wire_content)]
     request = next(message for message in session.new_messages() if isinstance(message, ModelRequest))
     assert request.parts == [
         result.part,
         UserPromptPart(
             content=follow_up_content,
-            source=ToolReturnContentSource(tool_name='info', tool_call_id='tc'),
+            source=ToolReturnSource(tool_name='info', tool_call_id='tc'),
             timestamp=IsDatetime(),
         ),
     ]

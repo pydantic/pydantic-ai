@@ -959,8 +959,8 @@ UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 """A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
 
-@dataclass(frozen=True, repr=False, kw_only=True)
-class ToolReturnContentSource:
+@dataclass(repr=False, kw_only=True)
+class ToolReturnSource:
     """The tool call that produced content carried outside its native tool result."""
 
     tool_name: str
@@ -969,13 +969,10 @@ class ToolReturnContentSource:
     tool_call_id: str
     """The identifier of the tool call that produced the content."""
 
-    kind: Literal['tool-return'] = 'tool-return'
-    """Source type identifier."""
-
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _tool_return_content_marker(source: ToolReturnContentSource) -> str:
+def _tool_return_content_marker(source: ToolReturnSource) -> str:
     """Render the fixed fallback marker for tool-origin content."""
     return (
         f'<pydantic_ai:tool_return tool_name="{html.escape(source.tool_name, quote=True)}" '
@@ -983,17 +980,42 @@ def _tool_return_content_marker(source: ToolReturnContentSource) -> str:
     )
 
 
-def _render_tool_return_content_part(  # pyright: ignore[reportUnusedFunction]
-    part: UserPromptPart,
-) -> UserPromptPart:
-    """Render a tool-origin marker on the outgoing copy of a `UserPromptPart`."""
+def _render_tool_return_content_part(part: UserPromptPart) -> UserPromptPart:
+    """Render a tool-origin marker on the outgoing copy of a `UserPromptPart`.
+
+    Only media earns the marker: text a tool returns is already attributed by the tool result it
+    accompanies, so marking it would change the prompt for every `ToolReturn.content` user on every
+    provider, including those whose tool results carry media natively and never spill.
+    """
     source = part.source
     if source is None or not part.content:
         return part
 
-    marker = _tool_return_content_marker(source)
-    content = f'{marker}\n{part.content}' if isinstance(part.content, str) else [marker, *part.content]
-    return replace(part, content=content, source=None)
+    content = part.content
+    if isinstance(content, str) or not any(is_multi_modal_content(item) for item in content):
+        return replace(part, source=None)
+
+    return replace(part, content=[_tool_return_content_marker(source), *content], source=None)
+
+
+def _tool_return_str_and_rendered_prompt(  # pyright: ignore[reportUnusedFunction]
+    part: BaseToolReturnPart, *, wrap_if_error: bool = True
+) -> tuple[str, UserPromptPart | None]:
+    """Split a tool return into text for its tool result and a marked prompt for the files it carries.
+
+    The marker is applied here rather than left to the caller so that a mapper spilling tool media
+    into an ordinary user message cannot forget to attribute it.
+
+    Args:
+        part: The tool return to split.
+        wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+            Set this to `False` when the provider has a native error channel.
+    """
+    tool_response, user_content = part.model_response_str_and_user_content(wrap_if_error=wrap_if_error)
+    if not user_content:
+        return tool_response, None
+    source = ToolReturnSource(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+    return tool_response, _render_tool_return_content_part(UserPromptPart(content=user_content, source=source))
 
 
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
@@ -1130,11 +1152,14 @@ class UserPromptPart:
 
     _: KW_ONLY
 
-    source: Annotated[ToolReturnContentSource | None, pydantic.Field(exclude_if=lambda source: source is None)] = None
+    source: Annotated[ToolReturnSource | None, pydantic.Field(exclude_if=lambda source: source is None)] = None
     """The semantic origin of content that was not written by the user.
 
-    Provider-specific roles or fallback markers are derived from this field when the request is rendered,
-    so serialized message history remains model-neutral.
+    Stored history stays model-neutral: the field records only which tool call produced the content.
+    [`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages] consumes it when building a
+    request, prefixing a fixed marker to media that could otherwise not be told apart from a user
+    upload, and clearing the field on the outgoing copy. A model driven directly, without
+    `prepare_messages`, sends the content unmarked.
     """
 
     timestamp: datetime = field(default_factory=_now_utc)
@@ -1593,16 +1618,6 @@ class BaseToolReturnPart:
         # Safe: when was_list is False, content is either scalar data (→ str item) or a single
         # MultiModalContent (→ 'See file ...' placeholder), so tool_content_parts always has one entry.
         return tool_content_parts[0], file_content
-
-    def _model_response_str_and_user_prompt(self, *, wrap_if_error: bool = True) -> tuple[str, UserPromptPart | None]:
-        """Build a text-only tool result and a provenance-bearing prompt for extracted files."""
-        tool_response, user_content = self.model_response_str_and_user_content(wrap_if_error=wrap_if_error)
-        if not user_content:
-            return tool_response, None
-        return tool_response, UserPromptPart(
-            content=user_content,
-            source=ToolReturnContentSource(tool_name=self.tool_name, tool_call_id=self.tool_call_id),
-        )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         part = _otel_messages.ToolCallResponsePart(
@@ -3040,8 +3055,9 @@ def sanitize_messages(
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
       tool return parts.
     - [`UserPromptPart.source`][pydantic_ai.messages.UserPromptPart.source] values. Tool-return
-      provenance is server-authored; accepting it from a client would let ordinary user content be
-      rendered as if a tool produced it.
+      provenance is server-authored, so a client-supplied value is dropped rather than trusted. Note
+      that this keeps forged provenance out of the stored part; it does not make the rendered marker
+      unforgeable, since that marker is ordinary prompt text a client can also type into `content`.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.

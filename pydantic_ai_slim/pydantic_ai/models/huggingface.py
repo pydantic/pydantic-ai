@@ -40,7 +40,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
-    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
 )
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -472,7 +472,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_prompt = part._model_response_str_and_user_prompt()  # pyright: ignore[reportPrivateUsage]
+                tool_text, tool_prompt = _tool_return_str_and_rendered_prompt(part)
                 if tool_prompt:
                     file_prompts.append(tool_prompt)
                 yield ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
@@ -503,7 +503,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             else:
                 assert_never(part)
         for file_prompt in file_prompts:
-            yield await self._map_user_prompt(_render_tool_return_content_part(file_prompt))
+            yield await self._map_user_prompt(file_prompt)
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart) -> ChatCompletionInputMessage:

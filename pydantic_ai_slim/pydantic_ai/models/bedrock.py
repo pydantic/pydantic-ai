@@ -52,8 +52,8 @@ from pydantic_ai import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
-    ToolReturnContentSource,
     ToolReturnPart,
+    ToolReturnSource,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1198,8 +1198,6 @@ class BedrockConverseModel(Model[BaseClient]):
                         tool_result_content: list[Any] = []
                         colocated_media_content: list[ContentBlockUnionTypeDef] = []
                         deferred_part_media_content: list[ContentBlockUnionTypeDef] = []
-                        source = ToolReturnContentSource(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
-                        marker: ContentBlockUnionTypeDef = {'text': _tool_return_content_marker(source)}
 
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
@@ -1270,11 +1268,14 @@ class BedrockConverseModel(Model[BaseClient]):
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
                             )
 
-                        if colocated_media_content:
-                            colocated_media_content.insert(0, marker)
-                        if deferred_part_media_content:
-                            deferred_media_content.append(marker)
-                            deferred_media_content.extend(deferred_part_media_content)
+                        if colocated_media_content or deferred_part_media_content:
+                            source = ToolReturnSource(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+                            marker: ContentBlockUnionTypeDef = {'text': _tool_return_content_marker(source)}
+                            if colocated_media_content:
+                                colocated_media_content.insert(0, marker)
+                            if deferred_part_media_content:
+                                deferred_media_content.append(marker)
+                                deferred_media_content.extend(deferred_part_media_content)
 
                         success_result: ToolResultBlockOutputTypeDef = {
                             'toolUseId': part.tool_call_id,

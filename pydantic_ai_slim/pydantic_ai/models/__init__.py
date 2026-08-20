@@ -704,9 +704,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         provider-agnostic exchange.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`, and converts
+        the profile's `supports_inline_system_prompts` is `False`, converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume.
+        `TextPart`s that any model can consume, and prefixes a `pydantic_ai:tool_return` marker to
+        tool-produced media carried on a `UserPromptPart`, clearing that part's
+        `source` on the outgoing copy.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -2199,7 +2201,11 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
 
 
 def _render_tool_return_content(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Render model-neutral tool-content provenance without changing stored history."""
+    """Render model-neutral tool-content provenance without changing stored history.
+
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip
+    the redundant `_clean_message_history` pass.
+    """
     changed = False
     rendered: list[ModelMessage] = []
     for message in messages:

@@ -764,18 +764,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_metadata_by_index[index] = e.metadata
             else:
                 tool_parts_by_index[index] = tool_parts
+                tool_part = tool_parts[0]
+                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                 if tool_user_content:
-                    tool_part = tool_parts[0]
+                    # Content only ever accompanies a successful return: every retry path leaves it unset.
                     assert isinstance(tool_part, _messages.ToolReturnPart)
                     user_parts_by_index[index] = _messages.UserPromptPart(
                         content=tool_user_content,
-                        source=_messages.ToolReturnContentSource(
+                        source=_messages.ToolReturnSource(
                             tool_name=tool_part.tool_name, tool_call_id=tool_part.tool_call_id
                         ),
                     )
 
-                tool_part = tool_parts[0]
-                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
         def call_tool(
@@ -1202,17 +1202,18 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                             else:
                                 tool_parts, tool_user_content = payload
                                 function_parts[index] = tool_parts
+                                tool_part = tool_parts[0]
+                                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                                 if tool_user_content:
-                                    tool_part = tool_parts[0]
+                                    # Content only ever accompanies a successful return: every retry
+                                    # path leaves it unset.
                                     assert isinstance(tool_part, _messages.ToolReturnPart)
                                     function_user_parts[index] = _messages.UserPromptPart(
                                         content=tool_user_content,
-                                        source=_messages.ToolReturnContentSource(
+                                        source=_messages.ToolReturnSource(
                                             tool_name=tool_part.tool_name, tool_call_id=tool_part.tool_call_id
                                         ),
                                     )
-                                tool_part = tool_parts[0]
-                                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
                                     self.retry_wins_triggered = True
                                 result_event = _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)

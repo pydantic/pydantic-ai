@@ -919,6 +919,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
+        - `UserPromptPart.source` is lost, so tool-produced content reloads indistinguishable from a
+          user upload. Provenance is server-authored and `sanitize_messages` strips a client-supplied
+          value, so restoring it on load would defeat the point rather than recover it.
         - `tool_kind` is lost when `ag_ui_version < '0.1.11'` (before its `encrypted_value` carrier
           existed), so typed tool parts reload as their base classes.
         - `tool_kind` is not restored on error/denied tool returns (a typed return implies
