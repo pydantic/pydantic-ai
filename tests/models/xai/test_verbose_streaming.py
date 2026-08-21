@@ -48,10 +48,7 @@ async def test_xai_verbose_streaming_native_tool_lifecycle(allow_model_requests:
     agent = Agent(
         XaiModel(XAI_MODEL, provider=xai_provider),
         capabilities=[NativeTool(WebSearchTool())],
-        model_settings=XaiModelSettings(
-            xai_include_verbose_streaming=True,
-            xai_include_web_search_output=True,
-        ),
+        model_settings=XaiModelSettings(xai_include_verbose_streaming=True),
     )
 
     events: list[Any] = []
@@ -65,7 +62,7 @@ async def test_xai_verbose_streaming_native_tool_lifecycle(allow_model_requests:
                         events.append(event)
 
     assert agent_run.result is not None
-    assert agent_run.result.output == snapshot('2.32.1')
+    assert agent_run.result.output == snapshot('2.33.0')
 
     native_tool_events = [
         (event.part.part_kind, event.part.tool_name)
@@ -77,8 +74,8 @@ async def test_xai_verbose_streaming_native_tool_lifecycle(allow_model_requests:
             ('builtin-tool-call', 'web_search'),
             ('builtin-tool-call', 'web_search'),
             ('builtin-tool-return', 'web_search'),
-            ('builtin-tool-return', 'web_search'),
             ('builtin-tool-call', 'web_search'),
+            ('builtin-tool-return', 'web_search'),
             ('builtin-tool-return', 'web_search'),
         ]
     )
@@ -87,9 +84,9 @@ async def test_xai_verbose_streaming_native_tool_lifecycle(allow_model_requests:
     assert isinstance(response, ModelResponse)
     assert [(call.tool_name, call.args) for call, _ in response.native_tool_calls] == snapshot(
         [
-            ('web_search', {'query': 'Pydantic AI latest release version', 'num_results': '5'}),
-            ('web_search', {'query': '"Pydantic AI" release OR version site:github.com', 'num_results': '5'}),
-            ('web_search', {'url': 'https://github.com/pydantic/pydantic-ai/releases'}),
+            ('web_search', {'query': 'latest Pydantic AI release version', 'num_results': '10'}),
+            ('web_search', {'query': 'pydantic-ai PyPI', 'num_results': '5'}),
+            ('web_search', {'query': 'pydantic-ai GitHub releases', 'num_results': '5'}),
         ]
     )
-    assert response.usage.details == snapshot({'reasoning_tokens': 526, 'server_side_tools_web_search': 3})
+    assert response.usage.details == snapshot({'reasoning_tokens': 311, 'server_side_tools_web_search': 3})
