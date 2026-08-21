@@ -175,8 +175,12 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
     # Attaching the processor is inside the lock, not just the cache write: two threads racing here would
     # otherwise each attach one, and only the winner's exporter would be reachable through the cache. The
     # loser's would stay attached to the provider, collecting spans under every context id that nothing ever
-    # clears. Locked once per `context_subtree()` rather than per span, so a plain uncontended acquire is
-    # cheap enough not to need double-checked locking.
+    # clears.
+    # The consequence is that `add_span_processor` runs under a non-reentrant lock, so a provider that called
+    # back into `context_subtree()` from it would deadlock. That is accepted rather than fixed: an `RLock`
+    # would let the inner call attach a second processor -- the very leak this lock exists to prevent -- and
+    # moving the attach outside the lock reopens the race. No real provider re-enters; the SDK and logfire's
+    # proxy both just append under their own lock.
     with _context_in_memory_providers_lock:
         if (cached := _context_in_memory_providers.get(cache_id)) is not None:
             cached_provider, cached_exporter = cached
@@ -193,25 +197,25 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
                 return cached_exporter
 
         exporter = _ContextInMemorySpanExporter()
+        # The eviction callback releases the entry with its provider. CPython runs it during the provider's
+        # deallocation, before that address can be reused, so it can never evict a newer entry keyed on a
+        # recycled `id()`. It deliberately does not take the lock: it can fire on a thread already holding
+        # this non-reentrant one, and `dict.pop` needs no lock of its own.
         try:
-            # The eviction callback releases the entry with its provider. CPython runs it during the provider's
-            # deallocation, before that address can be reused, so it can never evict a newer entry keyed on a
-            # recycled `id()`. It deliberately does not take the lock: it can fire on a thread already holding
-            # this non-reentrant one, and `dict.pop` needs no lock of its own.
             stored: ref[TracerProvider] | TracerProvider = ref(
                 provider, lambda _: _context_in_memory_providers.pop(cache_id, None)
             )
         except TypeError:
-            # A provider that cannot be weakly referenced is pinned instead. Pinning one provider is bounded,
-            # where leaving it uncached would attach a fresh span processor on every call and leave every
-            # orphaned exporter collecting spans that nothing ever clears. A pinned provider can never be
-            # freed, so its `id()` can never be recycled either.
+            # A provider that cannot be weakly referenced is pinned instead. That retains the provider and
+            # everything it owns -- its span processors and their exporters -- for the life of the process, but
+            # it is one entry per such provider, where leaving it uncached attaches a fresh span processor on
+            # every call and leaves every orphaned exporter collecting spans that nothing ever clears. A pinned
+            # provider can never be freed, so its `id()` can never be recycled either.
             stored = provider
 
         processor = SimpleSpanProcessor(exporter)
-        # Cached only once the attach has succeeded: an entry written first would claim an attachment that
-        # never happened, and every later call would return an exporter no provider feeds -- a silently empty
-        # `SpanTree`, which is the failure this cache exists to avoid.
+        # Cached only once the attach has succeeded, so a raising `add_span_processor` cannot leave an entry
+        # claiming an attachment that never happened.
         provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         _context_in_memory_providers[cache_id] = (stored, exporter)
         return exporter
