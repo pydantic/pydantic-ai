@@ -29,7 +29,7 @@ Assign every semantic-gap row one outcome:
 | `unverified` | A candidate construction exists, but the target project/version or operational boundary has not passed its own parity test. |
 | `blocked` | No acceptable construction has passed. Do not migrate that slice. |
 
-Do not leave a row at “redesign” or “not 1:1.” Select the most native mechanism that can preserve the behavior, write the smallest source/target reproduction, and measure both. Keep spike code outside the product and skill; promote only stable contract tests.
+Do not leave a row at "redesign" or "not 1:1." Select the most native mechanism that can preserve the behavior, write the smallest source/target reproduction, and measure both. Keep spike code outside the product and skill; promote only stable contract tests.
 
 ## Choose the replacement mechanism
 
@@ -142,7 +142,7 @@ agent = Agent(
 )
 ```
 
-A disposable skill-development spike on Pydantic AI `2.10.1.dev24` observed one output-function execution and one model call. Treat that as a candidate construction, not validation for the target project: rerun the source/target probe before assigning `verified-equivalent`. It changes the model contract from “optional ordinary tool” to “terminal output choice,” so use a union/list of output choices when other terminal outcomes exist. Output functions can run on partial values under `run_stream()`; guard side effects with `ctx.partial_output` or use a complete-execution API.
+A disposable skill-development spike on Pydantic AI `2.10.1.dev24` observed one output-function execution and one model call. Treat that as a candidate construction, not validation for the target project: rerun the source/target probe before assigning `verified-equivalent`. It changes the model contract from "optional ordinary tool" to "terminal output choice," so use a union/list of output choices when other terminal outcomes exist. Output functions can run on partial values under `run_stream()`; guard side effects with `ctx.partial_output` or use a complete-execution API.
 
 ## Conversational interrupts, approval, and durable resume
 

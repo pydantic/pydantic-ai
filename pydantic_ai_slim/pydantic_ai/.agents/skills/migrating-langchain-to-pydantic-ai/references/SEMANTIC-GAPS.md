@@ -25,7 +25,7 @@ For a checkpointed, side-effectful, approval-gated, or otherwise high-risk slice
 
 Classify each observed contract with the evidence statuses in [Verification and Cutover](VERIFICATION-AND-CUTOVER.md): `verified-equivalent`, `verified-adapter`, `intentional-change`, `external-owner`, `not-applicable`, `unverified`, or `blocked`. A promising native API remains `unverified` until its parity probe passes. A source behavior may be non-equivalent internally while a tested adapter earns `verified-adapter` at the public boundary.
 
-Never use “native” to mean “the names look similar.” Do not leave `redesign` as the proposed solution: follow the affected row into [Validated Workaround Recipes](WORKAROUND-RECIPES.md), implement the smallest viable construction, and classify the resulting contract. Record installed versions and link each verified claim to an executable test; use traces, source lines, and official documentation as supporting evidence.
+Never use "native" to mean "the names look similar." Do not leave `redesign` as the proposed solution: follow the affected row into [Validated Workaround Recipes](WORKAROUND-RECIPES.md), implement the smallest viable construction, and classify the resulting contract. Record installed versions and link each verified claim to an executable test; use traces, source lines, and official documentation as supporting evidence.
 
 ## Prompts and message history
 
@@ -37,7 +37,7 @@ Current LangChain `create_agent` keeps its request system message outside graph 
 - Dynamic `@agent.instructions` functions are reevaluated for every run, including a run with `message_history`.
 - Pydantic AI `system_prompt` is the historical-prompt mechanism. With non-empty history, a new system prompt is not generated unless the chosen reinjection behavior does so.
 
-Do not mechanically replace every LangChain prompt with `instructions` or use Pydantic AI `system_prompt` merely because the source used the phrase “system prompt.” Choose from observed model-boundary behavior:
+Do not mechanically replace every LangChain prompt with `instructions` or use Pydantic AI `system_prompt` merely because the source used the phrase "system prompt." Choose from observed model-boundary behavior:
 
 | Required behavior | Pydantic AI choice |
 |---|---|
