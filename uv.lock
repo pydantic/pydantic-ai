@@ -2130,15 +2130,15 @@ wheels = [
 
 [[package]]
 name = "genai-prices"
-version = "0.1.0"
+version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/4d/cc5a70b9ea9381d36fb8ba8792569009971f504131e7d1dbd2c9a6bed69b/genai_prices-0.1.0.tar.gz", hash = "sha256:a6e3386a1de1220a49ed080f6f136069f47b1e5ff2741706d405287afcbe20d7", size = 90982, upload-time = "2026-07-30T13:01:19.969Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/e3/23f4be7d5626878a6297c728f5f8db83bd9b135da481935d4c1bb82efc21/genai_prices-0.1.4.tar.gz", hash = "sha256:f3b8a0bf0c21b01f5af3ca42babcab2f17728bf3c602f87f42b72d1d2bf61d98", size = 94678, upload-time = "2026-08-19T23:53:25.527Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/56/a9dfac68e8b32a6f050a15ab62cc291803a3fb626f0bcb81a751704ecb97/genai_prices-0.1.0-py3-none-any.whl", hash = "sha256:337695a7d4d4f63bcd2ee91c3aa07e7b34b947745edafd6d1e47edfad3476d05", size = 95075, upload-time = "2026-07-30T13:01:18.917Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/54/911961e926a4c4ea30bf1fa0bf9d8ffc5c9ac5ed6a3f77b3d9e0ab5bb9a5/genai_prices-0.1.4-py3-none-any.whl", hash = "sha256:1d1b01cc7ab1adfa17c3a1121f4c13990bd0a4377640ecd37ebfde5836768240", size = 99160, upload-time = "2026-08-19T23:53:24.52Z" },
 ]
 
 [[package]]
@@ -5640,7 +5640,7 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
-    { name = "genai-prices", specifier = ">=0.1.0" },
+    { name = "genai-prices", specifier = ">=0.1.4" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.18.0" },
     { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.18.0" },
     { name = "griffelib", specifier = ">=2.0" },
