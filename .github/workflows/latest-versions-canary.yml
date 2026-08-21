@@ -1,0 +1,179 @@
+name: Latest Versions Canary
+
+# Resolves the workspace at the HIGHEST versions our declared constraints allow -- no
+# `uv.lock`, no `exclude-newer` cutoffs, because a user installing today gets neither --
+# and runs the test suite against that resolution.
+#
+# `ci.yml`'s `test` jobs resolve from `uv.lock` and `test-lowest-versions` resolves the
+# declared floors, so both test the BOTTOM of the range we publish while users break at
+# the top. `anthropic` 1.0.0 is the case that motivated this: every release up to
+# v2.32.2 declared `anthropic>=0.108.0` with no upper bound, so a fresh
+# `pip install 'pydantic-ai[anthropic]'` pulled an SDK major our code could not drive,
+# and no CI job ever saw it. See the v2.33.0 release notes:
+# https://github.com/pydantic/pydantic-ai/releases/tag/v2.33.0
+#
+# Red here means a user installing our packages fresh today gets a broken or drifted
+# environment. The two valid responses are to migrate (and raise the floor), or to add a
+# temporary upper cap `<N` to the affected extra so users are protected while the
+# migration happens. Suppressing the signal is not one of them.
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+  # Self-test: the PR that adds or edits the canary runs it once as a PR check, so a
+  # change to it is proven before merge rather than on the next scheduled run.
+  pull_request:
+    paths:
+      - '.github/workflows/latest-versions-canary.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COLUMNS: 150
+
+jobs:
+  latest-versions:
+    name: resolve and test at latest versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: true
+      # Both as on `ci.yml`'s all-extras test job, for the reasons documented there: blocking
+      # detection is exercised by the slimmer jobs, and Temporal's deadlock detector reads
+      # runner contention as a blocking call.
+      BLOCKBUSTER_ENABLED: false
+      TEMPORAL_DEBUG: '1'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # No `enable-cache`: the cache key is derived from the committed `uv.lock`, which this
+      # job replaces before installing anything, so the cache would hold the wrong wheels.
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: '3.13'
+          enable-cache: false
+
+      - name: Keep the committed lock to compare against
+        run: cp uv.lock "${RUNNER_TEMP}/uv.lock.committed"
+
+      # Users get neither the workspace's recency quarantine nor its per-package cutoffs, so
+      # neither may bound this resolution. `UV_EXCLUDE_NEWER` and `--exclude-newer` are not a
+      # way out: both set the *global* cutoff, and a `[tool.uv.exclude-newer-package]` entry
+      # outranks it. Editing the file is also what keeps `uv lock` and `uv sync` agreeing --
+      # uv records the cutoffs in the lock and re-resolves when they differ, so a flag passed
+      # to one and not the other silently undoes the upgrade.
+      #
+      # Version *constraints* stay: the question is what the top of the range we declare
+      # looks like, not what happens with nothing declared at all.
+      - name: Drop the `exclude-newer` cutoffs
+        run: |
+          python3 - <<'PY'
+          import re
+          import tomllib
+          from pathlib import Path
+
+          pyproject = Path('pyproject.toml')
+          text = pyproject.read_text()
+          before = tomllib.loads(text)['tool']['uv']
+
+          text, globals_dropped = re.subn(r'(?m)^exclude-newer = .*\n', '', text)
+          text, tables_dropped = re.subn(r'(?ms)^\[tool\.uv\.exclude-newer-package\]\n.*?(?=^\[|\Z)', '', text)
+          pyproject.write_text(text)
+
+          # Assert on the re-parsed file rather than on the substitution counts: a cutoff that
+          # moved somewhere the patterns above don't match would otherwise leave this job
+          # resolving the same bottom-of-range that `ci.yml` already covers, and reporting green.
+          survivors = [key for key in ('exclude-newer', 'exclude-newer-package') if key in tomllib.loads(text)['tool']['uv']]
+          if survivors:
+              raise SystemExit(f'`exclude-newer` settings survived neutralization: {survivors}')
+
+          print(f'dropped exclude-newer = {before.get("exclude-newer", "<absent>")} ({globals_dropped} occurrence(s))')
+          print(f'dropped {len(before.get("exclude-newer-package", {}))} exclude-newer-package entries ({tables_dropped} table(s))')
+          PY
+
+      - name: Resolve at the latest allowed versions
+        run: uv lock --upgrade
+
+      # `make install` without `--frozen`, and without the `pydantic-ai-harness` pin it adds
+      # for pyright: nothing here typechecks.
+      - name: Install
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+
+      # So a red run's log answers "which upgrade did this" without a bisect. The package list
+      # is read off the installed metadata for `pydantic-ai-slim`'s extras, so it tracks the
+      # extras themselves rather than a copy of them that goes stale.
+      - name: Report which dependencies moved
+        env:
+          LOCKED_BEFORE: ${{ runner.temp }}/uv.lock.committed
+        run: |
+          uv run --no-sync python - <<'PY'
+          import os
+          import re
+          import tomllib
+          from importlib.metadata import PackageNotFoundError, requires, version
+          from pathlib import Path
+
+          WORKSPACE = {'pydantic-ai', 'pydantic-ai-slim', 'pydantic-graph', 'pydantic-evals', 'clai'}
+
+          # Stdlib only, deliberately: every third-party parser is itself something this job
+          # just upgraded, and the report has to survive to explain a failure it caused.
+          def canonical(name: str) -> str:
+              return re.sub(r'[-_.]+', '-', name).lower()
+
+          locked: dict[str, set[str]] = {}
+          with open(os.environ['LOCKED_BEFORE'], 'rb') as f:
+              for package in tomllib.load(f)['package']:
+                  # Workspace members are dynamically versioned and carry no `version` key.
+                  if pinned := package.get('version'):
+                      locked.setdefault(canonical(package['name']), set()).add(pinned)
+
+          shipped: set[str] = set()
+          for entry in requires('pydantic-ai-slim') or []:
+              # A `Requires-Dist` opens with the distribution name and, for an extra's
+              # dependency, carries an `extra == "..."` marker. Base dependencies carry neither.
+              if 'extra ==' not in entry:
+                  continue
+              name = canonical(re.match(r'[A-Za-z0-9._-]+', entry).group())
+              if name not in WORKSPACE:
+                  shipped.add(name)
+
+          rows: list[tuple[str, str, str]] = []
+          unchanged = 0
+          for name in sorted(shipped):
+              try:
+                  resolved = version(name)
+              except PackageNotFoundError:
+                  resolved = '(not installed)'
+              committed = ', '.join(sorted(locked.get(name, set()))) or '(not locked)'
+              if committed == resolved:
+                  unchanged += 1
+              else:
+                  rows.append((name, committed, resolved))
+
+          width = max((len(name) for name, _, _ in rows), default=0)
+          lines = [f'{name:<{width}}  {committed} -> {resolved}' for name, committed, resolved in rows]
+          summary = f'{len(rows)} of {len(shipped)} extra dependencies moved past uv.lock; {unchanged} unchanged.'
+          print('\n'.join(lines) or 'No extra dependency moved past uv.lock.')
+          print(summary)
+
+          if step_summary := os.environ.get('GITHUB_STEP_SUMMARY'):
+              Path(step_summary).write_text(
+                  '\n'.join(['## Dependencies resolved past `uv.lock`', '', '```', *lines, '```', '', summary, ''])
+              )
+          PY
+
+      # `ci.yml`'s test invocation minus coverage. The suite runs whole: the only tests that
+      # reach the HuggingFace Hub (`tests/test_embeddings.py::TestSentenceTransformers`) already
+      # skip themselves on a rate limit or an outage and fail loudly on anything else, so
+      # deselecting them would drop real signal about the `sentence-transformers` extra rather
+      # than drop flake. That self-skip is also why this job needs none of `ci.yml`'s
+      # out-of-band HF cache warming.
+      - run: uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup
