@@ -87,7 +87,8 @@ mean you cannot push: it governs the upstream-maintainer auto-grant, not your ow
 fork.) If you genuinely cannot attempt it, say "not attempted", never "we can't".
 
 **Pushing is not the end of the task.** After you push, do not go idle. The work is done when CI is
-green, the required hosted review covers the current HEAD, and there are no unresolved comments —
+green, every applicable current-HEAD check has an accepted terminal result, the required hosted
+review covers the current HEAD, and there are no unresolved comments —
 see the `pushing-commits-to-the-repo` skill for the full loop.
 
 **Do not leave work uncommitted.** Don't end a turn with unstaged or uncommitted local changes

@@ -2,19 +2,7 @@
 name: pre-push-review
 description: Run the repository's high-judgment standards review locally on the exact candidate commit
   before it is pushed
-allowed-tools:
-  - Read
-  - Glob
-  - Grep
-  - Bash(gh issue view:*)
-  - Bash(gh pr view:*)
-  - Bash(git diff:*)
-  - Bash(git log:*)
-  - Bash(git merge-base:*)
-  - Bash(git status:*)
-  - Bash(git rev-parse:*)
-  - WebSearch
-  - WebFetch
+allowed-tools: Read Glob Grep WebSearch WebFetch
 ---
 
 # Pre-push Review
@@ -40,33 +28,29 @@ In repositories without that workflow, apply the same core rubric:
   pass until remediation.
 - Report only actionable concerns. Be concise, concrete, non-repetitive, and friendly without praise.
 
-Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every
-directory-specific `AGENTS.md` governing a changed file.
+Read the stable base checkout's root `AGENTS.md`, `agent_docs/index.md` and its relevant
+topic guides, plus every directory-specific `AGENTS.md` governing a changed file.
 
-## Gather local and PR context
+## Receive trusted review context
 
-If the dispatcher supplied a PR number, run `gh pr view <number>`; do not infer it from the base
-checkout's current branch.
+The implementing agent, not the fresh reviewer, prepares a read-only review bundle from the stable
+base checkout:
 
-- **If a PR exists**, read its title, body, base branch, linked issue, comments and reviews.
-  Review the entire branch diff against that base, not just the latest commit. Use the
-  existing discussion to avoid duplicate findings and to detect concerns that remain
-  unresolved after an iteration.
-- **If no PR exists**, use `main` as the base and review against the task context available
-  locally. Skip only PR metadata that does not exist; scope and readiness are still valid
-  review concerns.
-
-Gather the corresponding local state:
+1. Validate the supplied values as full commit SHAs and confirm both are commit objects.
+2. Confirm the candidate worktree is clean and its HEAD equals the candidate SHA.
+3. Collect the task or issue and, when a PR exists, its title, body, comments, reviews, inline review
+   threads, and resolution state with trusted read-only GitHub tooling.
+4. Capture the exact endpoint diff with external diff and text conversion disabled:
 
 ```bash
-git status --short
-git rev-parse <review-base-sha> <candidate-head-sha>
-git diff <review-base-sha>...<candidate-head-sha> --stat
-git diff <review-base-sha>...<candidate-head-sha> -W
+git -c diff.external= -c diff.trustExitCode=false diff --no-ext-diff --no-textconv --stat <review-base-sha> <candidate-head-sha> --
+git -c diff.external= -c diff.trustExitCode=false diff --no-ext-diff --no-textconv -W <review-base-sha> <candidate-head-sha> --
 ```
 
-Read a large diff in chunks, core implementation before tests, and skip generated files
-(`uv.lock`, cassettes).
+Store that material outside the candidate worktree and give the fresh reviewer only its path, the
+exact SHAs, and the stable base checkout. The reviewer reads stable instructions and repository
+context directly, but reads candidate content only from the bundle. Read a large diff in chunks,
+core implementation before tests, and skip generated files (`uv.lock`, cassettes).
 
 ## Return the review locally
 
