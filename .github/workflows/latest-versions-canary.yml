@@ -190,12 +190,23 @@ jobs:
         env:
           LOCKED_BEFORE: ${{ runner.temp }}/uv.lock.committed
         run: |
-          uv run --no-sync python - <<'PY'
+          python3 - <<'PY'
           import os
           import re
+          import sys
           import tomllib
-          from importlib.metadata import PackageNotFoundError, requires, version
           from pathlib import Path
+
+          # The runner's interpreter, like the two steps above, because `tomllib` is stdlib only
+          # from 3.11 and the matrix runs 3.10. The metadata this reads still has to come from
+          # the environment just synced, so the venv goes on the path first and
+          # `importlib.metadata` resolves against it rather than against the runner's own.
+          site_packages = sorted(Path('.venv/lib').glob('python*/site-packages'))
+          if not site_packages:
+              raise SystemExit('found no site-packages under .venv: nothing was installed to report on')
+          sys.path[:0] = [str(path) for path in site_packages]
+
+          from importlib.metadata import PackageNotFoundError, requires, version
 
           WORKSPACE = {'pydantic-ai', 'pydantic-ai-slim', 'pydantic-graph', 'pydantic-evals', 'clai'}
 
