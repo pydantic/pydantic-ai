@@ -27,13 +27,13 @@ If the fix could reasonably go more than one way, or you're unsure it's actually
 
 Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#what-goes-where) for the full distinction.
 
-**If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable shape, we can talk about upstreaming to harness or core.
+**If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable API, we can talk about upstreaming to harness or core.
 
 If it does belong in core:
 
 1. **Search first.** If an existing issue covers your need, comment there. If the closest match is only related, open a new issue and link it.
 2. **Describe the problem, not just the solution.** Tell us what you're building, what's blocking you, and what you've tried. This context matters more than code.
-3. **Propose a plan before building.** Post the shape of the solution on the issue, or open a draft PR with just a `PLAN.md`. For larger features, we do short video calls with contributors to iterate on the design — a 20-minute call often saves weeks of async review cycles.
+3. **Propose a plan before building.** Post a short plan on the issue, or open a draft PR with just a `PLAN.md`. For larger features, we do short video calls with contributors to iterate on the design — a 20-minute call often saves weeks of async review cycles.
 4. **Wait for assignment.** A maintainer needs to agree on the approach and assign the issue to you before you open a PR. Unassigned PRs may be auto-closed.
 
 !!! warning
@@ -61,7 +61,7 @@ Even for PRs with code we've previously engaged with: we treat all contributed c
 
 ### We may rewrite or supersede your code
 
-We treat contributed code as illustrative: a starting point that shows the shape of the change and proves the approach works, not the final form we merge. The most useful thing you can give us for a non-trivial change is a plan plus a working example — not a polished, merge-ready implementation.
+We treat contributed code as illustrative: a starting point that shows the proposed change and proves the approach works, not the final form we merge. The most useful thing you can give us for a non-trivial change is a plan plus a working example — not a polished, merge-ready implementation.
 
 On any PR, we may push commits to your branch, open a follow-up PR that supersedes yours, or rewrite from scratch. For security reasons, we lean toward rewriting contributed code rather than merging as-is. You will still be credited as the original author.
 

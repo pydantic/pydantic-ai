@@ -434,12 +434,12 @@ def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):
 def test_model_http_error_headers_provider_anthropic():
     """Headers from an anthropic.APIStatusError land on ModelHTTPError."""
     anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
-    import httpx
+    import httpx2
 
     from pydantic_ai.models.anthropic import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
-    req = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
-    resp = httpx.Response(
+    req = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
+    resp = httpx2.Response(
         429,
         headers={'retry-after': '10', 'anthropic-ratelimit-tokens-remaining': '0'},
         request=req,

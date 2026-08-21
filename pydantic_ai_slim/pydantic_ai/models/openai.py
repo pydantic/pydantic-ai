@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args, overload
+from typing import Any, Literal, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -25,7 +25,7 @@ from pydantic_core import to_json
 from typing_extensions import Never, Protocol, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._http import legacy_httpx
+from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
@@ -123,13 +123,6 @@ from . import (
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
-if TYPE_CHECKING:
-    from httpx import Timeout
-else:
-    # Legacy HTTPX is optional: without it `_normalize_openai_timeout`'s `isinstance` check falls back
-    # to the HTTPX2 type the SDK already accepts, so the conversion just rebuilds an equivalent value.
-    Timeout = legacy_httpx.Timeout if legacy_httpx is not None else HTTPX2Timeout
-
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
 try:
@@ -207,12 +200,6 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-
-def _normalize_openai_timeout(timeout: float | Timeout | NotGiven) -> float | HTTPX2Timeout | NotGiven:
-    if isinstance(timeout, Timeout):
-        return HTTPX2Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
-    return timeout
 
 
 def _preload_openai_sdk_resource_modules(model: OpenAIChatModel | OpenAIResponsesModel, client: AsyncOpenAI) -> None:
@@ -1161,7 +1148,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stop=model_settings.get('stop_sequences', OMIT),
                     max_completion_tokens=max_tokens if supports_max_completion_tokens else OMIT,
                     max_tokens=OMIT if supports_max_completion_tokens else max_tokens,
-                    timeout=_normalize_openai_timeout(model_settings.get('timeout', NOT_GIVEN)),
+                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
@@ -2687,7 +2674,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[dict[str, str], float | HTTPX2Timeout | NotGiven]:
         extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
-        timeout = _normalize_openai_timeout(model_settings.get('timeout', NOT_GIVEN))
+        timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
     @overload
@@ -3256,7 +3243,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
-        for message in messages:
+        for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
@@ -3348,7 +3335,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
-                for item in message.parts:
+                response_parts: Sequence[ModelResponsePart] = message.parts
+                if not profile.get('openai_responses_supports_interleaved_function_calls', True):
+                    response_parts = _group_settled_portable_function_calls(
+                        messages,
+                        message_index,
+                        message,
+                        client_tool_search_active=client_tool_search_active,
+                    )
+                for item in response_parts:
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
@@ -5053,6 +5048,88 @@ def _map_provider_details(
         provider_details['finish_reason'] = raw_finish_reason
 
     return provider_details or None
+
+
+def _group_settled_portable_function_calls(
+    messages: list[ModelMessage],
+    message_index: int,
+    message: ModelResponse,
+    *,
+    client_tool_search_active: bool,
+) -> Sequence[ModelResponsePart]:
+    """Reorder one assistant turn's settled function calls to the end of their segment.
+
+    Only for endpoints whose profile clears `openai_responses_supports_interleaved_function_calls`.
+    Such an endpoint folds each call into the assistant message next to it, so an assistant item
+    sitting between two calls splits them into separate messages, each carrying an unanswered call.
+    Item IDs are deliberately *not* consulted: an endpoint that merges items this way derives an
+    item's position from the surrounding sequence rather than its identity, so an ID pins nothing
+    (verified against DeepSeek: the grouped order is accepted with reasoning, message and
+    `function_call` IDs all present on the wire, while the interleaved order is rejected with them).
+
+    Reordering is skipped when the turn carries a native or compaction item the provider owns, or
+    when any of its calls is still unanswered — an unanswered call is rejected in either order, so
+    grouping cannot rescue it.
+
+    "Answered" is deliberately wire-local and stricter than `_agent_graph._dangling_tool_calls_by_response`:
+    only the requests between this response and the next one count, and repeated call IDs are
+    counted rather than shadowed. A model must not import the graph layer, and the two answer
+    different questions, so they are allowed to disagree — but only in the direction where this one
+    declines to reorder. Keep any change on that side.
+    """
+    parts = message.parts
+    if any(isinstance(part, (NativeToolCallPart, NativeToolReturnPart, CompactionPart)) for part in parts):
+        return parts
+
+    unsettled_call_counts: dict[str, int] = {}
+    for part in parts:
+        if isinstance(part, ToolCallPart) and not (
+            client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+        ):
+            unsettled_call_counts[part.tool_call_id] = unsettled_call_counts.get(part.tool_call_id, 0) + 1
+    for following_message_index in range(message_index + 1, len(messages)):
+        following_message = messages[following_message_index]
+        if isinstance(following_message, ModelResponse):
+            break
+        for part in following_message.parts:
+            if (
+                (
+                    isinstance(part, ToolReturnPart)
+                    and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
+                )
+                or (
+                    isinstance(part, RetryPromptPart)
+                    and part.tool_name is not None
+                    and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
+                )
+            ) and (count := unsettled_call_counts.get(part.tool_call_id)):
+                if count == 1:
+                    del unsettled_call_counts[part.tool_call_id]
+                else:
+                    unsettled_call_counts[part.tool_call_id] = count - 1
+    if unsettled_call_counts:
+        return parts
+
+    grouped_parts: list[ModelResponsePart] = []
+    segment: list[ModelResponsePart] = []
+
+    def flush_segment() -> None:
+        grouped_parts.extend(part for part in segment if not isinstance(part, ToolCallPart))
+        grouped_parts.extend(part for part in segment if isinstance(part, ToolCallPart))
+        segment.clear()
+
+    for part in parts:
+        if (
+            client_tool_search_active
+            and isinstance(part, ToolCallPart)
+            and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+        ):
+            flush_segment()
+            grouped_parts.append(part)
+        else:
+            segment.append(part)
+    flush_segment()
+    return grouped_parts
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
