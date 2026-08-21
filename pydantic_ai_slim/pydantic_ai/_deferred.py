@@ -87,8 +87,9 @@ class DeferredToolRequests:
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
-        call_result_ids = {c.tool_call_id for c in self.calls} & results.calls.keys()
-        approval_result_ids = {c.tool_call_id for c in self.approvals} & results.approvals.keys()
+        results = filter_deferred_results(self, results)
+        call_result_ids = set(results.calls)
+        approval_result_ids = set(results.approvals)
         resolved_ids = call_result_ids | approval_result_ids
         remaining = DeferredToolRequests(
             calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
@@ -197,3 +198,16 @@ class DeferredToolResults:
                 call_result = ToolReturn(call_result)
             tool_call_results[tool_call_id] = call_result
         return tool_call_results
+
+
+def filter_deferred_results(requests: DeferredToolRequests, results: DeferredToolResults) -> DeferredToolResults:
+    """Keep results whose IDs belong to the matching request category."""
+    approval_ids = {call.tool_call_id for call in requests.approvals}
+    call_ids = {call.tool_call_id for call in requests.calls}
+    return DeferredToolResults(
+        approvals={
+            tool_call_id: result for tool_call_id, result in results.approvals.items() if tool_call_id in approval_ids
+        },
+        calls={tool_call_id: result for tool_call_id, result in results.calls.items() if tool_call_id in call_ids},
+        metadata=results.metadata,
+    )
