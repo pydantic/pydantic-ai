@@ -17,6 +17,13 @@ name: Latest Versions Canary
 # temporary upper cap `<N` to the affected extra so users are protected while the
 # migration happens. Suppressing the signal is not one of them.
 #
+# On `v*` tag pushes `ci.yml` calls this workflow and `publish to PyPI` waits on it, so a
+# release cannot go out while the top of the ranges it declares is known-broken. That run is
+# time-dependent by design: an SDK published to PyPI minutes before the tag can turn it red,
+# and blocking the release is the correct outcome — the alternative is shipping a version
+# whose declared ranges we already know resolve to something we cannot drive. It gates
+# `deploy-docs` for the same reason, since docs for a release that never publishes are wrong.
+#
 # Scope, and its accepted limitation: only the dependencies our published packages declare
 # move — base requirements and extras alike — while the `dev` and `lint` groups stay at
 # their locked versions. So a transitive-only dependency advances only as far as those
@@ -34,12 +41,17 @@ on:
   pull_request:
     paths:
       - '.github/workflows/latest-versions-canary.yml'
+  # `ci.yml` calls this on `v*` tag pushes, where it gates `publish to PyPI` — see the
+  # release-gate note above.
+  workflow_call:
 
 permissions:
   contents: read
 
+# Named literally rather than via `github.workflow`, which resolves to the *caller's* name
+# under `workflow_call` and would put the tag-path run in a group belonging to `CI`.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: latest-versions-canary-${{ github.ref }}
   cancel-in-progress: true
 
 env:
