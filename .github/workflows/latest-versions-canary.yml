@@ -31,6 +31,14 @@ name: Latest Versions Canary
 # release we cannot drive, and that is the class this canary owns. Test tooling drifting
 # under us (a new `ruff` rule relinting the docs examples, say) is a real but different
 # problem, and letting it red this check would bury the one it exists to raise.
+#
+# It runs on two interpreters, the endpoints of the range we support: the oldest is where an
+# SDK drops support first, and the newest is where one has not caught up yet. Both are
+# invisible to a single-interpreter run, because `uv sync` and `pytest` only ever exercise the
+# marker branches the running interpreter selects — resolving every branch in `uv lock` does
+# not run them. The interior versions are left to `ci.yml`, which covers all five at the
+# bottom of the range; two here is the compromise between that coverage and a job that gates
+# every release.
 
 on:
   schedule:
@@ -59,9 +67,16 @@ env:
 
 jobs:
   latest-versions:
-    name: resolve and test at latest versions
+    name: resolve and test at latest versions (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      # Both ends are wanted whichever one breaks, so neither cancels the other.
+      fail-fast: false
+      matrix:
+        # The endpoints of `ci.yml`'s own `test` matrix. Keep these in step with it: an
+        # endpoint left behind here silently stops asking the question on that interpreter.
+        python-version: ['3.10', '3.14']
     env:
       CI: true
       # Both as on `ci.yml`'s all-extras test job, for the reasons documented there: blocking
@@ -78,7 +93,7 @@ jobs:
       # job replaces before installing anything, so the cache would hold the wrong wheels.
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.python-version }}
           enable-cache: false
 
       - name: Keep the committed lock to compare against

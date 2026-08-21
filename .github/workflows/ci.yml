@@ -219,6 +219,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `latest-versions-canary.yml` runs the endpoints of this list; update it alongside.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
