@@ -1399,14 +1399,7 @@ def test_cerebras_qwen_reasoning():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
-            'openai_unsupported_model_settings': (
-                'frequency_penalty',
-                'logit_bias',
-                'presence_penalty',
-                'parallel_tool_calls',
-                'service_tier',
-                'openai_service_tier',
-            ),
+            'openai_unsupported_model_settings': ('logit_bias',),
         }
     )
 
@@ -1418,14 +1411,7 @@ def test_cerebras_llama_non_reasoning():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'openai_unsupported_model_settings': (
-                'frequency_penalty',
-                'logit_bias',
-                'presence_penalty',
-                'parallel_tool_calls',
-                'service_tier',
-                'openai_service_tier',
-            ),
+            'openai_unsupported_model_settings': ('logit_bias',),
         }
     )
 

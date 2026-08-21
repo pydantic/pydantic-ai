@@ -72,6 +72,11 @@ class CerebrasProvider(_OpenAICompatibleProvider):
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
             OpenAIModelProfile(
+                # Cerebras accepts `logit_bias` and validates it — a map over 100 entries is a 400 — but
+                # never applies it: biasing a token by 100 in either direction leaves the returned logprobs
+                # bit-identical. Forwarding it would turn today's silent no-op into a hard error on large
+                # bias maps, so it stays stripped even though the API reference documents it as supported.
+                openai_unsupported_model_settings=('logit_bias',),
                 supports_thinking=is_reasoning,
                 thinking_always_enabled=is_always_on_reasoning,
                 openai_chat_send_back_thinking_parts=send_back_thinking_parts,
