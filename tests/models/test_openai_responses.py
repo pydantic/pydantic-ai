@@ -1764,12 +1764,17 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 async def test_openai_include_raw_annotations_streaming_model_annotation(allow_model_requests: None):
     """A streamed annotation that arrives as an SDK model, not a dict, still lands as the wire dict.
 
-    `openai` 3.1 retyped `ResponseOutputTextAnnotationAddedEvent.annotation` from `object` to a model
-    union, and the models it names are distinct classes from the identically shaped ones
-    `ResponseOutputText.annotations` uses — so an annotation model reaches us that the shared annotations
-    `TypeAdapter` cannot serialize. `model_construct` is what lets this pin the model-valued shape on
-    either side of that retype; before it, the same event carried a plain dict, as the VCR test above
-    still covers.
+    At the declared `openai` floor this is the only test that drives the `isinstance(..., BaseModel)`
+    side of that normalization: `ResponseOutputTextAnnotationAddedEvent.annotation` is typed `object`
+    there, so the VCR test above parses one into a plain dict and only ever takes the `else` side.
+    Coverage cannot show the difference — both sides of a one-line conditional converge on the same
+    arc, so the line reads as covered either way. `model_construct` skips validation, so the same
+    construction holds once 3.1 retypes that field into a discriminated union.
+
+    It pins the shape, not the regression. That retype makes the field a model union whose members are
+    distinct classes from the identically shaped ones `ResponseOutputText.annotations` uses, and
+    reverting the normalization leaves this test green at both 3.0.0 and 3.3.1 — the canary, which
+    resolves the real 3.1+ SDK, is what catches that.
     """
     base_response = resp.Response(
         id='resp_001',
