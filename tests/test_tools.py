@@ -5063,3 +5063,31 @@ def test_tool_return_part_serializes_with_serialization_alias():
     # The wire output keys agree with the advertised return schema properties.
     assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
+
+
+def test_tool_init_empty_description_preserved():
+    """An explicit empty description is preserved, not replaced by the function docstring."""
+
+    def policy_tool() -> None:
+        """INTERNAL POLICY DOCSTRING."""
+
+    assert Tool(policy_tool, description='').tool_def.description == ''
+
+
+def test_tool_init_none_description_infers_docstring():
+    """`description=None` still infers the description from the function docstring."""
+
+    def my_tool() -> None:
+        """Docstring description."""
+
+    assert Tool(my_tool, description=None).tool_def.description == 'Docstring description.'
+
+
+def test_tool_from_schema_empty_description():
+    """`Tool.from_schema` stores `description=''` verbatim, matching `Tool.__init__`."""
+
+    def my_tool() -> None:
+        """Docstring description."""
+
+    tool = Tool.from_schema(my_tool, name='my_tool', description='', json_schema={'type': 'object'})
+    assert tool.tool_def.description == ''

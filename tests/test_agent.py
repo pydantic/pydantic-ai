@@ -46,6 +46,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     ThinkingPart,
+    Tool,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -14362,3 +14363,19 @@ def test_tool_sync_function_returning_coroutine():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot('tool result value')
+
+
+def test_agent_run_empty_tool_description_not_replaced_by_docstring():
+    """An empty tool description reaches the model request verbatim, not the function docstring."""
+
+    def policy_tool() -> None:
+        """INTERNAL POLICY DOCSTRING."""
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.function_tools[0].description == ''
+        assert info.function_tools[0].description == ''
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(call_tool), tools=[Tool(policy_tool, description='')])
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'

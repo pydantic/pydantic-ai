@@ -421,7 +421,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.description = description or self.function_schema.description
+        self.description = description if description is not None else self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
         self.docstring_format = docstring_format
