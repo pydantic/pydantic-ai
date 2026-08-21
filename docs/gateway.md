@@ -92,6 +92,14 @@ Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable to your Gateway API k
 export PYDANTIC_AI_GATEWAY_API_KEY="pylf_v..."
 ```
 
+The Gateway base URL is inferred from the region encoded in your API key, so you normally do not
+need to set it. If your key predates region-encoded keys, Pydantic AI raises a `UserError` asking
+you to generate a new key or set the URL yourself, which you do with `PYDANTIC_AI_GATEWAY_BASE_URL`:
+
+```bash
+export PYDANTIC_AI_GATEWAY_BASE_URL="https://gateway-us.pydantic.dev/proxy"
+```
+
 You can access multiple models with the same API key, as shown in the code snippet below.
 
 ```python {title="hello_world.py"}
