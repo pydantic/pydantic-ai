@@ -1295,6 +1295,17 @@ cancellation). Shared between the agent graph's history repair and the UI adapte
 so both synthesize the same `outcome='interrupted'` return."""
 
 
+ERROR_OUTCOMES: tuple[Literal['failed', 'retried'], ...] = ('failed', 'retried')
+"""The [`BaseToolReturnPart.outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] values that
+reach the model as an error.
+
+Both went wrong from the model's point of view — the tool raised, or its call was rejected before it
+could run — so both take the provider's native error channel (Anthropic `is_error`, Bedrock
+`status='error'`, Google's `error` key) and the `{"error": ...}` wrapper where there is none. The
+other outcomes (`'denied'`, `'interrupted'`) are ordinary results whose content says what happened.
+"""
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""
@@ -1332,7 +1343,7 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success'
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
@@ -1343,11 +1354,16 @@ class BaseToolReturnPart:
       returning [`ToolDenied`][pydantic_ai.tools.ToolDenied].
     - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
       cancelled stream or a crash mid-execution); synthesized during message-history repair.
+    - `'retried'`: The tool asked the model to call it again — its arguments failed validation, or it
+      raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]. The content is the feedback the model
+      needs to get the call right, and the call still counts against the tool's retry budget.
 
-    Only `'failed'` is mapped to a provider's native error channel (e.g. Anthropic `is_error`,
-    Bedrock `status='error'`). A denial is a deliberate policy decision rather than a runtime error,
-    while an interruption means no result was produced. Both are sent as ordinary results; their
-    content tells the model what happened without suggesting a transient tool failure.
+    `'failed'` and `'retried'` are mapped to a provider's native error channel (e.g. Anthropic
+    `is_error`, Bedrock `status='error'`) — see
+    [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]. A denial is a deliberate policy decision
+    rather than a runtime error, while an interruption means no result was produced. Both are sent as
+    ordinary results; their content tells the model what happened without suggesting a transient tool
+    failure.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
@@ -1416,11 +1432,13 @@ class BaseToolReturnPart:
                   File items (`MultiModalContent`) pass through unchanged.
                 - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
                   via `tool_return_ta`. File items pass through unchanged.
-            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object (ignored in
-                `'raw'` mode). When `True` (the default), a failed return's non-file data collapses into a
-                single wrapped error item so providers without a native error channel still see the failure
-                explicitly; files pass through unchanged. Set this to `False` when the provider has a native
-                error channel (e.g. Anthropic `is_error`) and should receive the content unwrapped.
+            wrap_if_error: Whether to wrap errored tool returns (see
+                [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object
+                (ignored in `'raw'` mode). When `True` (the default), an errored return's non-file data
+                collapses into a single wrapped error item so providers without a native error channel still
+                see the failure explicitly; files pass through unchanged. Set this to `False` when the
+                provider has a native error channel (e.g. Anthropic `is_error`) and should receive the
+                content unwrapped.
         """
         items: list[ToolReturnContent]
         if isinstance(self.content, list):
@@ -1431,7 +1449,7 @@ class BaseToolReturnPart:
         if mode == 'raw':
             return items
 
-        if wrap_if_error and self.outcome == 'failed':
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             wrapped = self.model_response_str() if mode == 'str' else self.model_response_object()
             return [wrapped, *self.files]
 
@@ -1453,7 +1471,8 @@ class BaseToolReturnPart:
         This excludes multimodal files - use `.files` to get those separately.
 
         Args:
-            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+            wrap_if_error: Whether to wrap errored tool returns (see
+                [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
         """
         value, _ = self._unwrap_data()
@@ -1464,7 +1483,7 @@ class BaseToolReturnPart:
         else:
             response = tool_return_ta.dump_json(value, by_alias=True).decode()
 
-        if wrap_if_error and self.outcome == 'failed':
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             return tool_return_ta.dump_json({'error': response}).decode()
         return response
 
@@ -1475,10 +1494,11 @@ class BaseToolReturnPart:
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
 
         Args:
-            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+            wrap_if_error: Whether to wrap errored tool returns (see
+                [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
         """
-        if wrap_if_error and self.outcome == 'failed':
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             return {'error': self.model_response_str(wrap_if_error=False)}
 
         value, _ = self._unwrap_data()
@@ -1521,7 +1541,8 @@ class BaseToolReturnPart:
         returned file content list ('This is file {id}:' followed by the file).
 
         Args:
-            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+            wrap_if_error: Whether to wrap errored tool returns (see
+                [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
         """
         _, files, was_list = self._split_content()
@@ -1539,7 +1560,7 @@ class BaseToolReturnPart:
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
 
-        if wrap_if_error and self.outcome == 'failed':
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             error = {'error': self.model_response_str(wrap_if_error=False)}
             file_references = [f'See file {file.identifier}.' for file in files]
             return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
@@ -1633,6 +1654,25 @@ class NativeToolReturnPart(BaseToolReturnPart):
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
+def _validation_error_description(errors: list[pydantic_core.ErrorDetails], *, include_input: bool) -> str:
+    """Render Pydantic error details as the JSON block a model is shown.
+
+    `ctx` is always dropped: it can hold arbitrary objects that don't survive serialization, and it
+    repeats what `msg` already says. `input` is kept only where the model can't already see the value
+    it produced — a tool call's arguments are worth echoing back next to the error, while the JSON a
+    structured-output retry complains about is already in the model's context, so there top-level
+    errors drop it. Nested errors keep it either way: their `input` is the offending sub-value, which
+    a long generated document doesn't make obvious.
+    """
+    if include_input:
+        exclude = {'__all__': {'ctx'}}
+    else:
+        exclude = {i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(errors)}
+    json_errors = error_details_ta.dump_json(errors, exclude=exclude, indent=2)
+    plural = len(errors) != 1
+    return f'{len(errors)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+
+
 @dataclass(repr=False)
 class RetryPromptPart:
     """A message back to a model asking it to try again.
@@ -1647,6 +1687,14 @@ class RetryPromptPart:
     * Pydantic validation of a structured response failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
     * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+
+    Pydantic AI no longer emits this part: a retry that answers a tool call is now a
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'`, and one that
+    doesn't is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. Conflating the two
+    left tool-less retries reaching every provider as bare user text the model couldn't tell from
+    something a person wrote. The class stays accepted, deserializable, and rendered exactly as
+    before, so stored histories and code that hands one back through
+    [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] keep working unchanged.
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -1681,10 +1729,11 @@ class RetryPromptPart:
         tool_name: str | None = None,
         tool_call_id: str | None = None,
     ) -> RetryPromptPart:
-        """Build the retry prompt for a failed tool call or output validation.
+        """Build a retry prompt from a validation error or a `ModelRetry`.
 
-        This is the exact message the model receives when the error is handled by the agent loop,
-        so anything else presenting the failure (e.g. instrumentation spans) must build it the same way.
+        Pydantic AI no longer builds one for its own retries, so this is for code that answers a
+        deferred call with a `RetryPromptPart` of its own and wants the same content shape the
+        framework used to produce.
         """
         content = (
             error.errors(include_url=False, include_context=False)
@@ -1704,20 +1753,7 @@ class RetryPromptPart:
             else:
                 description = self.content
         else:
-            # For NativeOutput retries (no `tool_name`) the generated JSON is already in the model's
-            # context, so top-level errors' `input` just duplicates it. Tool-call retries keep `input`
-            # so the model sees what arguments it sent alongside the error.
-            if self.tool_name is None:
-                exclude = {
-                    i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(self.content)
-                }
-            else:
-                exclude = {'__all__': {'ctx'}}
-            json_errors = error_details_ta.dump_json(self.content, exclude=exclude, indent=2)
-            plural = isinstance(self.content, list) and len(self.content) != 1
-            description = (
-                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
-            )
+            description = _validation_error_description(self.content, include_input=self.tool_name is not None)
         return f'{description}\n\nFix the errors and try again.'
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
@@ -1738,6 +1774,69 @@ class RetryPromptPart:
                 part['result'] = self.model_response()
 
             return [part]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RetryFeedbackPart:
+    """Pydantic AI's own feedback about a model response it couldn't use.
+
+    Unlike [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] this part is never bound to a
+    tool call, and deliberately carries no tool fields: it covers the retries where the response as a
+    whole was unusable — structured output failed validation, an output validator or function raised
+    [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or the response contained nothing that could
+    serve as output. A tool call that needs retrying answers its own call as a
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` instead.
+
+    The stored part stays model-neutral; each model renders it at
+    [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time as a mid-conversation
+    [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart], degraded to a `<system>`-tagged user
+    message where the provider takes no mid-conversation system message. That is what lets the model
+    tell harness feedback apart from something a person wrote, and keeping the presentation out of the
+    history keeps a cached prefix valid across providers.
+    """
+
+    content: list[pydantic_core.ErrorDetails] | str
+    """Details of why the response couldn't be used.
+
+    If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a
+    list of error details.
+    """
+
+    _: KW_ONLY
+
+    cause: Literal['validation_error', 'no_output', 'model_retry']
+    """What made the response unusable, which decides how the feedback is worded to the model.
+
+    - `'validation_error'`: the output failed validation against the expected schema.
+    - `'no_output'`: the response carried nothing usable as output (e.g. thinking only).
+    - `'model_retry'`: an output validator, output function, or model hook raised
+      [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
+    """
+
+    timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp, when the retry was triggered."""
+
+    part_kind: Literal['retry-feedback'] = 'retry-feedback'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def model_response(self) -> str:
+        """Return a string message describing why the response couldn't be used.
+
+        Just the feedback: the wording that frames it as the harness speaking is chosen per `cause`
+        when the model renders the part, so no provider-facing phrasing is baked into the history.
+        """
+        if isinstance(self.content, str):
+            return self.content
+        return _validation_error_description(self.content, include_input=False)
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        return [
+            _otel_messages.TextPart(
+                type='text', **{'content': self.model_response()} if settings.include_content else {}
+            )
+        ]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2475,6 +2574,7 @@ ModelRequestPart = Annotated[
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]
+    | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')],
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
@@ -2968,10 +3068,12 @@ def sanitize_messages(
 
     By default it strips:
 
-    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s (disable with
+    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and
+      [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s (disable with
       `strip_system_prompts=False`). The system prompt is the server's to own; a client that can
-      inject one can override the agent's behavior. If stripping leaves a `ModelRequest` with no
-      parts, the request is dropped from history entirely.
+      inject one can override the agent's behavior, and a `RetryFeedbackPart` reaches the model as
+      one. If stripping leaves a `ModelRequest` with no parts, the request is dropped from history
+      entirely.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
       cause the model provider to fetch the object using the server-side IAM role, so they should
@@ -3007,7 +3109,8 @@ def sanitize_messages(
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
-            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s.
+            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and
+            [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s.
         strip_compaction_parts: Whether to drop
             [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
             when the untrusted input is the entire conversation; pass `True` when the sanitized
@@ -3189,13 +3292,17 @@ def _sanitize_request_parts(
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
     uploaded file providers encountered.
-    Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s
-    were stripped.
+    Returns the kept parts and whether any part carrying the system voice
+    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]) was stripped.
     """
     stripped_system_prompt = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
-        if strip_system_prompts and isinstance(part, SystemPromptPart):
+        # A `RetryFeedbackPart` is rendered into a `SystemPromptPart` before it reaches the model, so
+        # honoring a client-submitted one would hand the client the system voice the strip exists to
+        # protect. It goes with the system prompts, not through them.
+        if strip_system_prompts and isinstance(part, SystemPromptPart | RetryFeedbackPart):
             stripped_system_prompt = True
             continue
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str):

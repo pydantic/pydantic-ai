@@ -36,6 +36,7 @@ from ..messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
@@ -419,6 +420,9 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
     keeps reading the role it was built for.
 
+    `RetryFeedbackPart` gets `system` because that is what it renders as: feedback that belongs to no
+    tool call reaches the model in the system voice, so the span shows the role the model actually saw.
+
     `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
     mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
     of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is
@@ -427,7 +431,7 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     withheld. `tool` is the one role that would actively mislead, being paired with
     `tool_call_response`.
     """
-    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart):
+    if isinstance(part, SystemPromptPart | RetryFeedbackPart | ToolAvailabilityDeltaPart):
         return 'system'
     elif version >= 6 and (
         isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)

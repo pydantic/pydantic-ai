@@ -38,6 +38,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -871,7 +872,7 @@ The temperature in London on 1st January 2022 was 30°C.\
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -884,7 +885,7 @@ The temperature in London on 1st January 2022 was 30°C.\
 """,
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        cause='validation_error',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1065,11 +1066,12 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The country is not supported.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 instructions='You are a helpful chatbot.',

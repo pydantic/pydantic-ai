@@ -35,6 +35,7 @@ from pydantic_ai import (
     ModelRetry,
     PartDeltaEvent,
     PartEndEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     TextContent,
     TextPart,
@@ -500,11 +501,12 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        outcome='retried',
                     )
                 ],
                 instructions='this is the system prompt',
@@ -4871,7 +4873,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
 
-    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
+    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryFeedbackPart`
     that tells the model which kinds of output are valid, while relying on the model adapter to omit
     the empty response from the API payload.
     """
@@ -4887,16 +4889,16 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     assert result.output == 'hello back'
 
     # The empty response is omitted from the payload (no `content=None` assistant message that would
-    # trigger a 400); a retry prompt is appended instead so the model can self-correct.
+    # trigger a 400); the retry feedback is appended instead so the model can self-correct. OpenAI
+    # honors a mid-conversation system message, so it keeps the system voice.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message['role'] == 'assistant' for message in second_call_messages)
-    assert second_call_messages == [
-        {'content': 'hello', 'role': 'user'},
-        {
-            'role': 'user',
-            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
-        },
-    ]
+    assert second_call_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'hello'},
+            {'role': 'system', 'content': 'The response contained no usable output. Please return text.'},
+        ]
+    )
 
     assert result.all_messages() == snapshot(
         [
@@ -4923,9 +4925,9 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],

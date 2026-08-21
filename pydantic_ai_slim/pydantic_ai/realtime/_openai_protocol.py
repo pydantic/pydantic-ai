@@ -68,6 +68,7 @@ from ..messages import (
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
     RealtimeSessionErrorEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -80,6 +81,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..models import render_retry_feedback
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
@@ -530,6 +532,11 @@ async def _seed_request_items(
                         'output': output,
                     }
                 )
+        elif isinstance(part, RetryFeedbackPart):
+            # Seeded as text like the tool-less `RetryPromptPart` above: the session has no system
+            # role to carry it, and dropping it would leave the model unable to see why the response
+            # it is being replayed was rejected.
+            items.append(_message_item('user', [_text_content('input_text', render_retry_feedback(part))]))
         else:
             assert_never(part)
     return items

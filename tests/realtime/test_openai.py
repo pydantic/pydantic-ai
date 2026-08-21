@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RealtimeSessionErrorEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -1576,6 +1577,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='call-1'),
                 RetryPromptPart(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
                 RetryPromptPart(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', cause='model_retry'),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -1660,6 +1662,22 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                         {
                             'type': 'input_text',
                             'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.',
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+The response was not accepted:
+answer in prose\
+""",
                         }
                     ],
                 },

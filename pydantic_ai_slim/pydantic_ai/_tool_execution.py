@@ -138,6 +138,19 @@ def _emit_output_tool_events(
     yield _messages.OutputToolResultEvent(part)
 
 
+def _tool_bound_retry_part(error: ToolRetryError) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
+    """The part carried by a `ToolRetryError` raised against a tool call.
+
+    Every retry raised while handling a call answers that call — `ToolManager._wrap_error_as_retry`,
+    the deferred-result branches, and output-tool validation all build their part from the call's own
+    name and id — so it is never the tool-less `RetryFeedbackPart` that `ToolRetryError` also carries
+    for output that had no call to answer.
+    """
+    part = error.tool_retry
+    assert not isinstance(part, _messages.RetryFeedbackPart)
+    return part
+
+
 @dataclasses.dataclass
 class _OutputCallResult(Generic[NodeRunEndT]):
     """Result of validating and executing one output tool call.
@@ -151,7 +164,7 @@ class _OutputCallResult(Generic[NodeRunEndT]):
     call: _messages.ToolCallPart
     args_valid: bool | None = None
     final_result: result.FinalResult[NodeRunEndT] | None = None
-    retry_part: _messages.RetryPromptPart | None = None
+    retry_part: _messages.ToolReturnPart | _messages.RetryPromptPart | None = None
     raise_exc: BaseException | None = None
 
 
@@ -283,7 +296,7 @@ async def process_tool_calls(
     `parallel_execution_mode('sequential')` turns every tool into its own barrier.
 
     Under `'graceful'`/`'exhaustive'`, the **retry-wins** invariant applies: if any
-    function/unknown tool produces a `RetryPromptPart`, `final_result` is suppressed so the
+    function/unknown tool asks for a retry, `final_result` is suppressed so the
     model addresses the retries on the next round. Output-tool retries don't trigger this
     ("first valid output wins"). Retry-wins doesn't apply when `final_result` was passed in
     by `Agent.run_stream` (the streamed output is already committed) or under `'early'`
@@ -357,7 +370,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     #
     # `final_result_was_set_externally`: when `final_result` is passed in pre-set (e.g. from
     # `Agent.run_stream`), the streamed output is already committed and retry-wins can't revoke it.
-    # `retry_wins_triggered`: set when a function/unknown tool produces a `RetryPromptPart`.
+    # `retry_wins_triggered`: set when a function/unknown tool asks for a retry.
     # `output_retries_increment`: accumulates output-retry-budget increments to apply once execution
     # settles, so parallel output tasks don't race the counter.
     # `winning_output_part`: a direct reference to the winning output's 'Final result processed.'
@@ -510,7 +523,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # path, which also handles `ToolFailedError`.
             assert isinstance(validated.validation_error, ToolRetryError)
             self.output_retries_increment += 1
-            return _OutputCallResult(call=call, args_valid=False, retry_part=validated.validation_error.tool_retry)
+            return _OutputCallResult(
+                call=call, args_valid=False, retry_part=_tool_bound_retry_part(validated.validation_error)
+            )
 
         try:
             result_data: Any = await self.tool_manager.execute_output_tool_call(validated, schema=self.schema)
@@ -521,7 +536,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             return _OutputCallResult(call=call, args_valid=True, raise_exc=wrapped)
         except ToolRetryError as e:
             self.output_retries_increment += 1
-            return _OutputCallResult(call=call, args_valid=True, retry_part=e.tool_retry)
+            return _OutputCallResult(call=call, args_valid=True, retry_part=_tool_bound_retry_part(e))
 
         final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
         return _OutputCallResult(call=call, args_valid=True, final_result=final_result)
@@ -645,7 +660,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # tool kind from its `tool_name` (the parallel exhaustive path keys off `call_kinds` instead,
         # but both funnel through `_is_retry_wins_trigger`).
         for part in self.output_parts[before:]:
-            if isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None:
+            if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart) and part.tool_name is not None:
                 tool_def = self.tool_manager.get_tool_def(part.tool_name)
                 kind = tool_def.kind if tool_def is not None else 'unknown'
                 if self._is_retry_wins_trigger(part, kind=kind):
@@ -682,10 +697,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 )
                 raise ToolFailedError(m)
             elif isinstance(tool_call_result, exceptions.ModelRetry):
-                m = _messages.RetryPromptPart(
+                m = _messages.ToolReturnPart(
                     content=tool_call_result.message,
                     tool_name=call.tool_name,
                     tool_call_id=call.tool_call_id,
+                    outcome='retried',
                 )
                 raise ToolRetryError(m)
             elif isinstance(tool_call_result, _messages.RetryPromptPart):
@@ -695,7 +711,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             else:
                 tool_result = tool_call_result
         except ToolRetryError as e:
-            return [e.tool_retry], None
+            return [_tool_bound_retry_part(e)], None
         except ToolFailedError as e:
             return [e.tool_failed], None
         except exceptions.RunCancelled as e:
@@ -881,13 +897,20 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def _is_retry_wins_trigger(self, part: _messages.ModelRequestPart, *, kind: ToolKind | Literal['unknown']) -> bool:
         """Whether a settled tool part triggers retry-wins.
 
-        A `RetryPromptPart` (a `ModelRetry` or arg-validation failure) from an actual function
-        tool suppresses an otherwise-valid output, so the model addresses the retry next round.
-        Retries from unknown/hallucinated tools don't — they aren't work that needs to complete
-        before the output is valid. This single predicate backs both the emission-order paths
-        (graceful/early) and the parallel exhaustive path so the rule lives in one place.
+        A retry (a `ModelRetry` or arg-validation failure) from an actual function tool suppresses an
+        otherwise-valid output, so the model addresses the retry next round. Retries from
+        unknown/hallucinated tools don't — they aren't work that needs to complete before the output
+        is valid. This single predicate backs both the emission-order paths (graceful/early) and the
+        parallel exhaustive path so the rule lives in one place.
+
+        A tool-bound `RetryPromptPart` still counts: user code can hand one back through
+        `DeferredToolResults`, and it means exactly what the framework's own `outcome='retried'` does.
         """
-        return isinstance(part, _messages.RetryPromptPart) and kind == 'function'
+        if kind != 'function':
+            return False
+        if isinstance(part, _messages.ToolReturnPart):
+            return part.outcome == 'retried'
+        return isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None
 
     def _apply_retry_wins(self) -> None:
         """Suppress the output result if a function tool retried (graceful + exhaustive).
@@ -957,7 +980,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     try:
                         await self.tool_manager.execute_tool_call(validated)
                     except (ToolRetryError, ToolFailedError) as e:
-                        part = e.tool_retry if isinstance(e, ToolRetryError) else e.tool_failed
+                        part = _tool_bound_retry_part(e) if isinstance(e, ToolRetryError) else e.tool_failed
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
 

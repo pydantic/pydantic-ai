@@ -60,6 +60,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -73,7 +74,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..models import ModelRequestParameters
+from ..models import ModelRequestParameters, render_retry_feedback
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
@@ -425,6 +426,11 @@ async def _seed_request_parts(
             output = part.model_response()
             text = output if part.tool_name is None else f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'
             parts.append(genai_types.Part(text=text))
+        elif isinstance(part, RetryFeedbackPart):
+            # Seeded as text like the tool-less `RetryPromptPart` above: the session has no system
+            # role to carry it, and dropping it would leave the model unable to see why the response
+            # it is being replayed was rejected.
+            parts.append(genai_types.Part(text=render_retry_feedback(part)))
         else:
             assert_never(part)
     return parts

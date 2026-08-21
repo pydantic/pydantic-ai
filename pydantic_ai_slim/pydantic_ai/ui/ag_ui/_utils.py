@@ -11,14 +11,16 @@ from typing import Any, Final, Literal
 from typing_extensions import Required, TypedDict
 
 from ..._utils import is_str_dict
-from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
+from ...messages import RetryFeedbackPart, ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
+from .._adapter import retry_feedback_from_payload, retry_feedback_payload
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
-"""AG-UI version that added the `encrypted_value` field to `ToolCall` and `ToolMessage`.
+"""AG-UI version that added the `encrypted_value` field to `ToolCall` and to `BaseMessage` (so to
+`ToolMessage` and `SystemMessage` alike).
 
-Gates the field-based `tool_kind` round-trip in `dump_messages`/`load_messages`. The streaming
-carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated on
-`REASONING_VERSION` (0.1.13) — see `tool_kind_encrypted_value`.
+Gates the field-based `tool_kind`, tool-result `outcome` and retry-feedback round-trips in
+`dump_messages`/`load_messages`. The streaming carrier (`ReasoningEncryptedValueEvent`) is a separate
+`REASONING_*` event gated on `REASONING_VERSION` (0.1.13) — see `tool_kind_encrypted_value`.
 """
 
 REASONING_VERSION = (0, 1, 13)
@@ -143,8 +145,14 @@ _ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
 provider blob in the same slot is never mistaken for our data."""
 
 
+def _namespaced_encrypted_value(payload: dict[str, Any]) -> str:
+    """Pack a payload into an AG-UI `encrypted_value` blob under the `pydantic_ai` namespace."""
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
+
+
 def tool_kind_encrypted_value(
-    tool_kind: ToolPartKind | None, outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None
+    tool_kind: ToolPartKind | None,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
@@ -163,14 +171,14 @@ def tool_kind_encrypted_value(
     native error channel), that would silently change the request bytes and break the prompt-cache
     prefix stability the repaired history is designed to keep.
     """
-    payload: dict[str, str] = {}
+    payload: dict[str, Any] = {}
     if tool_kind is not None:
         payload['tool_kind'] = tool_kind
     if outcome is not None and outcome != 'success':
         payload['outcome'] = outcome
     if not payload:
         return None
-    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
+    return _namespaced_encrypted_value(payload)
 
 
 class _EncryptedValueKwargs(TypedDict, total=False):
@@ -183,7 +191,7 @@ def tool_kind_encrypted_value_kwargs(
     tool_kind: ToolPartKind | None,
     *,
     supported: bool,
-    outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
 ) -> _EncryptedValueKwargs:
     """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
 
@@ -194,6 +202,22 @@ def tool_kind_encrypted_value_kwargs(
     """
     value = tool_kind_encrypted_value(tool_kind, outcome) if supported else None
     return {'encrypted_value': value} if value is not None else {}
+
+
+def retry_feedback_encrypted_value_kwargs(part: RetryFeedbackPart, *, supported: bool) -> _EncryptedValueKwargs:
+    """`SystemMessage` kwargs carrying the `RetryFeedbackPart` its text was rendered from.
+
+    The same namespaced `encrypted_value` carrier as `tool_kind_encrypted_value`, used here because a
+    `SystemMessage` has no other metadata slot. It is what tells our own rendered feedback apart from
+    a system message the client wrote, and what restores the part's `cause` and raw content — neither
+    of which the rendered text alone can give back.
+
+    Empty when the target version predates the field (`supported=False`), in which case the message
+    reloads as a plain `SystemPromptPart`.
+    """
+    if not supported:
+        return {}
+    return {'encrypted_value': _namespaced_encrypted_value({'retry_feedback': retry_feedback_payload(part)})}
 
 
 def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
@@ -244,7 +268,9 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
     return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
 
 
-def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['failed', 'denied', 'interrupted'] | None:
+def parse_encrypted_outcome(
+    encrypted_value: str | None,
+) -> Literal['failed', 'denied', 'interrupted', 'retried'] | None:
     """Read an outcome claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
 
     Only non-`'success'` outcomes are ever carried (`'success'` is the default), so an absent or
@@ -255,9 +281,22 @@ def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['failed', 'd
     if namespaced is None:
         return None
     outcome = namespaced.get('outcome')
-    if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted':
+    if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted' or outcome == 'retried':
         return outcome
     return None
+
+
+def parse_encrypted_retry_feedback(encrypted_value: str | None) -> RetryFeedbackPart | None:
+    """Read a `RetryFeedbackPart` claim from the `pydantic_ai` namespace of an `encrypted_value` blob.
+
+    An absent, forged or malformed claim reads as `None`, so the message it rode on stays a plain
+    system prompt — see `retry_feedback_from_payload` for why the marker separates provenance rather
+    than proving it.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
+        return None
+    return retry_feedback_from_payload(namespaced.get('retry_feedback'))
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:

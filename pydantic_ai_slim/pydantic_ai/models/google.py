@@ -17,6 +17,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
+    ERROR_OUTCOMES,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -30,6 +31,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -63,6 +65,7 @@ from . import (
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -1119,6 +1122,8 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, RetryFeedbackPart):  # pragma: no cover
+                        raise _unrendered_retry_feedback_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         raise _unsynthesized_tool_availability_delta_error()
                     elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -1194,7 +1199,7 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 
-        if part.outcome == 'failed':
+        if part.outcome in ERROR_OUTCOMES:
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
             # used for success) for reporting a failed tool call, so this is Gemini's native error
             # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence

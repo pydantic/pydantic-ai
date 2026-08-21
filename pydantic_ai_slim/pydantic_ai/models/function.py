@@ -24,6 +24,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RetryFeedbackPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -44,6 +45,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -439,6 +441,8 @@ def _estimate_usage(  # noqa: C901
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
+                elif isinstance(part, RetryFeedbackPart):
+                    raise _unrendered_retry_feedback_error()
                 elif isinstance(part, ToolAvailabilityDeltaPart):
                     if not allow_tool_availability_deltas:
                         raise _unsynthesized_tool_availability_delta_error()

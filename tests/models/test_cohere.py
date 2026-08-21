@@ -19,7 +19,6 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -469,11 +468,12 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -859,4 +859,4 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     # self-correct.
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+    assert [message.role for message in second_call_messages] == snapshot(['user', 'system'])

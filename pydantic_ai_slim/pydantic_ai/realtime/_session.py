@@ -22,6 +22,7 @@ from .. import _agent_graph
 from .._enqueue import PendingMessage, PendingMessagePriority
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
+    _tool_bound_retry_part,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
     cancelled_sub_agent_return,
 )
@@ -2136,7 +2137,7 @@ class RealtimeSession:
                 on_inline_deferred=on_inline_deferred,
             )
         except ToolRetryError as e:
-            result_part = e.tool_retry
+            result_part = _tool_bound_retry_part(e)
             user_content = None
         except ToolFailedError as e:
             # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it

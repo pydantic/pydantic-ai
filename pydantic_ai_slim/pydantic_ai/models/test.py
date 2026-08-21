@@ -269,8 +269,14 @@ class TestModel(Model):
             last_message = messages[-1]
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 
-            # check if there are any retry prompts, if so retry them
-            new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
+            # check if there are any retries, if so retry them. A non-tool retry arrives already
+            # rendered into the system voice by `prepare_messages`, so only tool-bound ones show up
+            # here — apart from a legacy `RetryPromptPart` carried in from a stored history.
+            new_retry_names = {
+                p.tool_name
+                for p in last_message.parts
+                if isinstance(p, RetryPromptPart) or (isinstance(p, ToolReturnPart) and p.outcome == 'retried')
+            }
             if new_retry_names:
                 # Handle retries for both function tools and output tools
                 # Check function tools first
