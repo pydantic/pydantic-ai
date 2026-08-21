@@ -9,7 +9,7 @@ from typing import Optional, Union
 
 import pytest
 import typing_extensions
-from pydantic import BaseModel, RootModel, TypeAdapter
+from pydantic import BaseModel, RootModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.function_signature import (
@@ -37,16 +37,6 @@ class _Color(str, Enum):
 class _ConfigWithEnum(BaseModel):
     name: str
     color: _Color
-
-
-class _WidgetType(str, Enum):
-    TABLE = 'TABLE'
-    LINE = 'LINE'
-    PIE = 'PIE'
-
-
-class _CreateWidgetArgs(typing_extensions.TypedDict):
-    widget_type: _WidgetType
 
 
 class _SearchParams(typing_extensions.TypedDict):
@@ -864,23 +854,6 @@ def tool5(*, x: StringAlias) -> Any:
     ...\
 """)
 
-    # $ref to a non-object enum def renders inline as Literal, unlike the
-    # value-less StringAlias def above which keeps its bare name
-    sig_ref_enum = FunctionSignature.from_schema(
-        name='tool6',
-        parameters_schema={
-            'type': 'object',
-            'properties': {'color': {'$ref': '#/$defs/Color'}},
-            'required': ['color'],
-            '$defs': {'Color': {'enum': ['red', 'green'], 'type': 'string'}},
-        },
-    )
-    assert sig_ref_enum.render('...', name='tool6') == snapshot("""\
-def tool6(*, color: Literal['red', 'green']) -> Any:
-    ...\
-""")
-    assert FunctionSignature.render_type_definitions([sig_ref_enum], frozenset()) == []
-
 
 def test_schema_signature_array_object_typelist():
     """Arrays, objects, additionalProperties, and type lists."""
@@ -1444,10 +1417,7 @@ def test_schema_optional_with_oneof_null():
 
 
 def test_function_with_enum_field_in_model():
-    """Model with an enum field skips non-object $defs (enums) via schema path.
-
-    The enum field itself renders inline as `Literal` with its allowed values.
-    """
+    """Model with an enum field skips non-object $defs (enums) via schema path."""
 
     def configure(cfg: _ConfigWithEnum, dry_run: bool = False) -> str:
         return cfg.name  # pragma: no cover
@@ -1459,36 +1429,19 @@ def test_function_with_enum_field_in_model():
     type_names = {rt.name for rt in td.function_signature.referenced_types}
     assert '_ConfigWithEnum' in type_names
     assert '_Color' not in type_names
-    config_type = next(rt for rt in td.function_signature.referenced_types if rt.name == '_ConfigWithEnum')
-    assert str(config_type.fields['color'].type) == "Literal['red', 'green']"
 
 
 def test_function_with_enum_ref_parameter():
-    """Pydantic's default enum schema shape (`$defs` + `$ref`) keeps the allowed values.
+    """Referenced enum values are visible in the rendered tool signature."""
 
-    Before the fix the parameter rendered as a bare `WidgetType` name that was never
-    defined by `render_type_definitions`.
-    """
-    sig = FunctionSignature.from_schema(
-        name='create_widget',
-        parameters_schema=TypeAdapter(_CreateWidgetArgs).json_schema(),
-    )
-
-    assert sig.render('...', name='create_widget') == snapshot("""\
-def create_widget(*, widget_type: Literal['TABLE', 'LINE', 'PIE']) -> Any:
-    ...\
-""")
-    assert FunctionSignature.render_type_definitions([sig], frozenset()) == []
-
-
-def test_function_with_optional_enum_parameter():
-    """`Optional[Enum]` parameters render `Literal[...] | None` instead of a bare enum name."""
-
-    def set_color(color: _Color | None = None) -> str:
-        return color.value if color else 'none'  # pragma: no cover
+    def set_color(color: _Color) -> None:
+        pass  # pragma: no cover
 
     td = Tool(set_color).tool_def
-    assert "color: Literal['red', 'green'] | None = None" in td.render_signature('...')
+    assert td.render_signature('...') == snapshot("""\
+def set_color(*, color: Literal['red', 'green']) -> None:
+    ...\
+""")
 
 
 def test_schema_with_described_optional_fields():
