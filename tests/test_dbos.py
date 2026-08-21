@@ -1359,7 +1359,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            'MCPToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            "MCPToolset 'runtime_mcp' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
             'execute their own tools or resolve dynamically must be registered for durable execution when the '
             'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
             '`ExternalToolset` can be passed at runtime.'
@@ -1375,7 +1375,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
     with workflow_raises(
         UserError,
         snapshot(
-            'DynamicToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            "DynamicToolset 'runtime_dynamic' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
             'execute their own tools or resolve dynamically must be registered for durable execution when the '
             'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
             '`ExternalToolset` can be passed at runtime.'
@@ -3777,7 +3777,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
         )
 
     with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError, match=r"MCPToolset 'runtime_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
     ):
         await run_agent()
 
@@ -3791,7 +3791,8 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
         agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
 
     with pytest.raises(
-        UserError, match=r'DynamicToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError,
+        match=r"DynamicToolset 'runtime_dynamic' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS",
     ):
         run_agent()
 
@@ -3814,7 +3815,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             pass  # pragma: no cover
 
     with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError, match=r"MCPToolset 'iter_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
     ):
         await run_agent()
 
@@ -3838,7 +3839,7 @@ async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) ->
     async def run_agent() -> None:
         await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
 
-    with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
+    with pytest.raises(UserError, match="DynamicToolset 'per_run_dynamic' cannot be passed"):
         await run_agent()
 
 
