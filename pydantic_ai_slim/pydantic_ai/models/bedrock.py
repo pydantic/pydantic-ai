@@ -142,6 +142,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
                 suggested_model_id=suggested_model_id,
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except BotoCoreError as e:
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
 class _BotocoreRequestParams(TypedDict):
