@@ -140,7 +140,13 @@ class _ToXml:
             element.text = value.value if isinstance(value, Enum) else value
         elif isinstance(value, bytes | bytearray):
             element.text = value.decode(errors='ignore')
-        elif isinstance(value, bool | int | float | Enum):
+        elif isinstance(value, Enum):
+            # Serialize enums by their value (matching the str-subclass enum branch
+            # above and Pydantic's `model_dump(mode='json')`), so a plain `Enum`
+            # renders the same whether it is bare or nested in a dict, dataclass or
+            # model, rather than leaking its `ClassName.MEMBER` repr.
+            element.text = str(value.value)
+        elif isinstance(value, bool | int | float):
             element.text = str(value)
         elif isinstance(value, date | time):
             element.text = value.isoformat()

@@ -58,7 +58,7 @@ class ExamplePydanticFields(BaseModel):
         pytest.param(42, snapshot('<examples>42</examples>'), id='int'),
         pytest.param(None, snapshot('<examples>null</examples>'), id='null'),
         # regression test for https://github.com/pydantic/pydantic-ai/pull/4131
-        pytest.param(ExampleEnum.FOO, snapshot('<examples>ExampleEnum.FOO</examples>'), id='enum'),
+        pytest.param(ExampleEnum.FOO, snapshot('<examples>1</examples>'), id='enum'),
         pytest.param(ExampleStrEnum.FOO, snapshot('<examples>foo</examples>'), id='str enum'),
         pytest.param(
             ExampleDataclass(name='John', age=42),
@@ -160,6 +160,24 @@ class ExamplePydanticFields(BaseModel):
 def test_root_tag(input_obj: Any, output: str):
     assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info=False) == output
     assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info='once') == output
+
+
+def test_enum_value_consistent_across_containers():
+    # A plain `Enum` must serialize by its value the same way regardless of the
+    # container it sits in, rather than leaking its `ClassName.MEMBER` repr when
+    # bare or nested in a dict/dataclass.
+    @dataclass
+    class EnumDataclass:
+        color: ExampleEnum
+
+    class EnumModel(BaseModel):
+        color: ExampleEnum
+
+    bare = format_as_xml(ExampleEnum.FOO, root_tag='color')
+    assert bare == snapshot('<color>1</color>')
+    assert format_as_xml({'color': ExampleEnum.FOO}) == snapshot('<color>1</color>')
+    assert format_as_xml(EnumDataclass(color=ExampleEnum.FOO)) == snapshot('<color>1</color>')
+    assert format_as_xml(EnumModel(color=ExampleEnum.FOO)) == snapshot('<color>1</color>')
 
 
 @pytest.mark.parametrize(
