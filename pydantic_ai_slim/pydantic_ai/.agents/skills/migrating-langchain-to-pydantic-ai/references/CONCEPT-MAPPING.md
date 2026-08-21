@@ -116,14 +116,14 @@ Preserve tool name, description, JSON schema, concurrency, idempotency, timeout,
 |---|---|
 | `response_format=Schema` | `output_type=Schema`, but select the output transport explicitly when parity matters |
 | provider strategy | `NativeOutput(Schema)` when native enforcement is required |
-| tool strategy | `ToolOutput(Schema)`; this is the portable default for Pydantic models |
+| tool strategy | `ToolOutput(Schema)` when tool transport is required |
 | manual parser / non-JSON text | `TextOutput(parser)` |
 | dynamic JSON schema | `StructuredDict(schema, name=...)` |
 | retry after invalid response | output validation and `ModelRetry` / configured retries |
 
 Do not include `str` in a union when the run must end with structured output; plain text would be a valid terminal result.
 
-LangChain may auto-select provider-native structured output for a bare schema. A bare Pydantic AI structured `output_type` defaults to tool output. Use `NativeOutput`, `ToolOutput`, `PromptedOutput`, or `TextOutput` deliberately and characterize the chosen provider/model.
+LangChain may auto-select provider-native structured output for a bare schema. A bare Pydantic AI structured `output_type` follows the selected model profile's default, which may be tool, native, or prompted output. Use `NativeOutput`, `ToolOutput`, `PromptedOutput`, or `TextOutput` explicitly when wire behavior matters, and characterize the chosen provider/model.
 
 ## Middleware and lifecycle
 

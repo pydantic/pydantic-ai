@@ -91,7 +91,7 @@ Sync Pydantic AI tools may run in worker threads while async tools run on the ev
 The same schema type does not imply the same wire strategy:
 
 - LangChain may automatically choose `ProviderStrategy` when the selected model supports provider-native structured output, otherwise `ToolStrategy`.
-- Pydantic AI uses tool output for a plain structured `output_type` by default. Select `NativeOutput`, `ToolOutput`, `PromptedOutput`, or `TextOutput` deliberately when wire behavior matters.
+- Pydantic AI resolves a plain structured `output_type` through the selected model profile's default, which may be tool, native, or prompted output. Select `NativeOutput`, `ToolOutput`, `PromptedOutput`, or `TextOutput` explicitly when wire behavior matters.
 - LangChain returns structured output in agent state (commonly `structured_response`); Pydantic AI returns `result.output`. Preserve the application's public result DTO instead of exposing either shape.
 - Pydantic AI unions that include `str` permit plain text to end the run. Exclude it when structured output is mandatory.
 
