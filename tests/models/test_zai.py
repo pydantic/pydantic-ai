@@ -453,3 +453,46 @@ def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, 
         supports_reasoning_effort=True,
     )
     assert transformed == expected
+
+
+def test_zai_provider_model_profile():
+    """The Z.AI provider's `model_profile()` resolves a model name to the right capability flags.
+
+    A unit test (not VCR): referenced by `test_zai_thinking_mode` (line 191) and
+    `test_zai_reasoning_effort_forwarded_when_supported` (line 446) -- those tests pin the
+    request-body *shape* and rely on this test to pin the model-name -> capability mapping.
+    """
+    from pydantic_ai.providers.zai import ZaiProvider
+
+    # Thinking-capable + reasoning-effort-capable: only the glm-5.2 family.
+    glm_5_2 = ZaiProvider.model_profile('glm-5.2')
+    assert glm_5_2 is not None
+    assert glm_5_2['supports_thinking'] is True
+    assert glm_5_2['zai_supports_reasoning_effort'] is True
+
+    # Thinking-capable, no reasoning effort: glm-5.3 (matches 'glm-5' prefix, not 'glm-5.2').
+    glm_5_3 = ZaiProvider.model_profile('glm-5.3')
+    assert glm_5_3 is not None
+    assert glm_5_3['supports_thinking'] is True
+    assert glm_5_3['zai_supports_reasoning_effort'] is False
+
+    # Thinking-capable families: glm-4.7, glm-4.6, glm-4.5 (and vision variants glm-4.6v, glm-4.5v).
+    for model_name in ('glm-4.7', 'glm-4.6', 'glm-4.5', 'glm-4.6v', 'glm-4.5v'):
+        profile = ZaiProvider.model_profile(model_name)
+        assert profile is not None, model_name
+        assert profile['supports_thinking'] is True, model_name
+        assert profile['zai_supports_reasoning_effort'] is False, model_name
+
+    # Non-thinking models: anything that doesn't start with the thinking prefixes.
+    # `ZaiProvider.model_profile` still returns the merged OpenAI default profile, but without
+    # the ZAI-specific `supports_thinking` / `zai_supports_reasoning_effort` keys.
+    for model_name in ('glm-4-32b-0414-128k', 'glm-4-plus', 'glm-4-air', 'glm-3-turbo', 'codegeex-4', 'unknown'):
+        profile = ZaiProvider.model_profile(model_name)
+        assert 'supports_thinking' not in profile, model_name
+        assert 'zai_supports_reasoning_effort' not in profile, model_name
+
+    # Case-insensitive: 'GLM-5.2' resolves the same as 'glm-5.2'.
+    upper = ZaiProvider.model_profile('GLM-5.2')
+    assert upper is not None
+    assert upper['supports_thinking'] is True
+    assert upper['zai_supports_reasoning_effort'] is True
