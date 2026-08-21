@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
@@ -30,7 +28,10 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
 class OpenRouterModelProfile(OpenAIModelProfile, total=False):
@@ -229,7 +230,7 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -239,7 +240,7 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Configure the provider with either an API key or prebuilt client.
 
@@ -252,7 +253,7 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 `OPENROUTER_APP_TITLE` when omitted.
             openai_client: Existing `AsyncOpenAI` client to reuse instead of
                 creating one internally.
-            http_client: Custom `httpx.AsyncClient` to pass into the
+            http_client: Custom `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to pass into the
                 `AsyncOpenAI` constructor when building a client.
 
         Raises:

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from httpx import Timeout
 from typing_extensions import TypedDict
+
+from ._http import legacy_httpx
+
+if TYPE_CHECKING:
+    from httpx import Timeout
+else:
+    # Legacy HTTPX is optional: without it no `Timeout` instance can reach `ModelSettings`, so the
+    # union member collapses onto the numeric one it already allows.
+    Timeout = legacy_httpx.Timeout if legacy_httpx is not None else float
 
 ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
 """The string effort levels for thinking/reasoning configuration."""
@@ -200,6 +208,10 @@ class ModelSettings(TypedDict, total=False):
 
     timeout: int | float | Timeout
     """Override the client-level default timeout for a request, in seconds.
+
+    Numeric seconds work everywhere. A legacy `httpx.Timeout` is also accepted and is converted to an
+    `httpx2.Timeout` on the paths whose SDK expects one. `httpx2.Timeout` is deliberately not part of
+    this contract, because some SDKs behind these settings still reject it.
 
     Supported by:
 

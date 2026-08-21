@@ -233,6 +233,7 @@ async def test_anthropic_cancelled_read_error_is_suppressed():
         _model_name='claude-haiku-4-5',
         _response=_peekable_broken_stream(stream),
         _provider_name='anthropic',
+        _model_id_namespace='anthropic',
         _provider_url='https://api.anthropic.com',
         _enabled_server_tool_names=frozenset(),
     )
@@ -251,6 +252,7 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _model_name='claude-haiku-4-5',
         _response=_peekable_broken_stream(_BrokenClosableStream()),
         _provider_name='anthropic',
+        _model_id_namespace='anthropic',
         _provider_url='https://api.anthropic.com',
         _enabled_server_tool_names=frozenset(),
     )
@@ -3538,6 +3540,48 @@ I should provide practical advice for different methods of crossing a river.\
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model_requests: None):
+    """A thinking part with an empty signature (e.g. left behind by an interrupted stream)
+    must not be replayed as a `thinking` block: the API rejects empty signatures with a 400.
+    It falls back to tagged text instead, like thinking parts from other providers.
+    """
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about crossing the street.')]),
+        ModelResponse(
+            parts=[ThinkingPart(content='I was interrupted mid-thought', signature='', provider_name='anthropic')],
+            provider_name='anthropic',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=message_history)
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Think about crossing the street.', 'type': 'text'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'text': """\
+<thinking>
+I was interrupted mid-thought
+</thinking>\
+""",
+                        'type': 'text',
+                    }
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'Continue.', 'type': 'text'}]},
         ]
     )
 

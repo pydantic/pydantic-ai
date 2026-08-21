@@ -4584,7 +4584,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
             {
                 'type': 'TOOL_CALL_RESULT',
                 'timestamp': IsInt(),
-                'messageId': (result_message_id := IsSameStr()),
+                'messageId': IsStr(),
                 'toolCallId': 'tool_call_2',
                 'content': 'Bye!',
                 'role': 'tool',
@@ -4645,7 +4645,94 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         ]
     )
 
-    assert result_message_id != new_message_id
+    first_response_id = next(
+        event['parentMessageId']
+        for event in events
+        if event['type'] == 'TOOL_CALL_START' and event['toolCallId'] == 'tool_call_1'
+    )
+    result_message_id = next(
+        event['messageId']
+        for event in events
+        if event['type'] == 'TOOL_CALL_RESULT' and event['toolCallId'] == 'tool_call_2'
+    )
+    next_response_id = next(
+        event['parentMessageId']
+        for event in events
+        if event['type'] == 'TOOL_CALL_START' and event['toolCallId'] == 'tool_call_3'
+    )
+    assert first_response_id != next_response_id
+    assert result_message_id != next_response_id
+
+
+async def test_agent_multiple_responses_use_distinct_parent_message_ids() -> None:
+    """Each model response gets a fresh AG-UI parent through the supported `Agent` lifecycle."""
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if len(tool_returns) < 2:
+            call_number = len(tool_returns) + 1
+            yield {
+                0: DeltaToolCall(
+                    name='ping',
+                    json_args='{}',
+                    tool_call_id=f'call-{call_number}',
+                )
+            }
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    events = await run_and_collect_events(
+        agent,
+        create_input(UserMessage(id='msg-1', content='Call twice, then finish')),
+    )
+    identity_events = [
+        {key: event[key] for key in ('type', 'toolCallId', 'parentMessageId', 'messageId') if key in event}
+        for event in events
+        if event['type'] in ('TOOL_CALL_START', 'TOOL_CALL_RESULT', 'TEXT_MESSAGE_START')
+    ]
+    assert identity_events == snapshot(
+        [
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'call-1',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'toolCallId': 'call-1',
+                'messageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'call-2',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'toolCallId': 'call-2',
+                'messageId': IsStr(),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'messageId': IsStr(),
+            },
+        ]
+    )
+    emitted_ids = {
+        'first_response': identity_events[0]['parentMessageId'],
+        'first_result': identity_events[1]['messageId'],
+        'second_response': identity_events[2]['parentMessageId'],
+        'final_response': identity_events[4]['messageId'],
+    }
+    assert len(set(emitted_ids.values())) == 4
 
 
 async def test_timestamps_are_set():

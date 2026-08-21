@@ -7,6 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
+from .. import _utils
 from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
@@ -684,7 +685,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         timeout = tool.timeout if tool.timeout is not None else self.timeout
         if timeout is not None:
             try:
-                with anyio.fail_after(timeout):
+                with anyio.fail_after(timeout), _utils.abandon_threads_on_cancel():
                     return await tool.call_func(tool_args, ctx)
             except TimeoutError:
                 raise ModelRetry(f'Timed out after {timeout} seconds.') from None

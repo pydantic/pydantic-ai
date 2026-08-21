@@ -151,7 +151,7 @@ print(result.output)
 #> {"sum":0}
 ```
 
-Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
+Pydantic AI does not validate tool arguments here; it passes them as keyword arguments.
 
 ## Strict Mode {#strict-mode}
 
@@ -638,7 +638,7 @@ Both settings are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionT
 
 ### Cancelling the Run from a Tool
 
-A tool can abort the entire run by calling [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] -- e.g. when it discovers that further work is pointless, or a stop signal reaches your application while a tool holds the `RunContext`. From outside the run, pass a [`CancellationToken`][pydantic_ai.CancellationToken] to any run method. The run tears down whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] to the caller. Tool calls executing [in parallel](#parallel-tool-calls-concurrency) are cancelled and drained, but any that already completed keep their results in the message history, and a tool call that never produced a result is repaired automatically when that history is reused. Both cancellation surfaces require being in the same process as the run, so they do not cross a [durable execution](durable_execution/overview.md) serialization boundary such as a Temporal activity.
+A tool can abort the entire run by calling [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] -- e.g. when it discovers that further work is pointless, or a stop signal reaches your application while a tool holds the `RunContext`. From outside the run, pass a [`CancellationToken`][pydantic_ai.CancellationToken] to any run method. The run requests cancellation of whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] to the caller. Async tool tasks executing [in parallel](#parallel-tool-calls-concurrency) are cancelled and drained, but Python cannot forcibly stop a synchronous tool's worker thread; cancellation may wait for the worker or let it finish in the background. Either way, its eventual result is discarded while any side effects remain. Tool calls that already completed keep their results in the message history, and a tool call that never produced a result is repaired automatically when that history is reused. Both cancellation surfaces require being in the same process as the run, so they do not cross a [durable execution](durable_execution/overview.md) serialization boundary such as a Temporal activity.
 
 See [Cancelling a Run](agent.md#cancelling-a-run) for the full picture, including cancelling from outside the run and accessing the cancelled run's state.
 
@@ -782,6 +782,9 @@ print(calls)
 You can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering any function tool, and the same barrier is available for [output tools](output.md#tool-output) via [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] (see [Controlling output tool parallelism](output.md#controlling-output-tool-parallelism)). To run an entire run's tools serially regardless of which tools were called, wrap the run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager, or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
+
+!!! note "Sync tools run on a separate thread"
+    Because a sync function runs on a worker thread, a value it sets on a [`contextvars.ContextVar`][contextvars.ContextVar] is not visible outside the function, and asyncio APIs like `asyncio.get_running_loop()` raise an error, since the worker thread has no event loop. Reading context variables still works, but the write limitation also applies to libraries that use them internally, such as tracing and logging integrations. If your tool needs any of these, make it async. The same applies to any sync function the agent runs for you, including [hooks](hooks.md), system prompt functions, output functions, and history processors.
 
 #### Thread executor for long-running servers
 
