@@ -62,6 +62,13 @@ from .cassette_utils import check_cache_prefix_stability
 with suppress(ImportError):
     import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
 
+# `openai` 3.0 imports its vendored aiohttp transport eagerly when aiohttp is installed. That
+# transport reads the aiohttp package metadata from disk, so a first import inside an async test is
+# reported as blocking. Importing it here performs the read before BlockBuster is armed. This stays
+# while the 3.0 import path is supported: https://github.com/pydantic/pydantic-ai/issues/7660.
+with suppress(ImportError):
+    import openai  # pyright: ignore[reportUnusedImport] # noqa: F401
+
 T = TypeVar('T')
 
 __all__ = (
