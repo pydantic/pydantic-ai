@@ -213,7 +213,7 @@ agent = Agent(
 )
 ```
 
-The progress arrives as [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] events, so you need to be [streaming all events](../agent.md#streaming-all-events) — with [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], an `event_stream_handler`, or [`agent.iter()`][pydantic_ai.agent.Agent.iter] — to see them. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]'s `stream_text()` and `stream_output()` yield only the final output, and a non-streaming [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] has no cadence to change, so the setting makes no difference there.
+The progress arrives as [`PartStartEvent`][pydantic_ai.messages.PartStartEvent]s whose `part` is a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], so you need to be [streaming all events](../agent.md#streaming-all-events) — with [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], an `event_stream_handler`, or [`agent.iter()`][pydantic_ai.agent.Agent.iter] — to see them. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]'s `stream_text()` and `stream_output()` yield only the final output, and a non-streaming [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] has no cadence to change, so the setting makes no difference there.
 
 ## Multi-agent models
 
