@@ -887,6 +887,85 @@ async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
     )
 
 
+@pytest.mark.parametrize(
+    ('part', 'deltas', 'expected_part'),
+    [
+        pytest.param(
+            TextPart(content='The'),
+            [TextPartDelta(content_delta=' quick brown fox'), TextPartDelta(content_delta=' jumps over')],
+            TextPart(content='The quick brown fox jumps over'),
+            id='text',
+        ),
+        pytest.param(
+            ThinkingPart(content='Looking'),
+            [ThinkingPartDelta(content_delta=' for an'), ThinkingPartDelta(content_delta=' answer')],
+            ThinkingPart(content='Looking for an answer'),
+            id='thinking',
+        ),
+        pytest.param(
+            ToolCallPart(tool_name='search', args=None, tool_call_id='call_1'),
+            [
+                ToolCallPartDelta(args_delta='{"query":', tool_call_id='call_1'),
+                ToolCallPartDelta(args_delta='"pydantic"}', tool_call_id='call_1'),
+            ],
+            ToolCallPart(tool_name='search', args='{"query":"pydantic"}', tool_call_id='call_1'),
+            id='tool-call',
+        ),
+        pytest.param(
+            NativeToolCallPart(tool_name='code_execution', args=None, tool_call_id='call_2'),
+            [
+                ToolCallPartDelta(args_delta='{"code":', tool_call_id='call_2'),
+                ToolCallPartDelta(args_delta='"print(1)"}', tool_call_id='call_2'),
+            ],
+            NativeToolCallPart(tool_name='code_execution', args='{"code":"print(1)"}', tool_call_id='call_2'),
+            id='native-tool-call',
+        ),
+    ],
+)
+async def test_cancelled_part_end_contains_accumulated_part(
+    part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart,
+    deltas: list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta],
+    expected_part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart,
+):
+    class PartEndEventStream(UIEventStream[None, PartEndEvent, None, str]):
+        def encode_event(self, event: PartEndEvent) -> str:
+            return repr(event)
+
+        async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[PartEndEvent]:
+            yield event
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        for delta in deltas:
+            yield PartDeltaEvent(index=0, delta=delta)
+        raise RunCancelled('The agent run was cancelled.')
+
+    events = [event async for event in PartEndEventStream(run_input=None).transform_stream(event_generator())]
+
+    assert events == [PartEndEvent(index=0, part=expected_part)]
+
+
+async def test_part_end_contains_delta_when_handler_fails_after_yield():
+    class FailingEventStream(UIEventStream[None, str | PartEndEvent, None, str]):
+        def encode_event(self, event: str | PartEndEvent) -> str:
+            return repr(event)
+
+        async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[str | PartEndEvent]:
+            yield delta.content_delta
+            raise RuntimeError('handler failed')
+
+        async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[str | PartEndEvent]:
+            yield event
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+
+    events = [event async for event in FailingEventStream().transform_stream(event_generator())]
+
+    assert events == [' world', PartEndEvent(index=0, part=TextPart(content='Hello world'))]
+
+
 async def test_run_stream_on_cancel():
     agent = Agent(model=TestModel())
 

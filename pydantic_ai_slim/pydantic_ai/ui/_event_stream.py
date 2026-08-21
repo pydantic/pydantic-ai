@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from pydantic_ai import _utils
 
-from ..exceptions import RunCancelled
+from ..exceptions import RunCancelled, UnexpectedModelBehavior
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
@@ -136,6 +136,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     """
     _open_part_index: int = 0
     """The index of the part tracked by `_open_part`, used to reconstruct its `PartEndEvent` on error."""
+    _open_part_deltas: list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta] = field(
+        default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
+    )
+    """Deltas used to bring `_open_part` up to date only if a synthetic end event is needed."""
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -221,10 +225,21 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
+                elif isinstance(event, PartDeltaEvent) and event.index == self._open_part_index:
+                    match event.delta, self._open_part:
+                        case TextPartDelta() as delta, TextPart():
+                            self._open_part_deltas.append(delta)
+                        case ThinkingPartDelta() as delta, ThinkingPart():
+                            self._open_part_deltas.append(delta)
+                        case ToolCallPartDelta() as delta, ToolCallPart() | NativeToolCallPart():
+                            self._open_part_deltas.append(delta)
+                        case _:
+                            pass
                 elif isinstance(event, PartEndEvent):
                     # Only one part is open at a time, so this end is for `_open_part` (or it's already
                     # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
                     self._open_part = None
+                    self._open_part_deltas.clear()
                 elif isinstance(event, ToolCallEvent):
                     tool_call_id = event.part.tool_call_id
                     kind: Literal['function', 'output'] = (
@@ -264,13 +279,29 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 ):
                     self._open_part = event.part
                     self._open_part_index = event.index
+                    self._open_part_deltas.clear()
         except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
             # Close the open message part before emitting the error, so a client that aborts at the
             # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
             # first: it's a response-side event, whereas the tool-call cleanup below turns to the
             # request side, and everything after the error chunk is dropped.
             if (part := self._open_part) is not None:
+                for delta in self._open_part_deltas:
+                    match delta, part:
+                        case TextPartDelta() as text_delta, TextPart():
+                            part = text_delta.apply(part)
+                        case ThinkingPartDelta() as thinking_delta, ThinkingPart():
+                            part = thinking_delta.apply(part)
+                        case ToolCallPartDelta() as tool_delta, ToolCallPart() | NativeToolCallPart():
+                            # Adapters can forward mixed dict/JSON argument deltas that `apply()` rejects.
+                            try:
+                                part = tool_delta.apply(part)
+                            except UnexpectedModelBehavior:
+                                pass
+                        case _:
+                            pass
                 self._open_part = None
+                self._open_part_deltas.clear()
                 async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
                     yield e
 
