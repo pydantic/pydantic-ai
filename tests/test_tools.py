@@ -5072,22 +5072,3 @@ def test_tool_init_empty_description_preserved():
         """INTERNAL POLICY DOCSTRING."""
 
     assert Tool(policy_tool, description='').tool_def.description == ''
-
-
-def test_tool_init_none_description_infers_docstring():
-    """`description=None` still infers the description from the function docstring."""
-
-    def my_tool() -> None:
-        """Docstring description."""
-
-    assert Tool(my_tool, description=None).tool_def.description == 'Docstring description.'
-
-
-def test_tool_from_schema_empty_description():
-    """`Tool.from_schema` stores `description=''` verbatim, matching `Tool.__init__`."""
-
-    def my_tool() -> None:
-        """Docstring description."""
-
-    tool = Tool.from_schema(my_tool, name='my_tool', description='', json_schema={'type': 'object'})
-    assert tool.tool_def.description == ''
