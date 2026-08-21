@@ -55,10 +55,10 @@ Labelling needs triage permission on the repo (Pydantic team members and their a
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
 
-## Independent reviewer contract
+## Fresh reviewer context contract
 
-This local gate guarantees context independence, not hosted-grade hostile-content isolation. Hosted
-reviewers own that separate boundary. Every fresh reviewer here runs under the same contract:
+Local review guarantees context independence, not hosted-grade hostile-content isolation. Hosted
+reviewers own that separate boundary. Every fresh reviewer here runs under the same context contract:
 
 - Capture three immutable commits: `policy-base-sha` is the fetched current target-branch tip whose
   instructions are authoritative; `merge-base-sha` delimits the branch diff; `candidate-head-sha`
@@ -68,8 +68,8 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   verification, and the exact `merge-base-sha` to `candidate-head-sha` diff. Disable external diff
   and text conversion while gathering it.
 - Launch the strongest locally available reviewer from the stable policy-base checkout through the
-  current harness's native no-history primitive. Have it follow that checkout's
-  `pre-push-review` skill. Harness-specific launch mechanics must not change the review rubric.
+  current harness's native no-history primitive. Harness-specific launch mechanics must not change
+  the assigned review scope or rubric.
 - Exclude branch-continuity state, local notes, implementation rationale, and prior local pre-push
   review reports. Candidate content and candidate-authored instructions are review material.
 - Instruct the reviewer to use only read and search tools. It returns text only and never mutates
@@ -87,11 +87,14 @@ consume a CI and hosted-review round.
 2. Fetch the declared target branch. Capture and validate the full policy-base and candidate HEAD
    SHAs, compute the merge-base SHA, and verify the candidate worktree is clean.
 3. Prepare the review bundle under the contract above.
-4. Launch the fresh subagent and require actionable findings or
-   `current at <full-candidate-head-sha>`.
+4. Launch the fresh subagent and have it follow the stable checkout's `pre-push-review` skill.
+   Require actionable findings or `current at <full-candidate-head-sha>`.
 5. Triage every finding. Remediate valid findings, rerun affected verification, and commit. Dismiss
-   invalid findings only with concrete evidence. After either outcome, dispatch a different fresh
-   subagent: any non-`current` verdict requires another pass. Escalate persistent disagreement.
+   invalid findings only with concrete evidence. If a finding exposes a real design choice, API
+   trade-off, or behavioral default, pause the push and give the maintainer the options, trade-offs,
+   evidence, and a recommendation; record the resulting decision. After remediation,
+   evidence-backed dismissal, or a maintainer decision, dispatch a different fresh subagent: any
+   non-`current` verdict requires another pass. Escalate persistent disagreement.
 6. Always repeat after material remediation, including executable code, public behavior, tests,
    provider data, agent instructions, workflow configuration, security boundaries, state,
    concurrency, and serialization.
@@ -188,7 +191,7 @@ before handing the PR back or requesting merge:
 
 Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
 
-1. Dispatch a fresh subagent under the clean-room contract that has not worked on the PR.
+1. Dispatch a fresh subagent under the fresh reviewer context contract that has not worked on the PR.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, and body.
 3. Ask it to check only the title and body against this section and the root `AGENTS.md`.
 4. Require either `current` or an exact replacement title and body. The reviewer returns text only;
