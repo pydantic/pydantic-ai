@@ -6,7 +6,7 @@ import uuid
 from collections import defaultdict
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from weakref import WeakKeyDictionary
+from weakref import ref
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
@@ -127,10 +127,15 @@ class _ContextInMemorySpanExporter(SpanExporter):
 
 
 # Caching the exporter per provider keeps `context_subtree()` from attaching another span processor on every
-# call: a long-lived provider would otherwise accumulate one per evaluation. Keyed by the provider object so each
-# entry's lifetime is tied to its provider -- an `id()` key can be recycled, letting an entry outlive the provider
-# it belongs to and alias a later provider allocated at the same address.
-_context_in_memory_providers: WeakKeyDictionary[TracerProvider, _ContextInMemorySpanExporter] = WeakKeyDictionary()
+# call: a long-lived provider would otherwise accumulate one per evaluation. Each entry pairs the exporter with a
+# weak reference to the provider it is attached to, keyed by `id()` and matched by identity. Identity is what
+# matters here, not equality: a provider need not be hashable (logfire's own `ProxyTracerProvider` is a plain
+# dataclass, so it is not), and two distinct providers that compare equal each need their own exporter, since an
+# exporter only ever receives spans from the provider it was attached to. The weak reference is what makes an
+# `id()` key safe -- `id()`s are recycled, so an entry outliving its provider must be rejected rather than handed
+# to whatever was later allocated at the same address.
+_context_in_memory_providers: dict[int, tuple[ref[TracerProvider], _ContextInMemorySpanExporter]] = {}
+_context_in_memory_providers_lock = threading.Lock()
 
 
 def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecordingError:
@@ -147,7 +152,7 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
             return SpanTreeRecordingError(
                 f'To make use of the `span_tree` in an evaluator, you need to call `{required_call}` before running an'
                 f' evaluation.'
-                f' For more information, refer to the documentation at https://ai.pydantic.dev/evals/#opentelemetry-integration.'
+                f' For more information, refer to the documentation at https://ai.pydantic.dev/evals/evaluators/span-based.'
             )
         else:
             # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
@@ -164,23 +169,32 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
     else:
         cache_key = tracer_provider
 
-    # A provider that is unhashable or cannot be weakly referenced cannot key the cache. That is not fatal:
-    # recording still works, it just attaches a fresh exporter per call instead of reusing one.
-    try:
-        cached_exporter = _context_in_memory_providers.get(cache_key)
-    except TypeError:
-        cached_exporter = None
+    # Attaching the processor is inside the lock, not just the cache write: two threads racing here would
+    # otherwise each attach one, and only the winner's exporter would be reachable through the cache. The
+    # loser's would stay attached to the provider, collecting spans under every context id that nothing ever
+    # clears. Locked once per `context_subtree()` rather than per span, so a plain uncontended acquire is
+    # cheap enough not to need double-checked locking.
+    with _context_in_memory_providers_lock:
+        if (cached := _context_in_memory_providers.get(id(cache_key))) is not None:
+            cached_provider, cached_exporter = cached
+            # A provider keeps its identity across `shutdown()`, which stops the exporter attached to it, and
+            # a stopped exporter silently drops every span it is handed. The dead processor stays attached, so
+            # a provider shut down repeatedly without being replaced accumulates one per shutdown -- bounded
+            # in practice because `logfire.configure()` allocates a new provider each time.
+            if cached_provider() is cache_key and not cached_exporter._stopped:  # pyright: ignore[reportPrivateUsage]
+                return cached_exporter
 
-    # A provider keeps its identity across `shutdown()`, which stops the exporter attached to it. A stopped
-    # exporter silently drops every span it is handed, so it has to be replaced rather than reused. The dead
-    # processor stays attached, so a provider shut down repeatedly without being replaced accumulates one per
-    # shutdown -- bounded in practice because `logfire.configure()` allocates a new provider each time.
-    if cached_exporter is not None and not cached_exporter._stopped:  # pyright: ignore[reportPrivateUsage]
-        return cached_exporter
-
-    exporter = _ContextInMemorySpanExporter()
-    with suppress(TypeError):
-        _context_in_memory_providers[cache_key] = exporter
-    processor = SimpleSpanProcessor(exporter)
-    tracer_provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-    return exporter
+        exporter = _ContextInMemorySpanExporter()
+        # A provider that cannot be weakly referenced cannot be cached, because the entry could never be
+        # invalidated. Recording still works; it just attaches a fresh exporter on the next call.
+        with suppress(TypeError):
+            provider_id = id(cache_key)
+            # The eviction callback deliberately does not take the lock: it can run at any point, including
+            # on a thread that already holds it. `dict.pop` needs no lock of its own.
+            _context_in_memory_providers[provider_id] = (
+                ref(cache_key, lambda _: _context_in_memory_providers.pop(provider_id, None)),
+                exporter,
+            )
+        processor = SimpleSpanProcessor(exporter)
+        tracer_provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        return exporter

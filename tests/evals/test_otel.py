@@ -16,7 +16,6 @@ with try_import() as imports_successful:
 
 with try_import() as logfire_import_successful:
     import logfire
-    from logfire._internal.tracer import ProxyTracerProvider as LogfireProxyTracerProvider
     from logfire.testing import CaptureLogfire
 
 pytestmark = [
@@ -969,17 +968,78 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'To make use of the `span_tree` in an evaluator, you need to call '
         '`logfire.configure(...)` before running an evaluation. For more information, '
         'refer to the documentation at '
-        'https://ai.pydantic.dev/evals/#opentelemetry-integration.'
+        'https://ai.pydantic.dev/evals/evaluators/span-based.'
     )
+
+
+async def test_context_subtree_records_after_tracer_provider_shutdown():
+    """A shut-down exporter must not be served from the cache.
+
+    `TracerProvider.shutdown()` stops the exporter attached to it, but the provider keeps its
+    identity, so the cache kept handing back the stopped exporter -- which drops every span it is
+    given -- and `context_subtree()` silently yielded an empty tree from then on.
+    """
+    with context_subtree() as before_shutdown:
+        with logfire.span('before_shutdown'):
+            pass
+    assert isinstance(before_shutdown, SpanTree)
+    assert [node.name for node in before_shutdown.roots] == ['before_shutdown']
+
+    logfire.shutdown(flush=False)
+
+    with context_subtree() as after_shutdown:
+        with logfire.span('after_shutdown'):
+            pass
+    assert isinstance(after_shutdown, SpanTree)
+    assert [node.name for node in after_shutdown.roots] == ['after_shutdown']
+
+
+async def test_context_span_exporter_not_shared_between_equal_providers(mocker: MockerFixture):
+    """Two distinct providers that compare equal each get their own exporter.
+
+    An exporter only receives spans from the provider its processor was attached to, so sharing one
+    between equal-but-distinct providers would leave the second recording nothing. The cache is
+    matched by identity for that reason, and because a provider need not be hashable at all.
+
+    This can't be a VCR test: the cache isn't observable through the public API, and no provider
+    HTTP traffic is involved.
+    """
+
+    class ValueEqualTracerProvider:
+        def __init__(self) -> None:
+            self.processors: list[object] = []
+
+        def add_span_processor(self, span_processor: object) -> None:
+            self.processors.append(span_processor)
+
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, ValueEqualTracerProvider)
+
+        def __hash__(self) -> int:
+            return 0
+
+    first, second = ValueEqualTracerProvider(), ValueEqualTracerProvider()
+    assert first is not second and first == second
+
+    get_tracer_provider = mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=first
+    )
+    with context_subtree():
+        pass
+    get_tracer_provider.return_value = second
+    with context_subtree():
+        pass
+
+    assert len(first.processors) == 1
+    assert len(second.processors) == 1
 
 
 async def test_context_span_exporter_cache_entry_dies_with_its_provider(mocker: MockerFixture):
     """A plain `opentelemetry-sdk` provider records, and its cache entry is released with it.
 
-    Weak keying is the half of the fix that stops an entry outliving its provider: a plain `dict`
-    would satisfy every other assertion about the cache while pinning each provider alive for the
-    life of the process. This also covers the non-logfire keying path, which every other test in
-    this file reaches through logfire's proxy instead.
+    The cache is keyed by `id()`, and `id()`s are recycled, so an entry that outlived its provider
+    could be handed to whatever was later allocated at the same address. This also covers the
+    non-logfire keying path, which every other test in this file reaches through logfire's proxy.
 
     This can't be a VCR test: the cache isn't observable through the public API, and no provider
     HTTP traffic is involved.
@@ -1006,24 +1066,26 @@ async def test_context_span_exporter_cache_entry_dies_with_its_provider(mocker: 
             pass
     assert isinstance(tree, SpanTree)
     assert [node.name for node in tree.roots] == ['plain_otel']
-    assert holder[0] in _context_in_memory_providers
+
+    provider_id = id(holder[0])
+    assert provider_id in _context_in_memory_providers
 
     provider_ref = weakref.ref(holder[0])
     holder.clear()
     gc.collect()
     assert provider_ref() is None
+    assert provider_id not in _context_in_memory_providers
 
 
-async def test_context_subtree_provider_that_cannot_key_the_exporter_cache(mocker: MockerFixture):
-    """A provider that cannot be a cache key still records; it just doesn't get a cached exporter.
+async def test_context_subtree_provider_that_cannot_be_cached(mocker: MockerFixture):
+    """A provider that can't be weakly referenced still records, it just isn't cached.
 
-    The cache is keyed by the provider object, so a provider that can't be weakly referenced (as
-    here) or can't be hashed (any `@dataclass` provider, which is what logfire's own proxy is) would
-    otherwise raise `TypeError` out of `context_subtree()` and abort the evaluation.
+    Its cache entry could never be invalidated, so no entry is made. Failing closed instead would
+    raise `TypeError` out of `context_subtree()` and abort the evaluation.
     """
     from opentelemetry.sdk.trace import SpanProcessor
 
-    class UncacheableTracerProvider:
+    class UnreferenceableTracerProvider:
         __slots__ = ('processors',)
 
         def __init__(self) -> None:
@@ -1032,7 +1094,7 @@ async def test_context_subtree_provider_that_cannot_key_the_exporter_cache(mocke
         def add_span_processor(self, span_processor: SpanProcessor) -> None:
             self.processors.append(span_processor)
 
-    tracer_provider = UncacheableTracerProvider()
+    tracer_provider = UnreferenceableTracerProvider()
     mocker.patch(
         'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=tracer_provider
     )
@@ -1049,56 +1111,57 @@ async def test_context_subtree_provider_that_cannot_key_the_exporter_cache(mocke
     assert len(tracer_provider.processors) == 2
 
 
-async def test_context_subtree_records_after_tracer_provider_shutdown():
-    """A shut-down exporter must not be served from the cache.
+async def test_context_span_exporter_attached_once_under_concurrency(mocker: MockerFixture):
+    """Concurrent first calls for one provider attach exactly one span processor.
 
-    `TracerProvider.shutdown()` stops the exporter attached to it, but the provider keeps its
-    identity, so the cache kept handing back the stopped exporter -- which drops every span it is
-    given -- and `context_subtree()` silently yielded an empty tree from then on.
+    Unsynchronised, each racing caller attaches its own processor while only the last exporter stays
+    reachable through the cache; the rest stay attached, collecting spans that nothing ever clears.
+    The window between the cache miss and the attach is a few bytecodes wide, so it is held open
+    here with a slow exporter constructor -- without the lock this attaches one processor per thread.
     """
-    with context_subtree() as before_shutdown:
-        with logfire.span('before_shutdown'):
-            pass
-    assert isinstance(before_shutdown, SpanTree)
-    assert [node.name for node in before_shutdown.roots] == ['before_shutdown']
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
 
-    logfire.shutdown(flush=False)
-
-    with context_subtree() as after_shutdown:
-        with logfire.span('after_shutdown'):
-            pass
-    assert isinstance(after_shutdown, SpanTree)
-    assert [node.name for node in after_shutdown.roots] == ['after_shutdown']
-
-
-async def test_context_span_exporter_cached_by_provider_object():
-    """The exporter cache is keyed by the provider object rather than its `id()`.
-
-    Keying by `id()` let an entry outlive the provider it belonged to, so a later provider
-    allocated at the same address inherited an exporter attached to the dead one and recorded
-    nothing. Keying by the object ties each entry's lifetime to its provider instead.
-
-    This can't be a VCR test: the two keying schemes are indistinguishable through the public API,
-    and no provider HTTP traffic is involved.
-    """
-    from opentelemetry.trace import get_tracer_provider
+    from opentelemetry.sdk.trace import SpanProcessor
 
     from pydantic_evals.otel._context_in_memory_span_exporter import (
-        _context_in_memory_providers,  # pyright: ignore[reportPrivateUsage]
+        _ContextInMemorySpanExporter,  # pyright: ignore[reportPrivateUsage]
     )
 
-    tracer_provider = get_tracer_provider()
-    assert isinstance(tracer_provider, LogfireProxyTracerProvider)
-    provider = tracer_provider.provider
+    class SlowToBuildExporter(_ContextInMemorySpanExporter):
+        def __init__(self) -> None:
+            time.sleep(0.05)
+            super().__init__()
 
-    with context_subtree():
-        pass
-    assert provider in _context_in_memory_providers
+    class RecordingTracerProvider:
+        def __init__(self) -> None:
+            self.processors: list[SpanProcessor] = []
 
-    exporter = _context_in_memory_providers[provider]
-    with context_subtree():
-        pass
-    assert _context_in_memory_providers[provider] is exporter
+        def add_span_processor(self, span_processor: SpanProcessor) -> None:
+            self.processors.append(span_processor)
+
+    tracer_provider = RecordingTracerProvider()
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=tracer_provider
+    )
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter._ContextInMemorySpanExporter', SlowToBuildExporter
+    )
+
+    workers = 4
+    barrier = Barrier(workers)
+
+    def enter_context_subtree() -> None:
+        barrier.wait()
+        with context_subtree():
+            pass
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for future in [executor.submit(enter_context_subtree) for _ in range(workers)]:
+            future.result()
+
+    assert len(tracer_provider.processors) == 1
 
 
 async def test_span_node_status_captured():
