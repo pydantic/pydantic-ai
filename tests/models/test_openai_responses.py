@@ -1761,6 +1761,110 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     )
 
 
+async def test_openai_include_raw_annotations_streaming_model_annotation(allow_model_requests: None):
+    """A streamed annotation that arrives as an SDK model, not a dict, still lands as the wire dict.
+
+    `openai` 3.1 retyped `ResponseOutputTextAnnotationAddedEvent.annotation` from `object` to a model
+    union, and the models it names are distinct classes from the identically shaped ones
+    `ResponseOutputText.annotations` uses — so an annotation model reaches us that the shared annotations
+    `TypeAdapter` cannot serialize. `model_construct` is what lets this pin the model-valued shape on
+    either side of that retype; before it, the same event carried a plain dict, as the VCR test above
+    still covers.
+    """
+    from openai.types import responses as resp
+    from openai.types.responses.response_output_text import AnnotationURLCitation
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Mount Columbia is the tallest.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseOutputTextAnnotationAddedEvent.model_construct(
+            annotation=AnnotationURLCitation(
+                end_index=30,
+                start_index=0,
+                title='Mount Columbia',
+                type='url_citation',
+                url='https://example.com/mount-columbia',
+            ),
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Mount Columbia is the tallest.',
+            type='response.output_text.done',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=5,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+
+    async with agent.run_stream_events('What is the tallest mountain in Alberta?', model_settings=settings) as events:
+        annotated = [
+            event.delta.provider_details['annotations']
+            for event in [e async for e in events]
+            if isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, TextPartDelta)
+            and event.delta.provider_details
+            and 'annotations' in event.delta.provider_details
+        ]
+
+    assert annotated == snapshot(
+        [
+            [
+                {
+                    'end_index': 30,
+                    'start_index': 0,
+                    'title': 'Mount Columbia',
+                    'type': 'url_citation',
+                    'url': 'https://example.com/mount-columbia',
+                }
+            ]
+        ]
+    )
+
+
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
     """Set temperature to -1 to trigger an error, given only values between 0 and 1 are allowed."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
