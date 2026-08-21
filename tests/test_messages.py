@@ -19,15 +19,19 @@ from pydantic_ai import (
     BinaryAudio,
     BinaryContent,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
     DeferredToolRequests,
     DeferredToolRequestsEvent,
     DeferredToolResults,
     DeferredToolResultsEvent,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -43,6 +47,7 @@ from pydantic_ai import (
     SpeechPartDelta,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
@@ -55,6 +60,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
@@ -701,6 +707,83 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert isinstance(loaded, ModelResponse)
     assert loaded.usage == usage
     assert loaded.usage.__dict__['future_tokens'] == 42
+
+
+def test_citation_message_history_round_trip():
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Paris is the capital of France. [1]',
+                    citations=[
+                        Citation(
+                            sources=[
+                                WebCitationSource(
+                                    url='https://example.com/paris',
+                                    title='Paris',
+                                )
+                            ],
+                            anchor=MarkerCitationAnchor(start=32, end=35),
+                        ),
+                        Citation(sources=[DocumentCitationSource(file_id='file-123', title='report.pdf')]),
+                    ],
+                )
+            ]
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages)
+
+    assert ModelMessagesTypeAdapter.validate_python(serialized) == messages
+    assert serialized[0]['parts'][0]['citations'] == snapshot(
+        [
+            {
+                'sources': [
+                    {
+                        'kind': 'web',
+                        'url': 'https://example.com/paris',
+                        'title': 'Paris',
+                        'provider_details': None,
+                    }
+                ],
+                'anchor': {'start': 32, 'end': 35, 'kind': 'marker'},
+                'provider_details': None,
+            },
+            {
+                'sources': [
+                    {
+                        'kind': 'document',
+                        'file_id': 'file-123',
+                        'title': 'report.pdf',
+                        'provider_details': None,
+                    }
+                ],
+                'anchor': None,
+                'provider_details': None,
+            },
+        ]
+    )
+
+
+def test_text_part_delta_appends_citations():
+    citation = Citation(sources=[DocumentCitationSource(file_id='file-123', title='report.pdf')])
+
+    part = TextPartDelta(content_delta='', citations_delta=[citation]).apply(TextPart('Answer'))
+
+    assert part == TextPart('Answer', citations=[citation])
+
+
+def test_citation_invariants():
+    with pytest.raises(ValueError, match='0 <= start < end'):
+        ContentCitationAnchor(start=-1, end=0)
+    with pytest.raises(ValueError, match='0 <= start < end'):
+        MarkerCitationAnchor(start=2, end=1)
+    with pytest.raises(ValueError, match='0 <= start < end'):
+        ContentCitationAnchor(start=1, end=1)
+    with pytest.raises(ValueError, match='at least one source'):
+        Citation(sources=[])
+    with pytest.raises(ValueError, match='at least one source field'):
+        DocumentCitationSource()
 
 
 @pytest.mark.anyio

@@ -1887,6 +1887,130 @@ class ModelRequest:
 
 
 @dataclass(repr=False)
+class WebCitationSource:
+    """A web source referenced by a model-generated citation."""
+
+    url: str
+    """The source URL."""
+
+    _: KW_ONLY
+
+    kind: Literal['web'] = 'web'
+    """Source type identifier, used as a discriminator for deserialization."""
+
+    title: str | None = None
+    """The source title, if available."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional source data that cannot be mapped to standard fields."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class DocumentCitationSource:
+    """A document source referenced by a model-generated citation."""
+
+    _: KW_ONLY
+
+    kind: Literal['document'] = 'document'
+    """Source type identifier, used as a discriminator for deserialization."""
+
+    file_id: str | None = None
+    """The provider-defined file identifier, if available."""
+
+    title: str | None = None
+    """The document title or filename, if available."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional source data that cannot be mapped to standard fields."""
+
+    def __post_init__(self) -> None:
+        if not any((self.file_id, self.title, self.provider_details)):
+            raise ValueError('A document citation source must have at least one source field')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CitationSource: TypeAlias = Annotated[WebCitationSource | DocumentCitationSource, pydantic.Field(discriminator='kind')]
+"""A source referenced by a model-generated citation."""
+
+
+def _validate_citation_anchor(start: int, end: int) -> None:
+    if start < 0 or end <= start:
+        raise ValueError('Citation anchor must satisfy 0 <= start < end')
+
+
+@dataclass(repr=False, kw_only=True)
+class ContentCitationAnchor:
+    """A supported content range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
+
+    start: int
+    """The zero-based start character index, inclusive."""
+
+    end: int
+    """The zero-based end character index, exclusive."""
+
+    kind: Literal['content'] = 'content'
+    """Anchor type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        _validate_citation_anchor(self.start, self.end)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class MarkerCitationAnchor:
+    """A rendered citation marker range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
+
+    start: int
+    """The zero-based start character index, inclusive."""
+
+    end: int
+    """The zero-based end character index, exclusive."""
+
+    kind: Literal['marker'] = 'marker'
+    """Anchor type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        _validate_citation_anchor(self.start, self.end)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CitationAnchor: TypeAlias = Annotated[
+    ContentCitationAnchor | MarkerCitationAnchor, pydantic.Field(discriminator='kind')
+]
+"""A content or citation-marker range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
+
+
+@dataclass(repr=False)
+class Citation:
+    """A citation relating generated text to one or more sources."""
+
+    sources: list[CitationSource]
+    """The sources supporting the generated text."""
+
+    _: KW_ONLY
+
+    anchor: CitationAnchor | None = None
+    """The associated range in the containing text part.
+
+    `None` means the citation is associated with the text part but no normalized character range is available.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional citation data that cannot be mapped to standard fields."""
+
+    def __post_init__(self) -> None:
+        if not self.sources:
+            raise ValueError('A citation must have at least one source')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class TextPart:
     """A plain text response from a model."""
 
@@ -1913,6 +2037,9 @@ class TextPart:
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
+
+    citations: list[Citation] | None = None
+    """Citations associated with this text part, if any."""
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -3422,6 +3549,9 @@ class TextPartDelta:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    citations_delta: list[Citation] | None = None
+    """Citations to append to the existing text part."""
+
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
 
@@ -3444,6 +3574,7 @@ class TextPartDelta:
             content=part.content + self.content_delta,
             provider_name=self.provider_name or part.provider_name,
             provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
+            citations=[*(part.citations or []), *(self.citations_delta or [])] or None,
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

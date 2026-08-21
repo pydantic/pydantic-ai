@@ -1135,6 +1135,83 @@ async def main():
 asyncio.run(main())
 ```
 
+## Citations
+
+Pydantic AI normalizes web-search citations from OpenAI, Anthropic, and Google, plus file-search citations from OpenAI
+and Google. They are available on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations] without changing the
+model's text.
+
+```python {test="skip"}
+from pydantic_ai import Agent, Citation, ContentCitationAnchor, MarkerCitationAnchor, TextPart, WebCitationSource
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import WebSearchTool
+
+agent = Agent('openai-responses:gpt-5.2', capabilities=[NativeTool(WebSearchTool())])
+result = agent.run_sync('What is the tallest mountain in Alberta?')
+
+for message in result.all_messages():
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            for citation in part.citations or []:
+                anchor = citation.anchor
+                if isinstance(anchor, ContentCitationAnchor):
+                    location = f'supported text: {part.content[anchor.start : anchor.end]!r}'
+                elif isinstance(anchor, MarkerCitationAnchor):
+                    location = f'citation marker: {part.content[anchor.start : anchor.end]!r}'
+                else:
+                    location = 'the text part as a whole'
+
+                for source in citation.sources:
+                    if isinstance(source, WebCitationSource):
+                        print(location, source.title, source.url)
+```
+
+A citation can reference one or more web or document sources. Its optional
+[`anchor`][pydantic_ai.messages.CitationAnchor] uses Python character offsets into the containing text:
+`part.content[anchor.start:anchor.end]`. A
+[`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor] identifies supported text, while a
+[`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] identifies a citation marker already present in the
+model output. An absent anchor means the provider did not supply a text range that Pydantic AI could safely normalize.
+
+Google grounding can produce content anchors, including citations where several sources jointly support one span.
+OpenAI web-search citations can produce marker anchors, while OpenAI file citations and Anthropic web-search citations
+may be unanchored. Consumers should therefore handle all three cases rather than assuming every source identifies a
+specific assertion.
+
+For example, the normalized provider results can have these shapes:
+
+```python {test="skip"}
+# Google: both sources support the selected assertion.
+TextPart(
+    'Pydantic validates data.',
+    citations=[
+        Citation(
+            sources=[WebCitationSource('https://a.example'), WebCitationSource('https://b.example')],
+            anchor=ContentCitationAnchor(start=0, end=24),
+        )
+    ],
+)
+
+# OpenAI: the selected text is the rendered citation marker, not the supported assertion.
+TextPart(
+    'Pydantic validates data. [1]',
+    citations=[
+        Citation(
+            sources=[WebCitationSource('https://example.com')],
+            anchor=MarkerCitationAnchor(start=25, end=28),
+        )
+    ],
+)
+
+# Anthropic: the source qualifies this text part, but no character range was supplied.
+TextPart(
+    'Pydantic validates data.',
+    citations=[Citation(sources=[WebCitationSource('https://example.com')])],
+)
+```
+
+Treat citation URLs and titles as untrusted data when rendering them.
+
 ## API Reference
 
 For complete API documentation, see the [API Reference](api/native_tools.md).
