@@ -22943,6 +22943,35 @@ def test_deferred_tool_requests_build_results_approve_all():
     assert isinstance(results.approvals['approval_3'], ToolApproved)
 
 
+def test_deferred_tool_requests_build_results_metadata_copied():
+    """build_results() copies caller metadata so later caller-side mutations don't change the results."""
+    caller_metadata = {'call_1': {'scope': 'before'}}
+    requests = DeferredToolRequests(
+        calls=[ToolCallPart('b', {}, tool_call_id='call_1')],
+    )
+
+    results = requests.build_results(calls={'call_1': 'result'}, metadata=caller_metadata)
+
+    caller_metadata['call_1']['scope'] = 'after'
+
+    assert results.metadata == {'call_1': {'scope': 'before'}}
+
+
+def test_deferred_tool_requests_remaining_metadata_copied():
+    """remaining() copies per-call metadata so later mutations of the original requests don't change it."""
+    requests = DeferredToolRequests(
+        calls=[ToolCallPart('a', {}, tool_call_id='call_1'), ToolCallPart('b', {}, tool_call_id='call_2')],
+        metadata={'call_1': {'scope': 'one'}, 'call_2': {'scope': 'two'}},
+    )
+
+    remaining = requests.remaining(DeferredToolResults(calls={'call_1': 'result'}))
+    assert remaining is not None
+
+    requests.metadata['call_2']['scope'] = 'mutated'
+
+    assert remaining.metadata == {'call_2': {'scope': 'two'}}
+
+
 async def test_deferred_tool_handler_wrapper_capability():
     """HandleDeferredToolCalls works through WrapperCapability delegation."""
 

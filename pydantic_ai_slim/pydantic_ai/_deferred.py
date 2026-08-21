@@ -39,7 +39,7 @@ class DeferredToolRequests:
     approvals: list[ToolCallPart] = field(default_factory=list[ToolCallPart])
     """Tool calls that require human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
-    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
+    """Metadata for deferred tool calls, keyed by `tool_call_id`. Per-call mappings are copied by `remaining()`."""
 
     def build_results(
         self,
@@ -66,6 +66,7 @@ class DeferredToolRequests:
         """
         approvals = dict(approvals) if approvals else {}
         calls = dict(calls) if calls else {}
+        metadata = {k: dict(v) for k, v in metadata.items()} if metadata else {}
 
         approval_ids = {c.tool_call_id for c in self.approvals}
         call_ids = {c.tool_call_id for c in self.calls}
@@ -83,7 +84,7 @@ class DeferredToolRequests:
             for tool_call_id in approval_ids - set(approvals):
                 approvals[tool_call_id] = ToolApproved()
 
-        return DeferredToolResults(approvals=approvals, calls=calls, metadata=metadata or {})
+        return DeferredToolResults(approvals=approvals, calls=calls, metadata=metadata)
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
@@ -91,7 +92,7 @@ class DeferredToolRequests:
         remaining = DeferredToolRequests(
             calls=[c for c in self.calls if c.tool_call_id not in resolved_ids],
             approvals=[c for c in self.approvals if c.tool_call_id not in resolved_ids],
-            metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
+            metadata={k: dict(v) for k, v in self.metadata.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
 
@@ -167,7 +168,11 @@ class DeferredToolResults:
     )
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
-    """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
+    """Metadata for deferred tool calls, keyed by `tool_call_id`.
+
+    Each value will be available in the tool's RunContext as `tool_call_metadata`.
+    Per-call mappings are copied by `build_results()`.
+    """
 
     def update(self, other: DeferredToolResults) -> None:
         """Update this `DeferredToolResults` with entries from another, in-place."""
