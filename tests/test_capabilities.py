@@ -17446,6 +17446,81 @@ async def test_bare_async_for_drains_pending_messages():
         )
 
 
+class TestPendingMessageEnqueueLock:
+    @pytest.fixture
+    def blockbuster_enabled(self) -> bool:
+        # The interleaving is forced with Event.wait inside drain's `queue[:] = remaining`.
+        # That wait is test-only; BlockBuster still sees a library drain frame on the stack.
+        return False
+
+    async def test_enqueue_during_drain_does_not_lose_message(self):
+        """A worker-thread `enqueue` must not be dropped by drain's `queue[:] = remaining`.
+
+        `RunContext.enqueue` is documented as safe from sync tools, but a capability can let the
+        graph continue while a worker thread still runs. Drain iterates `pending_messages` and
+        then replaces the list; an append in that window is lost unless enqueue and drain share a
+        lock. This is a unit test because the race is an internal queue mutation, not a VCR-visible
+        model exchange.
+        """
+        from pydantic_ai.capabilities._pending_messages import PendingMessageDrainCapability
+
+        lock = threading.Lock()
+        queued = PendingMessage.from_content('already-queued')
+        assert queued is not None
+
+        window_open = threading.Event()
+        worker_reached_enqueue = threading.Event()
+        worker_done = threading.Event()
+        enqueued_id: str | None = None
+
+        class RaceWindowQueue(list[PendingMessage]):
+            def __setitem__(self, key: Any, value: Any) -> None:
+                if isinstance(key, slice):
+                    window_open.set()
+                    assert worker_reached_enqueue.wait(timeout=2)
+                    # No lock around drain: the worker has already appended, and waiting lets
+                    # `queue[:] = remaining` drop it. Shared lock: the worker is blocked in
+                    # `enqueue`, so proceed and let the append land on the remaining list.
+                    if not lock.locked():
+                        assert worker_done.wait(timeout=2)
+                super().__setitem__(key, value)
+
+        queue: list[PendingMessage] = RaceWindowQueue([queued])
+        ctx = RunContext(
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            pending_messages=queue,
+            messages=[],
+            run_id='run',
+            conversation_id='conv',
+            _event_stream_buffer=[],
+        )
+        ctx._pending_messages_lock = lock  # pyright: ignore[reportPrivateUsage]
+
+        def worker() -> None:
+            nonlocal enqueued_id
+            assert window_open.wait(timeout=2)
+            worker_reached_enqueue.set()
+            enqueued_id = ctx.enqueue('from-worker')
+            worker_done.set()
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        request_context = ModelRequestContext(
+            model=ctx.model,
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+        await PendingMessageDrainCapability().before_model_request(ctx, request_context)
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+        assert enqueued_id is not None
+        remaining_ids = {msg.enqueue_id for msg in ctx.pending_messages or []}
+        assert enqueued_id in remaining_ids, 'concurrent enqueue was lost during drain'
+
+
 async def test_pending_messages_accessible_on_run_context():
     """RunContext.pending_messages is accessible and initially empty."""
 

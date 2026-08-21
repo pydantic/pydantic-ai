@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import threading
 import inspect
 import time
 from asyncio import Task
@@ -430,6 +431,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
+
+    pending_messages_lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
+    """Runtime-only lock shared by enqueue and drain. Not part of durable serialization."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -2362,6 +2366,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _pending_messages_lock=ctx.deps.pending_messages_lock,
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,

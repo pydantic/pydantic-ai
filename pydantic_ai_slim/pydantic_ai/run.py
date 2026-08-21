@@ -522,8 +522,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         you're forwarding events from a different thread (e.g. a webhook handler
         running on its own loop or thread), marshal the call back onto the agent's
         loop first (e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`).
-        The drain's `queue[:] = remaining` pattern in `_drain_by_priority` isn't
-        atomic against concurrent appends from a different thread.
+        Enqueue and drain share a per-run lock, so a concurrent append cannot be
+        lost to drain's `queue[:] = remaining`.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -549,7 +549,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
             return None
-        self._graph_run.state.pending_messages.append(pending)
+        with self._graph_run.deps.pending_messages_lock:
+            self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
 
     def cancel(self) -> None:
