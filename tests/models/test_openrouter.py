@@ -35,7 +35,6 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
@@ -1609,8 +1608,7 @@ async def test_openrouter_web_search_tool_full_params(
     the cassette is unavailable, record it with:
     `uv run pytest tests/models/test_openrouter.py::test_openrouter_web_search_tool_full_params --record-mode=rewrite`.
     """
-    with pytest.warns(PydanticAIDeprecationWarning, match='httpx2.AsyncClient'):
-        provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
     model = OpenRouterModel('google/gemini-3.6-flash', provider=provider)
     agent = Agent(
         model,

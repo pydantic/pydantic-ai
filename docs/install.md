@@ -16,7 +16,7 @@ To use any other models or integrations, add the relevant extras to your install
 Pydantic AI's own HTTP requests, and those of providers migrated to [`httpx2`](https://httpx2.pydantic.dev/), verify TLS certificates against the operating system trust store rather than shipping a `certifi` bundle.
 Minimal container images and corporate proxies that rely on a private CA therefore need those certificates installed in the image (for example the `ca-certificates` package, plus your proxy's root CA).
 Alternatively, pass such a provider an `httpx2.AsyncClient` you configured yourself through its `http_client` argument — see the [provider docs](models/overview.md) for the client each one accepts.
-Providers whose SDKs still use legacy `httpx` (such as Anthropic and Cohere) keep its `certifi`-based verification and take a legacy `httpx.AsyncClient` instead.
+Providers whose SDKs still use legacy `httpx` (such as Groq and Cohere) keep its `certifi`-based verification and take a legacy `httpx.AsyncClient` instead.
 
 ## Use with Pydantic Logfire
 
@@ -72,6 +72,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `web-fetch` - installs [Web Fetch Tool](common-tools.md#web-fetch-tool) dependency `markdownify` [PyPI ↗](https://pypi.org/project/markdownify){:target="_blank"}
 * `cli` - installs [CLI](cli.md) dependencies `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
 * `mcp` - installs [MCP](mcp/client.md) dependency `fastmcp-slim[client]` [PyPI ↗](https://pypi.org/project/fastmcp-slim){:target="_blank"}
+* `mcp-tasks` - installs the [MCP](mcp/client.md) FastMCP 4 tasks extension (`use_task=True`) dependency `fastmcp-tasks` [PyPI ↗](https://pypi.org/project/fastmcp-tasks){:target="_blank"}
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `web` - installs [Web UI](ui/overview.md) dependencies `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"} and `uvicorn` [PyPI ↗](https://pypi.org/project/uvicorn){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
