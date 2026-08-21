@@ -169,8 +169,8 @@ jobs:
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages
 
       # So a red run's log answers "which upgrade did this" without a bisect. The package list
-      # is read off the installed metadata for `pydantic-ai-slim`'s extras, so it tracks the
-      # extras themselves rather than a copy of them that goes stale.
+      # is read off the installed metadata for `pydantic-ai-slim`, base requirements and extras
+      # alike, so it tracks what we declare rather than a copy of it that goes stale.
       - name: Report which dependencies moved
         env:
           LOCKED_BEFORE: ${{ runner.temp }}/uv.lock.committed
@@ -196,19 +196,25 @@ jobs:
                   if pinned := package.get('version'):
                       locked.setdefault(canonical(package['name']), set()).add(pinned)
 
-          shipped: set[str] = set()
+          # A `Requires-Dist` opens with the distribution name and, for an extra's dependency,
+          # carries an `extra == "..."` marker; a base requirement carries neither. Both halves
+          # ship to users and both are upgraded by the step above, so both are reported: a base
+          # requirement missing from this report is one whose move gets misattributed to
+          # whichever extra happened to move alongside it.
+          base: set[str] = set()
+          extras: set[str] = set()
           for entry in requires('pydantic-ai-slim') or []:
-              # A `Requires-Dist` opens with the distribution name and, for an extra's
-              # dependency, carries an `extra == "..."` marker. Base dependencies carry neither.
-              if 'extra ==' not in entry:
-                  continue
               name = canonical(re.match(r'[A-Za-z0-9._-]+', entry).group())
-              if name not in WORKSPACE:
-                  shipped.add(name)
+              if name in WORKSPACE:
+                  continue
+              (extras if 'extra ==' in entry else base).add(name)
+          extras -= base
 
           rows: list[tuple[str, str, str]] = []
           unchanged = 0
-          for name in sorted(shipped):
+          # Extras first, base requirements after: the provider SDKs are what a red run is
+          # usually about, and there are an order of magnitude more of them.
+          for name in sorted(extras) + sorted(base):
               try:
                   resolved = version(name)
               except PackageNotFoundError:
@@ -223,9 +229,14 @@ jobs:
                   rows.append((name, ', '.join(sorted(committed)) or '(not locked)', resolved))
 
           width = max((len(name) for name, _, _ in rows), default=0)
-          lines = [f'{name:<{width}}  {committed} -> {resolved}' for name, committed, resolved in rows]
-          summary = f'{len(rows)} of {len(shipped)} extra dependencies moved past uv.lock; {unchanged} unchanged.'
-          print('\n'.join(lines) or 'No extra dependency moved past uv.lock.')
+          lines = [
+              f'{name:<{width}}  {committed} -> {resolved}' + ('  (base)' if name in base else '')
+              for name, committed, resolved in rows
+          ]
+          summary = (
+              f'{len(rows)} of {len(extras) + len(base)} declared dependencies moved past uv.lock; {unchanged} unchanged.'
+          )
+          print('\n'.join(lines) or 'No declared dependency moved past uv.lock.')
           print(summary)
 
           if step_summary := os.environ.get('GITHUB_STEP_SUMMARY'):
