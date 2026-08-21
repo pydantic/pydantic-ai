@@ -945,13 +945,27 @@ async def test_cancelled_part_end_contains_accumulated_part(
     assert events == [PartEndEvent(index=0, part=expected_part)]
 
 
-async def test_part_end_contains_delta_when_handler_fails_after_yield():
+@pytest.mark.parametrize(
+    ('yield_delta', 'expected_events'),
+    [
+        pytest.param(
+            True,
+            [' world', PartEndEvent(index=0, part=TextPart(content='Hello world'))],
+            id='after-yield',
+        ),
+        pytest.param(False, [PartEndEvent(index=0, part=TextPart(content='Hello'))], id='before-yield'),
+    ],
+)
+async def test_part_end_delta_matches_handler_output_on_error(
+    yield_delta: bool, expected_events: list[str | PartEndEvent]
+):
     class FailingEventStream(UIEventStream[None, str | PartEndEvent, None, str]):
         def encode_event(self, event: str | PartEndEvent) -> str:
             return repr(event)
 
         async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[str | PartEndEvent]:
-            yield delta.content_delta
+            if yield_delta:
+                yield delta.content_delta
             raise RuntimeError('handler failed')
 
         async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[str | PartEndEvent]:
@@ -963,7 +977,37 @@ async def test_part_end_contains_delta_when_handler_fails_after_yield():
 
     events = [event async for event in FailingEventStream().transform_stream(event_generator())]
 
-    assert events == [' world', PartEndEvent(index=0, part=TextPart(content='Hello world'))]
+    assert events == expected_events
+
+
+async def test_part_cleanup_error_does_not_replace_stream_error():
+    class ErrorEventStream(UIEventStream[None, str | PartEndEvent, None, str]):
+        def encode_event(self, event: str | PartEndEvent) -> str:
+            return repr(event)
+
+        async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[str | PartEndEvent]:
+            yield event
+
+        async def on_error(self, error: Exception) -> AsyncIterator[str | PartEndEvent]:
+            yield f'{type(error).__name__}: {error}'
+
+    def raise_cleanup_error(_: dict[str, Any] | None) -> dict[str, Any]:
+        raise ValueError('cleanup failed')
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Thinking'))
+        yield PartDeltaEvent(
+            index=0,
+            delta=ThinkingPartDelta(content_delta='...', provider_details=raise_cleanup_error),
+        )
+        raise RuntimeError('stream failed')
+
+    events = [event async for event in ErrorEventStream().transform_stream(event_generator())]
+
+    assert events == [
+        PartEndEvent(index=0, part=ThinkingPart(content='Thinking')),
+        'RuntimeError: stream failed',
+    ]
 
 
 async def test_run_stream_on_cancel():
