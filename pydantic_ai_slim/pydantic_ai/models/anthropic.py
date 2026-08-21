@@ -14,6 +14,7 @@ from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._http import to_httpx2_timeout
 from .._run_context import RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
@@ -344,11 +345,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-# TODO(anthropic): drop these literals once the `anthropic` floor is bumped past the SDK release
-# that adds them to `ModelParam` (installed 0.109.0 still lags). See
-# https://github.com/pydantic/pydantic-ai/pull/5849 for the same
-# bridge-then-drop pattern applied to `claude-fable-5`.
-AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5', 'claude-opus-5']
+AnthropicModelName = LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
@@ -539,6 +536,28 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/compaction) for more details.
     """
+
+
+def _build_extra_body(model_settings: AnthropicModelSettings) -> object | None:
+    """Merge the sampling settings into `extra_body`, which is how they reach the API now.
+
+    `anthropic>=1` dropped `temperature`/`top_p`/`top_k` from the `messages.create()` signature, and
+    passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
+    the SDK's own migration guide names — rather than being silently dropped. Models that reject them
+    never get here: `_drop_unsupported_sampling_settings` has already removed them.
+
+    An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
+    the SDK gave it while the parameters were still named arguments.
+    """
+    sampling = {
+        setting: value for setting in _ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
+    }
+    extra_body = model_settings.get('extra_body')
+    if not sampling:
+        return extra_body
+    if is_str_dict(extra_body):
+        return {**sampling, **extra_body}
+    return sampling
 
 
 def _resolve_anthropic_service_tier(
@@ -953,17 +972,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 cache_control=auto_cache_control or OMIT,
                 thinking=self._translate_thinking(model_settings, model_request_parameters),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
-                temperature=model_settings.get('temperature', OMIT),
-                top_p=model_settings.get('top_p', OMIT),
-                top_k=model_settings.get('top_k', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
+                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
                 container=container or OMIT,
                 service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=_build_extra_body(model_settings),
             )
 
     @staticmethod
@@ -1201,7 +1217,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     cache_control=auto_cache_control or OMIT,
                     thinking=self._translate_thinking(model_settings, model_request_parameters),
                     context_management=context_management or OMIT,
-                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     speed=self._effective_speed(model_settings, anthropic_profile),
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
@@ -1220,7 +1236,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 cache_control=auto_cache_control or OMIT,
                 thinking=self._translate_thinking(model_settings, model_request_parameters),
                 context_management=context_management or OMIT,
-                timeout=model_settings.get('timeout', NOT_GIVEN),
+                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
