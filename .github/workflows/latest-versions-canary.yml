@@ -16,6 +16,14 @@ name: Latest Versions Canary
 # environment. The two valid responses are to migrate (and raise the floor), or to add a
 # temporary upper cap `<N` to the affected extra so users are protected while the
 # migration happens. Suppressing the signal is not one of them.
+#
+# Scope, and its accepted limitation: only the dependencies our published packages declare
+# move — base requirements and extras alike — while the `dev` and `lint` groups stay at
+# their locked versions. So a transitive-only dependency advances only as far as those
+# direct bumps require. That is the trade we want: our declared floors are what admit a
+# release we cannot drive, and that is the class this canary owns. Test tooling drifting
+# under us (a new `ruff` rule relinting the docs examples, say) is a real but different
+# problem, and letting it red this check would bury the one it exists to raise.
 
 on:
   schedule:
@@ -99,8 +107,49 @@ jobs:
           print(f'dropped {len(before.get("exclude-newer-package", {}))} exclude-newer-package entries ({tables_dropped} table(s))')
           PY
 
+      # `--upgrade-package` per declared dependency rather than a blanket `--upgrade`, which
+      # would also move the test tooling and red this job over findings no user can hit (see
+      # the scope note at the top). The names come from the lock's own record of each
+      # workspace member's `requires-dist`, so they cannot drift from what we publish, and no
+      # install is needed to read them.
       - name: Resolve at the latest allowed versions
-        run: uv lock --upgrade
+        env:
+          UPGRADE_ARGS: ${{ runner.temp }}/upgrade-args
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          with open('uv.lock', 'rb') as f:
+              packages = tomllib.load(f)['package']
+
+          def canonical(name: str) -> str:
+              return re.sub(r'[-_.]+', '-', name).lower()
+
+          # Every workspace member is a published distribution, so its `requires-dist` — base
+          # dependencies plus every extra — is exactly the set a user can install from us.
+          members = {canonical(package['name']) for package in packages if 'editable' in (package.get('source') or {})}
+
+          declared: set[str] = set()
+          for package in packages:
+              if canonical(package['name']) not in members:
+                  continue
+              for requirement in package.get('metadata', {}).get('requires-dist', []):
+                  name = canonical(requirement['name'])
+                  if name not in members:
+                      declared.add(name)
+
+          # An empty list would turn the `uv lock` below into a plain re-resolution that
+          # upgrades nothing, and report green having asked no question at all.
+          if not declared:
+              raise SystemExit('derived no declared dependencies from the workspace members in uv.lock')
+
+          Path(os.environ['UPGRADE_ARGS']).write_text(''.join(f'--upgrade-package\n{name}\n' for name in sorted(declared)))
+          print(f'upgrading {len(declared)} declared dependencies: {" ".join(sorted(declared))}')
+          PY
+          xargs uv lock < "${UPGRADE_ARGS}"
 
       # `make install` without `--frozen`, and without the `pydantic-ai-harness` pin it adds
       # for pyright: nothing here typechecks.
