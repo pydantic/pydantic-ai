@@ -59,9 +59,10 @@ applied automatically — don't set them.
 
 Every fresh reviewer in this skill runs under the same contract:
 
-- Launch from a base checkout or manager worktree outside the candidate diff. In Codex, use a fresh
-  `reviewer-deep` without inherited turns; in Claude Code, use a fresh Opus review subagent with no
-  transcript. Use the native equivalent no-history primitive elsewhere.
+- Run the `pre-push-review` skill in a fresh subagent through the current harness's native
+  no-history primitive, using the strongest locally available reviewer. Launch from a base checkout
+  or manager worktree outside the candidate diff. Harness-specific launch mechanics must not change
+  the repository-owned review rubric.
 - Exclude branch-continuity state (`issue-brief.md`, `pr-decisions.md`, and handoffs), local notes,
   implementation rationale, and prior reviews.
 - Pin that base or manager checkout to the immutable review-base SHA, so only base root and
@@ -88,8 +89,9 @@ they consume a CI and reviewer round.
 1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
    the user's instructions override this.
 2. Capture the full review-base and HEAD SHAs and verify the worktree is clean.
-3. Launch a fresh subagent under the clean-room contract. Give it those SHAs, the live issue or
-   task, the PR when one exists, the full base-to-HEAD diff, and the verification already run.
+3. Launch a fresh subagent under the contract above and have it follow the `pre-push-review`
+   skill. Give it those SHAs, the live issue or task, the PR when one exists, the full base-to-HEAD
+   diff, and the verification already run.
 4. Ask for a high-judgment review against the stable instructions. Require actionable findings or
    `current at <full-head-sha>`.
 5. Remediate every valid finding, rerun affected targeted verification, and commit the fixes.
