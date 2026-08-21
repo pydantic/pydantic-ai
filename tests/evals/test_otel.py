@@ -998,8 +998,9 @@ async def test_context_span_exporter_not_shared_between_equal_providers(mocker: 
     """Two distinct providers that compare equal each get their own exporter.
 
     An exporter only receives spans from the provider its processor was attached to, so sharing one
-    between equal-but-distinct providers would leave the second recording nothing. The cache is
-    matched by identity for that reason, and because a provider need not be hashable at all.
+    between equal-but-distinct providers would leave the second recording nothing. The cache matches
+    on identity for that reason; defining `__eq__` without `__hash__` here also makes this provider
+    unhashable, which is the other reason it cannot be a dictionary key.
 
     This can't be a VCR test: the cache isn't observable through the public API, and no provider
     HTTP traffic is involved.
@@ -1014,9 +1015,6 @@ async def test_context_span_exporter_not_shared_between_equal_providers(mocker: 
 
         def __eq__(self, other: object) -> bool:
             return isinstance(other, ValueEqualTracerProvider)
-
-        def __hash__(self) -> int:
-            return 0
 
     first, second = ValueEqualTracerProvider(), ValueEqualTracerProvider()
     assert first is not second and first == second
