@@ -1288,34 +1288,30 @@ async def test_bedrock_stream_usage_with_cached_tokens(
     )
 
 
+_BEDROCK_GUARDRAIL_TRACE = {'guardrail': {'modelOutput': ['blocked']}}
+
+
 async def test_bedrock_trace(allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture):
     """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model)
-
-    trace = {
-        'guardrail': {
-            'inputAssessment': {
-                'xbgw7g293v7o': {
-                    'contentPolicy': {'filters': [{'type': 'PROMPT_ATTACK', 'confidence': 'HIGH', 'action': 'BLOCKED'}]}
-                }
-            }
-        }
-    }
 
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
         'stopReason': 'guardrail_intervened',
         'usage': {'inputTokens': 1, 'outputTokens': 1},
-        'trace': trace,
+        'trace': _BEDROCK_GUARDRAIL_TRACE,
         'ResponseMetadata': {'HTTPStatusCode': 200},
     }
 
     result = await agent.run('hello')
 
     message = cast(ModelResponse, result.all_messages()[-1])
-    assert message.provider_details == {'finish_reason': 'guardrail_intervened', 'trace': trace}
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': _BEDROCK_GUARDRAIL_TRACE,
+    }
     assert message.finish_reason == 'content_filter'
 
 
@@ -1326,27 +1322,17 @@ async def test_bedrock_trace_streamed(
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model)
 
-    trace = {
-        'guardrail': {
-            'inputAssessment': {
-                'xbgw7g293v7o': {
-                    'contentPolicy': {'filters': [{'type': 'PROMPT_ATTACK', 'confidence': 'HIGH', 'action': 'BLOCKED'}]}
-                }
-            },
-            'outputAssessments': {
-                'xbgw7g293v7o': [
-                    {'contentPolicy': {'filters': [{'type': 'MISCONDUCT', 'confidence': 'LOW', 'action': 'NONE'}]}}
-                ]
-            },
-        }
-    }
-
     def _stream() -> Iterator[dict[str, Any]]:
         yield {'messageStart': {'role': 'assistant'}}
         yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
         yield {'contentBlockStop': {'contentBlockIndex': 0}}
         yield {'messageStop': {'stopReason': 'guardrail_intervened'}}
-        yield {'metadata': {'usage': {'inputTokens': 1, 'outputTokens': 1}, 'trace': trace}}
+        yield {
+            'metadata': {
+                'usage': {'inputTokens': 1, 'outputTokens': 1},
+                'trace': _BEDROCK_GUARDRAIL_TRACE,
+            }
+        }
 
     mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
     mock_converse_stream.return_value = {
@@ -1358,7 +1344,10 @@ async def test_bedrock_trace_streamed(
         assert await result.get_output() == 'hello'
 
     message = cast(ModelResponse, result.all_messages()[-1])
-    assert message.provider_details == {'finish_reason': 'guardrail_intervened', 'trace': trace}
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': _BEDROCK_GUARDRAIL_TRACE,
+    }
     assert message.finish_reason == 'content_filter'
 
 
