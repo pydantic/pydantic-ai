@@ -887,6 +887,42 @@ async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
     )
 
 
+class PartEndEventStream(UIEventStream[None, str | PartEndEvent, None, str]):
+    def encode_event(self, event: str | PartEndEvent) -> str:
+        return repr(event)  # pragma: no cover
+
+    async def before_stream(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def after_stream(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def before_response(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def after_response(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[str | PartEndEvent]:
+        yield event
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def on_error(self, error: Exception) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+
 @pytest.mark.parametrize(
     ('part', 'deltas', 'expected_part'),
     [
@@ -927,13 +963,6 @@ async def test_cancelled_part_end_contains_accumulated_part(
     deltas: list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta],
     expected_part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart,
 ):
-    class PartEndEventStream(UIEventStream[None, PartEndEvent, None, str]):
-        def encode_event(self, event: PartEndEvent) -> str:
-            return repr(event)  # pragma: no cover
-
-        async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[PartEndEvent]:
-            yield event
-
     async def event_generator() -> AsyncIterator[NativeEvent]:
         yield PartStartEvent(index=0, part=part)
         for delta in deltas:
@@ -946,13 +975,6 @@ async def test_cancelled_part_end_contains_accumulated_part(
 
 
 async def test_cancelled_part_end_ignores_delta_for_different_part():
-    class PartEndEventStream(UIEventStream[None, PartEndEvent, None, str]):
-        def encode_event(self, event: PartEndEvent) -> str:
-            return repr(event)  # pragma: no cover
-
-        async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[PartEndEvent]:
-            yield event
-
     async def event_generator() -> AsyncIterator[NativeEvent]:
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
         yield PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' world'))
@@ -977,17 +999,12 @@ async def test_cancelled_part_end_ignores_delta_for_different_part():
 async def test_part_end_delta_matches_handler_output_on_error(
     yield_delta: bool, expected_events: list[str | PartEndEvent]
 ):
-    class FailingEventStream(UIEventStream[None, str | PartEndEvent, None, str]):
-        def encode_event(self, event: str | PartEndEvent) -> str:
-            return repr(event)  # pragma: no cover
-
-        async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[str | PartEndEvent]:
-            if yield_delta:
-                yield delta.content_delta
-            raise RuntimeError('handler failed')
-
-        async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[str | PartEndEvent]:
-            yield event
+    class FailingEventStream(PartEndEventStream):
+        async def handle_event(self, event: NativeEvent) -> AsyncIterator[str | PartEndEvent]:
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                if yield_delta:
+                    yield event.delta.content_delta
+                raise RuntimeError('handler failed')
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
@@ -999,13 +1016,7 @@ async def test_part_end_delta_matches_handler_output_on_error(
 
 
 async def test_part_cleanup_error_does_not_replace_stream_error():
-    class ErrorEventStream(UIEventStream[None, str | PartEndEvent, None, str]):
-        def encode_event(self, event: str | PartEndEvent) -> str:
-            return repr(event)  # pragma: no cover
-
-        async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[str | PartEndEvent]:
-            yield event
-
+    class ErrorEventStream(PartEndEventStream):
         async def on_error(self, error: Exception) -> AsyncIterator[str | PartEndEvent]:
             yield f'{type(error).__name__}: {error}'
 
