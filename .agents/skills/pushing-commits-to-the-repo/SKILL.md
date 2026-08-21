@@ -55,14 +55,16 @@ Labelling needs triage permission on the repo (Pydantic team members and their a
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
 
-## Clean-room reviewer contract
+## Independent reviewer contract
 
 Every fresh reviewer in this skill runs under the same contract:
 
-- Launch with no inherited conversation history. Exclude branch-continuity state
-  (`issue-brief.md`, `pr-decisions.md`, and handoffs), local notes, implementation rationale, and
-  prior reviews.
-- Launch from a clean checkout pinned to the immutable review-base SHA, so only base root and
+- Launch from a base checkout or manager worktree outside the candidate diff. In Codex, use a fresh
+  `reviewer-deep` without inherited turns; in Claude Code, use a fresh Opus review subagent with no
+  transcript. Use the native equivalent no-history primitive elsewhere.
+- Exclude branch-continuity state (`issue-brief.md`, `pr-decisions.md`, and handoffs), local notes,
+  implementation rationale, and prior reviews.
+- Pin that base or manager checkout to the immutable review-base SHA, so only base root and
   directory instructions autoload as policy. Candidate content is accessible only through Git
   object reads; changed HEAD instructions are review material. If the harness cannot pin its
   working directory and autoloading to the base checkout, fail closed.
@@ -125,13 +127,14 @@ if the head changes, capture the new SHA and restart the loop.
    `Reviewed at` body marker must match the captured SHA; do not trust the review commit field.
    If it skips because the PR is a fork or the actor is ineligible, apply the `douwebot` label while
    the captured SHA is current and require its workflow run to succeed without the head changing.
-   For an existing changes-requested decision, inspect its author: a human request keeps the PR
-   incomplete until that human re-reviews or dismisses it; a stale `CI Review` bot decision uses the
-   `douwebot` fallback. Any other current-head run without a matching marker—including `noop`,
-   failure, or another skip—leaves the gate unsatisfied: retry once when appropriate, then use
-   `douwebot` or safe escalation. A stale-head result restarts the loop. If
-   neither reviewer can safely run, keep the PR incomplete and escalate for maintainer carry-forward
-   or another explicit safe hosted-review path.
+   For a changes-requested decision, enumerate every active requesting review. Any human request
+   keeps the PR incomplete until that human re-reviews or dismisses it. If only stale `CI Review`
+   bot requests remain, use the `douwebot` fallback; after it succeeds on the captured SHA, dismiss
+   or supersede only those stale bot requests, never a human review. Any other current-head run
+   without a matching marker—including `noop`, failure, or another skip—leaves the gate unsatisfied:
+   retry once when appropriate, then use `douwebot` or safe escalation. A stale-head result restarts
+   the loop. If neither reviewer can safely run, keep the PR incomplete and escalate for maintainer
+   carry-forward or another explicit safe hosted-review path.
 3. **Triage every comment** (bots and humans alike). For each one:
    - **Valid** → fix it, run targeted verification, commit, pass the fresh pre-push gate, push, and
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
