@@ -93,7 +93,7 @@ with try_import() as imports_successful:
     from openai.types.responses.response_compaction_item import ResponseCompactionItem
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-    from openai.types.responses.response_output_text import ResponseOutputText
+    from openai.types.responses.response_output_text import AnnotationURLCitation, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -1771,12 +1771,9 @@ async def test_openai_include_raw_annotations_streaming_model_annotation(allow_m
     either side of that retype; before it, the same event carried a plain dict, as the VCR test above
     still covers.
     """
-    from openai.types import responses as resp
-    from openai.types.responses.response_output_text import AnnotationURLCitation
-
     base_response = resp.Response(
         id='resp_001',
-        model='gpt-4o',
+        model='gpt-5.6-terra',
         object='response',
         created_at=1704067200,
         output=[],
@@ -1836,7 +1833,7 @@ async def test_openai_include_raw_annotations_streaming_model_annotation(allow_m
     ]
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    model = OpenAIResponsesModel('gpt-5.6-terra', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
 
