@@ -347,10 +347,17 @@ class VideoUrl(FileUrl):
 
     @property
     def is_youtube(self) -> bool:
-        """True if the URL has a YouTube domain."""
-        parsed = urlparse(self.url)
-        hostname = parsed.hostname
-        return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
+        """True if the URL is on a YouTube host that models can resolve directly.
+
+        This is a specific set of hosts rather than every YouTube-owned domain, so
+        `music.youtube.com` is deliberately not one of them.
+        """
+        # Exact hosts, not a `.youtube.com` suffix match: Google rejects
+        # `music.youtube.com` as a `file_uri` with 400 INVALID_ARGUMENT, on the Gemini API
+        # and on Vertex alike, so a suffix match would hand it a URL it cannot resolve.
+        # Membership is also read by `download_item`, so a host added here stops being
+        # downloadable on every other provider too — verify both before extending this.
+        return urlparse(self.url).hostname in ('youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com')
 
     @property
     def format(self) -> VideoFormat:
@@ -2472,6 +2479,15 @@ ModelRequestPart = Annotated[
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
 """A message part sent by Pydantic AI to a model."""
+
+
+def _tool_results_first_sort_key(part: ModelRequestPart) -> int:  # pyright: ignore[reportUnusedFunction]
+    """Stable-sort key placing the parts that answer tool calls ahead of a request's other parts.
+
+    Providers such as Anthropic require every tool result answering an assistant turn to lead the
+    next message, ahead of any other content.
+    """
+    return 0 if isinstance(part, ToolReturnPart | RetryPromptPart) else 1
 
 
 def _model_response_part_discriminator(v: Any) -> str | None:

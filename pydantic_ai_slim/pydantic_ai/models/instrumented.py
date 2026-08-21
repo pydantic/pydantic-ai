@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import itertools
 import time
 import warnings
@@ -30,9 +31,12 @@ from .. import _otel_messages
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
+    BaseToolReturnPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
 )
@@ -72,7 +76,7 @@ class InstrumentationSettings:
     include_binary_content: bool = True
     include_content: bool = True
     include_model_request_parameters: bool = True
-    version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
 
     def __init__(
@@ -83,7 +87,7 @@ class InstrumentationSettings:
         include_binary_content: bool = True,
         include_content: bool = True,
         include_model_request_parameters: bool = True,
-        version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
     ):
         """Create instrumentation options.
@@ -125,6 +129,10 @@ class InstrumentationSettings:
                 Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
                     no longer record an exception event or set the span status to ERROR — the span is left
                     as UNSET, since deferrals are control flow, not errors.
+                Version 6 is the same as version 5, but tool results are emitted in a message with
+                    `role='tool'` rather than `role='user'`, which is the role the GenAI semantic
+                    conventions pair with the `tool_call_response` parts they carry. Opt in to it when
+                    your telemetry consumer keys on the message role; it is not the default.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Defaults to True to prevent double-counting in observability backends that aggregate span
@@ -143,9 +151,10 @@ class InstrumentationSettings:
         self.include_content = include_content
         self.include_model_request_parameters = include_model_request_parameters
 
-        if version not in (2, 3, 4, 5):
-            raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
+        if version not in (2, 3, 4, 5, 6):
+            raise ValueError('Instrumentation version must be one of 2, 3, 4, 5, or 6.')
         # TODO(v3): remove instrumentation format versions 2, 3, and 4
+        # TODO(v3): default to instrumentation format version 6
         if version in (2, 3, 4):
             warnings.warn(
                 'Instrumentation format versions 2, 3, and 4 are deprecated; use `version=5` instead.',
@@ -197,17 +206,15 @@ class InstrumentationSettings:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                for is_system, group in itertools.groupby(
-                    message.parts, key=lambda p: isinstance(p, SystemPromptPart | ToolAvailabilityDeltaPart)
+                for role, group in itertools.groupby(
+                    message.parts, key=functools.partial(_otel_message_role, version=self.version)
                 ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
                             message_parts.extend(part.otel_message_parts(self))
 
-                    result.append(
-                        _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
-                    )
+                    result.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
             elif isinstance(message, ModelResponse):  # pragma: no branch
                 otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
                 if message.finish_reason is not None:
@@ -398,3 +405,33 @@ class InstrumentedModel(WrapperModel):
                         response_stream.get(),
                         time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
                     )
+
+
+def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.Role:
+    """The GenAI role of the message a request part belongs in.
+
+    Consecutive parts sharing a role make up one message, so a request carrying a tool return and a
+    user prompt splits into a `tool` message followed by a `user` one.
+
+    From version 6 on, a part that renders as a `tool_call_response` takes the `tool` role the
+    semantic conventions pair it with, which is also the channel the adapters send it on: a tool
+    return and a retry naming a tool both reach OpenAI as `role='tool'`, a retry naming none as
+    `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
+    keeps reading the role it was built for.
+
+    `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
+    mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
+    of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is
+    no native channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a
+    roleless `additional_tools` item on OpenAI Responses, a tool-search exchange where schemas are
+    withheld. `tool` is the one role that would actively mislead, being paired with
+    `tool_call_response`.
+    """
+    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart):
+        return 'system'
+    elif version >= 6 and (
+        isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+    ):
+        return 'tool'
+    else:
+        return 'user'

@@ -1,11 +1,12 @@
 import os
+import re
 import warnings
 from importlib import import_module
 from unittest.mock import patch
 
 import pytest
 
-from pydantic_ai import UserError
+from pydantic_ai import Agent, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     ModelMessage,
@@ -30,6 +31,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers import openai
 
 if not imports_successful():
     pytest.skip('model packages were not installed', allow_module_level=True)  # pragma: lax no cover
@@ -251,7 +253,6 @@ def test_infer_model(
         assert m.model_name == expected_model_name
         assert m.system == expected_system
 
-        # Test that model_id matches the provider:model string that was passed in
         assert m.model_id == f'{expected_system}:{expected_model_name}'
 
         m2 = infer_model(m)
@@ -259,8 +260,6 @@ def test_infer_model(
 
 
 def test_infer_model_with_provider():
-    from pydantic_ai.providers import openai
-
     provider_class = openai.OpenAIProvider(api_key='1234', base_url='http://test')
     m = infer_model('openai-chat:gpt-5', lambda x: provider_class)
 
@@ -269,9 +268,74 @@ def test_infer_model_with_provider():
     assert m._provider.base_url == 'http://test'  # pyright: ignore[reportPrivateUsage]
 
 
-def test_infer_str_unknown():
-    with pytest.raises(UserError, match='Unknown model: foobar'):
-        infer_model('foobar')
+@pytest.mark.parametrize(
+    ('model_name', 'message'),
+    [
+        pytest.param('foobar', 'Unknown model: foobar', id='unqualified'),
+        pytest.param(
+            'claude:sonnet-5',
+            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            id='close-match',
+        ),
+        pytest.param(
+            'claude:potato-5',
+            "Unknown model: claude:potato-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            id='loose-match',
+        ),
+        pytest.param(
+            'anthropicc:claude-sonnet-5',
+            "Unknown model: anthropicc:claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            id='provider-typo',
+        ),
+        pytest.param(
+            'unknown:claude-sonnet-5',
+            "Unknown model: unknown:claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            id='known-model-name',
+        ),
+        pytest.param(
+            'anthropic-claude-sonnet-5',
+            "Unknown model: anthropic-claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            id='missing-colon',
+        ),
+        pytest.param(
+            'openia:gpt-5.2',
+            "Unknown model: openia:gpt-5.2. Did you mean 'openai:gpt-5.2'?",
+            id='prefer-direct-provider',
+        ),
+        pytest.param('unknown:potato', 'Unknown model: unknown:potato', id='no-match'),
+    ],
+)
+def test_infer_str_unknown(model_name: str, message: str):
+    with pytest.raises(UserError, match=f'^{re.escape(message)}$'):
+        infer_model(model_name)
+
+
+def test_agent_suggests_known_model_name():
+    with pytest.raises(UserError, match="Did you mean 'anthropic:claude-sonnet-5'"):
+        Agent('claude:sonnet-5')
+
+
+def test_infer_model_allows_unknown_name_for_known_provider():
+    provider = openai.OpenAIProvider(api_key='1234', base_url='http://test')
+    model = infer_model('openai-chat:potato-5', lambda _: provider)
+
+    assert model.model_name == 'potato-5'
+
+
+def test_infer_model_preserves_custom_provider_factory_error():
+    def provider_factory(_provider_name: str):
+        raise ValueError('custom provider error')
+
+    with pytest.raises(ValueError, match='custom provider error'):
+        infer_model('openai:gpt-5', provider_factory)
+
+
+def test_infer_model_preserves_provider_initialization_error():
+    with (
+        patch.object(openai.OpenAIProvider, '__init__', side_effect=ValueError('provider initialization error')),
+        pytest.raises(ValueError, match='provider initialization error'),
+    ):
+        infer_model('openai:gpt-5')
 
 
 @pytest.mark.parametrize(

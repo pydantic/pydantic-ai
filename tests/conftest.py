@@ -18,12 +18,14 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
+import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
 
+import pydantic_ai._http
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.messages import (
@@ -49,6 +51,16 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
+
+# `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
+# (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
+# that first import happens inside an async test with the detector configured below armed, the read
+# is reported as blocking and aborts the import, leaving a partially initialized `pandas` in
+# `sys.modules` that every later import in the session trips over. Importing it here means the
+# detector never sees a first import. The read genuinely blocks, so this stays regardless of what
+# BlockBuster reports: https://github.com/pydantic/pydantic-ai/issues/7446.
+with suppress(ImportError):
+    import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
 
 T = TypeVar('T')
 
@@ -345,7 +357,7 @@ def anyio_backend():
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # coverage reads Python source files while collecting coverage data. Remove these once
-    # https://github.com/cbornet/blockbuster/pull/63 is released in a compatible version.
+    # https://github.com/cbornet/blockbuster/pull/69 is released in a compatible version.
     ('os.stat', 'coverage/python.py', 'get_python_source'),
     ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
@@ -585,6 +597,7 @@ def no_instrumentation_by_default():
 
 try:
     import logfire
+    from opentelemetry import context as otel_context
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
     logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
@@ -599,6 +612,19 @@ try:
         # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
         if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
             _httpx_instrumentor.uninstrument()
+        # The worker's main-thread OTel context also persists across tests: an `attach` without a
+        # matching `detach` leaves its values (an active span, suppression flags) visible to every
+        # later test in the worker. A leaked *non-sampled* span is the nasty case: parent-based
+        # sampling then marks all descendant spans unsampled and exporters silently drop them
+        # (seen as `context_subtree()` returning an empty tree in `tests/evals/test_otel.py`).
+        # The detach below resets the context to its pre-test snapshot, so no leaked `attach`
+        # outlives its test. (The clean context itself only shields sync test bodies: async bodies
+        # run in anyio's runner task, whose context is copied before this fixture attaches.)
+        token = otel_context.attach(otel_context.Context())
+        try:
+            yield
+        finally:
+            otel_context.detach(token)
 
 except ImportError:
     pass
@@ -770,36 +796,50 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
     check_cache_prefix_stability(request.node, cassette_path)
 
 
-_HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
+_HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
+_HttpClientCache: TypeAlias = 'dict[tuple[str, int, int], _HttpClient]'
 
 
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
-    """Monkeypatch `create_async_http_client` in all loaded modules and track created clients.
+    """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
 
     Within a single test, calls with the same (timeout, connect) args reuse the same
-    httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
+    client. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
     companion `close_httpx_clients` fixture handles async cleanup first.
     """
     cache: _HttpClientCache = {}
-    original = pydantic_ai.models.create_async_http_client
+    original_httpx = pydantic_ai.models.create_async_http_client
+    original_httpx2 = pydantic_ai._http.create_async_httpx2_client
 
     def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
-        key = (kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+        key = ('httpx', kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
         if key not in cache or cache[key].is_closed:
-            cache[key] = original(**kwargs)
-        return cache[key]
+            cache[key] = original_httpx(**kwargs)
+        client = cache[key]
+        assert isinstance(client, httpx.AsyncClient)
+        return client
+
+    def cached_httpx2_per_test(**kwargs: Any) -> httpx2.AsyncClient:
+        key = ('httpx2', kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+        if key not in cache or cache[key].is_closed:
+            cache[key] = original_httpx2(**kwargs)
+        client = cache[key]
+        assert isinstance(client, httpx2.AsyncClient)
+        return client
 
     for mod in list(sys.modules.values()):
         # Read the module's own namespace via `__dict__` rather than `getattr`: some
         # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
         # that imports submodules on attribute access, and probing every loaded module
         # with `getattr` would trigger those unrelated (and possibly failing) imports.
-        mod_dict = getattr(mod, '__dict__', None)
-        if mod_dict is not None and mod_dict.get('create_async_http_client', None) is original:
+        mod_dict: dict[str, object] = getattr(mod, '__dict__', None) or {}
+        if mod_dict.get('create_async_http_client', None) is original_httpx:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
+        if mod_dict.get('create_async_httpx2_client', None) is original_httpx2:
+            monkeypatch.setattr(mod, 'create_async_httpx2_client', cached_httpx2_per_test)
 
     yield cache
 

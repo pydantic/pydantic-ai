@@ -1,0 +1,86 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '338'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Explain me this video in a few sentences
+        - fileData:
+            fileUri: https://m.youtube.com/watch?v=lCdaVNyHtjU
+            mimeType: video/mp4
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1077'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=6189
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: This video demonstrates an AI assistant within a code editor analyzing recent 404 HTTP responses from a
+              logfile database. The AI queries the database, identifies common patterns related to specific endpoints, request
+              types, timeline issues, and authentication problems. Finally, it provides a detailed analysis of these patterns
+              along with actionable recommendations to resolve the identified issues.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: JiyGasHJHe-wjMcP4aqWmQg
+      usageMetadata:
+        cacheTokensDetails:
+        - modality: AUDIO
+          tokenCount: 1881
+        - modality: TEXT
+          tokenCount: 15
+        - modality: VIDEO
+          tokenCount: 15483
+        cachedContentTokenCount: 17379
+        candidatesTokenCount: 68
+        promptTokenCount: 17713
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 16
+        - modality: VIDEO
+          tokenCount: 15780
+        - modality: AUDIO
+          tokenCount: 1917
+        serviceTier: standard
+        thoughtsTokenCount: 821
+        totalTokenCount: 18602
+    status:
+      code: 200
+      message: OK
+version: 1

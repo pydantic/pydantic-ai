@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import PydanticSerializationError
@@ -105,7 +106,6 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
-    create_async_http_client,
     infer_model,
     infer_model_profile,
 )
@@ -291,7 +291,7 @@ def blockbuster_enabled() -> bool:
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = create_async_http_client()
+http_client = httpx2.AsyncClient()
 
 
 # Scoped to `session` rather than `module`: the `http_client` and the module-level agents that
@@ -2468,7 +2468,7 @@ async def test_model_construction_in_workflow_passes_sandbox(
     assert result == expected_model_class
 
 
-# Regression test for the `genai_prices`/`httpx2` passthrough entries in `_workflow_runner`.
+# Regression test for the `httpx2` stack passthrough entries in `_workflow_runner`.
 # `ModelResponse.cost()` lazily imports genai-prices on first call; inside a workflow that trips the
 # sandbox unless those modules are passed through (see #6215).
 @workflow.defn
@@ -7296,12 +7296,7 @@ def test_durability_activity_config_not_mutated():
 
 
 def test_temporal_agent_retry_policy_non_retryable_errors():
-    """The deprecated wrapper builds its own list, so its entries need their own assertion.
-
-    `TemporalAgent` doesn't go through `with_non_retryable_errors`, and every line of its
-    inline list runs on any construction — so without this, dropping `PayloadSizeError`
-    would leave coverage at 100% while restoring the infinite retry of #7110.
-    """
+    """The deprecated wrapper normalizes its base activity retry policy with `with_non_retryable_errors`."""
     temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='retry_policy_probe_agent'),
     )
@@ -7311,6 +7306,8 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
     assert retry_policy.non_retryable_error_types == [
         'UserError',
         'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
         'PayloadSizeError',
     ]
 

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, Field
 from pydantic.errors import PydanticUserError
@@ -63,7 +64,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
+from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -147,7 +148,7 @@ pytestmark = [
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = create_async_http_client()
+http_client = httpx2.AsyncClient()
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -3667,3 +3668,19 @@ async def test_prefect_durability_continuation_resume_from_history() -> None:
     assert result.usage.output_tokens == 6
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
+    """`PrefectAgent.run_sync()` dispatches through its own flow, not `AbstractAgent.run_sync()`, so it carries its own guard."""
+
+    def call_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delegate', '{}')])
+
+    outer_agent = Agent(FunctionModel(call_tool))
+
+    @outer_agent.tool_plain
+    def delegate() -> str:
+        return simple_prefect_agent.run_sync('hello').output
+
+    with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
+        await outer_agent.run('delegate')
