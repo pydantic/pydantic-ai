@@ -62,10 +62,11 @@ they consume a CI and reviewer round.
 
 1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
    the user's instructions override this.
-2. Launch a fresh subagent with no inherited conversation history. Do not provide implementation
-   rationale, local notes, handoffs, or prior pre-push reviews. Give it the linked issue or task,
-   the PR when one exists, the full diff from the PR base (or default branch before a PR exists),
-   and the verification already run. Repository-autoloaded instructions still apply.
+2. Launch a fresh subagent with no inherited conversation history. For this review only, exclude
+   branch-continuity state (`issue-brief.md`, `pr-decisions.md`, and handoffs), local notes,
+   implementation rationale, and prior pre-push reviews. Stable root and directory instructions
+   still apply. Give it the live issue or task, the PR when one exists, the full diff from the PR
+   base (or default branch before a PR exists), and the verification already run.
 3. Ask for a high-judgment review against the root and directory instructions. Require actionable
    findings or `current`. The subagent must not edit files or post to GitHub.
 4. Remediate every valid finding, rerun affected targeted verification, and commit the fixes.
