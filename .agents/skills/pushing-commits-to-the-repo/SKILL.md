@@ -6,8 +6,8 @@ description: Open and advance a PR — write current metadata, run an independen
 
 # pushing-commits-to-the-repo
 
-Pushing starts a loop; it does not end the task. **Work stops only when CI is green AND no comment
-is left unresolved.**
+Pushing starts a loop; it does not end the task. **Work stops only when CI is green, the required
+hosted review has finished on the current HEAD, AND no comment is left unresolved.**
 
 Lifecycle: implement → targeted verification → commit → independent pre-push review → remediate
 and re-review → push → full CI and coverage → hosted reviewers → final metadata check.
@@ -62,14 +62,17 @@ they consume a CI and reviewer round.
 
 1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
    the user's instructions override this.
-2. Dispatch a fresh subagent with no working-session context. Give the subagent the linked issue or
-   task, the PR when one exists, the full base-to-HEAD diff, and the verification already run.
+2. Launch a fresh subagent with no inherited conversation history. Do not provide implementation
+   rationale, local notes, handoffs, or prior pre-push reviews. Give it the linked issue or task,
+   the PR when one exists, the full diff from the PR base (or default branch before a PR exists),
+   and the verification already run. Repository-autoloaded instructions still apply.
 3. Ask for a high-judgment review against the root and directory instructions. Require actionable
    findings or `current`. The subagent must not edit files or post to GitHub.
-4. Remediate every valid finding and commit the fixes.
-5. Dispatch another fresh subagent when remediation changes executable code, public behavior, test
-   expectations, provider data, state, concurrency, or serialization. Repeat until the latest fresh
-   review reports `current` after the latest material change.
+4. Remediate every valid finding, rerun affected targeted verification, and commit the fixes.
+5. After any material remediation, dispatch a different fresh subagent to review the new HEAD.
+   Material includes, but is not limited to, executable code, public behavior, tests, provider data,
+   agent instructions, workflow configuration, security boundaries, state, concurrency, and
+   serialization. Repeat until the latest fresh review reports `current` for the current HEAD.
 
 Never use the implementing agent as the reviewer. Never treat this gate as test execution.
 
@@ -89,15 +92,20 @@ These gates catch different failures; none replaces another:
 
 1. **Watch CI to a terminal state.** Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
-2. **Triage every comment** (bots and humans alike). For each one:
+2. **Wait for the standard hosted review on the current HEAD.** For a same-repository PR, wait for
+   `CI Review` to submit its verdict after CI succeeds. For a fork PR, `CI Review` cannot run: apply
+   the `douwebot` label after CI and wait for its fork-capable review instead. A skipped review does
+   not satisfy this gate.
+3. **Triage every comment** (bots and humans alike). For each one:
    - **Valid** → fix it, then reply saying what changed, and react 👍.
    - **Invalid** → reply explaining concretely why (with code evidence), and react 👎.
    - Never silently ignore a comment, and never resolve a thread without a reply.
-3. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design
+4. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design
    choice, an API trade-off, a behavioral default), leave a comment containing: the background,
    your reasoning, the decision that needs making, the trade-offs (pros/cons of each option), and
    your recommendation. Then **poll every 30 minutes for a reply** and continue when it lands.
-4. Repeat until CI is green and no comment is outstanding.
+5. Repeat until CI is green, the required hosted review covers the current HEAD, and no comment is
+   outstanding.
 
 ## When the loop completes — consider a deep `douwebot` review
 
@@ -110,7 +118,8 @@ The repo has two standards reviewers, and they are independent:
   inline comments and no verdict, and it deletes the label when it finishes, so each application
   buys exactly one review of the diff as it stands at that moment.
 
-Applying the label adds a second opinion; it does not suppress or replace `CI Review`.
+For same-repository PRs, applying the label adds a second opinion; it does not suppress or replace
+`CI Review`. For fork PRs, it is the required hosted-review path because `CI Review` cannot run.
 
 Once the loop above has terminated — CI green, every comment triaged — decide whether to apply it
 before handing the PR back or requesting merge:

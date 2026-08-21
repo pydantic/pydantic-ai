@@ -2,9 +2,9 @@
 
 <!-- Please read the contributing guide: https://ai.pydantic.dev/contributing/ -->
 
-<!-- Link an issue that a maintainer has agreed on -->
+<!-- For non-trivial changes, link an issue that a maintainer has agreed on -->
 <!-- and assigned to you. Unassigned PRs may be auto-closed. -->
-<!-- This applies to trivial fixes too. -->
+<!-- Trivial fixes (typos, broken links, small doc improvements) don't need an issue. -->
 
 <!-- For a version-policy-permitted compatibility impact, add the `compatibility impact` label -->
 <!-- and place this warning immediately after the PR's opening explanation: -->
