@@ -64,7 +64,7 @@ Every fresh reviewer in this skill runs under the same contract:
   or manager worktree outside the candidate diff. Harness-specific launch mechanics must not change
   the repository-owned review rubric.
 - Exclude branch-continuity state (`issue-brief.md`, `pr-decisions.md`, and handoffs), local notes,
-  implementation rationale, and prior reviews.
+  implementation rationale, and prior local pre-push review reports.
 - Pin that base or manager checkout to the immutable review-base SHA, so only base root and
   directory instructions autoload as policy. Candidate content is accessible only through Git
   object reads; changed HEAD instructions are review material. If the harness cannot pin its
