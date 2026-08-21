@@ -7,8 +7,17 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterator,
+    Sequence,
+)
+from contextlib import aclosing, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -138,10 +147,11 @@ try:
     import temporalio.api.common.v1
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHandle, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+    from temporalio.contrib.workflow_streams import WorkflowStream
     from temporalio.converter import (
         DataConverter,
         DefaultPayloadConverter,
@@ -171,6 +181,8 @@ try:
         TemporalDurability,
         _logfire as temporal_logfire,  # pyright: ignore[reportPrivateUsage]
         _payload_converter as temporal_payload_converter,  # pyright: ignore[reportPrivateUsage]
+        stream_agent_events,
+        workflow_stream_event_handler,
     )
     from pydantic_ai.durable_exec.temporal._activity_execution import (
         execute_activity as execute_temporal_activity,
@@ -8319,6 +8331,481 @@ async def test_temporal_durability_event_stream_handler_outside_workflow() -> No
 def test_temporal_durability_without_handler_does_not_wrap_event_stream() -> None:
     durability = TemporalDurability()
     assert durability.has_wrap_run_event_stream is False
+
+
+def test_temporal_durability_event_stream_topic_implies_handler() -> None:
+    """Setting `event_stream_topic` enables streaming on its own (implies an event stream handler)."""
+    durability = TemporalDurability(event_stream_topic='agent_events')
+    assert durability.has_wrap_run_event_stream is True
+
+
+# --- Streaming to a Workflow Stream (event_stream_topic) ---
+
+_workflow_stream_teed_events: list[AgentStreamEvent] = []
+
+
+async def _workflow_stream_teed_handler(
+    ctx: RunContext[object],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for event in stream:
+        _workflow_stream_teed_events.append(event)
+
+
+_workflow_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_workflow_stream_agent',
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_topic='agent_events',
+            event_stream_handler=_workflow_stream_teed_handler,
+        )
+    ],
+)
+
+
+@workflow.defn
+class WorkflowStreamAgentWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        # Hosts the stream that the agent's activities publish to.
+        self.stream = WorkflowStream()
+        self._released = False
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _workflow_stream_durable_agent.run(prompt)
+        # Stay alive until the subscriber has drained the stream: subscription is a workflow
+        # update long-poll, which can't reach the workflow once it has completed. Bound the wait so
+        # a subscriber that never releases (e.g. under CI load) can't hang the worker's shutdown.
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
+        except asyncio.TimeoutError:
+            pass
+        # Release any in-flight poll long-poll and wait for the handler to return before completing,
+        # so the workflow doesn't finish with the poll update still running (which fails the task).
+        self.stream.detach_pollers()
+        await workflow.wait_condition(workflow.all_handlers_finished)
+        return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
+
+
+async def _collect_agent_events(
+    client: Client,
+    handle: WorkflowHandle[Any, Any],
+    release: Callable[[], Awaitable[Any]],
+    *,
+    topic: str = 'agent_events',
+) -> list[AgentStreamEvent]:
+    """Consume events via the public `stream_agent_events` helper until the workflow completes.
+
+    Subscription is a workflow update long-poll, so we consume while the workflow is still alive
+    (kept so by its `release` signal). The text part's end event is published after its deltas, so
+    once it arrives the whole model stream has been observed; we then `release()` the workflow and
+    let the iterator drain to its natural end when the workflow reaches a terminal state.
+    """
+    events: list[AgentStreamEvent] = []
+    released = False
+    async for event in stream_agent_events(client, handle, topic, poll_cooldown=timedelta(milliseconds=50)):
+        events.append(event)
+        if isinstance(event, PartEndEvent) and not released:
+            released = True
+            await release()
+    return events
+
+
+async def test_temporal_durability_streaming_to_workflow_stream(client: Client) -> None:
+    """`event_stream_topic` publishes every event to the parent workflow's `WorkflowStream`.
+
+    An external subscriber (with just the workflow handle) observes the streamed events via
+    `stream_agent_events`, and the user-supplied `event_stream_handler` still receives them too
+    (the topic is orthogonal to the handler — both run).
+    """
+    _workflow_stream_teed_events.clear()
+    workflow_id = f'{WorkflowStreamAgentWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowStreamAgentWorkflow],
+        plugins=[AgentPlugin(_workflow_stream_durable_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkflowStreamAgentWorkflow.run,
+            args=['Hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+
+        collected = await asyncio.wait_for(
+            _collect_agent_events(client, handle, lambda: handle.signal(WorkflowStreamAgentWorkflow.release)),
+            timeout=60.0,
+        )
+        output = await handle.result()
+
+    assert output == 'Streamed response'
+    # The external subscriber observed the streamed model events, decoded back into typed events...
+    assert any(isinstance(event, PartStartEvent) for event in collected)
+    assert any(isinstance(event, PartDeltaEvent) for event in collected)
+    # ...and the user-supplied handler saw them too (the topic is orthogonal, it doesn't replace).
+    assert any(isinstance(event, PartStartEvent) for event in _workflow_stream_teed_events)
+
+
+_offsets_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_offsets_stream_agent',
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_topic='agent_events',
+        )
+    ],
+)
+
+
+@workflow.defn
+class WorkflowStreamOffsetsWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.stream = WorkflowStream()
+        self._released = False
+        # Publish to a *second* topic before the agent runs. Offsets are assigned over the whole
+        # `WorkflowStream`, not per topic, so this shifts the agent's first event off offset 0 and
+        # makes the topic-filtered subscription's offsets differ from its event indices.
+        other = self.stream.topic('other_events')
+        for i in range(3):
+            other.publish(f'noise-{i}')
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _offsets_stream_durable_agent.run(prompt)
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
+        except asyncio.TimeoutError:
+            pass
+        self.stream.detach_pollers()
+        await workflow.wait_condition(workflow.all_handlers_finished)
+        return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
+
+
+async def test_temporal_durability_workflow_stream_offsets_support_resume(client: Client) -> None:
+    """`with_offsets=True` exposes each event's stream offset so a dropped consumer can resume.
+
+    Offsets are assigned over the whole `WorkflowStream` rather than per topic, so a topic-filtered
+    subscription can't reconstruct them by counting the events it received — the workflow here
+    publishes to a second topic first, so the agent's events start past offset 0. This drops the
+    subscription partway through the run and reconnects with `from_offset=last_offset + 1`,
+    asserting the second subscription resumes exactly where the first stopped.
+    """
+    workflow_id = f'{WorkflowStreamOffsetsWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowStreamOffsetsWorkflow],
+        plugins=[AgentPlugin(_offsets_stream_durable_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkflowStreamOffsetsWorkflow.run,
+            args=['Hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+
+        async def take_one_then_drop() -> tuple[int, AgentStreamEvent]:
+            """Handle the first event, then simulate a dropped connection."""
+            async with aclosing(
+                stream_agent_events(
+                    client,
+                    handle,
+                    'agent_events',
+                    poll_cooldown=timedelta(milliseconds=50),
+                    with_offsets=True,
+                )
+            ) as subscription:
+                return await anext(subscription)
+
+        last_offset, _ = await asyncio.wait_for(take_one_then_drop(), timeout=60.0)
+
+        async def consume_rest() -> list[tuple[int, AgentStreamEvent]]:
+            seen: list[tuple[int, AgentStreamEvent]] = []
+            released = False
+            async for offset, event in stream_agent_events(
+                client,
+                handle,
+                'agent_events',
+                from_offset=last_offset + 1,
+                poll_cooldown=timedelta(milliseconds=50),
+                with_offsets=True,
+            ):
+                seen.append((offset, event))
+                if isinstance(event, PartEndEvent) and not released:
+                    released = True
+                    await handle.signal(WorkflowStreamOffsetsWorkflow.release)
+            return seen
+
+        rest = await asyncio.wait_for(consume_rest(), timeout=60.0)
+        output = await handle.result()
+
+    assert output == 'Streamed response'
+    # The reconnected subscription picked up immediately after the last offset handled, so no
+    # event was duplicated or skipped across the drop.
+    assert rest
+    assert rest[0][0] == last_offset + 1
+
+    offsets = [last_offset, *(offset for offset, _ in rest)]
+    assert offsets == sorted(set(offsets))  # strictly increasing, no duplicates
+    # The three `other_events` items sit ahead of the agent's events in the shared log, so the
+    # offsets are shifted off the event indices a counting consumer would have derived.
+    assert offsets[0] == 3
+    assert offsets != list(range(len(offsets)))
+    # The resumed half carries the remainder of the model stream.
+    assert any(isinstance(event, PartDeltaEvent) for _, event in rest)
+
+
+_replay_workflow_side_invocations = 0
+_replay_topic_publisher = workflow_stream_event_handler('agent_events')
+
+
+async def _replay_workflow_side_handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    """The topic publisher composed as a *workflow-side* handler — the replay-unsafe shape.
+
+    A `ProcessEventStream` handler runs in workflow code and re-runs on every replay, so this is
+    exactly where a publisher that didn't check for an activity context would emit again on each
+    replay. Counts its own invocations so the test can prove the handler really did re-run.
+    """
+    global _replay_workflow_side_invocations
+    _replay_workflow_side_invocations += 1
+    await _replay_topic_publisher(ctx, stream)
+
+
+_replay_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_replay_stream_agent',
+    capabilities=[
+        ProcessEventStream(_replay_workflow_side_handler),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_topic='agent_events',
+        ),
+    ],
+)
+
+
+@workflow.defn
+class ReplayStreamWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.stream = WorkflowStream()
+        self._released = False
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _replay_stream_durable_agent.run(prompt)
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
+        except asyncio.TimeoutError:
+            pass
+        self.stream.detach_pollers()
+        await workflow.wait_condition(workflow.all_handlers_finished)
+        return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
+
+
+async def test_temporal_durability_workflow_stream_publishes_only_from_activities(client: Client) -> None:
+    """The topic is published to from exactly one side — the activity — never from workflow code.
+
+    Workflow code re-runs on replay while activities do not, so a publisher that fired workflow-side
+    would re-emit on every replay. Here the same publisher is installed on both sides at once: inside
+    the model-request activity via `event_stream_topic`, and in workflow code via `ProcessEventStream`.
+    Only the activity-side one may reach the topic.
+
+    Replaying the recorded history re-runs the workflow-side handler and must stay clean. Without the
+    activity-context check the failure is loud rather than silent — `from_within_activity()` raises
+    when there's no activity context — so this pins that the workflow-side composition drains instead,
+    both live and on replay.
+    """
+    global _replay_workflow_side_invocations
+    _replay_workflow_side_invocations = 0
+
+    workflow_id = f'{ReplayStreamWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ReplayStreamWorkflow],
+        plugins=[AgentPlugin(_replay_stream_durable_agent)],
+        # Unsandboxed so the workflow-side handler's invocation counter is the one this test reads
+        # (the sandbox re-imports the module, hiding the increments), and so the live run and the
+        # `Replayer` below execute workflow code the same way.
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            ReplayStreamWorkflow.run,
+            args=['Hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        collected = await asyncio.wait_for(
+            _collect_agent_events(client, handle, lambda: handle.signal(ReplayStreamWorkflow.release)),
+            timeout=60.0,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    assert output == 'Streamed response'
+    # The workflow-side handler did run during the live run, so the composition is really exercised...
+    assert _replay_workflow_side_invocations > 0
+    # ...yet the topic carries the model stream exactly once. The scripted model emits one text part
+    # from three chunks — the first opens the part, the other two arrive as deltas — so a second
+    # publishing side would show up here as doubled counts.
+    assert len([event for event in collected if isinstance(event, PartStartEvent)]) == 1
+    assert len([event for event in collected if isinstance(event, PartDeltaEvent)]) == 2
+
+    # Replay re-runs workflow code against the recorded history; the workflow-side handler must fire
+    # again (proving replay reached it) without publishing or raising.
+    _replay_workflow_side_invocations = 0
+    await Replayer(
+        workflows=[ReplayStreamWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+    assert _replay_workflow_side_invocations > 0
+
+
+_filtered_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_filtered_stream_agent',
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            event_stream_topic='agent_events',
+            # Drop the per-token deltas; publish everything else.
+            event_stream_events=lambda event: not isinstance(event, PartDeltaEvent),
+        )
+    ],
+)
+
+
+@workflow.defn
+class FilteredWorkflowStreamAgentWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.stream = WorkflowStream()
+        self._released = False
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _filtered_stream_durable_agent.run(prompt)
+        # Bounded so a subscriber that never releases can't hang the worker's shutdown.
+        try:
+            await workflow.wait_condition(lambda: self._released, timeout=timedelta(seconds=30))
+        except asyncio.TimeoutError:
+            pass
+        # Release any in-flight poll long-poll and wait for the handler to return before completing,
+        # so the workflow doesn't finish with the poll update still running (which fails the task).
+        self.stream.detach_pollers()
+        await workflow.wait_condition(workflow.all_handlers_finished)
+        return result.output
+
+    @workflow.signal
+    def release(self) -> None:
+        self._released = True
+
+
+async def test_temporal_durability_event_stream_topic_filter(client: Client) -> None:
+    """`event_stream_events` filters which events are published to the topic."""
+    workflow_id = f'{FilteredWorkflowStreamAgentWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FilteredWorkflowStreamAgentWorkflow],
+        plugins=[AgentPlugin(_filtered_stream_durable_agent)],
+    ):
+        handle = await client.start_workflow(
+            FilteredWorkflowStreamAgentWorkflow.run,
+            args=['Hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+
+        collected = await asyncio.wait_for(
+            _collect_agent_events(client, handle, lambda: handle.signal(FilteredWorkflowStreamAgentWorkflow.release)),
+            timeout=60.0,
+        )
+        await handle.result()
+
+    # Non-delta events are still published...
+    assert any(isinstance(event, PartStartEvent) for event in collected)
+    assert any(isinstance(event, PartEndEvent) for event in collected)
+    # ...but the filtered-out per-token deltas are not.
+    assert not any(isinstance(event, PartDeltaEvent) for event in collected)
+
+
+async def test_temporal_durability_event_stream_topic_outside_workflow() -> None:
+    """With `event_stream_topic` set but running outside a workflow, publishing is skipped
+    (it needs an activity context) and events are still forwarded to the user handler."""
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    durability = TemporalDurability(event_stream_topic='agent_events', event_stream_handler=handler)
+    agent = Agent(TestModel(custom_output_text='done'), name='outside_topic', capabilities=[durability])
+    await agent.run('Hello')
+    assert any(isinstance(event, PartStartEvent) for event in events)
+
+
+async def test_temporal_durability_event_stream_topic_without_handler_outside_workflow() -> None:
+    """A topic without a user handler enables streaming; outside a workflow, events are simply
+    drained (nothing to publish to, no handler to forward to)."""
+    durability = TemporalDurability(event_stream_topic='agent_events')
+    agent = Agent(TestModel(custom_output_text='done'), name='outside_topic_no_handler', capabilities=[durability])
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+
+
+async def test_workflow_stream_event_handler_is_composable() -> None:
+    """The public factory returns a normal `EventStreamHandler` usable as an `event_stream_handler`.
+
+    Outside a Temporal activity it can't publish, so it just drains the stream.
+    """
+    handler = workflow_stream_event_handler('agent_events')
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        name='factory_handler',
+        capabilities=[TemporalDurability(event_stream_handler=handler)],
+    )
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+
+
+async def test_workflow_stream_event_handler_rejects_standalone_activity() -> None:
+    """Inside an activity no workflow scheduled, there is no stream to publish to.
+
+    The handler pins publishing to the run that scheduled the activity, so it needs a workflow
+    ID and run ID from the activity context. An activity started directly on the client has
+    neither; Pydantic AI never schedules one that way, so an `ActivityEnvironment` with the
+    workflow fields cleared is the only way to reach the guard.
+    """
+    handler = workflow_stream_event_handler('agent_events')
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='standalone-run')
+    env = ActivityEnvironment()
+    env.info = replace(env.info, workflow_id=None, workflow_run_id=None)
+
+    send, receive = anyio.create_memory_object_stream[AgentStreamEvent](0)
+    async with send, receive:
+        with pytest.raises(UserError, match='can only publish from an activity scheduled by a workflow'):
+            await env.run(handler, ctx, receive)
 
 
 async def test_durability_streaming_in_workflow(client: Client):

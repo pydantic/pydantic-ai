@@ -150,7 +150,7 @@ web = ["starlette>=1.3.1", "uvicorn>=0.38.0"]
 # TODO(v3): remove `httpx`, staged here only for the legacy retry helpers that v3 drops.
 retries = ["tenacity>=8.2.3", "httpx>=0.27"]
 # Temporal
-temporal = ["temporalio>=1.24.0"]
+temporal = ["temporalio>=1.27.0"]
 # DBOS
 dbos = ["dbos>=2.10.0"]
 # Prefect

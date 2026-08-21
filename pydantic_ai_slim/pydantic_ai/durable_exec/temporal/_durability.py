@@ -48,6 +48,11 @@ if TYPE_CHECKING:
     pass
 
 from ._activity_execution import execute_activity
+from ._event_stream import (
+    AgentStreamEventFilter,
+    combine_event_stream_handlers,
+    workflow_stream_event_handler,
+)
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
@@ -170,6 +175,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_topic: str | None = None,
+        event_stream_events: AgentStreamEventFilter | None = None,
+        event_stream_batch_interval: timedelta = timedelta(milliseconds=100),
         name: str | None = None,
         deps_type: type[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
@@ -201,6 +209,21 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
                 per-event activities.
+            event_stream_topic: If set, every `AgentStreamEvent` is published to this topic on the
+                parent workflow's `WorkflowStream` so an external consumer can subscribe to the
+                workflow and observe events in real time (via
+                [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events]), without
+                needing a separate message queue. This is sugar over
+                [`workflow_stream_event_handler`][pydantic_ai.durable_exec.temporal.workflow_stream_event_handler];
+                it enables streaming on its own and is orthogonal to `event_stream_handler` (both run,
+                each seeing every event). The workflow must construct a `WorkflowStream` in its
+                `@workflow.init` for events to be delivered.
+            event_stream_events: Optional predicate to select which events are published to
+                `event_stream_topic`; by default every event is published. A model stream emits a
+                `PartDeltaEvent` per token, so filtering (e.g. dropping deltas) can significantly reduce
+                the number of durable batches. Only affects publishing, not `event_stream_handler`.
+            event_stream_batch_interval: How often the Workflow Stream client flushes buffered events
+                to the workflow when `event_stream_topic` is set. Defaults to 100ms.
             name: Unique agent name used in the Temporal activity names. Defaults to the agent's
                 `name` when the capability is bound.
             deps_type: The type of the agent's dependencies, needed for Temporal
@@ -230,6 +253,21 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             Setting the `'temporal'` key to `False` skips activity wrapping
             (only valid for async tool functions).
         """
+        if event_stream_topic is not None:
+            # Publishing to the topic runs inside the activities that run the event stream handler.
+            # Setting the topic implies an event stream handler, so streaming is enabled (and the
+            # per-event activity is registered) even without a user handler; when a user handler is
+            # also set, both run as independent consumers of the same stream.
+            publisher = workflow_stream_event_handler(
+                event_stream_topic,
+                events=event_stream_events,
+                batch_interval=event_stream_batch_interval,
+            )
+            event_stream_handler = (
+                combine_event_stream_handlers(publisher, event_stream_handler)
+                if event_stream_handler is not None
+                else publisher
+            )
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
         self._deps_type = deps_type
