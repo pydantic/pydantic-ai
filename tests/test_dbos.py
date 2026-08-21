@@ -1359,10 +1359,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            'MCPToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            '`ExternalToolset` can be passed at runtime.'
+            'MCPToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with DBOS, or registered with the `@agent.toolset` decorator after the agent was constructed, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to `Agent(toolsets=[...])` instead. For a `DynamicToolset`, set an explicit `id=` there (the same `id` accepted by the decorator). Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ):
         await simple_dbos_agent.run(
@@ -1375,10 +1372,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
     with workflow_raises(
         UserError,
         snapshot(
-            'DynamicToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            '`ExternalToolset` can be passed at runtime.'
+            'DynamicToolset cannot be passed to `run(toolsets=...)` or `override(toolsets=...)` at runtime with DBOS, or registered with the `@agent.toolset` decorator after the agent was constructed, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to `Agent(toolsets=[...])` instead. For a `DynamicToolset`, set an explicit `id=` there (the same `id` accepted by the decorator). Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ):
         await simple_dbos_agent.run(
@@ -3700,6 +3694,50 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.call_tool' in step_names
 
 
+async def test_dbos_durability_rejects_decorator_registered_dynamic_toolset(dbos: DBOS) -> None:
+    calls: list[str] = []
+    agent = Agent(TestModel(), name='dbos_late_dynamic', capabilities=[DBOSDurability()])
+
+    @agent.toolset(id='late_tools')
+    def late_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id='late_inner')
+
+        @toolset.tool_plain
+        def dynamic_tool() -> str:
+            calls.append('called')
+            return 'dynamic result'
+
+        return toolset
+
+    assert (await agent.run('Call the tool')).output == '{"dynamic_tool":"dynamic result"}'
+    assert calls == ['called']
+
+    @DBOS.workflow()
+    async def run_late_agent() -> None:
+        await agent.run('Call the tool')
+
+    with pytest.raises(UserError, match=r'DynamicToolset.*`Agent\(toolsets=\[\.\.\.\]\)`'):
+        await run_late_agent()
+
+    supported_agent = Agent(
+        TestModel(),
+        name='dbos_constructor_dynamic',
+        toolsets=[DynamicToolset(late_toolset, id='constructor_tools')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_supported_agent() -> str:
+        return (await supported_agent.run('Call the tool')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await run_supported_agent() == '{"dynamic_tool":"dynamic result"}'
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'dbos_constructor_dynamic__dynamic_toolset__constructor_tools.get_tools' in step_names
+    assert 'dbos_constructor_dynamic__dynamic_toolset__constructor_tools.call_tool' in step_names
+
+
 def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
         # Construction raises before the factory can run.
@@ -3776,9 +3814,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
             toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp')],
         )
 
-    with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
-    ):
+    with pytest.raises(UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` or `override'):
         await run_agent()
 
 
@@ -3790,9 +3826,7 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
     def run_agent() -> None:
         agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
 
-    with pytest.raises(
-        UserError, match=r'DynamicToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
-    ):
+    with pytest.raises(UserError, match=r'DynamicToolset cannot be passed to `run\(toolsets=\.\.\.\)` or `override'):
         run_agent()
 
 
@@ -3813,9 +3847,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             # Run setup raises before any node runs.
             pass  # pragma: no cover
 
-    with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
-    ):
+    with pytest.raises(UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` or `override'):
         await run_agent()
 
 
@@ -3840,6 +3872,93 @@ async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) ->
 
     with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
         await run_agent()
+
+
+@pytest.mark.parametrize('kind', ['mcp', 'dynamic'])
+async def test_dbos_durability_rejects_overridden_executing_toolsets(dbos: DBOS, kind: str) -> None:
+    """`override(toolsets=...)` inside a workflow is guarded exactly like `run(toolsets=...)`.
+
+    An overridden toolset arrives after `for_agent` wrapped the agent's toolsets in steps, so its
+    I/O would run straight in workflow code, un-checkpointed. The guard used to miss this because
+    it read `agent.toolsets`, which returns the *overridden* list while an override is in scope.
+    """
+    toolset_factories = {
+        'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='override_mcp'),
+        'dynamic': lambda: DynamicToolset(_per_run_dynamic_factory, id='override_dynamic'),
+    }
+    labels = {'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
+
+    agent = Agent(_durability_fn_model, name=f'durability_override_{kind}', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        with agent.override(toolsets=[toolset_factories[kind]()]):
+            await agent.run('Hello')
+
+    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+        await run_agent()
+
+
+async def test_dbos_durability_allows_overridden_function_toolset(dbos: DBOS) -> None:
+    """DBOS keeps allowing `override(toolsets=[FunctionToolset(...)])`, and the tool really runs.
+
+    DBOS deliberately runs function tools inline rather than in steps, so an overridden
+    `FunctionToolset` is no less durable than a construction-time one — `'function'` is absent from
+    `DBOSDurability._unsupported_runtime_toolset_kinds`. Only the half of the wrapper-era rationale
+    that dynamic toolsets invalidated (they are wrapped in steps now) is rejected above.
+    """
+    calls: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('override_tool', {}, tool_call_id='call-1')])
+
+    def override_tool() -> str:
+        calls.append('override_tool')
+        return 'ok'
+
+    agent = Agent(FunctionModel(model_fn), name='durability_override_function', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        with agent.override(toolsets=[FunctionToolset([override_tool], id='override_fn')]):
+            return (await agent.run('Hello')).output
+
+    assert await run_agent() == 'done'
+    assert calls == ['override_tool']
+
+
+async def test_dbos_durability_rejects_runtime_toolset_reusing_registered_id(dbos: DBOS) -> None:
+    """A run-time toolset under an already-registered `id` is rejected, not silently substituted.
+
+    `get_wrapper_toolset` swaps registered `id`s for their step wrappers, so without this guard the
+    run would have called the *construction-time* toolset's tools in place of the ones the caller
+    passed. A `FunctionToolset` gets past the executing-toolset guard on DBOS (function tools run
+    inline there), which is what makes the collision reachable.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_runtime_id_collision',
+        toolsets=[DynamicToolset(_per_run_dynamic_factory, id='shared')],
+        capabilities=[DBOSDurability()],
+    )
+    colliding = FunctionToolset[Any](id='shared')
+
+    @DBOS.workflow()
+    async def run_with_override() -> None:
+        with agent.override(toolsets=[colliding]):
+            await agent.run('Hello')
+
+    @DBOS.workflow()
+    async def run_with_runtime_toolset() -> None:
+        await agent.run('Hello', toolsets=[colliding])
+
+    message = "A toolset added at run time has the same `id` 'shared' as one the agent was constructed with"
+    with pytest.raises(UserError, match=message):
+        await run_with_override()
+    with pytest.raises(UserError, match=message):
+        await run_with_runtime_toolset()
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:
