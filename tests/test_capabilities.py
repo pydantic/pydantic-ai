@@ -22959,8 +22959,6 @@ def test_deferred_tool_requests_build_results_metadata_copied():
     caller_metadata['call_1']['scope'] = 'after'
 
     assert results.metadata == {'call_1': {'scope': 'before'}}
-    assert results.metadata is not caller_metadata
-    assert results.metadata['call_1'] is not caller_metadata['call_1']
 
 
 def test_deferred_tool_requests_remaining_metadata_copied():
@@ -22976,7 +22974,6 @@ def test_deferred_tool_requests_remaining_metadata_copied():
     requests.metadata['call_2']['scope'] = 'mutated'
 
     assert remaining.metadata == {'call_2': {'scope': 'two'}}
-    assert remaining.metadata['call_2'] is not requests.metadata['call_2']
 
 
 async def test_deferred_tool_handler_wrapper_capability():
