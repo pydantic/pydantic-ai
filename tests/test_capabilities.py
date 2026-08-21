@@ -22931,19 +22931,21 @@ def test_deferred_tool_requests_remaining_cross_category_ids_do_not_resolve():
     """remaining() only resolves requests with a same-kind result, never a mis-keyed one."""
     approval = ToolCallPart('a', {}, tool_call_id='approval_1')
     call = ToolCallPart('b', {}, tool_call_id='call_1')
-    requests = DeferredToolRequests(approvals=[approval], calls=[call])
+    requests = DeferredToolRequests(
+        approvals=[approval],
+        calls=[call],
+        metadata={'approval_1': {'kind': 'approval'}, 'call_1': {'kind': 'call'}},
+    )
 
-    # Mis-keyed (cross-category) results resolve nothing: both requests stay pending.
     mis_keyed = DeferredToolResults(approvals={'call_1': True}, calls={'approval_1': 'result'})
-    assert requests.remaining(mis_keyed) == DeferredToolRequests(approvals=[approval], calls=[call])
+    assert requests.remaining(mis_keyed) == requests
 
-    # Same-kind results resolve everything.
-    fully_resolved = DeferredToolResults(approvals={'approval_1': True}, calls={'call_1': 'result'})
-    assert requests.remaining(fully_resolved) is None
+    matching = DeferredToolResults(approvals={'approval_1': True}, calls={'call_1': 'result'})
+    assert requests.remaining(matching) is None
 
-    # Partial same-kind resolution preserves the pending request.
-    assert requests.remaining(DeferredToolResults(approvals={'approval_1': True})) == DeferredToolRequests(
-        approvals=[], calls=[call]
+    approval_only = DeferredToolResults(approvals={'approval_1': True})
+    assert requests.remaining(approval_only) == DeferredToolRequests(
+        calls=[call], metadata={'call_1': {'kind': 'call'}}
     )
 
 
