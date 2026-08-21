@@ -4882,36 +4882,8 @@ async def test_xai_include_settings(allow_model_requests: None):
                     chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_VERBOSE_STREAMING,
                 ],
-            }
-        ]
-    )
-
-
-async def test_xai_verbose_streaming_include_setting(allow_model_requests: None):
-    """`verbose_streaming` is sent on a streaming request, unlike the non-streaming one above.
-
-    Asserts the outgoing payload directly because cassette replay does not match request bodies, so a
-    recording cannot catch us dropping the option.
-    """
-    stream = [get_grok_text_chunk('test')]
-    mock_client = MockXai.create_mock_stream([stream])
-    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(model, model_settings=XaiModelSettings(xai_include_verbose_streaming=True))
-
-    async with agent.run_stream('Hello') as result:
-        assert [chunk async for chunk in result.stream_text(debounce_by=None)] == ['test']
-
-    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
-        [
-            {
-                'model': XAI_NON_REASONING_MODEL,
-                'messages': [{'content': [{'text': 'Hello'}], 'role': 'ROLE_USER'}],
-                'tools': None,
-                'tool_choice': None,
-                'response_format': None,
-                'use_encrypted_content': False,
-                'include': [chat_pb2.IncludeOption.INCLUDE_OPTION_VERBOSE_STREAMING],
             }
         ]
     )

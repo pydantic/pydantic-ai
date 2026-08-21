@@ -242,10 +242,14 @@ class XaiModelSettings(ModelSettings, total=False):
     """
 
     xai_include_verbose_streaming: bool
-    """Whether to stream intermediate progress from xAI's server-side tools.
+    """Whether to stream intermediate progress from xAI's server-side tool loop.
 
-    Corresponds to the `verbose_streaming` option in the xAI `include` parameter. This setting is
-    applied only to streaming requests and is ignored by [`request()`][pydantic_ai.models.Model.request].
+    Each server-side tool call is surfaced as it is made rather than only once the loop finishes, so
+    a streamed run emits native-tool events as the model works. It changes streaming cadence rather
+    than adding output to a response, so it makes no observable difference to
+    [`request()`][pydantic_ai.models.Model.request].
+
+    Corresponds to the `verbose_streaming` option in the xAI `include` parameter.
     """
 
     xai_reasoning_effort: GrokReasoningEffort
@@ -299,17 +303,11 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 
 
 def _get_include_options(
-    model_settings: XaiModelSettings,
-    model_request_parameters: ModelRequestParameters,
-    *,
-    streaming: bool,
+    model_settings: XaiModelSettings, model_request_parameters: ModelRequestParameters
 ) -> list[chat_pb2.IncludeOption]:
     """Build the xAI `include` options for a request.
 
     Extracted from `XaiModel._create_chat` to keep that method under the complexity limit.
-
-    `verbose_streaming` changes the provider's streaming cadence rather than adding output to a
-    final response, so it is only sent when `streaming` is set.
     """
     include: list[chat_pb2.IncludeOption] = []
     if model_settings.get('xai_include_code_execution_output'):
@@ -328,7 +326,7 @@ def _get_include_options(
         include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT)
     if model_settings.get('xai_include_mcp_output'):
         include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
-    if streaming and model_settings.get('xai_include_verbose_streaming'):
+    if model_settings.get('xai_include_verbose_streaming'):
         include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_VERBOSE_STREAMING)
     return include
 
@@ -777,8 +775,6 @@ class XaiModel(Model[AsyncClient]):
         messages: list[ModelMessage],
         model_settings: XaiModelSettings,
         model_request_parameters: ModelRequestParameters,
-        *,
-        streaming: bool = False,
     ) -> Any:
         """Create an xAI chat instance with common setup for both request and stream.
 
@@ -833,7 +829,7 @@ class XaiModel(Model[AsyncClient]):
 
         # Populate use_encrypted_content and include based on model settings
         use_encrypted_content = model_settings.get('xai_include_encrypted_content') or False
-        include = _get_include_options(model_settings, model_request_parameters, streaming=streaming)
+        include = _get_include_options(model_settings, model_request_parameters)
 
         # Create and return chat instance
         return self._provider.client.chat.create(
@@ -880,12 +876,7 @@ class XaiModel(Model[AsyncClient]):
             model_request_parameters,
         )
 
-        chat = await self._create_chat(
-            messages,
-            cast(XaiModelSettings, model_settings or {}),
-            model_request_parameters,
-            streaming=True,
-        )
+        chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
         response_stream = chat.stream()
         try:
             yield await self._process_streamed_response(response_stream, model_request_parameters)

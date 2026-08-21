@@ -197,7 +197,23 @@ agent = Agent(
 
 Note that when parallel tool calls are enabled, multiple tool calls can occur within a single turn, so `xai_max_turns` does not necessarily equal the total number of tool calls made.
 
-For real-time visibility into server-side tool calls, set [`XaiModelSettings.xai_include_verbose_streaming`][pydantic_ai.models.xai.XaiModelSettings.xai_include_verbose_streaming] to `True`. This adds xAI's `verbose_streaming` include option to streaming requests so Pydantic AI can emit intermediate native-tool events as the server-side loop progresses; it has no effect on non-streaming requests. The intermediate events surface when [streaming all events](../agent.md#streaming-all-events) — with [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], an `event_stream_handler`, or [`agent.iter()`][pydantic_ai.agent.Agent.iter] — not through [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]'s `stream_text()` and `stream_output()` methods.
+### Streaming the tool loop's progress
+
+By default a streamed run only learns about xAI's server-side tool calls once the loop that made them is done. Set [`XaiModelSettings.xai_include_verbose_streaming`][pydantic_ai.models.xai.XaiModelSettings.xai_include_verbose_streaming] to `True` to have each call reported as the model makes it:
+
+```py {title="xai_verbose_streaming.py"}
+from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.xai import XaiModelSettings
+
+agent = Agent(
+    'xai:grok-4.3',
+    capabilities=[NativeTool(WebSearchTool())],
+    model_settings=XaiModelSettings(xai_include_verbose_streaming=True),
+)
+```
+
+The progress arrives as [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] events, so you need to be [streaming all events](../agent.md#streaming-all-events) — with [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], an `event_stream_handler`, or [`agent.iter()`][pydantic_ai.agent.Agent.iter] — to see them. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]'s `stream_text()` and `stream_output()` yield only the final output, and a non-streaming [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] has no cadence to change, so the setting makes no difference there.
 
 ## Multi-agent models
 
