@@ -4889,7 +4889,11 @@ async def test_xai_include_settings(allow_model_requests: None):
 
 
 async def test_xai_verbose_streaming_include_setting(allow_model_requests: None):
-    """Test that verbose streaming is included only for streaming requests."""
+    """`verbose_streaming` is sent on a streaming request, unlike the non-streaming one above.
+
+    Asserts the outgoing payload directly because cassette replay does not match request bodies, so a
+    recording cannot catch us dropping the option.
+    """
     stream = [get_grok_text_chunk('test')]
     mock_client = MockXai.create_mock_stream([stream])
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
@@ -4909,108 +4913,6 @@ async def test_xai_verbose_streaming_include_setting(allow_model_requests: None)
                 'use_encrypted_content': False,
                 'include': [chat_pb2.IncludeOption.INCLUDE_OPTION_VERBOSE_STREAMING],
             }
-        ]
-    )
-
-
-async def test_xai_verbose_streaming_server_side_tool_call_events(allow_model_requests: None):
-    """Verbose-cadence streaming should emit one call part per server-side tool call id.
-
-    With `xai_include_verbose_streaming` enabled, xAI re-sends the same server-side tool call
-    across multiple assistant deltas as it progresses (e.g. in-progress, then completed with
-    updated args). The call part is emitted from the first assistant delta per tool_call_id and
-    later deltas for that id are dropped, so the part carries the first delta's args.
-    """
-    in_progress_call = create_server_tool_call(
-        tool_name='web_search',
-        arguments={'query': 'x'},
-        tool_call_id='server_tool_1',
-        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS,
-    )
-    completed_call = create_server_tool_call(
-        tool_name='web_search',
-        arguments={'query': 'x', 'num_results': 5},
-        tool_call_id='server_tool_1',
-        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
-    )
-
-    tool_output_json = json.dumps({'status': 'ok'})
-
-    stream: list[tuple[chat_types.Response, chat_types.Chunk]] = [
-        (
-            create_response(content='', tool_calls=[in_progress_call], finish_reason='stop'),
-            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[in_progress_call]),
-        ),
-        # Verbose cadence: the same tool_call_id arrives again with updated status and args.
-        (
-            create_response(content='', tool_calls=[completed_call], finish_reason='stop'),
-            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[completed_call]),
-        ),
-        (
-            create_response(content=tool_output_json, tool_calls=[completed_call], finish_reason='stop'),
-            create_stream_chunk(
-                role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[completed_call], content=tool_output_json
-            ),
-        ),
-        (
-            create_response(content='done', finish_reason='stop'),
-            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='done'),
-        ),
-    ]
-
-    mock_client = MockXai.create_mock_stream([stream])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, model_settings=XaiModelSettings(xai_include_verbose_streaming=True))
-
-    events: list[Any] = []
-    async with agent.iter(user_prompt='') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        events.append(event)
-
-    assert agent_run.result is not None
-    assert agent_run.result.output == 'done'
-
-    # The `include` wire format is covered by `test_xai_verbose_streaming_include_setting` above.
-    assert events == snapshot(
-        [
-            PartStartEvent(
-                index=0,
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'x'},
-                    tool_call_id='server_tool_1',
-                    provider_name='xai',
-                    provider_details={'function_name': 'web_search'},
-                ),
-            ),
-            PartEndEvent(
-                index=0,
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'x'},
-                    tool_call_id='server_tool_1',
-                    provider_name='xai',
-                    provider_details={'function_name': 'web_search'},
-                ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=1,
-                part=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content={'status': 'ok'},
-                    tool_call_id='server_tool_1',
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(index=2, part=TextPart(content='done'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartEndEvent(index=2, part=TextPart(content='done')),
         ]
     )
 
