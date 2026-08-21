@@ -43,7 +43,7 @@ async def test_xai_verbose_streaming_native_tool_lifecycle(allow_model_requests:
     progress events without changing the resulting message.
 
     Cassette replay does not match request bodies, so this does not prove the include option went out
-    on the wire; `test_xai_verbose_streaming_include_setting` asserts that separately.
+    on the wire; `test_xai_include_settings` asserts that separately.
     """
     agent = Agent(
         XaiModel(XAI_MODEL, provider=xai_provider),
