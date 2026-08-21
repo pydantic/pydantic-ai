@@ -16,6 +16,7 @@ with try_import() as imports_successful:
 
 with try_import() as logfire_import_successful:
     import logfire
+    from logfire._internal.tracer import ProxyTracerProvider as LogfireProxyTracerProvider
     from logfire.testing import CaptureLogfire
 
 pytestmark = [
@@ -970,6 +971,134 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'refer to the documentation at '
         'https://ai.pydantic.dev/evals/#opentelemetry-integration.'
     )
+
+
+async def test_context_span_exporter_cache_entry_dies_with_its_provider(mocker: MockerFixture):
+    """A plain `opentelemetry-sdk` provider records, and its cache entry is released with it.
+
+    Weak keying is the half of the fix that stops an entry outliving its provider: a plain `dict`
+    would satisfy every other assertion about the cache while pinning each provider alive for the
+    life of the process. This also covers the non-logfire keying path, which every other test in
+    this file reaches through logfire's proxy instead.
+
+    This can't be a VCR test: the cache isn't observable through the public API, and no provider
+    HTTP traffic is involved.
+    """
+    import gc
+    import weakref
+
+    from opentelemetry.sdk.trace import TracerProvider
+
+    from pydantic_evals.otel._context_in_memory_span_exporter import (
+        _context_in_memory_providers,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    # `shutdown_on_exit` registers an `atexit` handler bound to the provider, which would keep it
+    # alive regardless of the cache and make the collection assertion below meaningless.
+    holder = [TracerProvider(shutdown_on_exit=False)]
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider',
+        side_effect=lambda: holder[0],
+    )
+
+    with context_subtree() as tree:
+        with holder[0].get_tracer(__name__).start_as_current_span('plain_otel'):
+            pass
+    assert isinstance(tree, SpanTree)
+    assert [node.name for node in tree.roots] == ['plain_otel']
+    assert holder[0] in _context_in_memory_providers
+
+    provider_ref = weakref.ref(holder[0])
+    holder.clear()
+    gc.collect()
+    assert provider_ref() is None
+
+
+async def test_context_subtree_provider_that_cannot_key_the_exporter_cache(mocker: MockerFixture):
+    """A provider that cannot be a cache key still records; it just doesn't get a cached exporter.
+
+    The cache is keyed by the provider object, so a provider that can't be weakly referenced (as
+    here) or can't be hashed (any `@dataclass` provider, which is what logfire's own proxy is) would
+    otherwise raise `TypeError` out of `context_subtree()` and abort the evaluation.
+    """
+    from opentelemetry.sdk.trace import SpanProcessor
+
+    class UncacheableTracerProvider:
+        __slots__ = ('processors',)
+
+        def __init__(self) -> None:
+            self.processors: list[SpanProcessor] = []
+
+        def add_span_processor(self, span_processor: SpanProcessor) -> None:
+            self.processors.append(span_processor)
+
+    tracer_provider = UncacheableTracerProvider()
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=tracer_provider
+    )
+
+    with context_subtree() as span_tree:
+        pass
+    assert isinstance(span_tree, SpanTree)
+    assert len(tracer_provider.processors) == 1
+
+    # Nothing was cached, so the next call attaches a fresh exporter rather than reusing one.
+    with context_subtree() as span_tree:
+        pass
+    assert isinstance(span_tree, SpanTree)
+    assert len(tracer_provider.processors) == 2
+
+
+async def test_context_subtree_records_after_tracer_provider_shutdown():
+    """A shut-down exporter must not be served from the cache.
+
+    `TracerProvider.shutdown()` stops the exporter attached to it, but the provider keeps its
+    identity, so the cache kept handing back the stopped exporter -- which drops every span it is
+    given -- and `context_subtree()` silently yielded an empty tree from then on.
+    """
+    with context_subtree() as before_shutdown:
+        with logfire.span('before_shutdown'):
+            pass
+    assert isinstance(before_shutdown, SpanTree)
+    assert [node.name for node in before_shutdown.roots] == ['before_shutdown']
+
+    logfire.shutdown(flush=False)
+
+    with context_subtree() as after_shutdown:
+        with logfire.span('after_shutdown'):
+            pass
+    assert isinstance(after_shutdown, SpanTree)
+    assert [node.name for node in after_shutdown.roots] == ['after_shutdown']
+
+
+async def test_context_span_exporter_cached_by_provider_object():
+    """The exporter cache is keyed by the provider object rather than its `id()`.
+
+    Keying by `id()` let an entry outlive the provider it belonged to, so a later provider
+    allocated at the same address inherited an exporter attached to the dead one and recorded
+    nothing. Keying by the object ties each entry's lifetime to its provider instead.
+
+    This can't be a VCR test: the two keying schemes are indistinguishable through the public API,
+    and no provider HTTP traffic is involved.
+    """
+    from opentelemetry.trace import get_tracer_provider
+
+    from pydantic_evals.otel._context_in_memory_span_exporter import (
+        _context_in_memory_providers,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    tracer_provider = get_tracer_provider()
+    assert isinstance(tracer_provider, LogfireProxyTracerProvider)
+    provider = tracer_provider.provider
+
+    with context_subtree():
+        pass
+    assert provider in _context_in_memory_providers
+
+    exporter = _context_in_memory_providers[provider]
+    with context_subtree():
+        pass
+    assert _context_in_memory_providers[provider] is exporter
 
 
 async def test_span_node_status_captured():

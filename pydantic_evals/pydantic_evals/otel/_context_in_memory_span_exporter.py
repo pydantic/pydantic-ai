@@ -4,13 +4,13 @@ import threading
 import typing
 import uuid
 from collections import defaultdict
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from weakref import WeakValueDictionary
+from weakref import WeakKeyDictionary
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
-from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider
+from opentelemetry.trace import ProxyTracerProvider, TracerProvider, get_tracer_provider
 
 try:
     from logfire._internal.tracer import (
@@ -23,9 +23,7 @@ except ImportError:  # pragma: lax no cover
 
     # Ensure that we can do an isinstance check without erroring
     class LogfireProxyTracerProvider:
-        @property
-        def provider(self):
-            return None
+        provider: TracerProvider
 
 
 from ._errors import SpanTreeRecordingError
@@ -128,22 +126,19 @@ class _ContextInMemorySpanExporter(SpanExporter):
         return True
 
 
-# This cache is mostly just necessary for testing
-# When running in "real" code, the tracer provider won't be reset
-_context_in_memory_providers: WeakValueDictionary[int, _ContextInMemorySpanExporter] = WeakValueDictionary()
+# Caching the exporter per provider keeps `context_subtree()` from attaching another span processor on every
+# call: a long-lived provider would otherwise accumulate one per evaluation. Keyed by the provider object so each
+# entry's lifetime is tied to its provider -- an `id()` key can be recycled, letting an entry outlive the provider
+# it belongs to and alias a later provider allocated at the same address.
+_context_in_memory_providers: WeakKeyDictionary[TracerProvider, _ContextInMemorySpanExporter] = WeakKeyDictionary()
 
 
 def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecordingError:
     tracer_provider = get_tracer_provider()
-    if isinstance(tracer_provider, LogfireProxyTracerProvider):
-        cache_id = id(tracer_provider.provider)
-    else:
-        cache_id = id(tracer_provider)
-    if (cached_exporter := _context_in_memory_providers.get(cache_id)) is not None:
-        return cached_exporter
 
     # `tracer_provider` should generally be an `opentelemetry.sdk.trace.TracerProvider` or
-    # `logfire._internal.tracer.ProxyTracerProvider`, in which case the `add_span_processor` method will be present
+    # `logfire._internal.tracer.ProxyTracerProvider`, in which case the `add_span_processor` method will be present.
+    # Checked before the cache lookup so a provider we are going to reject never becomes a cache key.
     if not hasattr(tracer_provider, 'add_span_processor'):
         if isinstance(tracer_provider, ProxyTracerProvider):
             required_call = (
@@ -162,8 +157,30 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
                 f' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
             )
 
+    # `logfire.configure()` reuses one `ProxyTracerProvider` and swaps the provider it wraps, so the wrapped
+    # provider is what identifies the set of span processors; the proxy itself is also unhashable.
+    if isinstance(tracer_provider, LogfireProxyTracerProvider):
+        cache_key = tracer_provider.provider
+    else:
+        cache_key = tracer_provider
+
+    # A provider that is unhashable or cannot be weakly referenced cannot key the cache. That is not fatal:
+    # recording still works, it just attaches a fresh exporter per call instead of reusing one.
+    try:
+        cached_exporter = _context_in_memory_providers.get(cache_key)
+    except TypeError:
+        cached_exporter = None
+
+    # A provider keeps its identity across `shutdown()`, which stops the exporter attached to it. A stopped
+    # exporter silently drops every span it is handed, so it has to be replaced rather than reused. The dead
+    # processor stays attached, so a provider shut down repeatedly without being replaced accumulates one per
+    # shutdown -- bounded in practice because `logfire.configure()` allocates a new provider each time.
+    if cached_exporter is not None and not cached_exporter._stopped:  # pyright: ignore[reportPrivateUsage]
+        return cached_exporter
+
     exporter = _ContextInMemorySpanExporter()
-    _context_in_memory_providers[cache_id] = exporter
+    with suppress(TypeError):
+        _context_in_memory_providers[cache_key] = exporter
     processor = SimpleSpanProcessor(exporter)
     tracer_provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     return exporter
