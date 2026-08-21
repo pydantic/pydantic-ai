@@ -69,10 +69,12 @@ Every fresh reviewer in this skill runs under the same contract:
   candidate content.
 - Read trusted base files directly. Inspect candidate files through non-dereferencing Git object and
   diff reads so candidate-authored symlinks cannot escape the worktree.
-- Use a concrete per-harness allowlist: read-only Git inspection (`diff`, `show`, `log`, `status`,
-  `rev-parse`, `merge-base`, `ls-tree`), GitHub PR/issue/review/check/workflow-run reads, and
-  read-only retrieval of authoritative external documentation. It returns text only and never
-  mutates local or external state.
+- Use a trusted per-harness read-only wrapper or argument-safe allowlist. Git inspection must disable
+  external diff and text conversion, reject `--no-index` and output options, and use
+  `git --no-optional-locks status`; GitHub access is limited to PR/issue/review/check/workflow-run
+  reads. Read-only retrieval of authoritative external documentation is allowed. If the harness
+  cannot enforce this boundary, fail closed and have the implementing agent supply the review
+  inputs. The reviewer returns text only and never mutates local or external state.
 
 ## Before you push — independent review gate
 
@@ -81,16 +83,19 @@ they consume a CI and reviewer round.
 
 1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
    the user's instructions override this.
-2. Launch a fresh subagent under the clean-room contract. Give it the live issue or task, the PR
-   when one exists, the full diff from the PR base (or default branch before a PR exists), and the
-   verification already run.
-3. Ask for a high-judgment review against the stable instructions. Require actionable findings or
-   `current`.
-4. Remediate every valid finding, rerun affected targeted verification, and commit the fixes.
-5. After any material remediation, dispatch a different fresh subagent to review the new HEAD.
+2. Capture the full review-base and HEAD SHAs and verify the worktree is clean.
+3. Launch a fresh subagent under the clean-room contract. Give it those SHAs, the live issue or
+   task, the PR when one exists, the full base-to-HEAD diff, and the verification already run.
+4. Ask for a high-judgment review against the stable instructions. Require actionable findings or
+   `current at <full-head-sha>`.
+5. Remediate every valid finding, rerun affected targeted verification, and commit the fixes.
+6. After any material remediation, dispatch a different fresh subagent to review the new HEAD.
    Material includes, but is not limited to, executable code, public behavior, tests, provider data,
    agent instructions, workflow configuration, security boundaries, state, concurrency, and
-   serialization. Repeat until the latest fresh review reports `current` for the current HEAD.
+   serialization. Repeat until the latest fresh review reports `current at <full-head-sha>`.
+
+Immediately before pushing, verify HEAD still equals the reviewed full SHA and the worktree is
+clean. Any mismatch restarts the gate.
 
 Never use the implementing agent as the reviewer. Never treat this gate as test execution.
 
@@ -184,8 +189,9 @@ Run this final metadata check after CI, comments, and any selected `douwebot` re
    the implementing agent applies it.
 5. Before applying metadata, record the edit timestamp. Code changes restart the full lifecycle.
    Metadata-only changes skip code pre-push review and CI, but require the corresponding
-   `edited`-event workflow runs created after that timestamp to finish; stale checks on the same HEAD
-   are not evidence. Triage any resulting feedback.
+   `edited`-event workflow runs created after that timestamp to succeed. Classify any documented
+   permitted skip or neutral result explicitly; otherwise keep the PR incomplete. Stale checks on
+   the same HEAD are not evidence. Triage any resulting feedback.
 6. After a replacement and its checks, repeat the metadata check with another fresh subagent.
 7. Hand the PR back only after the check reports `current`.
 8. Report the human-only AI-code checkbox separately.
