@@ -1135,9 +1135,24 @@ asyncio.run(main())
 
 ## Citations
 
-Pydantic AI normalizes web-search citations from OpenAI, Anthropic, and Google, plus file-search citations from OpenAI
-and Google. They are available on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations] without changing the
-model's text.
+Pydantic AI normalizes provider-returned web and document citations onto
+[`TextPart.citations`][pydantic_ai.messages.TextPart.citations] without changing the model's text. Some providers need
+citations to be explicitly requested. Set `include_citations=True` to request them where supported:
+
+```python {test="skip"}
+from pydantic_ai import Agent, BinaryContent
+
+agent = Agent('anthropic:claude-sonnet-4-5', model_settings={'include_citations': True})
+result = agent.run_sync(
+    [
+        'How long do customers have to return an item?',
+        BinaryContent(data=b'Items may be returned within 30 days.', media_type='text/plain'),
+    ]
+)
+```
+
+This setting is a best-effort request: providers that do not require an explicit opt-in ignore it, and a model may
+still return no citations. It is separate from provider-specific settings that retain raw annotation payloads.
 
 ```python {test="skip"}
 from pydantic_ai import Agent, Citation, ContentCitationAnchor, MarkerCitationAnchor, TextPart, WebCitationSource

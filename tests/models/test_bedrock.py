@@ -22,6 +22,10 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     BinaryContent,
     CachePoint,
+    Citation,
+    CitationSource,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -50,6 +54,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -72,6 +77,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from .citation_utils import citations_from_messages
 
 with try_import() as imports_successful:
     from botocore.client import BaseClient
@@ -1201,6 +1207,137 @@ async def test_bedrock_unified_service_tier_auto_omits(
     assert 'serviceTier' not in kwargs
 
 
+@pytest.mark.parametrize('include_citations', [False, True])
+async def test_bedrock_include_citations_request_setting(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    text_document_content: BinaryContent,
+    include_citations: bool,
+) -> None:
+    """The shared setting changes every Bedrock document block and nothing when disabled."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'The document is a test.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 6},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await Agent(model, model_settings=ModelSettings(include_citations=include_citations)).run(
+        ['What is in this document?', text_document_content]
+    )
+
+    document = mock_converse.call_args.kwargs['messages'][0]['content'][1]['document']
+    expected: dict[str, object] = {
+        'name': 'Document 1',
+        'format': 'txt',
+        'source': {'text': 'Dummy TXT file\n'},
+    }
+    if include_citations:
+        expected['citations'] = {'enabled': True}
+    assert document == expected
+
+
+async def test_bedrock_document_citations_live(allow_model_requests: None, bedrock_provider: BedrockProvider) -> None:
+    agent = Agent(
+        BedrockConverseModel(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            provider=bedrock_provider,
+        ),
+        model_settings=ModelSettings(include_citations=True),
+    )
+
+    result = await agent.run(
+        [
+            'According to the document, what is the return window? Answer in one sentence and cite the document.',
+            BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+        ]
+    )
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Document 1',
+                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 47}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=47),
+            )
+        ]
+    )
+
+
+async def test_bedrock_document_citations_live_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    agent = Agent(
+        BedrockConverseModel(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            provider=bedrock_provider,
+        ),
+        model_settings=ModelSettings(include_citations=True),
+    )
+
+    async with agent.run_stream(
+        [
+            'According to the document, what is the return window? Answer in one sentence and cite the document.',
+            BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+        ]
+    ) as result:
+        await result.get_output()
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Document 1',
+                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 47}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=47),
+            )
+        ]
+    )
+
+
+async def test_bedrock_pdf_citations(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, document_content: BinaryContent
+) -> None:
+    agent = Agent(
+        BedrockConverseModel(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            provider=bedrock_provider,
+        ),
+        model_settings=ModelSettings(include_citations=True),
+    )
+
+    result = await agent.run(
+        ['What text appears in this PDF? Answer in one sentence and cite the document.', document_content]
+    )
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Document 1',
+                        provider_details={'location': {'documentPage': {'documentIndex': 0, 'start': 1, 'end': 2}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=42),
+            )
+        ]
+    )
+
+
 async def test_bedrock_usage_with_cached_tokens(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ):
@@ -1286,6 +1423,150 @@ async def test_bedrock_stream_usage_with_cached_tokens(
             cost=Decimal('0.000650595'),
         )
     )
+
+
+@pytest.mark.parametrize(
+    ('raw_citation', 'expected_source'),
+    [
+        pytest.param(
+            {
+                'title': 'Returns policy',
+                'source': 'Document 1',
+                'sourceContent': [{'text': 'Returns are accepted within thirty days.'}],
+                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+            },
+            DocumentCitationSource(
+                title='Returns policy',
+                provider_details={
+                    'source': 'Document 1',
+                    'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                },
+            ),
+            id='document',
+        ),
+        pytest.param(
+            {
+                'title': 'Pydantic AI',
+                'source': 'Web search',
+                'location': {'web': {'url': 'https://ai.pydantic.dev', 'domain': 'ai.pydantic.dev'}},
+            },
+            WebCitationSource(
+                url='https://ai.pydantic.dev',
+                title='Pydantic AI',
+                provider_details={
+                    'source': 'Web search',
+                    'location': {'web': {'url': 'https://ai.pydantic.dev', 'domain': 'ai.pydantic.dev'}},
+                },
+            ),
+            id='web',
+        ),
+    ],
+)
+async def test_bedrock_citations_response(
+    bedrock_provider: BedrockProvider, raw_citation: dict[str, Any], expected_source: CitationSource
+):
+    """Bedrock source locations remain metadata, while all sources share the generated-content anchor."""
+    text = 'The policy allows thirty days for returns.'
+    supporting_citation = {
+        'title': 'Supporting source',
+        'location': {'web': {'url': 'https://example.com/support'}},
+    }
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    response = await model._process_response(  # pyright: ignore[reportPrivateUsage]
+        cast(
+            Any,
+            {
+                'output': {
+                    'message': {
+                        'role': 'assistant',
+                        'content': [
+                            {
+                                'citationsContent': {
+                                    'content': [{'text': text}],
+                                    'citations': [raw_citation, supporting_citation],
+                                }
+                            }
+                        ],
+                    }
+                },
+                'stopReason': 'end_turn',
+                'usage': {'inputTokens': 10, 'outputTokens': 9, 'totalTokens': 19},
+                'ResponseMetadata': {'HTTPStatusCode': 200},
+            },
+        )
+    )
+
+    assert response.parts == [
+        TextPart(
+            text,
+            citations=[
+                Citation(
+                    sources=[
+                        expected_source,
+                        WebCitationSource(
+                            url='https://example.com/support',
+                            title='Supporting source',
+                            provider_details={'location': {'web': {'url': 'https://example.com/support'}}},
+                        ),
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=len(text)),
+                )
+            ],
+        )
+    ]
+
+
+async def test_bedrock_document_citations_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Bedrock streaming attaches citation deltas to their generated content block."""
+    text = 'The policy allows thirty days for returns.'
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {
+            'contentBlockDelta': {
+                'contentBlockIndex': 0,
+                'delta': {
+                    'citation': {
+                        'title': 'Returns policy',
+                        'source': 'Document 1',
+                        'sourceContent': [{'text': 'Returns are accepted within thirty days.'}],
+                        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                    }
+                },
+            }
+        }
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': text}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with Agent(model).run_stream('What is the return window?') as result:
+        await result.get_output()
+
+    assert result.response.parts == [
+        TextPart(
+            text,
+            citations=[
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={
+                                'source': 'Document 1',
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                            },
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=len(text)),
+                )
+            ],
+        )
+    ]
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -4240,7 +4521,7 @@ async def test_bedrock_leading_cache_point_replaces_existing_marker_before_trail
                 'content': [
                     {'text': 'Read this'},
                     {'cachePoint': {'type': 'default', 'ttl': '1h'}},
-                    {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Document content'}}},
+                    {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'text': 'Document content'}}},
                     {'text': 'A reminder'},
                 ],
             }
@@ -4459,14 +4740,14 @@ async def test_bedrock_cache_point_with_multiple_trailing_documents(
                 'document': {
                     'name': 'Document 1',
                     'format': 'txt',
-                    'source': {'bytes': b'Document 1 content'},
+                    'source': {'text': 'Document 1 content'},
                 }
             },
             {
                 'document': {
                     'name': 'Document 2',
                     'format': 'txt',
-                    'source': {'bytes': b'Document 2 content'},
+                    'source': {'text': 'Document 2 content'},
                 }
             },
         ]
@@ -4504,7 +4785,7 @@ async def test_bedrock_cache_point_with_mixed_content_and_trailing_documents(
                 'document': {
                     'name': 'Document 1',
                     'format': 'txt',
-                    'source': {'bytes': b'Doc 1'},
+                    'source': {'text': 'Doc 1'},
                 }
             },
             {
@@ -4518,14 +4799,14 @@ async def test_bedrock_cache_point_with_mixed_content_and_trailing_documents(
                 'document': {
                     'name': 'Document 2',
                     'format': 'txt',
-                    'source': {'bytes': b'Doc 2'},
+                    'source': {'text': 'Doc 2'},
                 }
             },
             {
                 'document': {
                     'name': 'Document 3',
                     'format': 'txt',
-                    'source': {'bytes': b'Doc 3'},
+                    'source': {'text': 'Doc 3'},
                 }
             },
         ]
@@ -4562,14 +4843,14 @@ async def test_bedrock_cache_messages_with_multiple_trailing_documents(
                 'document': {
                     'name': 'Document 1',
                     'format': 'txt',
-                    'source': {'bytes': b'File 1'},
+                    'source': {'text': 'File 1'},
                 }
             },
             {
                 'document': {
                     'name': 'Document 2',
                     'format': 'txt',
-                    'source': {'bytes': b'File 2'},
+                    'source': {'text': 'File 2'},
                 }
             },
         ]
@@ -4608,8 +4889,8 @@ async def test_bedrock_cache_point_multiple_markers_with_documents_no_back_to_ba
         [
             {'text': 'Analyze these:'},
             {'cachePoint': {'type': 'default', 'ttl': '5m'}},
-            {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Doc 1'}}},
-            {'document': {'name': 'Document 2', 'format': 'txt', 'source': {'bytes': b'Doc 2'}}},
+            {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'text': 'Doc 1'}}},
+            {'document': {'name': 'Document 2', 'format': 'txt', 'source': {'text': 'Doc 2'}}},
         ]
     )
 

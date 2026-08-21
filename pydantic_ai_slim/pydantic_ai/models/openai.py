@@ -4064,7 +4064,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                     event.part.provider_name = self.provider_name
                 yield event
 
-        raw_annotations = (choice.delta.model_extra or {}).get('annotations')
+        raw_annotations = getattr(choice.delta, 'annotations', None)
+        if raw_annotations is None:
+            raw_annotations = (choice.delta.model_extra or {}).get('annotations')
         if raw_annotations:
             part = self._parts_manager.get_part_by_vendor_id('content')
             if self._pending_raw_annotations or not isinstance(part, TextPart):

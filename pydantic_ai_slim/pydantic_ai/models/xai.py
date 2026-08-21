@@ -19,11 +19,14 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    Citation,
     CompactionPart,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinishReason,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -45,6 +48,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from ..models import (
     Model,
@@ -767,7 +771,7 @@ class XaiModel(Model[AsyncClient]):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
         if model_settings.get('xai_include_web_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_inline_citations'):
+        if model_settings.get('xai_include_inline_citations', model_settings.get('include_citations', False)):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
         if model_settings.get('xai_include_x_search_output') or any(
             isinstance(bt, XSearchTool) and bt.include_output for bt in model_request_parameters.native_tools
@@ -863,7 +867,13 @@ class XaiModel(Model[AsyncClient]):
                 part_provider_details: dict[str, Any] | None = None
                 if output.logprobs and output.logprobs.content:
                     part_provider_details = {'logprobs': _map_logprobs(output.logprobs)}
-                parts.append(TextPart(content=message.content, provider_details=part_provider_details))
+                parts.append(
+                    TextPart(
+                        content=message.content,
+                        provider_details=part_provider_details,
+                        citations=_map_inline_citations(message.citations, message.content),
+                    )
+                )
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:
@@ -1064,7 +1074,7 @@ class XaiStreamedResponse(StreamedResponse):
                 x_search_return_parts[return_vendor_id] = return_part
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
             # Local state to avoid re-emmiting duplicate events.
             prev_reasoning_content = ''
@@ -1079,10 +1089,12 @@ class XaiStreamedResponse(StreamedResponse):
             # once the stream completes.
             x_search_return_parts: dict[str, NativeToolReturnPart] = {}
             last_citations: Sequence[str] = ()
+            last_inline_citations: Sequence[chat_pb2.InlineCitation] = ()
 
             async for response, chunk in self._response:
                 self._update_response_state(response)
                 last_citations = response.citations
+                last_inline_citations = response.inline_citations
 
                 prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
                     response=response,
@@ -1160,6 +1172,14 @@ class XaiStreamedResponse(StreamedResponse):
             # tracked in `x_search_return_parts`, so the mutation is reflected in the final
             # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
             _attach_x_search_citations(x_search_return_parts.values(), last_citations)
+
+            if isinstance(part := self._parts_manager.get_part_by_vendor_id('content'), TextPart):
+                citations = _map_inline_citations(last_inline_citations, part.content)
+                if citations:
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id='content', content='', citations=citations
+                    ):
+                        yield event
 
     @property
     def model_name(self) -> str:
@@ -1402,6 +1422,45 @@ def _attach_x_search_citations(
     citations_list = list(citations)
     for part in x_search_return_parts:
         part.content = {'citations': citations_list}
+
+
+def _map_inline_citations(inline_citations: Sequence[chat_pb2.InlineCitation], text: str) -> list[Citation] | None:
+    citations: list[Citation] = []
+    for inline_citation in inline_citations:
+        match inline_citation.WhichOneof('citation'):
+            case 'web_citation':
+                source = WebCitationSource(url=inline_citation.web_citation.url)
+            case 'x_citation':
+                source = WebCitationSource(url=inline_citation.x_citation.url)
+            case 'collections_citation':
+                collection = inline_citation.collections_citation
+                provider_details = {
+                    key: value
+                    for key, value in (
+                        ('chunk_id', collection.chunk_id),
+                        ('collection_ids', list(collection.collection_ids)),
+                        ('score', collection.score),
+                    )
+                    if value
+                }
+                if not collection.file_id and not provider_details:
+                    continue
+                source = DocumentCitationSource(
+                    file_id=collection.file_id or None,
+                    provider_details=provider_details or None,
+                )
+            case _:
+                continue
+
+        start, end = inline_citation.start_index, inline_citation.end_index
+        if 0 <= start <= end <= len(text):
+            citations.append(
+                Citation(
+                    sources=[source],
+                    anchor=MarkerCitationAnchor(start=start, end=end) if start < end else None,
+                )
+            )
+    return citations or None
 
 
 def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:

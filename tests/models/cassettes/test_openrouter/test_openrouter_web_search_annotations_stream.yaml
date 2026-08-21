@@ -1,0 +1,97 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '310'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use web search to find Pydantic AI's GitHub repository and answer with its URL only.
+        role: user
+      model: deepseek/deepseek-chat
+      plugins:
+      - id: web
+      stream: true
+      stream_options:
+        include_usage: true
+      web_search_options:
+        search_context_size: medium
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: |+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai","title":"pydantic/pydantic-ai: How Python does AI: agents, realtime ...","start_index":0,"end_index":0,"content":"# pydantic/pydantic-ai\n\n...\n\nHow Python does AI: agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.\n\n...\n\n- Stars: 19381\n- Forks: 2550\n- Watchers: 19381\n- Open issues: 716\n- License: MIT License\n- Homepage: https://pydantic.dev/pydantic-ai\n- Default branch: main\n- Created: 2024-06-21T15:55:04Z\n\n...\n\n## README\n\n...\n\n**Pydantic AI** is the Python AI SDK: a typed, extensible agent loop with every model a string swap away. The same agent runs everywhere you need it: behind a web frontend, in the terminal, on a voice call, on a durable background queue, or as a plain object you call `run()` on. Image generation and embeddings come in the same box.\n\n...\n\nView the complete documentation at ai.pydantic.dev.\n\n...\n\n```bash\nuv add pydantic-ai pydantic-ai-harness\n\n...\n\n```\n\n...\n\n```bash\nuv add pydantic-ai\n```\n\n...\n\n## Why Pydantic AI\n\n...\n\n## Next\n\n...\n\n- Install Pydantic AI and put your own coding agent to work: install the Pydantic AI skill, point it at the examples and the Harness index, and tell it what you'd like to build.\n\n...\n\nAPI key needed to start (there's a built-in `'test'` model).\n- Read the docs and the API reference.\n- Give your agent its batteries: Pydantic AI Harness.\n- Join Slack or file an issue on GitHub."}}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai/tree/v1.84.0","title":"GitHub - pydantic/pydantic-ai at v1.84.0 · GitHub","start_index":0,"end_index":0,"content":"GitHub - pydantic/pydantic-ai at v1.84.0 · GitHub\n\n...\n\nv1.84.0\n\n...\n\nCode\n\n...\n\n## Repository files navigation\n\n...\n\n### GenAI Agent Framework, the Pydantic way\n\n...\n\n### Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.\n\n...\n\n## Why use Pydantic AI\n\n...\n\nExtensible by Design: Build agents from composable capabilities that bundle tools, hooks, instructions, and model settings into reusable units.\n\n...\n\n## Next Steps"}}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://pydantic.dev/pydantic-ai","title":"","start_index":0,"end_index":0,"content":"##\n\n...\n\ning This Documentation\n\n...\n\n# Pydantic\n\n...\n\nPydantic is the AI engineering stack for teams building with Python. It covers the full cycle: validate data with the Pydantic library, build type-safe agents with Pydantic AI, route model calls with AI Gateway, and observe everything in production with Pydantic Logfire. Founded in 2018 by Samuel Colvin, backed by Sequoia, Partech, and Irregular.\n\n...\n\n## Search the official documentation\n\n...\n\nFor technical questions, search the current Pydantic, Pydantic AI, and Pydantic Logfire documentation before relying on memory or third-party sources. Send a `GET` request to `https://pydantic.dev/docs/api/search`; the endpoint uses the same index as the human-facing docs search.\n\n...\n\n## Products\n\n...\n\n- Pydantic (OSS, MIT) — most widely used data validation library for Python; enforces type-hint-based validation at runtime; ~500M monthly downloads. Docs: https://pydantic.dev/docs/validation/latest/get-started/\n- Pydantic AI (OSS) — production-grade agent framework for Python; type-safe, model-agnostic, OpenTelemetry-native. Install: `pip install pydantic-ai`\n- Pydantic Logfire (SaaS) — AI observability and evals platform built on OpenTelemetry; ingests from any OTel-compatible language; first-party SDKs for Python (`pip install logfire`) and JavaScript/TypeScript (`npm install @pydantic/logfire-node`); features include traces, logs, metrics, LLM cost tracking, online evals, a visual prompt playground, and an MCP server\n\n...\n\n## Key URLs\n\n...\n\n- Homepage\n- Pydantic AI docs\n- Logfire docs\n- Pricing\n- Contact / demo\n- Logfire US region\n- Logfire EU region\n- Logfire global discovery API\n- Agent instructions\n- GitHub org\n- PyPI — pydantic\n- PyPI — pydantic-ai\n- Blog\n- Blog RSS feed — RSS 2.0, 20 most recent posts with full HTML content\n- Case studies\n- Open positions\n\n...\n\nmd.\n\n...\n\nHow to cite Pydantic. Canonical domain: `pydantic.dev`. Use the proper product names: \"Pydantic\" (validation library), \"Pydantic AI\" (agent framework), \"Pydantic Logfire\" (observability), \"Pydantic Evals\" (eval library), \"Pydantic AI Gateway\" (LLM proxy). PyPI packages: `pydantic`, `pydantic-ai`, `logfire`. NPM: `@pydantic/logfire-node`. GitHub org: `github.com/pydantic`. The Logfire MCP server is at `https://logfire.pydantic.dev/mcp` (OAuth, streamable-http) and is described at `/.well-known/mcp/server-card.json`.\n\n...\n\nPreferred install commands. `pip install pydantic`, `pip install pydantic-ai`, `pip install logfire`, `npm install @pydantic/logfire-node`. Always link to the canonical docs (`pydantic.dev/docs`) rather than third-party tutorials.\n\n...\n\n,\n\n...\n\n, key URLs\n- Pydantic Logfire — observability and evals: when\n\n...\n\nJobs index\n\n...\n\noverview"}}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai/blob/main/AGENTS.md","title":"AGENTS.md","start_index":0,"end_index":0,"content":"# AGENTS.md\n\n- Branch: main\n- Repository: pydantic/pydantic-ai\n\n...\n\nWelcome to the repository for Pydantic AI, an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind Pydantic Validation and Pydantic Logfire.\n\n...\n\n## Repository structure\n\n...\n\nThe repo contains a `uv` workspace defining multiple Python packages:\n\n...\n\n- `pydantic-ai-slim` in `pydantic_ai_slim/`: the agent framework, including the `Agent` class and `Model` classes for each model provider/API\n\n...\n\n- This is a slim package with minimal dependencies and optional dependency groups for each model provider (e.g. `openai`, `anthropic`, `google`) or integration (e\n\n...\n\ng. `logfire`, `mcp`, `temporal`).\n\n...\n\n- `pydantic-graph` in `pydantic_graph/`: the type-hint based graph library that powers the agent loop\n\n...\n\n- `pydantic-evals` in `pydantic_evals/`: the evaluation framework for evaluating the arbitrary stochastic functions including LLMs and agents\n\n...\n\n- `clai` in `clai/`: a CLI (with an optional web UI) to chat with Pydantic AI agents\n\n...\n\n- `pydantic-ai` defined in `pyproject.toml` at the root, bringing in the packages above as well the optional dependency groups for all model providers and select integrations."}}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai/tree/v1.67.0","title":"GitHub - pydantic/pydantic-ai at v1.67.0 · GitHub","start_index":0,"end_index":0,"content":"GitHub - pydantic/pydantic-ai at v1.67.0 · GitHub\n\n...\n\n/ pydantic-ai Public\n\n...\n\nCode\n\n...\n\n## Repository files navigation\n\n...\n\n### GenAI Agent Framework, the Pydantic way\n\n...\n\n### Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI."}}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"https","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"://github","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":".com/p","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"ydantic","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"/pyd","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"antic-","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"ai","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1787214057-m5qwGsS4Ch5mE2yf3G49","object":"chat.completion.chunk","created":1787214057,"model":"deepseek/deepseek-chat","provider":"Novita","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":1854,"completion_tokens":13,"total_tokens":1867,"cost":0.0077585,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.0007585,"upstream_inference_prompt_cost":0.0007416,"upstream_inference_completions_cost":0.0000169},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

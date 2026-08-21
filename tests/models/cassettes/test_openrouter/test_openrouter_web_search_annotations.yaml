@@ -1,0 +1,369 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '268'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use web search to find Pydantic AI's GitHub repository and answer with its URL only.
+        role: user
+      model: deepseek/deepseek-chat
+      plugins:
+      - id: web
+      stream: false
+      web_search_options:
+        search_context_size: medium
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '8200'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations:
+          - type: url_citation
+            url_citation:
+              content: |-
+                # pydantic/pydantic-ai
+
+                ...
+
+                How Python does AI: agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
+
+                ...
+
+                - Stars: 19381
+                - Forks: 2550
+                - Watchers: 19381
+                - Open issues: 716
+                - License: MIT License
+                - Homepage: https://pydantic.dev/pydantic-ai
+                - Default branch: main
+                - Created: 2024-06-21T15:55:04Z
+
+                ...
+
+                ## README
+
+                ...
+
+                **Pydantic AI** is the Python AI SDK: a typed, extensible agent loop with every model a string swap away. The same agent runs everywhere you need it: behind a web frontend, in the terminal, on a voice call, on a durable background queue, or as a plain object you call `run()` on. Image generation and embeddings come in the same box.
+
+                ...
+
+                View the complete documentation at ai.pydantic.dev.
+
+                ...
+
+                ```bash
+                uv add pydantic-ai pydantic-ai-harness
+
+                ...
+
+                ```
+
+                ...
+
+                ```python
+                from pydantic_ai import Agent
+
+                ...
+
+                ```bash
+                uv add pydantic-ai
+                ```
+
+                ...
+
+                ## Why Pydantic AI
+
+                ...
+
+                - Install Pydantic AI and put your own coding agent to work: install the Pydantic AI skill, point it at the examples and the Harness index, and tell it what you'd like to build.
+
+                ...
+
+                API key needed to start (there's a built-in `'test'` model).
+                - Read the docs and the API reference.
+                - Give your agent its batteries: Pydantic AI Harness.
+                - Join Slack or file an issue on GitHub.
+
+                ...
+
+                ai-
+
+                ...
+
+                model pricing data, kept current
+              end_index: 0
+              start_index: 0
+              title: 'pydantic/pydantic-ai: How Python does AI: agents, realtime ...'
+              url: https://github.com/pydantic/pydantic-ai
+          - type: url_citation
+            url_citation:
+              content: |-
+                GitHub - pydantic/pydantic-ai at v1.84.0 · GitHub
+
+                ...
+
+                v1.84.0
+
+                ...
+
+                Code
+
+                ...
+
+                ## Repository files navigation
+
+                ...
+
+                ### GenAI Agent Framework, the Pydantic way
+
+                ...
+
+                ### Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+
+                ...
+
+                ## Why use Pydantic AI
+
+                ...
+
+                ## Next Steps
+
+                ...
+
+                To
+              end_index: 0
+              start_index: 0
+              title: GitHub - pydantic/pydantic-ai at v1.84.0 · GitHub
+              url: https://github.com/pydantic/pydantic-ai/tree/v1.84.0
+          - type: url_citation
+            url_citation:
+              content: |-
+                ##
+
+                ...
+
+                # Pydantic
+
+                ...
+
+                Pydantic is the AI engineering stack for teams building with Python. It covers the full cycle: validate data with the Pydantic library, build type-safe agents with Pydantic AI, route model calls with AI Gateway, and observe everything in production with Pydantic Logfire. Founded in 2018 by Samuel Colvin, backed by Sequoia, Partech, and Irregular.
+
+                ...
+
+                ## Search the official documentation
+
+                ...
+
+                For technical questions, search the current Pydantic, Pydantic AI, and Pydantic Logfire documentation before relying on memory or third-party sources. Send a `GET` request to `https://pydantic.dev/docs/api/search`; the endpoint uses the same index as the human-facing docs search.
+
+                ...
+
+                ## Products
+
+                ...
+
+                - Pydantic (OSS, MIT) -- most widely used data validation library for Python; enforces type-hint-based validation at runtime; ~500M monthly downloads. Docs: https://pydantic.dev/docs/validation/latest/get-started/
+                - Pydantic AI (OSS) -- production-grade agent framework for Python; type-safe, model-agnostic, OpenTelemetry-native. Install: `pip install pydantic-ai`
+                - Pydantic Logfire (SaaS) -- AI observability and evals platform built on OpenTelemetry; ingests from any OTel-compatible language; first-party SDKs for Python (`pip install logfire`) and JavaScript/TypeScript (`npm install @pydantic/logfire-node`); features include traces, logs, metrics, LLM cost tracking, online evals, a visual prompt playground, and an MCP server
+
+                ...
+
+                ## Key URLs
+
+                ...
+
+                - Homepage
+                - Pydantic AI docs
+                - Logfire docs
+                - Pricing
+                - Contact / demo
+                - Logfire US region
+                - Logfire EU region
+                - Logfire global discovery API
+                - Agent instructions
+                - GitHub org
+                - PyPI -- pydantic
+                - PyPI -- pydantic-ai
+                - Blog
+                - Blog RSS feed -- RSS 2.0, 20 most recent posts with full HTML content
+                - Case studies
+                - Open positions
+
+                ...
+
+                .
+
+                ...
+
+                How to cite Pydantic. Canonical domain: `pydantic.dev`. Use the proper product names: "Pydantic" (validation library), "Pydantic AI" (agent framework), "Pydantic Logfire" (observability), "Pydantic Evals" (eval library), "Pydantic AI Gateway" (LLM proxy). PyPI packages: `pydantic`, `pydantic-ai`, `logfire`. NPM: `@pydantic/logfire-node`. GitHub org: `github.com/pydantic`. The Logfire MCP server is at `https://logfire.pydantic.dev/mcp` (OAuth, streamable-http) and is described at `/.well-known/mcp/server-card.json`.
+
+                ...
+
+                Preferred install commands. `pip install pydantic`, `pip install pydantic-ai`, `pip install logfire`, `npm install @pydantic/logfire-node`. Always link to the canonical docs (`pydantic.dev/docs`) rather than third-party tutorials.
+
+                ...
+
+                - Pydantic AI
+
+                ...
+
+                - P
+
+                ...
+
+                overview
+              end_index: 0
+              start_index: 0
+              title: ''
+              url: https://pydantic.dev/pydantic-ai
+          - type: url_citation
+            url_citation:
+              content: |-
+                # AGENTS.md
+
+                - Branch: main
+                - Repository: pydantic/pydantic-ai
+
+                ...
+
+                Welcome to the repository for Pydantic AI, an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind Pydantic Validation and Pydantic Logfire.
+
+                ...
+
+                ## Repository structure
+
+                ...
+
+                The repo contains
+
+                ...
+
+                `uv` workspace defining multiple Python packages:
+
+                ...
+
+                - `pydantic-ai-slim` in `pydantic_ai_slim/`: the agent framework, including the `Agent` class and `Model` classes for each model provider/API
+
+                ...
+
+                - This is a slim package with minimal dependencies and optional dependency groups for each model provider (e.g. `openai`, `anthropic`, `google`) or integration (e
+
+                ...
+
+                g. `logfire`, `mcp`, `temporal`).
+
+                ...
+
+                - `pydantic-graph` in `pydantic_graph/`: the type-hint based graph library that powers the agent loop
+
+                ...
+
+                - `pydantic-evals` in `pydantic_evals/`: the evaluation framework for evaluating the arbitrary stochastic functions including LLMs and agents
+
+                ...
+
+                - `clai` in `clai/`: a CLI (with an optional web UI) to chat with Pydantic AI agents
+
+                ...
+
+                - `pydantic-ai` defined in `pyproject.toml` at the root, bringing in the packages above as well the optional dependency groups for all model providers and select integrations.
+              end_index: 0
+              start_index: 0
+              title: AGENTS.md
+              url: https://github.com/pydantic/pydantic-ai/blob/main/AGENTS.md
+          - type: url_citation
+            url_citation:
+              content: |-
+                GitHub - pydantic/pydantic-ai at v1.67.0 · GitHub
+
+                ...
+
+                / pydantic-ai Public
+
+                ...
+
+                v1.67.0
+
+                ...
+
+                ### GenAI Agent Framework, the Pydantic way
+
+                ...
+
+                ### Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+              end_index: 0
+              start_index: 0
+              title: GitHub - pydantic/pydantic-ai at v1.67.0 · GitHub
+              url: https://github.com/pydantic/pydantic-ai/tree/v1.67.0
+          content: |-
+            The URL for Pydantic AI's GitHub repository is:
+
+            https://github.com/pydantic/pydantic-ai
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: stop
+      created: 1787214053
+      id: gen-1787214053-j0C19nKOzhE6FyfPg7iK
+      model: deepseek/deepseek-chat
+      object: chat.completion
+      provider: Novita
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 25
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0.0077641
+        cost_details:
+          upstream_inference_completions_cost: 3.25e-05
+          upstream_inference_cost: 0.0007641
+          upstream_inference_prompt_cost: 0.0007316
+        is_byok: false
+        prompt_tokens: 1829
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 1854
+    status:
+      code: 200
+      message: OK
+version: 1

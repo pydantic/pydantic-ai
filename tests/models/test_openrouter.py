@@ -31,6 +31,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
@@ -40,6 +41,7 @@ from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsStr, message, try_import
+from .citation_utils import citations_from_messages
 from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -238,6 +240,39 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
             }
         ]
     )
+
+
+async def test_openrouter_web_search_annotations(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """OpenRouter web-search annotations normalize onto the text they qualify."""
+    agent = Agent(
+        OpenRouterModel('deepseek/deepseek-chat', provider=OpenRouterProvider(api_key=openrouter_api_key)),
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+    )
+
+    result = await agent.run("Use web search to find Pydantic AI's GitHub repository and answer with its URL only.")
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations
+    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
+    assert all(citation.anchor is None for citation in citations)
+
+
+async def test_openrouter_web_search_annotations_stream(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Streaming produces the same normalized OpenRouter citations as the standard path."""
+    agent = Agent(
+        OpenRouterModel('deepseek/deepseek-chat', provider=OpenRouterProvider(api_key=openrouter_api_key)),
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+    )
+
+    async with agent.run_stream(
+        "Use web search to find Pydantic AI's GitHub repository and answer with its URL only."
+    ) as result:
+        await result.get_output()
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations
+    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
+    assert all(citation.anchor is None for citation in citations)
 
 
 async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:

@@ -77,6 +77,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, message, try_import
+from .citation_utils import citations_from_messages
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -4233,6 +4234,53 @@ async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key
 
     result = await agent.run('What day is today?')
     assert result.output == snapshot('May 14, 2025, 8:51:29 AM ')
+
+
+async def test_openai_responses_web_search_citations(allow_model_requests: None, openai_api_key: str) -> None:
+    agent = Agent(
+        OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key)),
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+    )
+
+    result = await agent.run("Use web search to find Pydantic AI's GitHub repository and cite it.")
+
+    assert citations_from_messages(result.all_messages()) == snapshot(
+        [
+            Citation(
+                sources=[
+                    WebCitationSource(
+                        url='https://github.com/pydantic/pydantic-ai?utm_source=openai',
+                        title='GitHub - pydantic/pydantic-ai: AI Agent Framework, the Pydantic way · GitHub',
+                    )
+                ],
+                anchor=MarkerCitationAnchor(start=70, end=143),
+            )
+        ]
+    )
+
+
+async def test_openai_responses_web_search_citations_stream(allow_model_requests: None, openai_api_key: str) -> None:
+    agent = Agent(
+        OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key)),
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+    )
+
+    async with agent.run_stream("Use web search to find Pydantic AI's GitHub repository and cite it.") as result:
+        await result.get_output()
+
+    assert citations_from_messages(result.all_messages()) == snapshot(
+        [
+            Citation(
+                sources=[
+                    WebCitationSource(
+                        url='https://github.com/pydantic/pydantic-ai?utm_source=openai',
+                        title='GitHub - pydantic/pydantic-ai: AI Agent Framework, the Pydantic way · GitHub',
+                    )
+                ],
+                anchor=MarkerCitationAnchor(start=71, end=144),
+            )
+        ]
+    )
 
 
 async def test_openai_web_search_tool_with_user_location(allow_model_requests: None, openai_api_key: str):

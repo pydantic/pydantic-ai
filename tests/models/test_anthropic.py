@@ -23,6 +23,8 @@ from pydantic_ai import (
     BinaryContent,
     CachePoint,
     Citation,
+    CitationSource,
+    DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
@@ -125,7 +127,10 @@ with try_import() as imports_successful:
         BetaAdvisorToolResultBlock,
         BetaAdvisorToolResultError,
         BetaCitationCharLocation,
+        BetaCitationContentBlockLocation,
+        BetaCitationPageLocation,
         BetaCitationsDelta,
+        BetaCitationSearchResultLocation,
         BetaCitationsWebSearchResultLocation,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
@@ -155,6 +160,7 @@ with try_import() as imports_successful:
         BetaRawMessageStreamEvent,
         BetaServerToolUseBlock,
         BetaTextBlock,
+        BetaTextCitation,
         BetaTextDelta,
         BetaToolUseBlock,
         BetaUsage,
@@ -196,36 +202,101 @@ pytestmark = [
 ]
 
 
-def test_anthropic_maps_only_web_search_citations():
-    web = BetaCitationsWebSearchResultLocation(
-        type='web_search_result_location',
-        url='https://example.com',
-        title='Example',
-        cited_text='web excerpt',
-        encrypted_index='opaque-index',
-    )
-    document = BetaCitationCharLocation(
-        cited_text='document excerpt',
-        document_index=0,
-        document_title='Report',
-        start_char_index=0,
-        end_char_index=16,
-        type='char_location',
-    )
-    assert _map_citations([web, document]) == [
-        Citation(
-            sources=[
-                WebCitationSource(
-                    url='https://example.com',
-                    title='Example',
-                )
-            ]
-        )
-    ]
+@pytest.mark.parametrize(
+    ('citation', 'expected_source'),
+    [
+        pytest.param(
+            BetaCitationCharLocation(
+                cited_text='document excerpt',
+                document_index=0,
+                document_title='Report',
+                file_id='file-1',
+                start_char_index=0,
+                end_char_index=16,
+                type='char_location',
+            ),
+            DocumentCitationSource(
+                file_id='file-1',
+                title='Report',
+                provider_details={
+                    'document_index': 0,
+                    'start_char_index': 0,
+                    'end_char_index': 16,
+                    'type': 'char_location',
+                },
+            ),
+            id='document-character-range',
+        ),
+        pytest.param(
+            BetaCitationPageLocation(
+                cited_text='page excerpt',
+                document_index=0,
+                document_title='Report',
+                start_page_number=2,
+                end_page_number=3,
+                type='page_location',
+            ),
+            DocumentCitationSource(
+                title='Report',
+                provider_details={
+                    'document_index': 0,
+                    'start_page_number': 2,
+                    'end_page_number': 3,
+                    'type': 'page_location',
+                },
+            ),
+            id='document-page-range',
+        ),
+        pytest.param(
+            BetaCitationContentBlockLocation(
+                cited_text='block excerpt',
+                document_index=0,
+                document_title='Report',
+                start_block_index=1,
+                end_block_index=2,
+                type='content_block_location',
+            ),
+            DocumentCitationSource(
+                title='Report',
+                provider_details={
+                    'document_index': 0,
+                    'start_block_index': 1,
+                    'end_block_index': 2,
+                    'type': 'content_block_location',
+                },
+            ),
+            id='document-content-block-range',
+        ),
+        pytest.param(
+            BetaCitationSearchResultLocation(
+                cited_text='search excerpt',
+                search_result_index=0,
+                source='https://example.com/result',
+                title='Search result',
+                start_block_index=0,
+                end_block_index=1,
+                type='search_result_location',
+            ),
+            WebCitationSource(
+                url='https://example.com/result',
+                title='Search result',
+                provider_details={
+                    'search_result_index': 0,
+                    'start_block_index': 0,
+                    'end_block_index': 1,
+                    'type': 'search_result_location',
+                },
+            ),
+            id='client-search-result',
+        ),
+    ],
+)
+def test_anthropic_maps_citation_source_variants(citation: BetaTextCitation, expected_source: CitationSource):
+    assert _map_citations([citation]) == [Citation(sources=[expected_source])]
 
 
 async def test_anthropic_stream_citations(allow_model_requests: None):
-    unsupported = [
+    documents = [
         BetaCitationCharLocation(
             cited_text='first',
             document_index=0,
@@ -276,13 +347,14 @@ async def test_anthropic_stream_citations(allow_model_requests: None):
         BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=BetaCitationsDelta(type='citations_delta', citation=unsupported[0]),
+            delta=BetaCitationsDelta(type='citations_delta', citation=documents[0]),
         ),
         BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=BetaCitationsDelta(type='citations_delta', citation=unsupported[1]),
+            delta=BetaCitationsDelta(type='citations_delta', citation=documents[1]),
         ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
         BetaRawMessageStopEvent(type='message_stop'),
     ]
     model = AnthropicModel(
@@ -305,9 +377,27 @@ async def test_anthropic_stream_citations(allow_model_requests: None):
                         WebCitationSource(
                             url='https://example.com',
                             title='Example',
-                        )
+                        ),
+                        DocumentCitationSource(
+                            title='Report',
+                            provider_details={
+                                'document_index': 0,
+                                'start_char_index': 0,
+                                'end_char_index': 5,
+                                'type': 'char_location',
+                            },
+                        ),
+                        DocumentCitationSource(
+                            title='Report',
+                            provider_details={
+                                'document_index': 0,
+                                'start_char_index': 6,
+                                'end_char_index': 12,
+                                'type': 'char_location',
+                            },
+                        ),
                     ]
-                )
+                ),
             ],
         )
     ]
@@ -3144,6 +3234,168 @@ async def test_document_binary_content_input(
     assert result.output == snapshot(
         'The document simply contains the text "Dummy PDF file" at the top of what appears to be an otherwise blank page.'
     )
+
+
+@pytest.mark.parametrize('include_citations', [False, True])
+async def test_anthropic_include_citations_request_setting(allow_model_requests: None, include_citations: bool) -> None:
+    """The shared setting changes every Anthropic document block and nothing when disabled."""
+    response = completion_message(
+        [BetaTextBlock(text='The policy allows thirty days.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await Agent(model, model_settings=ModelSettings(include_citations=include_citations)).run(
+        [
+            'What is the return window?',
+            BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'),
+        ]
+    )
+
+    document = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]['content'][1]
+    expected: dict[str, object] = {
+        'source': {
+            'data': 'Returns are allowed within thirty days.',
+            'media_type': 'text/plain',
+            'type': 'text',
+        },
+        'type': 'document',
+    }
+    if include_citations:
+        expected['citations'] = {'enabled': True}
+    assert document == expected
+
+
+async def test_anthropic_document_citations(allow_model_requests: None, anthropic_api_key: str) -> None:
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        model_settings=ModelSettings(include_citations=True),
+    )
+
+    result = await agent.run(
+        [
+            'According to the document, what is the return window? Answer in one sentence and cite the document.',
+            BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+        ]
+    )
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        provider_details={
+                            'document_index': 0,
+                            'end_char_index': 47,
+                            'start_char_index': 0,
+                            'type': 'char_location',
+                        }
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_anthropic_document_citations_stream(allow_model_requests: None, anthropic_api_key: str) -> None:
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        model_settings=ModelSettings(include_citations=True),
+    )
+
+    async with agent.run_stream(
+        [
+            'According to the document, what is the return window? Answer in one sentence and cite the document.',
+            BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+        ]
+    ) as result:
+        await result.get_output()
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        provider_details={
+                            'document_index': 0,
+                            'end_char_index': 47,
+                            'start_char_index': 0,
+                            'type': 'char_location',
+                        }
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_anthropic_pdf_citations(
+    allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
+) -> None:
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        model_settings=ModelSettings(include_citations=True),
+    )
+
+    result = await agent.run(
+        ['What text appears in this PDF? Answer in one sentence and cite the document.', document_content]
+    )
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        provider_details={
+                            'document_index': 0,
+                            'end_page_number': 2,
+                            'start_page_number': 1,
+                            'type': 'page_location',
+                        }
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_anthropic_web_search_citations(allow_model_requests: None, anthropic_api_key: str) -> None:
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+    )
+
+    result = await agent.run("Use web search to find Pydantic AI's documentation and cite it.")
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations
+    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
+    assert all(citation.anchor is None for citation in citations)
+    assert any(len(citation.sources) > 1 for citation in citations)
+
+    follow_up = await agent.run(
+        'In one sentence, repeat which project you found.', message_history=result.all_messages()
+    )
+    assert follow_up.output
+
+
+async def test_anthropic_web_search_citations_stream(allow_model_requests: None, anthropic_api_key: str) -> None:
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+    )
+
+    async with agent.run_stream("Use web search to find Pydantic AI's documentation and cite it.") as result:
+        await result.get_output()
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations
+    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
+    assert all(citation.anchor is None for citation in citations)
 
 
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):

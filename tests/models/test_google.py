@@ -28,6 +28,7 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     Citation,
+    CitationAnchor,
     ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
@@ -148,6 +149,11 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+def _citation_summary(citations: list[Citation]) -> list[tuple[list[str | None], CitationAnchor | None]]:
+    """Keep live grounding snapshots focused on source grouping and anchor semantics."""
+    return [([source.title for source in citation.sources], citation.anchor) for citation in citations]
 
 
 @pytest.fixture()
@@ -598,6 +604,71 @@ async def test_google_model_vertex_labels(
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
+
+
+async def test_google_vertex_web_search_citations(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    agent = Agent(
+        GoogleModel('gemini-2.5-flash', provider=vertex_provider),
+        capabilities=[NativeTool(WebSearchTool())],
+    )
+
+    result = await agent.run("Use Google Search to find Pydantic AI's documentation and cite it.")
+
+    citations = citations_from_messages(result.all_messages())
+    assert _citation_summary(citations) == snapshot(
+        [
+            (['pydantic.dev'], ContentCitationAnchor(start=0, end=84)),
+            (['github.com'], ContentCitationAnchor(start=142, end=146)),
+            (['pydantic.dev'], ContentCitationAnchor(start=148, end=316)),
+            (['pydantic.dev'], ContentCitationAnchor(start=318, end=400)),
+        ]
+    )
+
+
+async def test_google_vertex_web_search_citations_stream(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    agent = Agent(
+        GoogleModel('gemini-2.5-flash', provider=vertex_provider),
+        capabilities=[NativeTool(WebSearchTool())],
+    )
+
+    async with agent.run_stream("Use Google Search to find Pydantic AI's documentation and cite it.") as result:
+        await result.get_output()
+
+    citations = citations_from_messages(result.all_messages())
+    assert _citation_summary(citations) == snapshot(
+        [
+            (['github.com'], ContentCitationAnchor(start=96, end=100)),
+            (['pydantic.dev', 'together.ai', 'github.com'], ContentCitationAnchor(start=102, end=248)),
+            (['pydantic.dev', 'github.com'], ContentCitationAnchor(start=251, end=391)),
+            (['pydantic.dev', 'github.com'], ContentCitationAnchor(start=393, end=586)),
+            (['pydantic.dev', 'pydantic.dev'], ContentCitationAnchor(start=588, end=734)),
+            (['pydantic.dev', 'pydantic.dev'], ContentCitationAnchor(start=736, end=817)),
+        ]
+    )
+
+
+async def test_google_gemini_web_search_citations(allow_model_requests: None, google_provider: GoogleProvider) -> None:
+    agent = Agent(
+        GoogleModel('gemini-2.5-flash', provider=google_provider),
+        capabilities=[NativeTool(WebSearchTool())],
+    )
+
+    result = await agent.run("Use Google Search to find Pydantic AI's documentation and cite it.")
+
+    citations = citations_from_messages(result.all_messages())
+    assert citations
+    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
+    assert all(isinstance(citation.anchor, ContentCitationAnchor) for citation in citations)
+    assert any(len(citation.sources) > 1 for citation in citations)
+
+    follow_up = await agent.run(
+        'In one sentence, repeat which project you found.', message_history=result.all_messages()
+    )
+    assert follow_up.output
 
 
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):
