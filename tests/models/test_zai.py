@@ -453,3 +453,158 @@ def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, 
         supports_reasoning_effort=True,
     )
     assert transformed == expected
+
+
+# --- Non-standard finish_reason handling (fixes pydantic/pydantic-ai#7678) ---
+#
+# Z.AI returns `sensitive` (content moderation) and `network_error` (proxy transport)
+# as `finish_reason` values.  Neither is in the OpenAI SDK's strict 5-value Literal, so
+# pydantic-ai's default `_validate_completion` hook (which re-runs `model_validate` with
+# the SDK schema) aborts the run with `UnexpectedModelBehavior`.  The streaming path was
+# lenient because the SDK's chunk constructor is permissive, but with the override in
+# ZaiModel/ZaiStreamedResponse both paths now behave consistently: the widened Literal
+# accepts the raw value, `_map_finish_reason` normalises it to a standard FinishReason,
+# and the raw string stays in `provider_details['finish_reason']` for debugging.
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('raw_finish_reason', 'mapped_finish_reason'),
+    [
+        ('sensitive', 'content_filter'),
+        ('network_error', 'error'),
+    ],
+)
+async def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped_finish_reason: str):
+    """Non-standard Z.AI finish_reasons complete the run with a mapped standard finish_reason.
+
+    Without the `_ZaiChatCompletion` widening + `ZaiModel._validate_completion` override,
+    this test would crash with `UnexpectedModelBehavior` during the model_validate step.
+    """
+    from typing import cast
+
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from pydantic_ai.models.zai import ZaiModel
+    from pydantic_ai.providers.zai import ZaiProvider
+
+    from .mock_openai import MockOpenAI, completion_message
+
+    # Build a completion whose Choice uses a non-standard `finish_reason` string.
+    # The SDK constructor accepts arbitrary strings here (pydantic model_validate lenient mode),
+    # so the raw value survives all the way to the pydantic-ai re-validation gate.
+    msg = ChatCompletionMessage(role='assistant', content='blocked')
+    base = completion_message(msg)
+    finish_reason_value = cast(Any, raw_finish_reason)
+    bad_choice = Choice(finish_reason=finish_reason_value, index=0, message=msg)
+    bad_completion = base.__class__(
+        **{**base.model_dump(), 'choices': [bad_choice], 'model': 'glm-5.2'}
+    )
+
+    mock_client = MockOpenAI.create_mock(bad_completion)
+    provider = ZaiProvider(openai_client=mock_client)
+    model = ZaiModel('glm-5.2', provider=provider)
+    agent = Agent(model=model)
+    result = await agent.run('Say hi')
+
+    # The run must complete successfully and carry the normalised finish reason.
+    from pydantic_ai import ModelResponse
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.finish_reason == mapped_finish_reason
+    assert response.provider_details is not None
+    assert response.provider_details.get('finish_reason') == raw_finish_reason
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+async def test_zai_standard_finish_reasons_still_map_nonstream():
+    """Regression guard: the widened Literal does not change standard finish_reason mapping."""
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from pydantic_ai import ModelResponse
+    from pydantic_ai.models.zai import ZaiModel
+    from pydantic_ai.providers.zai import ZaiProvider
+
+    from .mock_openai import MockOpenAI, completion_message
+
+    completion = completion_message(ChatCompletionMessage(role='assistant', content='hello'))
+    mock_client = MockOpenAI.create_mock(completion)
+    provider = ZaiProvider(openai_client=mock_client)
+    model = ZaiModel('glm-5.2', provider=provider)
+    agent = Agent(model=model)
+    result = await agent.run('Say hi')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.finish_reason == 'stop'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('raw_finish_reason', 'mapped_finish_reason'),
+    [
+        ('sensitive', 'content_filter'),
+        ('network_error', 'error'),
+    ],
+)
+async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_finish_reason: str):
+    """Non-standard Z.AI finish_reasons on the terminal stream chunk are handled cleanly."""
+    from typing import cast
+
+    from openai.types.chat import chat_completion_chunk
+
+    from pydantic_ai import ModelResponse
+    from pydantic_ai.models.zai import ZaiModel
+    from pydantic_ai.providers.zai import ZaiProvider
+
+    from .mock_openai import MockOpenAI
+
+    finish_reason_cast = cast(Any, raw_finish_reason)
+    chunk_a = chat_completion_chunk.ChatCompletionChunk(
+        id='c1',
+        choices=[
+            chat_completion_chunk.Choice(
+                finish_reason=None,
+                index=0,
+                delta=chat_completion_chunk.ChoiceDelta(role='assistant', content='hal'),
+            )
+        ],
+        created=1704067200,
+        model='glm-5.2',
+        object='chat.completion.chunk',
+    )
+    chunk_b = chat_completion_chunk.ChatCompletionChunk(
+        id='c2',
+        choices=[
+            chat_completion_chunk.Choice(
+                finish_reason=finish_reason_cast,
+                index=0,
+                delta=chat_completion_chunk.ChoiceDelta(content='f'),
+            )
+        ],
+        created=1704067200,
+        model='glm-5.2',
+        object='chat.completion.chunk',
+    )
+
+    mock_client = MockOpenAI.create_mock_stream([chunk_a, chunk_b])
+    provider = ZaiProvider(openai_client=mock_client)
+    model = ZaiModel('glm-5.2', provider=provider)
+    agent = Agent(model=model)
+
+    text_parts: list[str] = []
+    async with agent.run_stream('Say hi') as stream_result:
+        async for event in stream_result:
+            if event.part and event.part.kind == 'text':
+                text_parts.append(event.part.content)
+        assert ''.join(text_parts) == 'half'
+
+        # Final streamed response also carries the normalised finish reason and raw value.
+        messages = stream_result.all_messages()
+        response = messages[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.finish_reason == mapped_finish_reason
+        assert response.provider_details is not None
+        assert response.provider_details.get('finish_reason') == raw_finish_reason
+
