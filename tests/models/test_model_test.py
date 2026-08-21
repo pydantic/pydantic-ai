@@ -598,6 +598,32 @@ def test_max_items():
     assert data == snapshot([])
 
 
+@pytest.mark.parametrize('const', ['', False, 0, None])
+def test_json_schema_test_data_falsy_const(const: Any) -> None:
+    schema = {
+        'type': 'object',
+        'required': ['value'],
+        'properties': {'value': {'const': const}},
+    }
+
+    assert _JsonSchemaTestData(schema).generate() == {'value': const}
+
+
+def test_falsy_const_tool_args() -> None:
+    """Regression test for #7629: falsy JSON Schema `const` values must be generated as-is."""
+
+    agent = Agent()
+    calls: list[dict[str, Any]] = []
+
+    @agent.tool_plain
+    def my_tool(empty: Literal[''], flag: Literal[False], zero: Literal[0]) -> str:
+        calls.append({'empty': empty, 'flag': flag, 'zero': zero})
+        return 'ok'
+
+    agent.run_sync('hello', model=TestModel())
+    assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
+
+
 @pytest.mark.parametrize(
     'content',
     [

@@ -460,8 +460,8 @@ class _JsonSchemaTestData:
 
     def _gen_any(self, schema: dict[str, Any]) -> Any:
         """Generate data for any JSON Schema."""
-        if const := schema.get('const'):
-            return const
+        if 'const' in schema:
+            return schema['const']
         elif enum := schema.get('enum'):
             return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
