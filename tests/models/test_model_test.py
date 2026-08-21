@@ -558,6 +558,17 @@ def test_json_schema_test_data_additional():
     TestModel.model_validate(data)
 
 
+def test_json_schema_test_data_equal_inclusive_bounds():
+    class TestModel(BaseModel):
+        my_int_eq: Annotated[int, Ge(7), Le(7)]
+        my_float_eq: Annotated[float, Ge(7.5), Le(7.5)]
+
+    json_schema = TestModel.model_json_schema()
+    data = _JsonSchemaTestData(json_schema).generate()
+    assert data == snapshot({'my_int_eq': 7, 'my_float_eq': 7.5})
+    TestModel.model_validate(data)
+
+
 def test_chars_wrap():
     class TestModel(BaseModel):
         a: Annotated[set[str], MinLen(4)]

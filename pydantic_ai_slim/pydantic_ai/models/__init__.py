@@ -16,15 +16,18 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
-import httpx
+import httpx2
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._cost import preload_pricing_data
+from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -83,25 +86,21 @@ from ..profiles import (
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
-
-if TYPE_CHECKING:
-    from ..agent.abstract import AbstractAgent
-from .._cost import preload_pricing_data
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 
 if TYPE_CHECKING:
+    from httpx import AsyncClient
+
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
-
-DEFAULT_HTTP_TIMEOUT: int = 600
-"""Default HTTP timeout in seconds for API requests.
-
-This matches the default timeout used by OpenAI's Python client.
-See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
-"""
+else:
+    # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
+    # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
+    # its caller owns and closes. Calling it without legacy HTTPX still raises (see its body).
+    AsyncClient = legacy_httpx.AsyncClient if legacy_httpx is not None else object
 
 _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
@@ -1100,13 +1099,18 @@ class StreamedResponse(ABC):
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Return transport errors caused by `cancel()` tearing down the stream.
 
-        The default covers model classes whose SDKs iterate `httpx` responses
-        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
-        and the custom Gemini client), since they let bare `httpx` errors
-        propagate from chunk reads. Model classes that use other transports
-        (for example gRPC or botocore) should override this method.
+        The default covers model classes whose SDKs iterate HTTP responses
+        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, and HuggingFace),
+        since they let bare `httpx2` (or legacy `httpx`) errors propagate from
+        chunk reads. Model classes that use other transports (for example gRPC or
+        botocore) should override this method.
         """
-        return (httpx.StreamError, httpx.TransportError)
+        try:
+            import httpx
+        except ImportError:
+            return (httpx2.StreamError, httpx2.TransportError)
+
+        return (httpx2.StreamError, httpx2.TransportError, httpx.StreamError, httpx.TransportError)
 
     async def close_stream(self) -> None:
         """Close the provider stream and any exposed HTTP or gRPC transport.
@@ -1453,6 +1457,42 @@ def parse_model_id(model: str) -> tuple[str | None, str]:
     return None, model
 
 
+def _suggest_known_model_name(model: str, model_name: str, known_model_ids: Sequence[str] | None = None) -> str | None:
+    if known_model_ids is None:
+        known_model_ids = known_model_names()
+    known_ids = sorted(known_model_ids, key=lambda name: (name.startswith('gateway/'), name))
+    normalized_ids: list[str] = [known_id.replace(':', '-', 1) for known_id in known_ids if ':' in known_id]
+    normalized_model = model.replace(':', '-', 1)
+    if matches := get_close_matches(normalized_model, normalized_ids, n=1, cutoff=0.9):
+        return next(known_id for known_id in known_ids if known_id.replace(':', '-', 1) == matches[0])
+
+    known_names: list[str] = [known_id.split(':', maxsplit=1)[1] for known_id in known_ids if ':' in known_id]
+    matches = get_close_matches(model_name, known_names, n=1, cutoff=0.8)
+    if not matches:
+        matches = get_close_matches(normalized_model, known_names, n=1, cutoff=0.7)
+    if matches:
+        return next(known_id for known_id in known_ids if known_id.endswith(f':{matches[0]}'))
+    return None
+
+
+def _suggest_known_model_id_from_provider_error(  # pyright: ignore[reportUnusedFunction]
+    model_id_namespace: str, model_name: str
+) -> str | None:
+    """The closest known model ID for a name the provider itself rejected, or `None`.
+
+    The result rides on `ModelHTTPError.suggested_model_id` rather than a dedicated exception type.
+    Only some model classes carry a not-found signal at all — `MistralModel`, `CohereModel`,
+    `HuggingFaceModel` and `XaiModel` map their errors without one — so a distinct type would assert
+    a taxonomy that holds for part of the matrix only. A hint that is sometimes absent degrades
+    harmlessly; an exception type that is sometimes absent misclassifies.
+    """
+    model_id = f'{model_id_namespace}:{model_name}'
+    provider_prefix = f'{model_id_namespace}:'
+    known_model_ids = [name for name in known_model_names() if name.startswith(provider_prefix)]
+    suggestion = _suggest_known_model_name(model_id, model_name, known_model_ids)
+    return suggestion if suggestion != model_id else None
+
+
 def infer_model_profile(model: str) -> ModelProfile:
     """Infer the model profile from a model id string without constructing a provider.
 
@@ -1506,7 +1546,19 @@ def infer_model(  # noqa: C901
 
     provider_name, model_name = parse_model_id(model)
     if provider_name is None:
-        raise UserError(f'Unknown model: {model}')
+        message = f'Unknown model: {model}'
+        if suggested_name := _suggest_known_model_name(model, model_name):
+            message += f". Did you mean '{suggested_name}'?"
+        raise UserError(message)
+
+    if provider_factory is infer_provider:
+        try:
+            infer_provider_class(provider_name)
+        except ValueError:
+            message = f'Unknown model: {model}'
+            if suggested_name := _suggest_known_model_name(model, model_name):
+                message += f". Did you mean '{suggested_name}'?"
+            raise UserError(message) from None
 
     provider = provider_factory(provider_name)
 
@@ -1598,15 +1650,30 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
-    """Create an HTTPX async client.
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
+    """Create a legacy HTTPX async client.
+
+    This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
+    providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
     the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
+
+    Raises:
+        ImportError: If legacy `httpx` is not installed.
     """
+    try:
+        import httpx
+    except ImportError as _import_error:
+        raise ImportError(
+            'Please install `httpx` to create a legacy HTTPX client with this factory, '
+            'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`. '
+            'Providers otherwise build their own `httpx2.AsyncClient`, which you can also pass in yourself.'
+        ) from _import_error
+
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},

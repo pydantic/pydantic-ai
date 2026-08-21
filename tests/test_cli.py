@@ -58,6 +58,16 @@ def test_invalid_model(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.splitlines() == snapshot(['Error initializing potato:', 'Unknown model: potato'])
 
 
+def test_invalid_model_suggestion(capfd: CaptureFixture[str]):
+    assert cli(['--model', 'claude:sonnet-5']) == 1
+    assert capfd.readouterr().out.splitlines() == snapshot(
+        [
+            'Error initializing claude:sonnet-5:',
+            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+        ]
+    )
+
+
 @pytest.fixture
 def create_test_module():
     def _create_test_module(**namespace: Any) -> None:

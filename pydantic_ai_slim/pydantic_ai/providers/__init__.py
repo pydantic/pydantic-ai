@@ -12,9 +12,9 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic
 
 import anyio
-import httpx
 from typing_extensions import Self, TypeVar
 
+from .._http import AsyncHTTPClient
 from ..exceptions import UserError
 from ..profiles import ModelProfile
 
@@ -53,9 +53,10 @@ class Provider(ABC, Generic[InterfaceClient]):
     """
 
     _client: InterfaceClient
-    _own_http_client: httpx.AsyncClient | None = None
-    _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
+    _own_http_client: AsyncHTTPClient | None = None
+    _http_client_factory: Callable[[], AsyncHTTPClient] | None = None
     _entered_count: int = 0
+    _model_id_namespace: str | None = None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -75,6 +76,11 @@ class Provider(ABC, Generic[InterfaceClient]):
         replay of any message history captured against the old name.
         """
         raise NotImplementedError()
+
+    @property
+    def model_id_namespace(self) -> str:
+        """The namespace used to fully qualify model IDs routed through this provider."""
+        return self._model_id_namespace or self.name
 
     @property
     @abstractmethod
@@ -98,7 +104,7 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The realtime model profile for the named model, if available."""
         return None
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         """Update the SDK client's internal HTTP client reference.
 
         Subclasses that manage their own HTTP client should override this to inject
