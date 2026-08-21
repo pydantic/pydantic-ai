@@ -1,13 +1,16 @@
 ---
 name: pushing-commits-to-the-repo
-description: Open and advance a PR — write a current title and body, label it, watch CI, and triage
-  every comment. Use whenever you open a PR or push a commit to one.
+description: Open and advance a PR — write current metadata, run an independent pre-push review,
+  push, watch CI, and triage every comment. Use whenever you open a PR or push a commit to one.
 ---
 
 # pushing-commits-to-the-repo
 
 Pushing starts a loop; it does not end the task. **Work stops only when CI is green AND no comment
 is left unresolved.**
+
+Lifecycle: implement → targeted verification → commit → independent pre-push review → remediate
+and re-review → push → full CI and coverage → hosted reviewers → final metadata check.
 
 ## When you open the PR
 
@@ -52,15 +55,38 @@ Labelling needs triage permission on the repo (Pydantic team members and their a
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
 
-## Before you push
-- Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless
-  the user's instructions override this.
-- Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
-  maintainers can squash them when merging.
-- Attempt the push. If it fails, read the real error — do not preemptively decide you lack
-  permission from a flag or setting.
+## Before you push — independent review gate
+
+Run this gate before the first push and every later push. The gate catches semantic defects before
+they consume a CI and reviewer round.
+
+1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
+   the user's instructions override this.
+2. Dispatch a fresh subagent with no working-session context. Give the subagent the linked issue or
+   task, the PR when one exists, the full base-to-HEAD diff, and the verification already run.
+3. Ask for a high-judgment review against the root and directory instructions. Require actionable
+   findings or `current`. The subagent must not edit files or post to GitHub.
+4. Remediate every valid finding and commit the fixes.
+5. Dispatch another fresh subagent when remediation changes executable code, public behavior, test
+   expectations, provider data, state, concurrency, or serialization. Repeat until the latest fresh
+   review reports `current` after the latest material change.
+
+Never use the implementing agent as the reviewer. Never treat this gate as test execution.
+
+Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
+maintainers can squash them when merging.
+
+Attempt the push. If it fails, read the real error. Do not infer a restriction from metadata.
 
 ## After you push — the loop
+
+These gates catch different failures; none replaces another:
+
+- **Independent pre-push review** catches semantic and design defects before they consume a CI or
+  hosted-review round.
+- **CI** executes the complete test matrix and coverage checks.
+- **Hosted reviewers** inspect the pushed diff with different models, instructions, and context.
+
 1. **Watch CI to a terminal state.** Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
 2. **Triage every comment** (bots and humans alike). For each one:
