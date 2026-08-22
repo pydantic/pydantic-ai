@@ -203,7 +203,7 @@ jobs:
       - name: Check doc links and heading anchors
         uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
         with:
-          args: --no-progress --offline --config .github/workflows/lychee.toml './docs/**/*.md' './*.md'
+          args: --no-progress --offline --include-fragments --config .github/workflows/lychee.toml './docs/**/*.md' './*.md'
           fail: true
 
   test:
