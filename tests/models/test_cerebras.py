@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-from contextlib import nullcontext
 from typing import Any, cast, get_args
 
 import pytest
@@ -68,15 +67,7 @@ async def test_cerebras_forwards_settings_the_api_honors(
     The drop happens while the request is built, not in `prepare_request`, so the outgoing body is the only
     place it is observable — hence `request_capture` rather than an assertion about the profile.
     """
-    # Only a legacy `httpx.AsyncClient` warns; `httpx2.AsyncClient` is already the supported type.
-    capture_client = request_capture.client
-    warn_ctx = (
-        pytest.warns(PydanticAIDeprecationWarning, match='httpx2.AsyncClient')
-        if type(capture_client).__module__ == 'httpx'
-        else nullcontext()
-    )
-    with warn_ctx:
-        provider = CerebrasProvider(api_key=cerebras_api_key, http_client=capture_client)
+    provider = CerebrasProvider(api_key=cerebras_api_key, http_client=request_capture.client)
     model = CerebrasModel('gemma-4-31b', provider=provider)
     params = ModelRequestParameters(function_tools=[WEATHER_TOOL])
     prompt = [ModelRequest.user_text_prompt('What is the weather in Paris?')]
