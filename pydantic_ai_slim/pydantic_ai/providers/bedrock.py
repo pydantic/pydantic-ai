@@ -320,11 +320,13 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a DeepSeek model used via Bedrock."""
-    profile = deepseek_model_profile(model_name)
+    # Bedrock strips `deepseek.` from IDs such as `deepseek.r1-v1:0`.
+    upstream_name = model_name if model_name.startswith('deepseek-') else f'deepseek-{model_name}'
+    profile = deepseek_model_profile(upstream_name)
     if 'r1' in model_name:
         # Bedrock-specific override applies on top of the upstream DeepSeek profile.
         return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
-    return profile  # pragma: no cover
+    return profile
 
 
 def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
