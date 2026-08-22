@@ -4,14 +4,18 @@ import json
 from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
+from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import iter_message_parts, try_import
+from .conftest import RequestCapture
 
 with try_import() as imports_successful:
     from pydantic_ai.models.cerebras import (
@@ -19,6 +23,7 @@ with try_import() as imports_successful:
         CerebrasModelSettings,
         _cerebras_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openai import OpenAIChatModelSettings
     from pydantic_ai.providers.cerebras import CerebrasProvider
 
 
@@ -36,6 +41,65 @@ async def test_cerebras_model_simple(allow_model_requests: None, cerebras_api_ke
     agent = Agent(model=model)
     result = await agent.run('What is 2 + 2?')
     assert '4' in result.output
+
+
+WEATHER_TOOL = ToolDefinition(
+    name='get_weather',
+    description='Get the current weather in a city.',
+    parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+)
+"""`parallel_tool_calls` only reaches the wire when the request carries tools."""
+
+TRACKED_SETTINGS = ('frequency_penalty', 'presence_penalty', 'parallel_tool_calls', 'service_tier', 'logit_bias')
+"""The settings the Cerebras profile chooses between forwarding and stripping."""
+
+
+async def test_cerebras_forwards_settings_the_api_honors(
+    allow_model_requests: None, cerebras_api_key: str, request_capture: RequestCapture
+):
+    """Settings Cerebras honors reach the wire; `logit_bias` is stripped because Cerebras ignores it.
+
+    Cerebras accepts and validates `logit_bias` — a map over 100 entries is a 400 — but never applies it:
+    biasing a token by 100 in either direction leaves the returned logprobs bit-identical. Forwarding it
+    would buy a hard error on large bias maps in exchange for a no-op, so the profile drops it.
+
+    The drop happens while the request is built, not in `prepare_request`, so the outgoing body is the only
+    place it is observable — hence `request_capture` rather than an assertion about the profile.
+    """
+    # `request_capture` hands out a legacy `httpx.AsyncClient`, which the OpenAI-compatible providers
+    # deprecate in favor of `httpx2`; the same wrapper is on `test_openrouter_web_search_tool_full_params`.
+    with pytest.warns(PydanticAIDeprecationWarning, match='httpx2.AsyncClient'):
+        provider = CerebrasProvider(api_key=cerebras_api_key, http_client=request_capture.client)
+    model = CerebrasModel('gemma-4-31b', provider=provider)
+    params = ModelRequestParameters(function_tools=[WEATHER_TOOL])
+    prompt = [ModelRequest.user_text_prompt('What is the weather in Paris?')]
+
+    settings = CerebrasModelSettings(
+        frequency_penalty=0.5,
+        presence_penalty=0.25,
+        parallel_tool_calls=False,
+        service_tier='flex',
+        logit_bias={'424243': 7},
+    )
+    await model_request(model, prompt, model_settings=settings, model_request_parameters=params)
+
+    body = request_capture.body('/chat/completions')
+    assert {name: body.get(name, '<stripped>') for name in TRACKED_SETTINGS} == snapshot(
+        {
+            'frequency_penalty': 0.5,
+            'presence_penalty': 0.25,
+            'parallel_tool_calls': False,
+            'service_tier': 'flex',
+            'logit_bias': '<stripped>',
+        }
+    )
+
+    # `openai_service_tier` is forwarded too, and takes precedence over the unified `service_tier`.
+    # It lives on `OpenAIChatModelSettings` rather than `CerebrasModelSettings`, which extends `ModelSettings`.
+    tier_settings = OpenAIChatModelSettings(service_tier='default', openai_service_tier='priority')
+    await model_request(model, prompt, model_settings=tier_settings, model_request_parameters=params)
+
+    assert request_capture.body('/chat/completions', index=1)['service_tier'] == snapshot('priority')
 
 
 async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str, vcr: Cassette):
