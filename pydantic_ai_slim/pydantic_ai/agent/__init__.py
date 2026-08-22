@@ -67,6 +67,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities._toolsets import get_capability_toolset
 from ..capabilities.abstract import leaf_capabilities
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
@@ -99,6 +100,7 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
+from ..toolsets._capability_owned import CapabilityOwnedToolset
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -731,6 +733,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
+        self._construction_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self._construction_capability_toolsets: list[CapabilityOwnedToolset[AgentDepsT] | None] = []
         self._cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
         self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
@@ -743,9 +747,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # `self.toolsets`). The flip side is that `innermost` capabilities can't
         # contribute toolsets of their own.
         self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
-        cap_toolset = self._root_capability.get_toolset()
-        if cap_toolset is not None:
-            self._cap_toolsets = [cap_toolset]
+        self._construction_capabilities = list(self._root_capability.capabilities)
+        self._construction_capability_toolsets = [
+            get_capability_toolset(capability) for capability in self._construction_capabilities
+        ]
+        if construction_toolsets := [
+            toolset for toolset in self._construction_capability_toolsets if toolset is not None
+        ]:
+            self._cap_toolsets = [CombinedToolset(construction_toolsets)]
         self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=True)
 
         if model is not None and not defer_model_check and not self._root_capability.has_resolve_model_id:
@@ -2937,8 +2946,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions = _instructions.normalize_instructions(source_cap.get_instructions())
             native_tools = list(source_cap.get_native_tools())
             model_settings = source_cap.get_model_settings()
-            cap_toolset = source_cap.get_toolset()
-            toolsets: list[AgentToolset[AgentDepsT]] | None = [cap_toolset] if cap_toolset is not None else []
+            toolsets = self._run_capability_toolsets(
+                source_cap,
+                reuse_construction=not base_is_override,
+            )
         else:
             instructions = None  # use init-time defaults
             native_tools = self._cap_native_tools
@@ -2978,6 +2989,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             resolved_layers=resolved_layers,
         )
+
+    def _run_capability_toolsets(
+        self,
+        run_capability: AbstractCapability[AgentDepsT],
+        *,
+        reuse_construction: bool,
+    ) -> list[AgentToolset[AgentDepsT]]:
+        """Collect per-run capability toolsets, retaining unchanged construction occurrences.
+
+        Capability ordering is finalized before this runs, so walking the resolved combined capability
+        keeps the construction entries in their effective order while new and replaced occurrences are
+        re-extracted. Object identity is the contract here; mutating a capability in place between runs is
+        unsupported because it is indistinguishable from an unchanged occurrence.
+        """
+        capabilities = (
+            run_capability.capabilities if isinstance(run_capability, CombinedCapability) else [run_capability]
+        )
+        construction_entries: dict[int, list[CapabilityOwnedToolset[AgentDepsT]]] = {}
+        if reuse_construction:
+            for capability, toolset in zip(
+                self._construction_capabilities, self._construction_capability_toolsets, strict=True
+            ):
+                if toolset is not None:
+                    construction_entries.setdefault(id(capability), []).append(toolset)
+
+        toolsets: list[CapabilityOwnedToolset[AgentDepsT]] = []
+        for capability in capabilities:
+            cached_toolsets = construction_entries.get(id(capability))
+            if cached_toolsets:
+                toolsets.append(cached_toolsets.pop(0))
+            elif toolset := get_capability_toolset(capability):
+                toolsets.append(toolset)
+
+        return [CombinedToolset(toolsets)] if toolsets else []
 
     def _get_instructions(
         self,

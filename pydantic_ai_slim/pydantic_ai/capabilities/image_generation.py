@@ -131,7 +131,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         aspect_ratio: ImageAspectRatio | None = None,
-        id: str | None = None,
+        id: str | None = 'image_generation',
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:

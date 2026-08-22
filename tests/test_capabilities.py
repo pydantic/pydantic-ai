@@ -3013,6 +3013,163 @@ def test_native_or_local_stamps_id_on_local_toolset():
     assert leaf.id == 'search'
 
 
+def _local_fallback(query: str) -> str:
+    return query  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    ('capability', 'expected_id'),
+    [
+        pytest.param(WebSearch[None](native=False, local=_local_fallback), 'web_search', id='web_search'),
+        pytest.param(WebFetch[None](native=False, local=_local_fallback), 'web_fetch', id='web_fetch'),
+        pytest.param(
+            ImageGeneration[None](native=False, local=_local_fallback),
+            'image_generation',
+            id='image_generation',
+        ),
+        pytest.param(XSearch[None](native=False, local=_local_fallback), 'x_search', id='x_search'),
+    ],
+)
+def test_single_purpose_capability_defaults_its_id(capability: AbstractCapability[None], expected_id: str) -> None:
+    """Fixed-purpose capabilities own a stable identity and local toolset identity.
+
+    This is not a VCR test: both identities are determined during construction, before the
+    model request boundary.
+    """
+    assert capability.id == expected_id
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, FunctionToolset)
+    assert toolset.id == expected_id
+
+
+def test_single_purpose_capability_explicit_ids() -> None:
+    """Explicit values override a fixed-purpose capability default, including `None` and an empty string."""
+    custom = WebSearch[None](native=False, local=_local_fallback, id='customer-search')
+    opt_out = WebSearch[None](native=False, local=_local_fallback, id=None)
+    empty = WebSearch[None](native=False, local=_local_fallback, id='')
+
+    custom_toolset = custom.get_toolset()
+    opt_out_toolset = opt_out.get_toolset()
+    empty_toolset = empty.get_toolset()
+
+    assert isinstance(custom_toolset, FunctionToolset)
+    assert isinstance(opt_out_toolset, FunctionToolset)
+    assert isinstance(empty_toolset, FunctionToolset)
+    assert (custom.id, custom_toolset.id) == ('customer-search', 'customer-search')
+    assert (opt_out.id, opt_out_toolset.id) == (None, None)
+    assert (empty.id, empty_toolset.id) == ('', '')
+
+
+@pytest.mark.parametrize(
+    ('capability', 'expected_capability_id', 'expected_toolset_id'),
+    [
+        pytest.param(WebSearch[None](native=False, local=_local_fallback), 'web_search', 'web_search', id='default'),
+        pytest.param(
+            WebSearch[None](native=False, local=_local_fallback, id='customer-search'),
+            'customer-search',
+            'customer-search',
+            id='custom',
+        ),
+        pytest.param(WebSearch[None](native=False, local=_local_fallback, id=''), '', '', id='empty'),
+        pytest.param(WebSearch[None](native=False, local=_local_fallback, id=None), 'web_search', None, id='none'),
+    ],
+)
+async def test_single_purpose_capability_exposes_matching_public_ids(
+    capability: AbstractCapability[None], expected_capability_id: str, expected_toolset_id: str | None
+) -> None:
+    """A local fallback advertises its configured capability and toolset identities to the model."""
+    observed_tool_defs: list[ToolDefinition] = []
+
+    def model(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        observed_tool_defs.extend(info.function_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model, profile=ModelProfile(supported_native_tools=frozenset())),
+        deps_type=type(None),
+        capabilities=[capability],
+    )
+    await agent.run('hi')
+
+    assert [(tool_def.capability_id, tool_def.toolset_id) for tool_def in observed_tool_defs] == [
+        (expected_capability_id, expected_toolset_id)
+    ]
+
+
+async def test_distinct_single_purpose_capability_ids_are_unambiguous() -> None:
+    """Separate configurations use their separately declared capability and toolset ids."""
+    observed_tool_defs: list[ToolDefinition] = []
+
+    def first_search(query: str) -> str:
+        return query  # pragma: no cover
+
+    def second_search(query: str) -> str:
+        return query  # pragma: no cover
+
+    def model(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        observed_tool_defs.extend(info.function_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model, profile=ModelProfile(supported_native_tools=frozenset())),
+        deps_type=type(None),
+        capabilities=[
+            WebSearch[None](native=False, local=first_search, id='first-search'),
+            WebSearch[None](native=False, local=second_search, id='second-search'),
+        ],
+    )
+    await agent.run('hi')
+
+    assert {(tool_def.capability_id, tool_def.toolset_id) for tool_def in observed_tool_defs} == {
+        ('first-search', 'first-search'),
+        ('second-search', 'second-search'),
+    }
+
+
+async def test_root_capability_override_does_not_reuse_construction_toolsets() -> None:
+    """An override root re-extracts its own capability toolsets rather than using the agent cache."""
+    observed_tool_names: list[str] = []
+
+    def construction_tool() -> str:
+        return 'construction'  # pragma: no cover
+
+    def override_tool() -> str:
+        return 'override'  # pragma: no cover
+
+    def model(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        observed_tool_names.extend(tool.name for tool in info.function_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        capabilities=[Toolset(FunctionToolset([construction_tool], id='construction-toolset'))],
+    )
+    override_root = CombinedCapability[None]([Toolset(FunctionToolset([override_tool], id='override-toolset'))])
+    token = agent._override_root_capability.set(Some(override_root))  # pyright: ignore[reportPrivateUsage]
+    try:
+        await agent.run('hi')
+    finally:
+        agent._override_root_capability.reset(token)  # pyright: ignore[reportPrivateUsage]
+
+    assert observed_tool_names == ['override_tool']
+
+
+def test_native_or_local_direct_and_user_toolset_keep_their_ids() -> None:
+    """Only a built-in with one fixed purpose supplies an id on the user's behalf."""
+    from pydantic_ai.capabilities import NativeOrLocalTool
+
+    direct = NativeOrLocalTool[None](native=False, local=_local_fallback)
+    supplied = FunctionToolset[None]([_local_fallback], id='user-toolset')
+    with_user_toolset = NativeOrLocalTool[None](native=False, local=supplied)
+
+    direct_toolset = direct.get_toolset()
+    user_toolset = with_user_toolset.get_toolset()
+    assert isinstance(direct_toolset, FunctionToolset)
+    assert direct_toolset.id is None
+    assert user_toolset is supplied
+
+
 def _noop_greet(name: str) -> str:
     return f'Hello, {name}!'  # pragma: no cover
 
@@ -3334,6 +3491,33 @@ def test_duplicate_capability_ids_raise() -> None:
 
     assert str(exc_info.value) == snapshot(
         "Capability id 'dup' is used by multiple capabilities. Capability ids must be unique within a run."
+    )
+
+
+def test_duplicate_single_purpose_capabilities_raise() -> None:
+    """A fixed-purpose capability may occur only once unless each instance gets a distinct `id`."""
+    with pytest.raises(UserError, match="Capability id 'web_search' is used by multiple capabilities"):
+        Agent(
+            TestModel(),
+            deps_type=type(None),
+            capabilities=[
+                WebSearch[None](native=False, local=_local_fallback),
+                WebSearch[None](native=False, local=_local_fallback),
+            ],
+        )
+
+
+def test_fixed_purpose_capabilities_can_be_deferred_without_an_explicit_id() -> None:
+    """Their stable defaults are suitable for deferred capability history."""
+    Agent(
+        TestModel(),
+        deps_type=type(None),
+        capabilities=[
+            WebSearch[None](native=False, local=_local_fallback, defer_loading=True),
+            WebFetch[None](native=False, local=_local_fallback, defer_loading=True),
+            ImageGeneration[None](native=False, local=_local_fallback, defer_loading=True),
+            XSearch[None](native=False, local=_local_fallback, defer_loading=True),
+        ],
     )
 
 
@@ -8712,6 +8896,8 @@ class TestMCPCapability:
             (MCP[object](url='https://mcp.example.com/api'), 'mcp.example.com-api'),
             # explicit id wins
             (MCP[object](url='https://mcp.example.com/api', id='docs'), 'docs'),
+            # an explicit empty id is preserved rather than replaced with the URL-derived value
+            (MCP[object](url='https://mcp.example.com/api', id=''), ''),
             # native MCPServerTool id is reused for the local fallback
             (
                 MCP[object](
@@ -8734,6 +8920,19 @@ class TestMCPCapability:
             local = cap.local
             assert isinstance(local, MCPToolset)
             assert local.id == expected_id
+
+    def test_mcp_callable_and_user_toolset_ids(self):
+        """MCP only derives identity from connection data; user-managed local tools stay unchanged."""
+        from pydantic_ai.mcp import MCPToolset
+
+        callable_capability = MCP[None](local=_local_fallback)
+        callable_toolset = callable_capability.get_toolset()
+        assert isinstance(callable_toolset, FunctionToolset)
+        assert callable_toolset.id is None
+
+        local_toolset = MCPToolset('https://mcp.example.com/api', id='user-mcp')
+        supplied_capability = MCP[None](local=local_toolset)
+        assert supplied_capability.get_toolset() is local_toolset
 
     def test_mcp_callable_native_without_url_or_id_errors(self):
         """A `native=<callable>` factory paired with a local fallback has nothing to derive the
