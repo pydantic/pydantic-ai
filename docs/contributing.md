@@ -150,6 +150,11 @@ either value with `/ai` or a leading slash.
 For the rendered site, use the documentation preview attached to a pull request after a maintainer
 adds the `trigger:docs` label.
 
+CI checks that every link between doc pages resolves, anchor included, and fails on `Cannot find
+fragment`. A heading's anchor is generated from its text, so renaming one silently breaks every link
+pointing at it. Where a heading is linked to, pin its anchor with `{#custom-id}` — the heading text
+is then free to change without moving the anchor.
+
 ## Rules for adding new models to Pydantic AI {#new-model-rules}
 
 To avoid an excessive workload for the maintainers of Pydantic AI, we can't accept all model contributions, so we're setting the following rules for when we'll accept new models and when we won't. This should hopefully reduce the chances of disappointment and wasted work.

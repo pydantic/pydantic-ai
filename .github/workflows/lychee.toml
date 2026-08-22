@@ -20,8 +20,8 @@ exclude_all_private = true
 exclude_loopback = true
 
 # No `scheme` allowlist: relative links between doc pages resolve as filesystem paths, and skipping
-# them is how 25 dead in-page anchors shipped. The rule for keeping heading anchors resolvable lives
-# in `docs/AGENTS.md`, next to the rest of the doc-authoring conventions.
+# them is how a page's worth of dead in-page anchors shipped unnoticed. The rule for keeping heading
+# anchors resolvable lives in `docs/AGENTS.md`, with the rest of the doc-authoring conventions.
 #
 # The PR gate adds `--include-fragments` on the command line rather than setting the key here: the
 # config key's type changed between lychee releases while the flag did not, and the gate is the only
