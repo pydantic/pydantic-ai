@@ -1096,11 +1096,6 @@ async def test_tool_ag_ui_multiple() -> None:
     )
 
 
-async def local_weather(location: str) -> str:
-    """Get the weather for a location."""
-    return f'Sunny in {location}'
-
-
 async def test_tool_only_response_announces_its_assistant_message() -> None:
     """A response that opens with a tool call announces the message its tool calls parent to.
 
@@ -1108,6 +1103,10 @@ async def test_tool_only_response_announces_its_assistant_message() -> None:
     message no event had started, so a client rebuilding history from the event stream alone had
     nothing to attach the tool call to.
     """
+
+    async def local_weather(location: str) -> str:
+        """Get the weather for a location."""
+        return f'Sunny in {location}'
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -1190,6 +1189,118 @@ async def test_tool_only_response_announces_its_assistant_message() -> None:
     )
 
     assert message_id != text_message_id
+
+
+async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
+    """Text between two tool calls opens a new assistant message for the later call to parent.
+
+    This pins the composed path the "Assistant message identity" section of `docs/ui/ag-ui.md`
+    documents: text appearing after a tool call starts a new message, and any later tool calls
+    attach to that one instead of the message announced for the first call. The boundaries the
+    stream produces are checked against `AGUIAdapter.dump_messages` for the equivalent
+    `ModelResponse`, so streamed and frontend-loaded histories split the response identically.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'))
+        yield PartEndEvent(
+            index=0, part=ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'), next_part_kind='text'
+        )
+
+        yield PartStartEvent(index=1, part=TextPart(content='Note this. '), previous_part_kind='tool-call')
+        yield PartEndEvent(index=1, part=TextPart(content='Note this. '), next_part_kind='tool-call')
+
+        yield PartStartEvent(
+            index=2,
+            part=ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'),
+            previous_part_kind='text',
+        )
+        yield PartEndEvent(
+            index=2, part=ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'), next_part_kind=None
+        )
+
+        yield FunctionToolCallEvent(
+            part=ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'),
+            args_valid=True,
+        )
+        yield FunctionToolCallEvent(
+            part=ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'),
+            args_valid=True,
+        )
+
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='tool_a', tool_call_id='call_0', content='A result')
+        )
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='tool_b', tool_call_id='call_1', content='B result')
+        )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Call tool_a, add a note, then call tool_b',
+        ),
+    )
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    announced_ids = [event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START']
+    assert len(announced_ids) == 2
+    first_message_id, second_message_id = announced_ids
+    assert first_message_id != second_message_id
+
+    # The first message is announced empty and closed before its tool call streams.
+    first_end_index = next(
+        i
+        for i, event in enumerate(events)
+        if event['type'] == 'TEXT_MESSAGE_END' and event['messageId'] == first_message_id
+    )
+    first_call_start_index = next(
+        i for i, event in enumerate(events) if event['type'] == 'TOOL_CALL_START' and event['toolCallId'] == 'call_0'
+    )
+    assert first_end_index < first_call_start_index
+    assert not any(
+        event['type'] == 'TEXT_MESSAGE_CONTENT' and event['messageId'] == first_message_id for event in events
+    )
+
+    # The two tool calls parent different assistant messages, the second to the text's message.
+    tool_call_parents = {
+        event['toolCallId']: event['parentMessageId'] for event in events if event['type'] == 'TOOL_CALL_START'
+    }
+    assert tool_call_parents == {'call_0': first_message_id, 'call_1': second_message_id}
+
+    streamed_boundaries = [
+        (
+            ''.join(
+                event['delta']
+                for event in events
+                if event['type'] == 'TEXT_MESSAGE_CONTENT' and event['messageId'] == message_id
+            ),
+            [
+                event['toolCallId']
+                for event in events
+                if event['type'] == 'TOOL_CALL_START' and event['parentMessageId'] == message_id
+            ],
+        )
+        for message_id in announced_ids
+    ]
+    assert streamed_boundaries == [('', ['call_0']), ('Note this. ', ['call_1'])]
+
+    equivalent_response = ModelResponse(
+        parts=[
+            ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'),
+            TextPart(content='Note this. '),
+            ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'),
+        ]
+    )
+    assert streamed_boundaries == [
+        (message.content or '', [tool_call.id for tool_call in message.tool_calls or []])
+        for message in AGUIAdapter.dump_messages([equivalent_response])
+        if isinstance(message, AssistantMessage)
+    ]
 
 
 async def test_tool_ag_ui_parts() -> None:
