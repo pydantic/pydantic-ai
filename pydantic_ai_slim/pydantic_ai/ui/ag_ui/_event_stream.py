@@ -345,10 +345,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         if self._started_message_id != parent_message_id:
             # `handle_text_start` is the only other site that starts a message, so a response with
-            # no text before its first tool call would name a parent the stream never announced,
-            # leaving a client that rebuilds history from the events alone nothing to attach the call
-            # to. The message carries no text, so it is closed straight away: the AG-UI client's
-            # event verifier rejects `RUN_FINISHED` while a text message is still open.
+            # no text before its first tool call would name a parent no event in the stream carries.
+            # A client can still synthesize that message for itself, but its ID then matches nothing
+            # the server emitted, so a conversation echoed back can't be told apart from new input.
+            # The message carries no text, so it is closed straight away: the AG-UI client's event
+            # verifier rejects `RUN_FINISHED` while a text message is still open.
             self._started_message_id = parent_message_id
             yield TextMessageStartEvent(message_id=parent_message_id)
             yield TextMessageEndEvent(message_id=parent_message_id)
