@@ -100,13 +100,19 @@ async def test_cerebras_forwards_settings_the_api_honors(
     assert request_capture.body('/chat/completions', index=1)['service_tier'] == snapshot('priority')
 
 
-async def test_cerebras_accepts_every_service_tier(allow_model_requests: None, cerebras_api_key: str, vcr: Cassette):
+async def test_cerebras_accepts_every_service_tier(
+    allow_model_requests: None, cerebras_api_key: str, vcr: Cassette, request_capture: RequestCapture
+):
     """Every `ServiceTier` value is HTTP 200 on an ordinary Cerebras key.
 
     Tiers are in Private Preview, so whether a request *gets* that tier is gated. Acceptance is
     not: `auto` / `default` / `flex` / `priority` all 200 rather than 400.
+
+    `request_capture` pins the four values on the live outgoing body; `vcr.responses` pins the
+    recorded HTTP 200s. Cassette matching ignores the body, so asserting on `vcr.requests` would
+    keep passing after the code stopped sending `service_tier`.
     """
-    provider = CerebrasProvider(api_key=cerebras_api_key)
+    provider = CerebrasProvider(api_key=cerebras_api_key, http_client=request_capture.client)
     model = CerebrasModel('gemma-4-31b', provider=provider)
     prompt = [ModelRequest.user_text_prompt('Reply with the single word ok.')]
     tiers = get_args(ServiceTier)
@@ -114,11 +120,7 @@ async def test_cerebras_accepts_every_service_tier(allow_model_requests: None, c
     for tier in tiers:
         await model_request(model, prompt, model_settings=CerebrasModelSettings(service_tier=tier))
 
-    recorded_requests = vcr.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    sent = [
-        json.loads(request.body).get('service_tier')  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        for request in recorded_requests  # pyright: ignore[reportUnknownVariableType]
-    ]
+    sent = [body.get('service_tier') for body in request_capture.bodies('/chat/completions')]
     assert sent == list(tiers)
     recorded_responses = vcr.responses  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
     assert [response['status']['code'] for response in recorded_responses] == [200] * len(tiers)  # pyright: ignore[reportUnknownVariableType]
