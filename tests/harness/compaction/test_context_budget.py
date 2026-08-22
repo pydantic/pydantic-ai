@@ -26,7 +26,7 @@ from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelR
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from pydantic_ai_harness.compaction import (
     DEFAULT_CONTEXT_WINDOW,
@@ -87,6 +87,7 @@ def _ctx(model: Any = None) -> Any:
     @dataclasses.dataclass
     class _FakeCtx:
         usage: RunUsage = dataclasses.field(default_factory=RunUsage)
+        usage_limits: UsageLimits | None = None
         model: Model = dataclasses.field(default_factory=TestModel)
         deps: None = None
         tracer: Tracer = dataclasses.field(default_factory=NoOpTracer)

@@ -23,10 +23,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from pydantic_ai_harness._usage import reserved_usage_limits
+
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
     from pydantic_ai.models import ModelRequestContext
-    from pydantic_ai.usage import UsageLimits
 
 
 @dataclass
@@ -292,24 +293,11 @@ class LLMReminder(Generic[AgentDepsT]):
                 agent = Agent(self.model, instructions=self.instructions, output_type=str)
                 self._agent = agent
             transcript = _build_compact_transcript(ctx.messages, self.max_context_messages)
-            result = await agent.run(transcript, usage=ctx.usage, usage_limits=_reserved_limits(ctx.usage_limits))
+            result = await agent.run(transcript, usage=ctx.usage, usage_limits=reserved_usage_limits(ctx.usage_limits))
             text = result.output.strip()
             return text or None
         except Exception:
             return GoalReanchor[AgentDepsT]()(ctx)
-
-
-def _reserved_limits(limits: UsageLimits | None) -> UsageLimits | None:
-    """The parent run's limits with one request held back for the model call this reminder precedes.
-
-    `wrap_model_request` runs after the parent request already cleared `check_before_request`, so
-    a nested run spending the last slot would let that approved request push the run one past
-    `request_limit`. Holding the slot back makes the nested run raise `UsageLimitExceeded` first;
-    the caller falls back to `GoalReanchor`, which costs no request, and the budget holds.
-    """
-    if limits is None or limits.request_limit is None:
-        return limits
-    return replace(limits, request_limit=max(0, limits.request_limit - 1))
 
 
 def _should_fire(reminder: Reminder[AgentDepsT], count: int) -> bool:

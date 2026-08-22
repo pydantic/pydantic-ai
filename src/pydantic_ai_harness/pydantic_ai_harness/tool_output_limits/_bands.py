@@ -66,7 +66,9 @@ class Summarize:
     `model=None` inherits the running agent's model (`ctx.model`), mirroring
     `SummarizingCompaction`. Pass a model id / instance to override, or a `summarize`
     callable to bypass the built-in prompt entirely. Summary usage folds into `ctx.usage`;
-    no token caps are imposed. Falls back to `then` on a binary payload or a failed call.
+    the built-in agent receives the parent usage limits and reserves one request from a finite
+    request limit for the pending parent request. Falls back to `then` on a binary payload or a
+    failed call.
     """
 
     model: str | Model | None = None

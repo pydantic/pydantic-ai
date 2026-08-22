@@ -230,9 +230,10 @@ for path in root.rglob('*'):
 
 ## Usage accounting
 
-A `Summarize` call is a real request to the model, so its full usage -- tokens and the
-request itself -- folds into the run's `ctx.usage`, exactly like `SummarizingCompaction`. No
-token caps are imposed on the summary call. A `UsageLimits` request limit will see it.
+A built-in `Summarize` call is a real request to the model, so its full usage -- tokens and the
+request itself -- folds into the run's `ctx.usage`, exactly like `SummarizingCompaction`. Its nested
+run receives the parent limits unchanged except that a finite request limit reserves one request for
+the pending parent request.
 
 By default `Summarize` inherits the running agent's model (`ctx.model`). Pass a model id or
 instance to `Summarize(model=...)` to override, or a `summarize` callable to bypass the

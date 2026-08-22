@@ -34,7 +34,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
@@ -89,6 +89,7 @@ def _make_ctx(
     requests: int = 0,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    usage_limits: UsageLimits | None = None,
 ) -> Any:
     """Build a minimal RunContext-like object for testing hooks."""
 
@@ -97,6 +98,7 @@ def _make_ctx(
     @dataclasses.dataclass
     class _FakeCtx:
         usage: RunUsage
+        usage_limits: UsageLimits | None = None
         model: Model = dataclasses.field(default_factory=TestModel)
         deps: None = None
         tracer: Tracer = dataclasses.field(default_factory=NoOpTracer)
@@ -107,7 +109,7 @@ def _make_ctx(
             default_factory=dict[str, AbstractCapability[None]]
         )
 
-    return _FakeCtx(usage=usage)
+    return _FakeCtx(usage=usage, usage_limits=usage_limits)
 
 
 def _make_request_context(messages: list[ModelMessage], model: Model | None = None) -> ModelRequestContext:
@@ -2120,6 +2122,24 @@ class TestSummarizingCompactionModel:
         assert MockAgent.call_args.args[0] is rc.model
         # Its usage is threaded into the parent run for honest accounting.
         assert mock_agent_instance.run.call_args.kwargs['usage'] is ctx.usage
+
+    @pytest.mark.anyio
+    async def test_nested_summary_reserves_parent_usage_limits(self):
+        comp = SummarizingCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
+        messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
+        ctx = _make_ctx(usage_limits=UsageLimits(request_limit=5, tool_calls_limit=2))
+
+        mock_result = AsyncMock()
+        mock_result.output = 'Bounded summary.'
+        with patch('pydantic_ai.Agent') as MockAgent:
+            mock_agent_instance = AsyncMock()
+            mock_agent_instance.run.return_value = mock_result
+            MockAgent.return_value = mock_agent_instance
+            await comp.before_model_request(ctx, _make_request_context(messages))
+
+        assert mock_agent_instance.run.call_args.kwargs['usage_limits'] == UsageLimits(
+            request_limit=4, tool_calls_limit=2
+        )
 
     def test_default_prompt_has_structured_sections(self):
         from pydantic_ai_harness.compaction._summarizing_compaction import _DEFAULT_SUMMARY_PROMPT

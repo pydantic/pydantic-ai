@@ -8,6 +8,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic_ai import Agent
@@ -25,7 +26,7 @@ from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_core import to_json
 
 from pydantic_ai_harness.tool_output_limits import (
@@ -66,7 +67,9 @@ from pydantic_ai_harness.tool_output_limits._store import _safe_segment
 # ---------------------------------------------------------------------------
 
 
-def _make_ctx(*, run_id: str | None = 'run-1', retry: int = 0, model: Any = None) -> Any:
+def _make_ctx(
+    *, run_id: str | None = 'run-1', retry: int = 0, model: Any = None, usage_limits: UsageLimits | None = None
+) -> Any:
     """Build a minimal RunContext-like object for testing the hook directly."""
 
     @dataclasses.dataclass
@@ -78,11 +81,12 @@ def _make_ctx(*, run_id: str | None = 'run-1', retry: int = 0, model: Any = None
         usage: RunUsage
         run_id: str | None
         retry: int
+        usage_limits: UsageLimits | None = None
         tool_call_id: str | None = 'call-1'
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
 
-    ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry)
+    ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
     if model is not None:
         ctx.model = model
     return ctx
@@ -647,6 +651,22 @@ class TestSummarize:
         out = await _run(cap, 'x' * 100, ctx=ctx)
         assert out == 'THE SUMMARY'
         assert ctx.usage.requests == 1
+
+    async def test_inherited_model_reserves_parent_usage_limits(self):
+        ctx = _make_ctx(
+            model=_fixed_model('THE SUMMARY'), usage_limits=UsageLimits(request_limit=5, tool_calls_limit=2)
+        )
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Summarize())])
+        mock_result = AsyncMock()
+        mock_result.output = 'THE SUMMARY'
+        mock_agent = AsyncMock()
+        mock_agent.run.return_value = mock_result
+
+        with patch('pydantic_ai.Agent', return_value=mock_agent):
+            out = await _run(cap, 'x' * 100, ctx=ctx)
+
+        assert out == 'THE SUMMARY'
+        assert mock_agent.run.call_args.kwargs['usage_limits'] == UsageLimits(request_limit=4, tool_calls_limit=2)
 
     async def test_explicit_model_overrides_ctx(self):
         ctx = _make_ctx(model=_fixed_model('FROM CTX MODEL'))
