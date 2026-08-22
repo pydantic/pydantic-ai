@@ -14,7 +14,7 @@ With [dependencies installed and environment variables set](./setup.md#usage), r
 python/uv-run -m pydantic_ai_examples.pydantic_model
 ```
 
-This examples uses `openai:gpt-5` by default, but it works well with other models, e.g. you can run it
+This example uses `openai:gpt-5` by default, but it works well with other models, e.g. you can run it
 with Gemini using:
 
 ```bash
