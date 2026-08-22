@@ -143,7 +143,30 @@ result = agent.run_sync([
 ])
 ```
 
-Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value. For GPT-5.6 and later models, set a stable [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to use OpenAI's more reliable matching for both implicit and explicit caching. Requests without a key may still receive automatic cache hits, but do not use the improved matching. Use different keys to partition unrelated workloads.
+To cache the instructions, set [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+settings = OpenAIResponsesModelSettings(
+    openai_prompt_cache_key='support-app:kb-v1',
+    openai_cache_instructions=True,
+)
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    instructions='Long-lived support policies...',
+    model_settings=settings,
+)
+
+result = agent.run_sync('Where is order 1234?')
+```
+
+The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix and don't invalidate it when they change. Leave `openai_prompt_cache_options` on its default `mode='implicit'` so OpenAI also keeps caching the growing conversation.
+
+On the Responses API the instructions are sent as leading input messages, because the top-level `instructions` field cannot carry a breakpoint. When [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set, or the history has been [compacted](../capabilities/compaction.md), this cache-specific relocation is skipped and no breakpoint is added. When switching to `openai_previous_response_id` after a stateless request that placed instructions in its input, Pydantic AI rebuilds from complete local history as needed to avoid duplicated instructions. It raises an error rather than losing context if that history was trimmed.
+
+Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. If a request sets more breakpoints than that, OpenAI creates new cache writes only at the latest ones. The instruction breakpoint is the earliest one in a request, so it is the first one not written, but it remains available for cache reads. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value. For GPT-5.6 and later models, set a stable [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to use OpenAI's more reliable matching for both implicit and explicit caching. Requests without a key may still receive automatic cache hits, but do not use the improved matching. Use different keys to partition unrelated workloads.
 
 When OpenAI reports prompt cache writes, Pydantic AI exposes them as [`result.usage.cache_write_tokens`][pydantic_ai.usage.RunUsage.cache_write_tokens]. Cache reads are available as [`result.usage.cache_read_tokens`][pydantic_ai.usage.RunUsage.cache_read_tokens]. For GPT-5.6 and later model families, OpenAI bills cache writes at 1.25 times the uncached input token rate.
 
