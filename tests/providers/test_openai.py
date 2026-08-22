@@ -51,3 +51,29 @@ def test_init_of_openai_with_base_url_env_var_and_without_api_key(env: TestEnv):
     env.set('OPENAI_BASE_URL', 'https://example.com/v1')
     provider = OpenAIProvider()
     assert provider.client.api_key == 'api-key-not-set'
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-4o', 'gpt-5.4', 'o3-mini', 'o4-mini', 'chatgpt-4o-latest', 'ft:gpt-4o-2024-08-06:org:name:id'],
+)
+def test_first_party_openai_models_keep_leading_whitespace_flag_off(model_name: str):
+    """Official Chat Completions names must not ignore leading streamed whitespace.
+
+    Applying the flag to first-party models dropped leading whitespace tokens from
+    official OpenAI streams.
+    """
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('ignore_streamed_leading_whitespace', False) is False
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    ['Ornith-1.5-35B-A3B-MLX-4bit', 'qwen3', 'my-local-model', 'foobar'],
+)
+def test_unrecognized_openai_compatible_names_ignore_leading_whitespace(model_name: str):
+    """Unrecognized names used with OpenAIProvider are custom-endpoint configurations."""
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('ignore_streamed_leading_whitespace') is True

@@ -53,9 +53,18 @@ class OpenAIProvider(_OpenAICompatibleProvider):
         # The flag stays here rather than moving into `openai_model_profile`, which is shared with
         # OpenAI-compatible endpoints (Azure, OpenRouter, vLLM, ...) that speak the Responses API without
         # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
+        #
+        # First-party Chat Completions models must keep `ignore_streamed_leading_whitespace` off:
+        # applying it globally dropped leading whitespace tokens from official OpenAI streams.
+        # Unrecognized names used with this provider are almost always OpenAI-compatible custom
+        # endpoints (oMLX, vLLM, LM Studio) that emit a whitespace-only text part ahead of tool
+        # calls; ignoring that whitespace lets `run_stream` continue into the tool-call follow-up.
+        name = model_name.lower()
+        first_party = name.startswith(('gpt-', 'o1', 'o3', 'o4', 'chatgpt-', 'ft:gpt-', 'ft:o1', 'ft:o3', 'ft:o4'))
         return merge_profile(
             openai_model_profile(model_name),
             OpenAIModelProfile(tool_addition_mode='with_definitions', tool_deferral_mode='with_tool_search'),
+            None if first_party else ModelProfile(ignore_streamed_leading_whitespace=True),
         )
 
     @staticmethod

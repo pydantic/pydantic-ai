@@ -958,6 +958,70 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
 
+async def test_stream_whitespace_text_before_tool_call_on_custom_openai_endpoint(
+    allow_model_requests: None,
+):
+    """Custom OpenAI-compatible endpoints can emit thinking + whitespace + tool calls.
+
+    That whitespace must not be treated as the final `run_stream` result when `str` is a
+    valid output type, or the agent never sends the tool result back to the model.
+    """
+    first_stream = [
+        chunk([ChoiceDelta.model_construct(role='assistant', reasoning_content='Need the current time.')]),
+        text_chunk('\n\n\n'),
+        struc_chunk('get_datetime', '{}'),
+        chunk([], finish_reason='tool_calls'),
+    ]
+    second_stream = [
+        text_chunk('It is 3pm in Korea.'),
+        chunk([], finish_reason='stop'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream([first_stream, second_stream])
+    m = OpenAIChatModel(
+        'Ornith-1.5-35B-A3B-MLX-4bit',
+        provider=OpenAIProvider(openai_client=mock_client),
+    )
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def get_datetime() -> str:
+        return '2026-08-22T16:00:00+09:00'
+
+    async with agent.run_stream('What time is it in Korea?') as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert chunks[-1] == 'It is 3pm in Korea.'
+
+    assert await result.get_output() == 'It is 3pm in Korea.'
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 2
+
+
+async def test_stream_non_empty_text_before_tool_call_still_final_on_custom_endpoint(
+    allow_model_requests: None,
+):
+    """Non-empty leading text is still a final `run_stream` result, even on custom endpoints."""
+    stream = [
+        text_chunk('Here is the time.'),
+        struc_chunk('get_datetime', '{}'),
+        chunk([], finish_reason='tool_calls'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel(
+        'Ornith-1.5-35B-A3B-MLX-4bit',
+        provider=OpenAIProvider(openai_client=mock_client),
+    )
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def get_datetime() -> str:
+        return '2026-08-22T16:00:00+09:00'
+
+    async with agent.run_stream('What time is it?') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['Here is the time.'])
+
+    assert await result.get_output() == 'Here is the time.'
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+
+
 async def test_no_delta(allow_model_requests: None):
     stream = [
         chunk([]),
