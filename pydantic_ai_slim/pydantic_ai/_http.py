@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, TypeVar
 
 # Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
 # I/O if that happens inside the event loop.
@@ -17,6 +17,7 @@ __all__ = (
     'AsyncHTTPClient',
     'create_async_httpx2_client',
     'legacy_httpx',
+    'to_httpx2_timeout',
     'warn_if_legacy_httpx_client',
 )
 
@@ -36,10 +37,18 @@ if TYPE_CHECKING:
     import httpx
 
     AsyncHTTPClient: TypeAlias = httpx.AsyncClient | httpx2.AsyncClient
+    LegacyTimeout: TypeAlias = httpx.Timeout
 elif legacy_httpx is not None:
     AsyncHTTPClient = legacy_httpx.AsyncClient | httpx2.AsyncClient
+    LegacyTimeout = legacy_httpx.Timeout
 else:
     AsyncHTTPClient = httpx2.AsyncClient
+    # Without legacy HTTPX no `ModelSettings.timeout` can hold one of its `Timeout` objects, so the
+    # `isinstance` check in `to_httpx2_timeout` falls back to the type the SDKs already accept and
+    # the conversion just rebuilds an equivalent value.
+    LegacyTimeout = httpx2.Timeout
+
+_NotGivenT = TypeVar('_NotGivenT')
 
 
 def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx2.AsyncClient:
@@ -54,6 +63,18 @@ def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: 
         timeout=httpx2.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
+
+
+def to_httpx2_timeout(timeout: float | LegacyTimeout | _NotGivenT) -> float | httpx2.Timeout | _NotGivenT:
+    """Rebuild a legacy `httpx.Timeout` as the `httpx2.Timeout` that migrated SDKs accept.
+
+    Anything else — a plain number, or the SDK's own not-given sentinel — passes through unchanged,
+    so callers can hand [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] straight
+    to a client whose HTTPX family no longer matches the one the setting is typed against.
+    """
+    if isinstance(timeout, LegacyTimeout):
+        return httpx2.Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
+    return timeout
 
 
 # TODO(v3): remove, along with the legacy `httpx.AsyncClient` support it warns about.

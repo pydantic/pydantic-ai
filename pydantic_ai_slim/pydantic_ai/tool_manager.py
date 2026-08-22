@@ -261,7 +261,7 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx.retries.get(name, 0) >= max_retries:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
-                'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
+                'limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
             ) from error
 
     @staticmethod
