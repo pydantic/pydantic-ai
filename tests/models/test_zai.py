@@ -730,15 +730,15 @@ def test_zai_validate_completion_raises_unexpected_behavior_on_malformed_payload
 ) -> None:
     """Malformed SDK completions are normalised to `UnexpectedModelBehavior` on the non-stream path.
 
-    Coverage contract: `ZaiModel._validate_completion` has an ``except ValidationError``
+    Coverage contract: `ZaiModel._validate_completion` has an `except ValidationError`
     branch (zai.py L210-L213) whose sole responsibility is to wrap Pydantic validation
     failures raised by the widened `_ZaiChatCompletion` TypedDict, then re-raise as
     `UnexpectedModelBehavior` with the same exception message the base class uses.
 
     Without this test the exception-only branch is un-exercised and the repo-wide
-    ``fail_under = 100`` coverage rule (pyproject.toml L463) aborts the `coverage
-    report` step of the CI coverage job, which in turn marks the required ``check``
-    aggregator red (``ci.yml`` L592).
+    `fail_under = 100` coverage rule (pyproject.toml L463) aborts the `coverage
+    report` step of the CI coverage job, which in turn marks the required `check`
+    aggregator red (`ci.yml` L592).
     """
     from unittest.mock import MagicMock
 
@@ -776,7 +776,7 @@ async def test_zai_stream_validate_response_raises_unexpected_behavior_on_malfor
     """Malformed streaming chunks are normalised to `UnexpectedModelBehavior`.
 
     Streaming-path counterpart to `test_zai_validate_completion_raises_...`: covers
-    the ``except ValidationError`` branch inside `ZaiStreamedResponse._validate_response`
+    the `except ValidationError` branch inside `ZaiStreamedResponse._validate_response`
     (zai.py L253-L254) which wraps pydantic-validation failures raised by the widened
     `_ZaiChatCompletionChunk` TypedDict and re-raises as `UnexpectedModelBehavior`.
 
