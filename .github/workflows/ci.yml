@@ -197,6 +197,15 @@ jobs:
       # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
 
+      # Check that links between doc pages resolve, including their `#anchor` fragments. Runs
+      # `--offline` so only local files are checked: external hosts are swept weekly by
+      # link-check.yml instead, where being down doesn't block a PR.
+      - name: Check doc links and heading anchors
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
+        with:
+          args: --no-progress --offline --include-fragments --config .github/workflows/lychee.toml './docs/**/*.md' './*.md' './examples/**/*.md'
+          fail: true
+
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label

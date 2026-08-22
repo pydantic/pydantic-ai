@@ -230,7 +230,6 @@ async def test_zai_glm_5_3_reasoning_effort(
     during playback, since VCR matchers aren't sensitive to the body. The full effort mapping is unit-tested
     in `test_zai_glm_5_3_reasoning_effort_mapping`.
     """
-    # `RequestCapture.client` is already `httpx2.AsyncClient`, the non-deprecated type.
     provider = ZaiProvider(api_key=zai_api_key, http_client=request_capture.client)
     model = ZaiModel('glm-5.3', provider=provider)
     settings = ModelSettings(thinking='xhigh')

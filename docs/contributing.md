@@ -1,6 +1,6 @@
 We'd love you to contribute to Pydantic AI!
 
-## How we work — the short version
+## How we work — the short version {#how-we-work-the-short-version}
 
 Pydantic AI is maintained by a small team. We set our own priorities based on what benefits the most users, and we work through issues and PRs in that order — not in the order they arrive.
 
@@ -25,7 +25,7 @@ If the fix could reasonably go more than one way, or you're unsure it's actually
 
 ### Features, integrations, or API changes
 
-Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#what-goes-where) for the full distinction.
+Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness) for the full distinction.
 
 **If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable API, we can talk about upstreaming to harness or core.
 
@@ -149,6 +149,11 @@ either value with `/ai` or a leading slash.
 
 For the rendered site, use the documentation preview attached to a pull request after a maintainer
 adds the `trigger:docs` label.
+
+CI checks that every link between doc pages resolves, anchor included, and fails on `Cannot find
+fragment`. A heading's anchor is generated from its text, so renaming one silently breaks every link
+pointing at it. Where a heading is linked to, pin its anchor with `{#custom-id}` — the heading text
+is then free to change without moving the anchor.
 
 ## Rules for adding new models to Pydantic AI {#new-model-rules}
 

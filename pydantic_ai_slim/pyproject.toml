@@ -51,7 +51,7 @@ requires-python = ">=3.10"
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
 Source = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
-Documentation = "https://ai.pydantic.dev/install/#slim-install"
+Documentation = "https://pydantic.dev/docs/ai/overview/install/#slim-install"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
