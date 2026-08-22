@@ -258,6 +258,8 @@ async def test_forecast_future():
 2. Our function is slightly intelligent in that it tries to extract a date from the prompt, but just hard codes the location.
 3. We use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to replace the agent's model with our custom function.
 
+If your replacement model needs to carry state between requests, `FunctionModel` also accepts a callable instance with an `async def __call__` in place of a function; see the [`FunctionModel` API docs](api/models/function.md) for an example.
+
 ### Overriding model via pytest fixtures
 
 If you're writing lots of tests that all require model to be overridden, you can use [pytest fixtures](https://docs.pytest.org/en/6.2.x/fixture.html) to override the model with [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in a reusable way.

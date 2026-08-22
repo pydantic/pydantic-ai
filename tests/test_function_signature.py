@@ -1431,6 +1431,19 @@ def test_function_with_enum_field_in_model():
     assert '_Color' not in type_names
 
 
+def test_function_with_enum_ref_parameter():
+    """Referenced enum values are visible in the rendered tool signature."""
+
+    def set_color(color: _Color) -> None:
+        pass  # pragma: no cover
+
+    td = Tool(set_color).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def set_color(*, color: Literal['red', 'green']) -> None:
+    ...\
+""")
+
+
 def test_schema_with_described_optional_fields():
     """Schema with descriptions and optional fields renders NotRequired and field descriptions."""
     sig = FunctionSignature.from_schema(

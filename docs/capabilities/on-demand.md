@@ -2,7 +2,7 @@
 
 A capability is a bundle of instructions and/or tools, optionally with settings and hooks. A multi-workflow agent normally sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks for the whole run — even though most requests need just one workflow. That cost grows with each workflow you add: more input tokens, and worse tool selection once the visible tool set passes the ~30–50-tool mark where models start picking the wrong one (the same pressure behind [tool search](../tools-advanced.md#tool-search)).
 
-Mark a [capability](overview.md) with `defer_loading=True` and give it a stable `id`, and it collapses to a one-line catalog entry — its `id` plus an optional `description` — that the model pulls in on demand. Here's the minimal shape:
+Mark a [capability](overview.md) with `defer_loading=True` and give it a stable `id`, and it collapses to a one-line catalog entry — its `id` plus an optional `description` — that the model pulls in on demand. The minimal setup is:
 
 ```python {title="on_demand_capability.py"}
 from pydantic_ai import Agent
@@ -406,7 +406,7 @@ def issue_refund(order_id: str, amount: float) -> str:
     return f'Refund of ${amount} issued for {order_id}.'
 ```
 
-The model sees `issue_refund` from turn 1. If it tries to call it before opening `refund-policy`, the hook bounces the call back with a message pointing at the exact `load_capability` tool call to make. The model loads the policy, the policy text lands in its recent context, and the refund runs *within* the rules — and only then. Same shape for any tool-and-runbook pair.
+The model sees `issue_refund` from turn 1. If it tries to call it before opening `refund-policy`, the hook bounces the call back with a message pointing at the exact `load_capability` tool call to make. The model loads the policy, the policy text lands in its recent context, and the refund runs *within* the rules — and only then. The same pattern works for any tool-and-runbook pair.
 
 Because the loaded set is just runtime data on [`RunContext`][pydantic_ai.tools.RunContext], the pattern generalises: dynamic instructions can warn when a risky pair of workflows is open, audit hooks can tag traces with the loaded set, escalation hooks can require an extra confirmation when both `payments` and `account-security` are active.
 

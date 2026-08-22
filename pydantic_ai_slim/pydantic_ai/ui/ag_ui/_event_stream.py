@@ -429,6 +429,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             output = _tool_return_content(result)
 
+        # Regular tool results arrive after `ToolCallEvent` moved the stream to the request turn.
+        # The next model response starts with `PartStartEvent`, whose request-to-response transition
+        # replaces this ID in `before_response()`. Native tool returns differ: another native call can
+        # follow inside the same response, so that path must use a one-off ID without mutating this one.
         message_id = self.new_message_id()
         yield ToolCallResultEvent(
             message_id=message_id,

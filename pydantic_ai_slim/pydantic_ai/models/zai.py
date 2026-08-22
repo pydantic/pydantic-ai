@@ -2,7 +2,9 @@
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Literal, cast
 
 from typing_extensions import override
@@ -26,6 +28,7 @@ except ImportError as _import_error:  # pragma: no cover
 __all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
 
 LatestZaiModelNames = Literal[
+    'glm-5.3',
     'glm-5.2',
     'glm-5.1',
     'glm-5',
@@ -122,6 +125,7 @@ class ZaiModel(OpenAIChatModel):
             customized_parameters,
             supports_thinking=profile.get('supports_thinking', False),
             supports_reasoning_effort=profile.get('zai_supports_reasoning_effort', False),
+            reasoning_effort_mapping=profile.get('zai_reasoning_effort_mapping', {}),
         )
         return new_settings, customized_parameters
 
@@ -143,6 +147,7 @@ def _zai_settings_to_openai_settings(
     *,
     supports_thinking: bool,
     supports_reasoning_effort: bool,
+    reasoning_effort_mapping: Mapping[str, str] = MappingProxyType({}),
 ) -> OpenAIChatModelSettings:
     """Transforms a 'ZaiModelSettings' object into an 'OpenAIChatModelSettings' object.
 
@@ -154,7 +159,9 @@ def _zai_settings_to_openai_settings(
         model_settings: The 'ZaiModelSettings' object to transform.
         model_request_parameters: The request parameters carrying the resolved unified `thinking` value.
         supports_thinking: Whether the model supports thinking, gating the default `clear_thinking`.
-        supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2).
+        supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2 and GLM-5.3).
+        reasoning_effort_mapping: Substitutions applied to the effort level before it is forwarded, for
+            models that only accept a subset of the unified levels (GLM-5.3).
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -186,7 +193,7 @@ def _zai_settings_to_openai_settings(
     # An explicit effort level (not a bare `True`/`False`) maps to Z.AI's `reasoning_effort`; a plain
     # `thinking=True` leaves it unset so Z.AI applies its own default.
     if supports_reasoning_effort and isinstance(thinking_level, str):
-        extra_body['reasoning_effort'] = thinking_level
+        extra_body['reasoning_effort'] = reasoning_effort_mapping.get(thinking_level, thinking_level)
 
     filtered = {k: v for k, v in model_settings.items() if not k.startswith('zai_')}
     if extra_body:

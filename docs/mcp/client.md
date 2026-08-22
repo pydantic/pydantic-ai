@@ -3,7 +3,7 @@
 Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers to use their tools as part of an agent run. The [`MCPToolset`][pydantic_ai.mcp.MCPToolset] [toolset](../toolsets.md) wraps the [FastMCP Client](https://gofastmcp.com/clients/) and works with both local (stdio) and remote (Streamable HTTP, SSE) MCP servers.
 
 !!! tip "Recommended: the `MCP` capability"
-    For most use cases, use the [`MCP` capability](../capabilities/mcp.md) — it takes a URL (or any `MCPToolset` input via `local=`) and additionally lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag. Reach for `MCPToolset` directly when you need to manage the client lifecycle yourself, attach the same MCP server to multiple agents, or pass advanced transport / client configuration that doesn't fit the capability shape.
+    For most use cases, use the [`MCP` capability](../capabilities/mcp.md) — it takes a URL (or any `MCPToolset` input via `local=`) and additionally lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag. Reach for `MCPToolset` directly when you need to manage the client lifecycle yourself, attach the same MCP server to multiple agents, or pass advanced transport or client configuration the capability does not expose.
 
 ## Install
 
@@ -98,7 +98,7 @@ logfire.instrument_pydantic_ai()
 
 ### SSE
 
-The [HTTP + Server-Sent Events](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`](https://gofastmcp.com/clients/transports).
+The [HTTP + Server-Sent Events](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`](https://gofastmcp.com/clients/transports).
 
 !!! note
     The SSE transport in MCP is deprecated. You should prefer Streamable HTTP for new deployments.
@@ -113,7 +113,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 ### Stdio
 
-MCP also offers the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio), where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. Pass a path to a Python or Node.js script, or build a [`StdioTransport`](https://gofastmcp.com/clients/transports) for full control over the command, arguments, and environment.
+MCP also offers the [stdio transport](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#stdio), where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. Pass a path to a Python or Node.js script, or build a [`StdioTransport`](https://gofastmcp.com/clients/transports) for full control over the command, arguments, and environment.
 
 ```python {title="mcp_stdio_client.py" test="skip"}
 from fastmcp.client.transports import StdioTransport
