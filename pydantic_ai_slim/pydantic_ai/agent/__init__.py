@@ -2904,11 +2904,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        # Two layers, not one per capability: everything the agent carries, and everything supplied
+        # for this run. Ids must be unique *within* each — `run(capabilities=[Thinking(), Thinking()])`
+        # is as much a mistake as the same list on `Agent(...)` — while a run-level id supersedes an
+        # agent-level one.
+        layer_groups = [resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras]
+        for group in layer_groups:
+            _validate_capability_ids([leaf for layer in group for leaf in leaf_capabilities(layer)])
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
         )
-        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+        run_capability = _compose_run_layers(layer_groups)
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -3238,8 +3245,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
         # tool spans.
+        # Search the run-level layer first, and its last entry first, because a run-level
+        # `Instrumentation` supersedes an agent-level one (see `_compose_run_layers`). Taking the
+        # first match over `[agent, *extras]` would pick the instance the run is about to drop.
         explicit_instrumentation = find_capability(
-            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
+            [*reversed(extra_capabilities), self._effective_root_capability()], InstrumentationCap
         )
         session_instrumentation_settings = (
             explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
@@ -3968,10 +3978,18 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     """Validate capability `id`s and return the set of explicit ones.
 
     Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
-    one capability. Shared by two call sites: construction-time validation over the
-    statically-provided capabilities (so misconfiguration fails fast in `Agent(...)` rather than
-    on the first run), and run-time assembly in `_build_run_capabilities`, which also covers
-    capabilities supplied per-run or returned by `for_run` and so can't be checked at construction.
+    one capability *within a single layer*.
+
+    The layer distinction mirrors [`_validate_native_tool_ids`][pydantic_ai.agent._validate_native_tool_ids]:
+    two capabilities sharing an id in one layer are ambiguous, because the one that ends up in the
+    run registry is arbitrary. *Across* layers the reuse is the intentional override mechanism —
+    `agent.run(capabilities=[Thinking(effort='high')])` is how a run overrides an agent-level
+    `Thinking`, and the one-off capabilities carry a fixed default `id` precisely so that lines up.
+
+    Called at construction over the statically-provided capabilities (so misconfiguration fails fast
+    in `Agent(...)` rather than on the first run) and once per resolved layer in
+    `_resolve_run_capabilities`, which also covers capabilities supplied per-run or returned by
+    `for_run` and so can't be checked at construction.
     """
     explicit_ids: set[str] = set()
     for cap in capabilities:
@@ -4061,11 +4079,66 @@ def _layer_model_settings(
     return merged
 
 
+def _compose_run_layers(
+    layer_groups: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
+) -> AbstractCapability[AgentDepsT]:
+    """Compose the run's capability layers, letting a later layer's `id` supersede an earlier one.
+
+    Capabilities covering a single fixed concern carry a stable default `id`, so an agent-level one
+    and a run-level one arrive under the same key. Keeping both would leave the earlier capability
+    contributing tools and instructions while `_build_run_capabilities` maps its `id` to the later
+    one, orphaning it: `resolve_capability_id` would then fail to find it, and it would be missing
+    from `RunContext.available_capability_ids`. Dropping it instead makes the run registry and the
+    composed tree agree, and matches the last-wins `unique_id` dedup already applied to native tools
+    across layers.
+
+    Supersession is tracked by *occurrence*, not by object: the same capability instance may appear
+    in more than one group, and only the occurrences before its last one are dropped. Every id
+    therefore keeps exactly one occurrence, so the result is never empty.
+
+    Duplicates *within* a group are rejected by `_validate_capability_ids` before this runs, so any
+    collision here spans groups and is the user's own composition. Pydantic AI's own injected
+    capabilities can't reach it: each is added only when one of its type isn't already present.
+    """
+    leaves_by_group = [[leaf for layer in group for leaf in leaf_capabilities(layer)] for group in layer_groups]
+    last_occurrence: dict[str, tuple[int, int]] = {
+        leaf.id: (group_index, leaf_index)
+        for group_index, leaves in enumerate(leaves_by_group)
+        for leaf_index, leaf in enumerate(leaves)
+        if leaf.id is not None
+    }
+
+    kept: list[AbstractCapability[AgentDepsT]] = []
+    superseded = False
+    for group_index, leaves in enumerate(leaves_by_group):
+        for leaf_index, leaf in enumerate(leaves):
+            if leaf.id is not None and last_occurrence[leaf.id] != (group_index, leaf_index):
+                superseded = True
+                warnings.warn(
+                    f'Capability id {leaf.id!r} is used by a capability supplied for this run and by '
+                    f'one on the agent, so the agent-level {type(leaf).__name__} is replaced. Pass a '
+                    f'distinct `id` to keep both, or `id=None` to derive separate ids.',
+                    exceptions.CapabilityOverriddenWarning,
+                    stacklevel=2,
+                )
+                continue
+            kept.append(leaf)
+
+    if not superseded:
+        # Compose from the layers themselves so an untouched run keeps the exact structure it had.
+        layers = [layer for group in layer_groups for layer in group]
+        return CombinedCapability(layers) if len(layers) > 1 else layers[0]
+    return CombinedCapability(kept) if len(kept) > 1 else kept[0]
+
+
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
-    explicit_ids = _validate_capability_ids(capabilities)
+    # Ids are validated per layer (see `_validate_capability_ids`), not over the composed tree, so a
+    # run-level capability may deliberately reuse an agent-level id to override it. Collect the
+    # explicit ones here only so a derived id can't shadow one.
+    explicit_ids = {cap.id for cap in capabilities if cap.id is not None}
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     for cap in capabilities:

@@ -91,7 +91,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         enable_image_understanding: bool | None = None,
         enable_video_understanding: bool | None = None,
         include_output: bool | None = None,
-        id: str | None = None,
+        id: str | None = 'x_search',
         description: str | None = None,
         defer_loading: bool = False,
     ) -> None:
