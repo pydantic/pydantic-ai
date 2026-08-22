@@ -984,6 +984,14 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
     )
 
 
+class RecordingTracerProvider:
+    def __init__(self) -> None:
+        self.processors: list[SpanProcessor] = []
+
+    def add_span_processor(self, span_processor: SpanProcessor) -> None:
+        self.processors.append(span_processor)
+
+
 # `pydantic_evals/otel` makes no provider HTTP calls, and the exporter cache is not reachable through
 # the public API, so the exporter-cache tests through `test_context_span_exporter_attached_once_under_concurrency`
 # are unit tests rather than VCR tests. They still drive `context_subtree()` itself rather than
@@ -1051,13 +1059,7 @@ async def test_context_span_exporter_not_shared_between_equal_providers(mocker: 
     this provider unhashable, which is the other reason it cannot be a dictionary key.
     """
 
-    class ValueEqualTracerProvider:
-        def __init__(self) -> None:
-            self.processors: list[SpanProcessor] = []
-
-        def add_span_processor(self, span_processor: SpanProcessor) -> None:
-            self.processors.append(span_processor)
-
+    class ValueEqualTracerProvider(RecordingTracerProvider):
         def __eq__(self, other: object) -> bool:
             return isinstance(other, ValueEqualTracerProvider)
 
@@ -1096,13 +1098,6 @@ async def test_context_span_exporter_reused_for_the_same_provider(mocker: Mocker
         def __init__(self) -> None:
             super().__init__()
             constructed.append(self)
-
-    class RecordingTracerProvider:
-        def __init__(self) -> None:
-            self.processors: list[SpanProcessor] = []
-
-        def add_span_processor(self, span_processor: SpanProcessor) -> None:
-            self.processors.append(span_processor)
 
     tracer_provider = RecordingTracerProvider()
     mocker.patch(
@@ -1158,6 +1153,7 @@ async def test_context_subtree_provider_that_cannot_be_weakly_referenced(mocker:
     is not an option: the `TypeError` would escape `context_subtree()` and abort the evaluation.
     """
 
+    # Standalone: a `RecordingTracerProvider` subclass would inherit `__weakref__` and so be weakrefable.
     class UnreferenceableTracerProvider:
         __slots__ = ('processors',)
 
@@ -1194,13 +1190,6 @@ async def test_context_span_exporter_refused_when_its_provider_was_recycled(mock
     this arm is defence in depth -- and unreachable without seeding the cache by hand, which is why
     it is pinned here rather than left to a coincidence of allocation.
     """
-
-    class RecordingTracerProvider:
-        def __init__(self) -> None:
-            self.processors: list[SpanProcessor] = []
-
-        def add_span_processor(self, span_processor: SpanProcessor) -> None:
-            self.processors.append(span_processor)
 
     tracer_provider = RecordingTracerProvider()
     mocker.patch(
@@ -1241,13 +1230,6 @@ async def test_context_span_exporter_attached_once_under_concurrency(mocker: Moc
         def __init__(self) -> None:
             time.sleep(0.05)
             super().__init__()
-
-    class RecordingTracerProvider:
-        def __init__(self) -> None:
-            self.processors: list[SpanProcessor] = []
-
-        def add_span_processor(self, span_processor: SpanProcessor) -> None:
-            self.processors.append(span_processor)
 
     tracer_provider = RecordingTracerProvider()
     mocker.patch(
