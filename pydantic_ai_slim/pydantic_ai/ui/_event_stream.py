@@ -21,6 +21,10 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -116,7 +120,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     message_id: str = field(default_factory=lambda: str(uuid4()))
     """The message ID to use for the next event."""
 
-    _turn: Literal['request', 'response'] | None = None
+    _open_turn: Literal['request', 'response'] | None = None
+    """The request/response turn opened by a boundary event whose closing event hasn't arrived, so an
+    abnormal end can still fire its after-hook. Set from the boundary events, never inferred from content."""
 
     _result: AgentRunResult[OutputDataT] | None = None
     _cancelled: RunCancelled | None = None
@@ -236,7 +242,23 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         try:
             async for event in stream:
-                if isinstance(event, PartStartEvent):
+                if isinstance(event, ModelRequestStartEvent):
+                    self._open_turn = 'request'
+                    async for e in self.before_request():
+                        yield e
+                elif isinstance(event, ModelRequestEndEvent):
+                    async for e in self.after_request():
+                        yield e
+                    self._open_turn = None
+                elif isinstance(event, ModelResponseStartEvent):
+                    self._open_turn = 'response'
+                    async for e in self.before_response():
+                        yield e
+                elif isinstance(event, ModelResponseEndEvent):
+                    async for e in self.after_response():
+                        yield e
+                    self._open_turn = None
+                elif isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
                 elif isinstance(event, PartEndEvent):
@@ -260,7 +282,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     result = cast(AgentRunResult[OutputDataT], event.result)
                     self._result = result
 
-                    async for e in self._turn_to(None):
+                    async for e in self._close_turn():
                         yield e
 
                     if on_complete is not None:
@@ -293,8 +315,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
             # Close the open message part before emitting the error, so a client that aborts at the
             # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
-            # first: it's a response-side event, whereas the tool-call cleanup below turns to the
-            # request side, and everything after the error chunk is dropped.
+            # first: it's a response-side event, whereas the tool-call cleanup below closes the response
+            # turn, and everything after the error chunk is dropped.
             if (part := self._open_part) is not None:
                 for delta in self._open_part_deltas:
                     # Synthetic cleanup must not replace the original stream error.
@@ -327,7 +349,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 self._final_result_event = None
                 self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
 
-            # Pending tool calls
+            # Pending tool calls — their synthetic results are request-side, so enter a request turn
+            # (closing an open response) before emitting them; the `_close_turn` after the stream fires
+            # its after-hook. The graph emits no boundary events once the stream has errored.
+            #
             # A cancelled run's pending calls were interrupted, not failed: `'interrupted'` keeps
             # the closeout honest on reload (a `'failed'` closeout would tell the model the tool
             # errored) and matches how cancellation records tool calls in message history.
@@ -338,9 +363,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # misread an ordinary error raised while handling a nested `RunCancelled` (Python sets
             # `__context__` implicitly) as a cancellation, hiding the failure from the client.
             cancelled = exc if isinstance(exc, RunCancelled) else None
-            for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
+            if self._pending_tool_calls:
                 async for e in self._turn_to('request'):
                     yield e
+            for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
                 error_part = ToolReturnPart(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
@@ -370,7 +396,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         finally:
             await _utils.aclose_if_supported(stream)
 
-        async for e in self._turn_to(None):
+        async for e in self._close_turn():
             yield e
 
         async for e in self.after_stream():
@@ -399,24 +425,37 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             elif inspect.isawaitable(result):
                 await result
 
-    async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
-        """Fire hooks when turning from request to response or vice versa."""
-        if to_turn == self._turn:
-            return
+    async def _close_turn(self) -> AsyncIterator[EventT]:
+        """Close the open request/response turn, firing its after-hook.
 
-        if self._turn == 'request':
+        Idempotent: the boundary events already close their own turn, so this only fires when a turn is
+        still open — an abnormal end, or the defensive close after the stream is exhausted.
+        """
+        turn, self._open_turn = self._open_turn, None
+        if turn == 'request':
             async for e in self.after_request():
                 yield e
-        elif self._turn == 'response':
+        elif turn == 'response':
             async for e in self.after_response():
                 yield e
 
-        self._turn = to_turn
+    async def _turn_to(self, to_turn: Literal['request', 'response']) -> AsyncIterator[EventT]:
+        """Open `to_turn`, closing whichever turn is open, unless it is already the open one.
 
+        A stream whose events carry boundaries never reaches the fallback callers: the boundary already
+        opened the matching turn, so switching to it is a no-op. This covers the streams that carry no
+        boundary events — those an error cut short, and those a caller builds by hand — where the turn
+        has to be inferred from the content events for the protocol to see a step at all.
+        """
+        if self._open_turn == to_turn:
+            return
+        async for e in self._close_turn():
+            yield e
+        self._open_turn = to_turn
         if to_turn == 'request':
             async for e in self.before_request():
                 yield e
-        elif to_turn == 'response':
+        else:
             async for e in self.before_response():
                 yield e
 

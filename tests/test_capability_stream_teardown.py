@@ -247,8 +247,10 @@ async def test_agent_stream_closes_custom_async_iterator() -> None:
 
     with anyio.fail_after(5):
         async for stream in _model_request_stream(agent):
-            async for _event in stream:  # pragma: no branch
-                break
+            # Tear down while the *provider* stream is live, which the boundary events precede.
+            async for event in stream:  # pragma: no branch
+                if isinstance(event, PartStartEvent):
+                    break
 
     assert held_streams
     assert torn_down.is_set()
@@ -282,9 +284,10 @@ async def test_agent_stream_close_is_shielded_from_cancellation() -> None:
     with anyio.fail_after(5):
         with anyio.CancelScope() as scope:
             async for stream in _model_request_stream(agent):
-                async for _event in stream:  # pragma: no branch
-                    scope.cancel()
-                    break
+                async for event in stream:  # pragma: no branch
+                    if isinstance(event, PartStartEvent):
+                        scope.cancel()
+                        break
 
     assert held_streams
     assert torn_down.is_set()

@@ -29,7 +29,11 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -2506,6 +2510,14 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
+                            continue
                         event_parts.append(event)
 
     assert agent_run.result is not None
@@ -5307,6 +5319,14 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
+                            continue
                         event_parts.append(event)
 
     assert agent_run.result is not None
@@ -7163,6 +7183,14 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
+                            continue
                         event_parts.append(event)
 
     assert agent_run.result is not None
@@ -8800,6 +8828,14 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
+                            continue
                         event_parts.append(event)
 
     assert agent_run.result is not None
@@ -12156,6 +12192,14 @@ async def test_openai_responses_model_file_search_tool_stream(
                 if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as request_stream:
                         async for event in request_stream:
+                            if isinstance(
+                                event,
+                                ModelRequestStartEvent
+                                | ModelRequestEndEvent
+                                | ModelResponseStartEvent
+                                | ModelResponseEndEvent,
+                            ):
+                                continue
                             event_parts.append(event)
 
         assert agent_run.result is not None
@@ -14281,6 +14325,14 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
+                            continue
                         events.append(event)
                 # The run would go on to retry this text-less response; only the stream matters here.
                 break
@@ -14816,7 +14868,9 @@ async def test_background_mode_streaming_continuation_vcr(allow_model_requests: 
         original_request = node.request
         async with node.stream(agent_run.ctx) as request_stream:
             # Intentionally stop reading early so the underlying background job stays suspended.
-            await anext(aiter(request_stream))
+            async for event in request_stream:  # pragma: no branch
+                if isinstance(event, PartStartEvent | PartDeltaEvent | PartEndEvent):
+                    break
             # The streamed-continuation composite reports its mid-stream snapshot as 'incomplete';
             # the background job itself is still suspended, so reconstruct the suspended response to
             # drive a manual model-level continuation below.
@@ -14868,7 +14922,9 @@ async def test_background_mode_streaming_starting_after_vcr(
             # Stop early: the composite reports 'incomplete' mid-stream while the background job is
             # still suspended. Reconstruct the suspended response (carrying the continuation metadata)
             # to drive a manual model-level continuation with `starting_after`.
-            await anext(aiter(request_stream))
+            async for event in request_stream:  # pragma: no branch
+                if isinstance(event, PartStartEvent | PartDeltaEvent | PartEndEvent):
+                    break
             assert request_stream.response.state == 'incomplete'
             suspended_response = replace(request_stream.response, state='suspended')
 

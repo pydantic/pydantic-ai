@@ -144,7 +144,7 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
 """
 
-ModelRequestState: TypeAlias = Literal['complete', 'interrupted']
+ModelRequestState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
 """Lifecycle state of a model request."""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
@@ -1863,6 +1863,11 @@ class ModelRequest:
 
     state: ModelRequestState = 'complete'
     """Lifecycle state of the request.
+
+    Set to `'incomplete'` on the provisional snapshots streamed while the request is still being assembled —
+    the [`ModelRequestStartEvent`][pydantic_ai.messages.ModelRequestStartEvent] boundary and the growing
+    requests yielded by [`run_stream_messages`][pydantic_ai.agent.AbstractAgent.run_stream_messages] as tool
+    returns land — before the authoritative `'complete'` request is committed.
 
     Set to `'interrupted'` when the request was being assembled (e.g. collecting tool returns) and
     the run was abnormally terminated by an exception or cancellation before the request was sent to the model.
@@ -3922,6 +3927,70 @@ ModelResponseStreamEvent = Annotated[
 
 
 @dataclass(repr=False, kw_only=True)
+class ModelRequestStartEvent:
+    """An event indicating that a model request has started being assembled.
+
+    Emitted when the request turn begins: at the start of a run, or as tool calls begin executing and
+    their returns are collected into the next request. The snapshot is provisional — agent hooks and
+    history processors may still rewrite it, and its parts keep growing as tool returns land — so the
+    authoritative request arrives with the paired
+    [`ModelRequestEndEvent`][pydantic_ai.messages.ModelRequestEndEvent].
+    """
+
+    request: ModelRequest
+    """The initial request snapshot, carrying the request parts assembled so far, before agent hooks and processors run."""
+
+    event_kind: Literal['model_request_start'] = 'model_request_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelRequestEndEvent:
+    """An event indicating that a model request was finalized and committed to the agent's message history.
+
+    The request is the canonical message history after agent hooks and processors. Providers may
+    still normalize it before sending it to the model. A final output-tool return request is
+    committed without issuing another model request.
+    """
+
+    request: ModelRequest
+    """The authoritative final request committed to the message history, after agent hooks and processors have run."""
+
+    event_kind: Literal['model_request_end'] = 'model_request_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelResponseStartEvent:
+    """An event indicating that a model response has started streaming."""
+
+    response: ModelResponse
+    """The initial response snapshot, carrying its available metadata and no completed parts."""
+
+    event_kind: Literal['model_response_start'] = 'model_response_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelResponseEndEvent:
+    """An event indicating that a model response was finalized and committed to the message history."""
+
+    response: ModelResponse
+    """The authoritative final response after response hooks have completed."""
+
+    event_kind: Literal['model_response_end'] = 'model_response_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class EnqueuedMessagesEvent:
     """An event indicating that messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] were delivered into the run's message history.
 
@@ -4337,7 +4406,14 @@ RealtimeSessionEvent = Annotated[
 """An event that occurs only in realtime session streams."""
 
 AgentStreamEvent = Annotated[
-    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent | RealtimeSessionEvent,
+    ModelRequestStartEvent
+    | ModelRequestEndEvent
+    | ModelResponseStartEvent
+    | ModelResponseEndEvent
+    | ModelResponseStreamEvent
+    | EnqueuedMessagesEvent
+    | HandleResponseEvent
+    | RealtimeSessionEvent,
     pydantic.Discriminator('event_kind'),
 ]
-"""An event in an agent run or realtime session stream."""
+"""An event in an agent run or realtime session stream: model-message boundaries, response stream events, enqueued-message delivery events, response-handling events, and realtime session events."""
