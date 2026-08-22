@@ -548,6 +548,11 @@ class _JsonSchemaTestData:
                 minimum = exc_min + 1
 
         if minimum is not None and maximum is not None:
+            # JSON Schema `minimum`/`maximum` are inclusive bounds (draft 2020-12),
+            # so the integer span includes `maximum`. `number` generation keeps its
+            # existing span; see #7696.
+            if schema.get('type') == 'integer':
+                return minimum + self.seed % (maximum - minimum + 1)
             return minimum + self.seed % (maximum - minimum)
         elif minimum is not None:
             return minimum + self.seed
