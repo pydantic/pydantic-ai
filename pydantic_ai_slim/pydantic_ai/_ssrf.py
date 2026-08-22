@@ -544,7 +544,7 @@ class _CookieResponseInfo:
     exposes `get_list`. This adapter bridges the two.
     """
 
-    def __init__(self, headers: httpx.Headers) -> None:
+    def __init__(self, headers: httpx2.Headers) -> None:
         self._headers = headers
 
     def get_all(self, name: str, default: list[str] | None = None) -> list[str]:
@@ -556,7 +556,7 @@ class _CookieResponseInfo:
 class _CookieCompatResponse:
     """Adapter letting stdlib's cookie jar read `Set-Cookie` from an httpx response."""
 
-    def __init__(self, response: httpx.Response) -> None:
+    def __init__(self, response: httpx2.Response) -> None:
         self._response = response
 
     def info(self) -> _CookieResponseInfo:
@@ -694,7 +694,7 @@ async def safe_download(
             # Store any server-set cookies against the logical URL, and drop the copies
             # httpx extracted against the resolved-IP URL so they cannot be replayed on a
             # same-IP redirect to a different hostname.
-            if isinstance(response, httpx.Response):
+            if isinstance(response, httpx2.Response):
                 # typeshed types `extract_cookies`'s response as `http.client.HTTPResponse`,
                 # but stdlib only calls `response.info()`, which our adapter provides.
                 cookie_jar.extract_cookies(
