@@ -4901,9 +4901,13 @@ async def test_agent_multiple_responses_use_distinct_parent_message_ids() -> Non
     assert identity_events == snapshot(
         [
             {
+                'type': 'TEXT_MESSAGE_START',
+                'messageId': (first_response := IsSameStr()),
+            },
+            {
                 'type': 'TOOL_CALL_START',
                 'toolCallId': 'call-1',
-                'parentMessageId': IsStr(),
+                'parentMessageId': first_response,
             },
             {
                 'type': 'TOOL_CALL_RESULT',
@@ -4911,9 +4915,13 @@ async def test_agent_multiple_responses_use_distinct_parent_message_ids() -> Non
                 'messageId': IsStr(),
             },
             {
+                'type': 'TEXT_MESSAGE_START',
+                'messageId': (second_response := IsSameStr()),
+            },
+            {
                 'type': 'TOOL_CALL_START',
                 'toolCallId': 'call-2',
-                'parentMessageId': IsStr(),
+                'parentMessageId': second_response,
             },
             {
                 'type': 'TOOL_CALL_RESULT',
@@ -4927,10 +4935,10 @@ async def test_agent_multiple_responses_use_distinct_parent_message_ids() -> Non
         ]
     )
     emitted_ids = {
-        'first_response': identity_events[0]['parentMessageId'],
-        'first_result': identity_events[1]['messageId'],
-        'second_response': identity_events[2]['parentMessageId'],
-        'final_response': identity_events[4]['messageId'],
+        'first_response': identity_events[0]['messageId'],
+        'first_result': identity_events[2]['messageId'],
+        'second_response': identity_events[3]['messageId'],
+        'final_response': identity_events[6]['messageId'],
     }
     assert len(set(emitted_ids.values())) == 4
 
