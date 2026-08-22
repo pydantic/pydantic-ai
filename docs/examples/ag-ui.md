@@ -204,7 +204,7 @@ Requires `ag-ui-protocol >= 0.1.19`.
 Delete the file at /tmp/report.txt
 ```
 
-#### Tool Approval - Code
+#### Tool Approval - Code {#tool-approval-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/tool_approval.py"}```
 
