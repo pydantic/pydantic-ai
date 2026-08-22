@@ -601,13 +601,25 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                             self.is_strict_compatible = False
 
         if schema_type == 'array':
-            # OpenAI strict mode requires an array to describe its elements' type, via either `items`
-            # (list types) or `prefixItems` (tuple types). A bare `list` produces an empty `items: {}`,
-            # `list[Any]` a boolean `items: true`, and a schema may omit `items` entirely; none of these
-            # give the element a type, so they're rejected by the API in strict mode and there's no way
-            # to repair them without inventing an element type. `items` only types its elements when it's
-            # a schema object carrying a type-bearing keyword (a boolean node, `{}`, or a metadata-only
-            # node like `{'description': ...}` does not).
+            # OpenAI strict mode does not support `prefixItems` (tuple types): the API ignores the
+            # keyword and rejects the array as missing `items`.
+            # See https://github.com/pydantic/pydantic-ai/issues/7315
+            if schema.get('prefixItems'):
+                if self.strict is True:
+                    raise UserError(
+                        'OpenAI strict mode does not support tuple types (`prefixItems`). '
+                        'Use a different field type, or set `strict=False`.'
+                    )
+                elif self.strict is None:
+                    self.is_strict_compatible = False
+
+            # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
+            # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
+            # may omit `items` entirely; none of these give the element a type, so they're rejected by
+            # the API in strict mode and there's no way to repair them without inventing an element
+            # type. `items` only types its elements when it's a schema object carrying a type-bearing
+            # keyword (a boolean node, `{}`, or a metadata-only node like `{'description': ...}` does
+            # not).
             # See https://github.com/pydantic/pydantic-ai/issues/4425
             items = schema.get('items')
             has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
