@@ -5053,7 +5053,8 @@ def _map_usage(
     # nothing, so a model that doesn't reason stays distinguishable from one that reasoned for free.
     # TODO: Remove this block once genai-prices maps reasoning tokens for every OpenAI-compatible provider.
     if isinstance(reasoning_tokens, int) and 'output_reasoning_tokens' not in request_usage.__dict__:
-        request_usage = usage.RequestUsage(**request_usage.__dict__, output_reasoning_tokens=reasoning_tokens)
+        # Extra field, not a declared `RequestUsage` attribute — `setattr` is how `__init__` sets extras.
+        setattr(request_usage, 'output_reasoning_tokens', reasoning_tokens)
     return request_usage
 
 
