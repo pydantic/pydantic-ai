@@ -16,7 +16,7 @@
 <!-- > **Migration:** ... -->
 
 <!-- Adding a capability? Most capabilities belong in Pydantic AI Harness, not here. -->
-<!-- See: https://pydantic.dev/docs/ai/harness/#what-goes-where -->
+<!-- See: https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness -->
 
 - Closes #<issue>
 

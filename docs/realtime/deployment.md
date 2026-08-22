@@ -17,7 +17,7 @@ In every setup the session — with its [tools](tools.md), [history](history.md)
 to the provider with the provider's own SDK instead moves the agent loop into the client and gives
 up all of that; prefer one of the setups above.
 
-## Browser WebRTC + server sideband
+## Browser WebRTC + server sideband {#browser-webrtc-server-sideband}
 
 For browser voice agents on OpenAI and Azure OpenAI, the browser carries microphone and speaker
 audio directly over WebRTC while the backend attaches a control-plane **sideband** to the same call.
@@ -83,7 +83,7 @@ The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the f
 browser flow. Provider-specific setup (Azure's Microsoft Entra ID and `webrtcfilter`) lives on the
 [Azure](azure.md#browser-webrtc-and-microsoft-entra-id) page.
 
-## Browser → backend WebSocket relay
+## Browser → backend WebSocket relay {#browser-backend-websocket-relay}
 
 When the browser can't use WebRTC — or the provider is Gemini Live or xAI — build a WebSocket
 endpoint on your backend that accepts the browser's microphone audio and pumps it into

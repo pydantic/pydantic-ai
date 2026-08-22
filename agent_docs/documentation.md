@@ -14,6 +14,7 @@
 - Use Markdown heading syntax (`##`, `###`, `####`) instead of bold text for sections — preserves semantic structure and document hierarchy — Proper heading levels enable navigation, accessibility, and consistent documentation structure across all `.md` files
 <!-- rule:396 -->
 - Establish one canonical source per topic and link to it — prevents inconsistency and maintenance burden — Documentation that's duplicated across locations becomes outdated differently, creating contradictions and requiring multiple updates for every change
+- When linking to a section of a docs page from anywhere in the repo — a docstring, a skill reference, an example README — use the `{#custom-id}` pinned on that heading in `docs/`, never an id copied out of a rendered page's URL — A copied id is whatever the site's slugifier happened to generate that week, so it goes dead the moment the heading is pinned or the slugifier changes; only files under `docs/`, `examples/`, and the repository root are anchor-checked in CI, so a link written anywhere else has nothing to catch it
 <!-- rule:34 -->
 - Link to official provider/project docs instead of duplicating model lists, features, or setup details — prevents stale documentation and reduces maintenance burden — Exhaustive inline lists become outdated quickly; authoritative external sources stay current and reduce maintenance
 <!-- rule:138 -->
