@@ -46,7 +46,14 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # the property override below), or falls back to `discovered_tool_names` without one.
 # `realtime_session` is a live session object that cannot cross the boundary, and its contract
 # already makes `None` mean "not available here".
-_NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_manager', 'realtime_session')
+_NONE_UNLESS_ATTACHED = (
+    'agent',
+    'root_capability',
+    'pending_messages',
+    '_pending_messages_lock',
+    'tool_manager',
+    'realtime_session',
+)
 
 # Defaulted rather than guarded when a payload doesn't carry it. Unlike the guarded fields, the
 # dataclass default can't be mistaken for real run state here: empty means "no anchored evidence",

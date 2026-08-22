@@ -100,7 +100,10 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         messages exactly as delivered here.
         """
         assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
-        drained = _drain_by_priority(ctx.pending_messages, 'asap')
+        lock = ctx._pending_messages_lock  # pyright: ignore[reportPrivateUsage]
+        assert lock is not None, 'drain runs during an agent run, which always has a queue lock'
+        with lock:
+            drained = _drain_by_priority(ctx.pending_messages, 'asap')
         for pending in drained:
             messages = _stamped_messages(
                 pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
@@ -137,12 +140,15 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
             return result
 
         assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
+        lock = ctx._pending_messages_lock  # pyright: ignore[reportPrivateUsage]
+        assert lock is not None, 'drain runs during an agent run, which always has a queue lock'
         # Pi-mono parity: drain `'asap'` first so anything that arrived during the
         # final step (e.g. a background task completing while the model produced
         # its final response) gets delivered before `'when_idle'` messages, and the
         # agent gets another turn rather than terminating with the message lost.
-        leftover_asap = _drain_by_priority(ctx.pending_messages, 'asap')
-        when_idle = _drain_by_priority(ctx.pending_messages, 'when_idle')
+        with lock:
+            leftover_asap = _drain_by_priority(ctx.pending_messages, 'asap')
+            when_idle = _drain_by_priority(ctx.pending_messages, 'when_idle')
         if not leftover_asap and not when_idle:
             return result
 

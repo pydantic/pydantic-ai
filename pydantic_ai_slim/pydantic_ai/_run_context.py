@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import sys
+import threading
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -152,6 +153,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
     to add messages rather than mutating it directly.
+    """
+
+    _pending_messages_lock: threading.Lock | None = field(default=None, repr=False)
+    """Private per-run lock shared by enqueue entry points and pending-message drains.
+
+    Runtime-only: `None` in synthetic contexts and across durable-execution boundaries.
     """
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
@@ -419,10 +426,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Safe to call from anywhere a `RunContext` is available — async tools,
         sync tools (auto-wrapped in a thread executor by Pydantic AI), and
-        capability hooks. The drain only iterates the queue between graph nodes
-        (in `before_model_request` and `after_node_run`), never concurrently
-        with the tool body, so `list.append` from a worker thread doesn't race
-        the drain.
+        capability hooks. Enqueues and drains share a per-run lock, so a capability can let the graph continue
+        while a sync tool is still running without racing the drain's list iteration and replacement.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -461,7 +466,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
             return None
-        self.pending_messages.append(pending)
+        if self._pending_messages_lock is None:
+            self.pending_messages.append(pending)
+        else:
+            with self._pending_messages_lock:
+                self.pending_messages.append(pending)
         return pending.enqueue_id
 
     def cancel(self) -> None:
