@@ -26,11 +26,14 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+from pydantic_core import ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -79,6 +82,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2, wire_name
     from pydantic_ai.mcp import (
+        LIST_MCP_RESOURCES_TOOL_NAME,
+        READ_MCP_RESOURCE_TOOL_NAME,
         MCPError,
         MCPToolset,
         Prompt,
@@ -91,7 +96,7 @@ with try_import() as imports_successful:
         _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
-    from pydantic_ai.messages import TextContent
+    from pydantic_ai.messages import BinaryContent, TextContent
 
 
 pytestmark = [
@@ -431,6 +436,14 @@ async def fastmcp_server() -> FastMCP[None]:
     @server.resource('resource://{name}/profile.json')
     async def profile(name: str) -> str:
         return f'{{"name": "{name}"}}'
+
+    @server.resource(
+        'resource://product_name.txt',
+        mime_type='text/plain',
+        annotations=Annotations(audience=['user', 'assistant'], priority=0.5),
+    )
+    async def product_name() -> str:
+        return 'Pydantic AI'
 
     _register_prompts(server)
     return server
@@ -930,6 +943,243 @@ class TestMCPToolsetIntegration:
             toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
             assert await toolset.list_resources() == []
             assert await toolset.list_resource_templates() == []
+
+    # --- `expose_resources`: MCP resources as model-callable tools ---
+    # These use the in-process `fastmcp_server` (no HTTP), so they aren't VCR tests; the behavior
+    # is pure client/server projection with no provider involved.
+
+    async def test_expose_resources_default_off(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        """Backward compatibility: without the flag, no resource tools are synthesized."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+        assert LIST_MCP_RESOURCES_TOOL_NAME not in tools
+        assert READ_MCP_RESOURCE_TOOL_NAME not in tools
+
+    async def test_expose_resources_adds_synthesized_tools(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """With the flag on, both resource tools appear alongside the server's own tools, with the
+        expected parameter schemas (`read_mcp_resource` requires a string `uri`)."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+        # Server tools are still present.
+        assert 'echo' in tools
+        # Both resource tools are flagged read-only so approval predicates that gate on the MCP
+        # `readOnlyHint` annotation don't force human approval for a resource read.
+        for name in (LIST_MCP_RESOURCES_TOOL_NAME, READ_MCP_RESOURCE_TOOL_NAME):
+            metadata: dict[str, Any] = tools[name].tool_def.metadata or {}
+            annotations: dict[str, Any] = metadata.get('annotations') or {}
+            assert annotations.get('readOnlyHint') is True
+        assert tools[LIST_MCP_RESOURCES_TOOL_NAME].tool_def.parameters_json_schema == snapshot(
+            {'type': 'object', 'properties': {}, 'additionalProperties': False}
+        )
+        assert tools[READ_MCP_RESOURCE_TOOL_NAME].tool_def.parameters_json_schema == snapshot(
+            {
+                'type': 'object',
+                'properties': {
+                    'uri': {
+                        'type': 'string',
+                        'description': 'The URI of the resource to read, e.g. "resource://product_name.txt". Use `list_mcp_resources` to discover valid URIs.',
+                    }
+                },
+                'required': ['uri'],
+                'additionalProperties': False,
+            }
+        )
+        # The `read_mcp_resource` args validator enforces a required string `uri` (unlike server
+        # tools, which use the pass-through validator because they're validated server-side).
+        read_tool = tools[READ_MCP_RESOURCE_TOOL_NAME]
+        with pytest.raises(ValidationError):
+            read_tool.args_validator.validate_python({})
+        with pytest.raises(ValidationError):
+            read_tool.args_validator.validate_python({'uri': 123})
+        assert read_tool.args_validator.validate_python({'uri': 'resource://greeting.txt'}) == {
+            'uri': 'resource://greeting.txt'
+        }
+
+    async def test_list_mcp_resources_tool_returns_projected_dicts(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """The `list_mcp_resources` tool returns compact dicts (surfacing annotations) and excludes
+        resource templates — locking the v1 boundary (concrete resources only)."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                LIST_MCP_RESOURCES_TOOL_NAME, {}, run_context, tools[LIST_MCP_RESOURCES_TOOL_NAME]
+            )
+        by_uri = {r['uri']: r for r in result}
+        # Annotated resource surfaces its annotations sub-dict.
+        assert by_uri['resource://product_name.txt'] == snapshot(
+            {
+                'uri': 'resource://product_name.txt',
+                'name': 'product_name',
+                'description': None,
+                'mime_type': 'text/plain',
+                'annotations': {'audience': ['user', 'assistant'], 'priority': 0.5, 'last_modified': None},
+            }
+        )
+        # Concrete resource without annotations omits the `annotations` key.
+        assert 'annotations' not in by_uri['resource://greeting.txt']
+        # The `{name}/profile.json` template is a resource template, not a concrete resource, so it
+        # must NOT appear in `list_mcp_resources`.
+        assert not any('{name}' in uri for uri in by_uri)
+
+    async def test_read_mcp_resource_tool_text(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        """The `read_mcp_resource` tool returns a text resource as a string."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                READ_MCP_RESOURCE_TOOL_NAME,
+                {'uri': 'resource://product_name.txt'},
+                run_context,
+                tools[READ_MCP_RESOURCE_TOOL_NAME],
+            )
+        assert result == 'Pydantic AI'
+
+    async def test_read_mcp_resource_tool_binary(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        """The `read_mcp_resource` tool returns a binary resource as `BinaryContent`."""
+
+        @fastmcp_server.resource('resource://blob.bin', mime_type='application/octet-stream')
+        async def blob() -> bytes:
+            return b'binary-bytes'
+
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                READ_MCP_RESOURCE_TOOL_NAME,
+                {'uri': 'resource://blob.bin'},
+                run_context,
+                tools[READ_MCP_RESOURCE_TOOL_NAME],
+            )
+        assert isinstance(result, BinaryContent)
+        assert result.data == b'binary-bytes'
+        assert result.media_type == 'application/octet-stream'
+
+    @pytest.mark.parametrize(
+        'tool_error_behavior,expected_exception',
+        [
+            pytest.param('retry', ModelRetry, id='retry'),
+            pytest.param('failed', ToolFailed, id='failed'),
+            pytest.param('error', MCPError, id='error'),
+        ],
+    )
+    async def test_read_mcp_resource_tool_bad_uri_honors_error_behavior(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        tool_error_behavior: Literal['retry', 'failed', 'error'],
+        expected_exception: type[Exception],
+    ):
+        """A bad URI is routed through `tool_error_behavior` like a server tool: `ModelRetry` by
+        default so the model can self-correct, `ToolFailed` under `'failed'`, and the raw `MCPError`
+        under `'error'` (rather than escaping the toolset unmapped)."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True, tool_error_behavior=tool_error_behavior)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with pytest.raises(expected_exception):
+                await toolset.call_tool(
+                    READ_MCP_RESOURCE_TOOL_NAME,
+                    {'uri': 'resource://does-not-exist.txt'},
+                    run_context,
+                    tools[READ_MCP_RESOURCE_TOOL_NAME],
+                )
+
+    async def test_list_mcp_resources_tool_honors_error_behavior(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """An `MCPError` raised while listing resources is routed through `tool_error_behavior`
+        (here `'failed'` → `ToolFailed`) instead of aborting the run — the `list` path previously
+        had no `MCPError` handling at all, so even the default `'retry'` let it escape."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True, tool_error_behavior='failed')
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.list_resources = AsyncMock(side_effect=MCPError('list boom', code=-32603))
+            with pytest.raises(ToolFailed, match='list boom'):
+                await toolset.call_tool(
+                    LIST_MCP_RESOURCES_TOOL_NAME, {}, run_context, tools[LIST_MCP_RESOURCES_TOOL_NAME]
+                )
+
+    async def test_read_mcp_resource_tool_invalid_uri_retries(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """A `uri` that passes the `str` schema but isn't a valid URL (e.g. `'not a url'`) is a
+        retryable tool error, not an unhandled `ValidationError` from `AnyUrl` that aborts the run."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with pytest.raises(ModelRetry, match="Invalid resource URI 'not a url'"):
+                await toolset.call_tool(
+                    READ_MCP_RESOURCE_TOOL_NAME,
+                    {'uri': 'not a url'},
+                    run_context,
+                    tools[READ_MCP_RESOURCE_TOOL_NAME],
+                )
+
+    async def test_expose_resources_no_capability(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        """`expose_resources=True` is a no-op when the server doesn't advertise the `resources`
+        capability — no resource tools are synthesized."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        async with toolset:
+            toolset._server_capabilities = ServerCapabilities(tools=True)  # pyright: ignore[reportPrivateUsage]
+            tools = await toolset.get_tools(run_context)
+        assert LIST_MCP_RESOURCES_TOOL_NAME not in tools
+        assert READ_MCP_RESOURCE_TOOL_NAME not in tools
+
+    async def test_expose_resources_name_collision(self, run_context: RunContext):
+        """If a server tool already owns a synthesized name, `get_tools` raises a `UserError`
+        rather than silently shadowing the server tool."""
+        server: FastMCP[None] = FastMCP('collision_server')
+
+        # Both bodies exist only to shape the server's advertised surface (a colliding tool name and
+        # the `resources` capability); `get_tools` raises on the collision before either is invoked.
+        @server.tool(name=READ_MCP_RESOURCE_TOOL_NAME)
+        async def read_mcp_resource() -> str:  # pragma: no cover
+            """A server tool that collides with the synthesized resource tool name."""
+            return 'server tool'
+
+        @server.resource('resource://greeting.txt')
+        async def greeting() -> str:  # pragma: no cover
+            return 'Hello, world!'
+
+        toolset = MCPToolset(server, expose_resources=True)
+        async with toolset:
+            with pytest.raises(UserError, match='the server already defines a tool with that name'):
+                await toolset.get_tools(run_context)
+
+    async def test_expose_resources_end_to_end(self, fastmcp_server: FastMCP[None]):
+        """The model can call `read_mcp_resource` mid-run and receive the resource content — the
+        scenario the feature exists for."""
+        tool_call_uri = 'resource://greeting.txt'
+
+        async def call_read_resource(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # First turn: the model calls `read_mcp_resource`. Second turn (after the tool return):
+            # it reports what it read.
+            if not any(isinstance(m, ModelResponse) for m in messages):
+                assert {LIST_MCP_RESOURCES_TOOL_NAME, READ_MCP_RESOURCE_TOOL_NAME} <= {
+                    t.name for t in info.function_tools
+                }
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=READ_MCP_RESOURCE_TOOL_NAME, args={'uri': tool_call_uri})]
+                )
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        agent = Agent(FunctionModel(call_read_resource), toolsets=[toolset])
+        result = await agent.run('read the greeting resource')
+        assert result.output == 'done'
+        # The resource content reached the message history via the tool return.
+        tool_returns = [
+            part.content
+            for message in result.all_messages()
+            for part in getattr(message, 'parts', [])
+            if type(part).__name__ == 'ToolReturnPart' and part.tool_name == READ_MCP_RESOURCE_TOOL_NAME
+        ]
+        assert tool_returns == ['Hello, world!']
 
     async def test_list_prompts_returns_pai_types(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server)
@@ -1718,6 +1968,15 @@ class TestResourceMethodErrorPaths:
             toolset.client.read_resource = AsyncMock(side_effect=make_mcp_error(-32002, 'not found'))
             with pytest.raises(MCPError, match='not found'):
                 await toolset.read_resource('resource://missing')
+
+    async def test_read_resource_wraps_invalid_uri(self, fastmcp_server: FastMCP[None]):
+        """A `uri` that isn't a valid URL is surfaced as `MCPError` (from the `AnyUrl` parse),
+        honoring the method's documented `Raises: MCPError` contract rather than escaping as a raw
+        `ValidationError`."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            with pytest.raises(MCPError, match="Invalid resource URI 'not a url'"):
+                await toolset.read_resource('not a url')
 
 
 class TestLoadMCPToolsets:
