@@ -30,6 +30,7 @@ with try_import() as imports_successful:
         wait_for_evaluations,
     )
     from pydantic_evals.online_capability import OnlineEvaluation
+    from pydantic_evals.otel.span_tree import SpanTree
 
 with try_import() as logfire_import_successful:
     from logfire.testing import CaptureLogfire
@@ -355,6 +356,41 @@ async def test_run_on_errors_only_dispatches_opted_in_evaluators():
     assert len(collector.calls) == 1
     results, _, _ = collector.calls[0]
     assert len(results) == 1
+
+
+@pytest.mark.anyio
+@needs_logfire
+async def test_run_on_errors_evaluator_sees_spans_and_metrics_on_exception(capfire: CaptureLogfire):
+    """Error evaluators receive the spans recorded before the exception and their metrics.
+
+    Regression test for #6927: when the wrapped run raised, the span tree was not
+    finalized and span-derived metrics were not extracted, so `run_on_errors=True`
+    evaluators saw an empty `span_tree` even though the failing model call had
+    completed spans.
+    """
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    agent = Agent(
+        FunctionModel(_failing_model),
+        capabilities=[
+            OnlineEvaluation(
+                evaluators=[OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True)],
+                config=config,
+            ),
+        ],
+    )
+    agent.instrument = True
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    _results, _failures, ctx = collector.calls[0]
+    assert isinstance(ctx.span_tree, SpanTree)
+    assert len(list(ctx.span_tree)) >= 1
+    assert ctx.metrics.get('requests', 0) >= 1
 
 
 @pytest.mark.anyio

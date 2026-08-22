@@ -44,12 +44,16 @@ def context_subtree() -> typing.Generator[SpanTree | SpanTreeRecordingError]:
     If no TracerProvider has been configured, a `SpanTreeRecordingError` will be yielded instead of the SpanTree.
     """
     tree = SpanTree()
-    with _context_subtree_spans() as spans:
-        if isinstance(spans, SpanTreeRecordingError):
-            yield spans
-            return
-        yield tree
-    tree.add_readable_spans(spans)
+    spans: list[ReadableSpan] | SpanTreeRecordingError | None = None
+    try:
+        with _context_subtree_spans() as spans:
+            if isinstance(spans, SpanTreeRecordingError):
+                yield spans
+                return
+            yield tree
+    finally:
+        if spans is not None and not isinstance(spans, SpanTreeRecordingError):
+            tree.add_readable_spans(spans)
 
 
 @contextmanager
@@ -65,11 +69,15 @@ def _context_subtree_spans() -> typing.Generator[list[ReadableSpan] | SpanTreeRe
         return
 
     spans: list[ReadableSpan] = []
-    with _set_exporter_context_id() as context_id:
-        yield spans
-    result = exporter.get_finished_spans(context_id)
-    exporter.clear(context_id)
-    spans.extend(result)
+    context_id: str | None = None
+    try:
+        with _set_exporter_context_id() as context_id:
+            yield spans
+    finally:
+        if context_id is not None:
+            result = exporter.get_finished_spans(context_id)
+            exporter.clear(context_id)
+            spans.extend(result)
 
 
 @contextmanager
@@ -91,7 +99,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
     def clear(self, context_id: str | None = None) -> None:
         """Clear list of collected spans."""
         with self._lock:
-            if context_id is None:  # pragma: no cover
+            if context_id is None:
                 self._finished_spans.clear()
             else:
                 self._finished_spans.pop(context_id, None)
@@ -99,10 +107,10 @@ class _ContextInMemorySpanExporter(SpanExporter):
     def get_finished_spans(self, context_id: str | None = None) -> tuple[ReadableSpan, ...]:
         """Get list of collected spans."""
         with self._lock:
-            if context_id is None:  # pragma: no cover
+            if context_id is None:
                 all_finished_spans: list[ReadableSpan] = []
                 for finished_spans in self._finished_spans.values():
-                    all_finished_spans.extend(finished_spans)
+                    all_finished_spans.extend(finished_spans)  # pragma: no cover
                 return tuple(all_finished_spans)
             else:
                 return tuple(self._finished_spans.get(context_id, []))
