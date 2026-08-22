@@ -507,7 +507,7 @@ Because the per-run toolset's session is established inside the run itself, cred
 
 As an alternative to a dynamic toolset, you can construct a new `MCPToolset` yourself for each request and pass it to the [`toolsets` argument](../toolsets.md) of the agent run methods.
 
-## Custom TLS / SSL configuration
+## Custom TLS / SSL configuration {#custom-tls-ssl-configuration}
 
 In some environments you need to tweak how HTTPS connections are established — for example to trust an internal Certificate Authority, present a client certificate for **mTLS**, or (during local development only!) disable certificate verification altogether. `MCPToolset` exposes an `http_client` parameter so you can pass your own pre-configured [`httpx.AsyncClient`](https://www.python-httpx.org/async/):
 
