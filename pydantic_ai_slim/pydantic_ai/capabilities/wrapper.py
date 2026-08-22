@@ -81,14 +81,40 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
-        # A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
-        # over a container still needs the container's leaves registered for child-owned hooks
-        # and toolsets to resolve their capability ids.
+        if self._registers_wrapped_children:
+            self.wrapped.apply(visitor)
+
+    @property
+    def _registers_wrapped_children(self) -> bool:
+        """Whether the wrapped subtree contributes capabilities of its own beyond this wrapper.
+
+        A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
+        over a container still needs the container's leaves registered for child-owned hooks
+        and toolsets to resolve their capability ids.
+        """
         wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
         self.wrapped.apply(wrapped_capabilities.append)
-        if len(wrapped_capabilities) != 1 or wrapped_capabilities[0] is not self.wrapped:
-            for capability in wrapped_capabilities:
-                visitor(capability)
+        return len(wrapped_capabilities) != 1 or wrapped_capabilities[0] is not self.wrapped
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
+    ) -> AbstractCapability[AgentDepsT] | None:
+        replacement = visitor(self)
+        if replacement is not self:
+            # The wrapper is what's registered for the subtree, so replacing or removing it takes
+            # the subtree with it — visiting children the caller just discarded would be pointless.
+            return replacement
+        if not self._registers_wrapped_children:
+            return self
+        new_wrapped = self.wrapped.visit_and_replace(visitor)
+        if new_wrapped is None:
+            # `wrapped` is required, and a wrapper whose subtree is gone has nothing left to modify.
+            return None
+        if new_wrapped is self.wrapped:
+            return self
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

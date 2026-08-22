@@ -82,6 +82,27 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for cap in self.capabilities:
             cap.apply(visitor)
 
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
+    ) -> AbstractCapability[AgentDepsT] | None:
+        new_caps: list[AbstractCapability[AgentDepsT]] = []
+        unchanged = True
+        for cap in self.capabilities:
+            new_cap = cap.visit_and_replace(visitor)
+            if new_cap is not cap:
+                unchanged = False
+            if new_cap is not None:
+                new_caps.append(new_cap)
+        if unchanged:
+            return self
+        if not new_caps:
+            # A container that lost every child contributes nothing, and reporting it as removed is
+            # what lets an enclosing wrapper or container drop it in turn.
+            return None
+        new_self = replace_no_init(self, capabilities=new_caps)
+        new_self.__normalize_capabilities()
+        return new_self
+
     @property
     def _has_wrap_node_run(self) -> bool:
         return any(c._has_wrap_node_run for c in self.capabilities)
