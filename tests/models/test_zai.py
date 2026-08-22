@@ -458,41 +458,71 @@ def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, 
 def test_zai_provider_model_profile():
     """The Z.AI provider's `model_profile()` resolves a model name to the right capability flags.
 
-    A unit test (not VCR): referenced by `test_zai_thinking_mode` (line 191) and
-    `test_zai_reasoning_effort_forwarded_when_supported` (line 446) -- those tests pin the
+    A unit test (not VCR): referenced by `test_zai_thinking_mode` and
+    `test_zai_reasoning_effort_forwarded_when_supported` — those tests pin the
     request-body *shape* and rely on this test to pin the model-name -> capability mapping.
+
+    Strict-pyright notes:
+    * `ZaiProvider.model_profile()` returns `ModelProfile | None`, so we always assert-not-None
+      before consuming the merged profile.
+    * `supports_thinking` is an *optional* (`NotRequired`) key on the base `ModelProfile`
+      TypedDict, so we access it through `.get()` to silence `reportTypedDictNotRequiredAccess`.
+    * `zai_supports_reasoning_effort` is a ZAI-vendor extension that lives on the merged
+      payload but is not declared on the public `ModelProfile` TypedDict.  Accessing it via
+      `.get()` after casting to a plain `dict[str, object]` avoids both
+      `reportGeneralTypeIssues` (undeclared TypedDict key) and the same not-required access
+      report as `supports_thinking`.
+    * For non-thinking models, the equivalent vendor-key *absence* check goes through the
+      same `.get() is None` predicate instead of the `in` operator, so that when the merged
+      object is typed as the strict ModelProfile TypedDict, pyright doesn't complain about
+      an undeclared-key / None-incompatible `in` comparison (reportOperatorIssue).
     """
+    from typing import cast
+
     from pydantic_ai.providers.zai import ZaiProvider
 
     # Thinking-capable + reasoning-effort-capable: only the glm-5.2 family.
     glm_5_2 = ZaiProvider.model_profile('glm-5.2')
     assert glm_5_2 is not None
-    assert glm_5_2['supports_thinking'] is True
-    assert glm_5_2['zai_supports_reasoning_effort'] is True
+    glm_5_2_ext = cast(dict[str, object], glm_5_2)
+    assert glm_5_2.get('supports_thinking') is True
+    assert glm_5_2_ext.get('zai_supports_reasoning_effort') is True
 
     # Thinking-capable, no reasoning effort: glm-5.3 (matches 'glm-5' prefix, not 'glm-5.2').
     glm_5_3 = ZaiProvider.model_profile('glm-5.3')
     assert glm_5_3 is not None
-    assert glm_5_3['supports_thinking'] is True
-    assert glm_5_3['zai_supports_reasoning_effort'] is False
+    glm_5_3_ext = cast(dict[str, object], glm_5_3)
+    assert glm_5_3.get('supports_thinking') is True
+    assert glm_5_3_ext.get('zai_supports_reasoning_effort') is False
 
     # Thinking-capable families: glm-4.7, glm-4.6, glm-4.5 (and vision variants glm-4.6v, glm-4.5v).
     for model_name in ('glm-4.7', 'glm-4.6', 'glm-4.5', 'glm-4.6v', 'glm-4.5v'):
         profile = ZaiProvider.model_profile(model_name)
         assert profile is not None, model_name
-        assert profile['supports_thinking'] is True, model_name
-        assert profile['zai_supports_reasoning_effort'] is False, model_name
+        profile_ext = cast(dict[str, object], profile)
+        assert profile.get('supports_thinking') is True, model_name
+        assert profile_ext.get('zai_supports_reasoning_effort') is False, model_name
 
     # Non-thinking models: anything that doesn't start with the thinking prefixes.
     # `ZaiProvider.model_profile` still returns the merged OpenAI default profile, but without
     # the ZAI-specific `supports_thinking` / `zai_supports_reasoning_effort` keys.
-    for model_name in ('glm-4-32b-0414-128k', 'glm-4-plus', 'glm-4-air', 'glm-3-turbo', 'codegeex-4', 'unknown'):
+    for model_name in (
+        'glm-4-32b-0414-128k',
+        'glm-4-plus',
+        'glm-4-air',
+        'glm-3-turbo',
+        'codegeex-4',
+        'unknown',
+    ):
         profile = ZaiProvider.model_profile(model_name)
-        assert 'supports_thinking' not in profile, model_name
-        assert 'zai_supports_reasoning_effort' not in profile, model_name
+        assert profile is not None, model_name
+        profile_ext = cast(dict[str, object], profile)
+        assert profile_ext.get('supports_thinking') is None, model_name
+        assert profile_ext.get('zai_supports_reasoning_effort') is None, model_name
 
     # Case-insensitive: 'GLM-5.2' resolves the same as 'glm-5.2'.
     upper = ZaiProvider.model_profile('GLM-5.2')
     assert upper is not None
-    assert upper['supports_thinking'] is True
-    assert upper['zai_supports_reasoning_effort'] is True
+    upper_ext = cast(dict[str, object], upper)
+    assert upper.get('supports_thinking') is True
+    assert upper_ext.get('zai_supports_reasoning_effort') is True
