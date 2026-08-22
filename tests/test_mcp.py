@@ -84,6 +84,7 @@ with try_import() as imports_successful:
     from pydantic_ai.mcp import (
         LIST_MCP_RESOURCES_TOOL_NAME,
         READ_MCP_RESOURCE_TOOL_NAME,
+        CallToolFunc,
         MCPError,
         MCPToolset,
         Prompt,
@@ -93,6 +94,7 @@ with try_import() as imports_successful:
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
+        ToolResult,
         _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
@@ -1119,6 +1121,89 @@ class TestMCPToolsetIntegration:
                     run_context,
                     tools[READ_MCP_RESOURCE_TOOL_NAME],
                 )
+
+    async def test_read_mcp_resource_tool_rejects_unadvertised_template_uri(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """A template-backed URI the listing never advertised is refused rather than read.
+
+        The server resolves `resource://{name}/profile.json` for any `name` (see
+        `test_read_resource_template_instance`, which reads one directly), so without this guard a
+        model could reach a resource `list_mcp_resources` never disclosed by guessing its URI.
+        """
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            # Not advertised: `list_resources()` exposes concrete resources only.
+            assert 'resource://alice/profile.json' not in [str(r.uri) for r in await toolset.list_resources()]
+            with pytest.raises(ModelRetry, match='is not one of the resources advertised by the server'):
+                await toolset.call_tool(
+                    READ_MCP_RESOURCE_TOOL_NAME,
+                    {'uri': 'resource://alice/profile.json'},
+                    run_context,
+                    tools[READ_MCP_RESOURCE_TOOL_NAME],
+                )
+
+    async def test_resource_tools_go_through_process_tool_call(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Both synthesized tools are passed to `process_tool_call`, and the delegate still reads.
+
+        Applications use the callback to gate, deny, or log tool calls, so a resource read must not
+        skip it.
+        """
+        seen: list[str] = []
+
+        async def hook(
+            ctx: RunContext[Any], call_tool: CallToolFunc, name: str, tool_args: dict[str, Any]
+        ) -> ToolResult:
+            seen.append(name)
+            return await call_tool(name, tool_args)
+
+        toolset = MCPToolset(fastmcp_server, expose_resources=True, process_tool_call=hook)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            listed = await toolset.call_tool(
+                LIST_MCP_RESOURCES_TOOL_NAME, {}, run_context, tools[LIST_MCP_RESOURCES_TOOL_NAME]
+            )
+            read = await toolset.call_tool(
+                READ_MCP_RESOURCE_TOOL_NAME,
+                {'uri': 'resource://product_name.txt'},
+                run_context,
+                tools[READ_MCP_RESOURCE_TOOL_NAME],
+            )
+        assert seen == [LIST_MCP_RESOURCES_TOOL_NAME, READ_MCP_RESOURCE_TOOL_NAME]
+        # The delegate really dispatched to the resource methods rather than returning `None`.
+        assert isinstance(listed, list)
+        assert read == 'Pydantic AI'
+
+    async def test_process_tool_call_can_deny_a_resource_read(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """A callback that refuses a resource read prevents the read from happening.
+
+        This is the point of routing these tools through the hook: a denial has to actually stop the
+        resource from being reached, not just observe the attempt.
+        """
+        read_resource = AsyncMock(side_effect=AssertionError('read_resource must not be reached'))
+
+        async def deny(
+            ctx: RunContext[Any], call_tool: CallToolFunc, name: str, tool_args: dict[str, Any]
+        ) -> ToolResult:
+            raise ModelRetry('resource reads are not allowed')
+
+        toolset = MCPToolset(fastmcp_server, expose_resources=True, process_tool_call=deny)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.read_resource = read_resource
+            with pytest.raises(ModelRetry, match='resource reads are not allowed'):
+                await toolset.call_tool(
+                    READ_MCP_RESOURCE_TOOL_NAME,
+                    {'uri': 'resource://product_name.txt'},
+                    run_context,
+                    tools[READ_MCP_RESOURCE_TOOL_NAME],
+                )
+        read_resource.assert_not_awaited()
 
     async def test_expose_resources_no_capability(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         """`expose_resources=True` is a no-op when the server doesn't advertise the `resources`

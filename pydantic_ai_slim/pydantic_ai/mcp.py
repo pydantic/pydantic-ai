@@ -932,18 +932,21 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     - `list_mcp_resources` — lists the concrete resources the server advertises (with their `uri`,
       `name`, `description`, `mime_type`, and any `annotations`).
-    - `read_mcp_resource` — reads a single resource by `uri`.
+    - `read_mcp_resource` — reads a single one of those resources by `uri`.
 
     This lets the model discover and read MCP resources mid-run, rather than requiring the
-    application to inject resource content out-of-band. Resource *templates* are not exposed. If
-    the server does not advertise the `resources` capability, no tools are added even when this is
-    `True`.
+    application to inject resource content out-of-band. Resource *templates* are not exposed, and a
+    read is restricted to the URIs the server advertises, so a template-backed URI the listing
+    never disclosed cannot be reached by guessing it. If the server does not advertise the
+    `resources` capability, no tools are added even when this is `True`.
 
     These synthesized tools are client-side projections over
     [`list_resources()`][pydantic_ai.mcp.MCPToolset.list_resources] /
-    [`read_resource()`][pydantic_ai.mcp.MCPToolset.read_resource], so they bypass
-    [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] (which wraps server tool
-    calls). A bad URI passed to `read_mcp_resource` honors
+    [`read_resource()`][pydantic_ai.mcp.MCPToolset.read_resource] rather than server tools, but they
+    are still passed to [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] if one is
+    set, so a callback that gates or logs tool calls sees them too (its `call_tool` delegate ignores
+    `metadata`, as a resource read has no server-side metadata channel). An unadvertised or
+    malformed URI passed to `read_mcp_resource` honors
     [`tool_error_behavior`][pydantic_ai.mcp.MCPToolset.tool_error_behavior] like any other tool.
     """
 
@@ -1627,6 +1630,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # We key on the `mcp_resource_tool` marker rather than the name so a server tool that shares
         # the name can never be misrouted (and `get_tools` would have raised on that collision).
         if (tool.tool_def.metadata or {}).get('mcp_resource_tool'):
+            # Still routed through `process_tool_call`: applications use that callback to gate,
+            # deny, or log tool calls, so exempting these two would let a model reach a resource
+            # the callback would have refused. The delegate accepts (and ignores) `metadata` to
+            # satisfy `CallToolFunc` -- a resource read has no server-side metadata channel.
+            async def call_resource_tool(
+                name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
+            ) -> ToolResult:
+                return await self._call_resource_tool(name, args)
+
+            if self.process_tool_call is not None:
+                return await self.process_tool_call(ctx, call_resource_tool, name, tool_args)
             return await self._call_resource_tool(name, tool_args)
 
         # `get_tools()` resolves the server's `execution.taskSupport` and the client's
@@ -1646,12 +1660,33 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         so it becomes a `ModelRetry` under `'retry'` or a `ToolFailed` under `'failed'` rather than
         escaping the toolset. `tool_args['uri']` is guaranteed present and a `str` by the tool's
         args validator.
+
+        A read is restricted to the URIs `list_resources()` advertises, so the tool can only reach
+        what `list_mcp_resources` disclosed. Without the check a model could read a guessed
+        template-backed URI (a server resolves `resource://{name}/profile.json` for any `name`),
+        which the feature does not expose. `list_resources()` is cached by default, so the guard
+        usually costs no extra round-trip.
         """
         try:
             if name == LIST_MCP_RESOURCES_TOOL_NAME:
                 return [_resource_to_model_dict(resource) for resource in await self.list_resources()]
             elif name == READ_MCP_RESOURCE_TOOL_NAME:
-                return await self.read_resource(tool_args['uri'])
+                uri = tool_args['uri']
+                # Parse before the advertised-URI check so a malformed URI keeps reporting itself as
+                # malformed rather than as unadvertised.
+                try:
+                    AnyUrl(uri)
+                except ValidationError as e:
+                    raise MCPError(f'Invalid resource URI {uri!r}', code=mcp_types.INVALID_PARAMS) from e
+                if not any(str(resource.uri) == uri for resource in await self.list_resources()):
+                    # Raised as an `MCPError` so it maps through `tool_error_behavior` exactly like a
+                    # server-reported unknown-resource error, rather than by a different rule.
+                    raise MCPError(
+                        f'Resource {uri!r} is not one of the resources advertised by the server; '
+                        f'call {LIST_MCP_RESOURCES_TOOL_NAME!r} for the available URIs.',
+                        code=mcp_types.INVALID_PARAMS,
+                    )
+                return await self.read_resource(uri)
             else:  # pragma: no cover - only the two names above carry the `mcp_resource_tool` marker
                 raise ValueError(f'Unknown MCP resource tool: {name!r}')
         except MCPError as e:
