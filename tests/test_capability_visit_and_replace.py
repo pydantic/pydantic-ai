@@ -96,6 +96,24 @@ def test_visit_and_replace_removes_every_combined_child():
     assert combined.visit_and_replace(lambda _: None) is None
 
 
+def test_visit_and_replace_splats_a_combined_replacement():
+    """A container handed back by the visitor is splatted into the parent, as on construction."""
+    web_search = WebSearch(local='duckduckgo')
+    combined = CombinedCapability[Any]([Thinking(id='thinking'), web_search])
+
+    rewritten = combined.visit_and_replace(
+        lambda cap: (
+            CombinedCapability[Any]([Capability(tools=[], id='a'), Capability(tools=[], id='b')])
+            if isinstance(cap, Thinking)
+            else cap
+        )
+    )
+
+    assert isinstance(rewritten, CombinedCapability)
+    assert [type(cap).__name__ for cap in rewritten.capabilities] == snapshot(['Capability', 'Capability', 'WebSearch'])
+    assert _visited(rewritten) == snapshot([('Capability', 'a'), ('Capability', 'b'), ('WebSearch', None)])
+
+
 def test_visit_and_replace_wrapper_over_capability():
     """A wrapper over a leaf is offered instead of the leaf, and takes the leaf with it."""
     thinking = Thinking()
