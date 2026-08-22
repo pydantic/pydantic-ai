@@ -6,11 +6,11 @@ import uuid
 from collections import defaultdict
 from contextlib import contextmanager
 from contextvars import ContextVar
-from weakref import WeakValueDictionary
+from weakref import ref
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
-from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider
+from opentelemetry.trace import ProxyTracerProvider, TracerProvider, get_tracer_provider
 
 try:
     from logfire._internal.tracer import (
@@ -23,9 +23,7 @@ except ImportError:  # pragma: lax no cover
 
     # Ensure that we can do an isinstance check without erroring
     class LogfireProxyTracerProvider:
-        @property
-        def provider(self):
-            return None
+        provider: TracerProvider
 
 
 from ._errors import SpanTreeRecordingError
@@ -128,23 +126,33 @@ class _ContextInMemorySpanExporter(SpanExporter):
         return True
 
 
-# This cache is mostly just necessary for testing
-# When running in "real" code, the tracer provider won't be reset
-_context_in_memory_providers: WeakValueDictionary[int, _ContextInMemorySpanExporter] = WeakValueDictionary()
+# Caching the exporter per provider keeps `context_subtree()` from attaching another span processor on every
+# call: a long-lived provider would otherwise accumulate one per evaluation. Each entry pairs the exporter with the
+# provider it is attached to, keyed by `id()` and matched by identity. Identity is what matters here, not equality:
+# a provider need not be hashable, and two distinct providers that compare equal each need their own exporter, since
+# an exporter only ever receives spans from the provider it was attached to. The provider is held weakly wherever it
+# can be, which is what makes an `id()` key safe -- `id()`s are recycled, so an entry outliving its provider must be
+# rejected rather than handed to whatever was later allocated at the same address.
+_context_in_memory_providers: dict[int, tuple[ref[TracerProvider] | TracerProvider, _ContextInMemorySpanExporter]] = {}
+_context_in_memory_providers_lock = threading.Lock()
 
 
 def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecordingError:
     tracer_provider = get_tracer_provider()
-    if isinstance(tracer_provider, LogfireProxyTracerProvider):
-        cache_id = id(tracer_provider.provider)
-    else:
-        cache_id = id(tracer_provider)
-    if (cached_exporter := _context_in_memory_providers.get(cache_id)) is not None:
-        return cached_exporter
 
-    # `tracer_provider` should generally be an `opentelemetry.sdk.trace.TracerProvider` or
-    # `logfire._internal.tracer.ProxyTracerProvider`, in which case the `add_span_processor` method will be present
-    if not hasattr(tracer_provider, 'add_span_processor'):
+    # `logfire.configure()` reuses one `ProxyTracerProvider` and swaps the provider it wraps, so the wrapped provider
+    # -- not the proxy -- is what owns the span processors. Resolve it once and then both key on it and attach to it:
+    # going through the proxy would re-resolve `.provider` under logfire's own lock at attach time, and a concurrent
+    # `logfire.configure()` in that window would leave the entry keyed on a provider we never attached to.
+    if isinstance(tracer_provider, LogfireProxyTracerProvider):
+        provider = tracer_provider.provider
+    else:
+        provider = tracer_provider
+
+    # `provider` should generally be an `opentelemetry.sdk.trace.TracerProvider`, in which case the
+    # `add_span_processor` method will be present.
+    # Checked before the cache lookup so a provider we are going to reject never becomes a cache key.
+    if not hasattr(provider, 'add_span_processor'):
         if isinstance(tracer_provider, ProxyTracerProvider):
             required_call = (
                 'logfire.configure(...)' if _LOGFIRE_IS_INSTALLED else 'opentelemetry.trace.set_tracer_provider(...)'
@@ -152,7 +160,7 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
             return SpanTreeRecordingError(
                 f'To make use of the `span_tree` in an evaluator, you need to call `{required_call}` before running an'
                 f' evaluation.'
-                f' For more information, refer to the documentation at https://ai.pydantic.dev/evals/#opentelemetry-integration.'
+                f' For more information, refer to the documentation at https://ai.pydantic.dev/evals/evaluators/span-based.'
             )
         else:
             # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
@@ -162,8 +170,52 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
                 f' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
             )
 
-    exporter = _ContextInMemorySpanExporter()
-    _context_in_memory_providers[cache_id] = exporter
-    processor = SimpleSpanProcessor(exporter)
-    tracer_provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-    return exporter
+    cache_id = id(provider)
+
+    # Attaching the processor is inside the lock, not just the cache write: two threads racing here would
+    # otherwise each attach one, and only the winner's exporter would be reachable through the cache. The
+    # loser's would stay attached to the provider, collecting spans under every context id that nothing ever
+    # clears.
+    # The consequence is that `add_span_processor` runs under a non-reentrant lock, so a provider that called
+    # back into `context_subtree()` from it would deadlock. That is accepted rather than fixed: an `RLock`
+    # would let the inner call attach a second processor -- the very leak this lock exists to prevent -- and
+    # moving the attach outside the lock reopens the race. No real provider re-enters; the SDK and logfire's
+    # proxy both just append under their own lock.
+    with _context_in_memory_providers_lock:
+        if (cached := _context_in_memory_providers.get(cache_id)) is not None:
+            cached_provider, cached_exporter = cached
+            if isinstance(cached_provider, ref):
+                cached_provider = cached_provider()
+            # A provider keeps its identity across `shutdown()`, which stops the exporter attached to it, and
+            # a stopped exporter silently drops every span it is handed. The dead processor stays attached, so
+            # a provider shut down repeatedly without being replaced accumulates one per shutdown -- bounded
+            # in practice because `logfire.configure()` allocates a new provider each time.
+            # Recovering by attaching to an already-shut-down provider relies on `opentelemetry-sdk` letting a
+            # new processor receive spans after `shutdown()`; the OTel specification says an SDK SHOULD hand
+            # out a no-op tracer instead, and nothing here pins the SDK version.
+            if cached_provider is provider and not cached_exporter._stopped:  # pyright: ignore[reportPrivateUsage]
+                return cached_exporter
+
+        exporter = _ContextInMemorySpanExporter()
+        # The eviction callback releases the entry with its provider. CPython runs it during the provider's
+        # deallocation, before that address can be reused, so it can never evict a newer entry keyed on a
+        # recycled `id()`. It deliberately does not take the lock: it can fire on a thread already holding
+        # this non-reentrant one, and `dict.pop` needs no lock of its own.
+        try:
+            stored: ref[TracerProvider] | TracerProvider = ref(
+                provider, lambda _: _context_in_memory_providers.pop(cache_id, None)
+            )
+        except TypeError:
+            # A provider that cannot be weakly referenced is pinned instead. That retains the provider and
+            # everything it owns -- its span processors and their exporters -- for the life of the process, but
+            # it is one entry per such provider, where leaving it uncached attaches a fresh span processor on
+            # every call and leaves every orphaned exporter collecting spans that nothing ever clears. A pinned
+            # provider can never be freed, so its `id()` can never be recycled either.
+            stored = provider
+
+        processor = SimpleSpanProcessor(exporter)
+        # Cached only once the attach has succeeded, so a raising `add_span_processor` cannot leave an entry
+        # claiming an attachment that never happened.
+        provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        _context_in_memory_providers[cache_id] = (stored, exporter)
+        return exporter

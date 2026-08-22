@@ -102,4 +102,4 @@ logfire.configure(
 my_dataset.evaluate_sync(my_task)
 ```
 
-[Read more about the Logfire integration here.](https://ai.pydantic.dev/evals/#logfire-integration)
+[Read more about the Logfire integration here.](https://ai.pydantic.dev/evals/how-to/logfire-integration)
