@@ -8,7 +8,6 @@ from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -231,8 +230,8 @@ async def test_zai_glm_5_3_reasoning_effort(
     during playback, since VCR matchers aren't sensitive to the body. The full effort mapping is unit-tested
     in `test_zai_glm_5_3_reasoning_effort_mapping`.
     """
-    with pytest.warns(PydanticAIDeprecationWarning, match='httpx2.AsyncClient'):
-        provider = ZaiProvider(api_key=zai_api_key, http_client=request_capture.client)
+    # `RequestCapture.client` is already `httpx2.AsyncClient`, the non-deprecated type.
+    provider = ZaiProvider(api_key=zai_api_key, http_client=request_capture.client)
     model = ZaiModel('glm-5.3', provider=provider)
     settings = ModelSettings(thinking='xhigh')
     response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
