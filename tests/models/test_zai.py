@@ -536,7 +536,11 @@ def test_zai_glm_5_3_reasoning_effort_mapping(thinking: ThinkingLevel, expected_
         ('network_error', 'error'),
     ],
 )
-def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped_finish_reason: str) -> None:
+def test_zai_nonstd_finish_reason_nonstream(
+    raw_finish_reason: str,
+    mapped_finish_reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Non-standard Z.AI finish_reasons pass the widened re-validation gate and map cleanly.
 
     Covers three contracts exercised by the ZaiModel overrides:
@@ -560,12 +564,20 @@ def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped_finis
     avoids the dispatch gate entirely (see `test_openrouter.py` L590-603 for the same
     pattern used against OpenRouter's `finish_reason='error'` override).
     """
+    from typing import cast
+
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.messages import FinishReason
     from pydantic_ai.models.zai import ZaiModel
+
+    # The public `ZaiModel.__init__` -> `ZaiProvider.__init__` chain requires a real
+    # `ZAI_API_KEY` to be configured.  We only need the class to resolve its method
+    # override MRO (no actual dispatch happens), so a dummy value fully satisfies
+    # constructor-time validation and avoids `UserError` in CI runs without API keys.
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
 
     msg = ChatCompletionMessage(role='assistant', content='blocked')
     bad_choice = Choice.model_construct(finish_reason=raw_finish_reason, index=0, message=msg)
@@ -589,17 +601,22 @@ def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped_finis
     assert mapped is not None
     assert mapped == mapped_finish_reason
 
-    # 3. The inherited `_map_provider_details` helper stores the un-normalised raw
-    #    value for downstream forensics.  Call the same helper path the model uses
-    #    at runtime: route through the model instance method (defined on the shared
-    #    OpenAI base) so we pin the exact inheritance behaviour the dispatch path hits.
-    provider_details: dict | None = model._map_provider_details(v_choice)  # type: ignore[reportPrivateUsage, arg-type]
+    # 3. The inherited `_process_provider_details` helper stores the un-normalised
+    #    raw value for downstream forensics.  Call the same helper path the model
+    #    uses at runtime (defined on the shared OpenAI base) so we pin the exact
+    #    inheritance behaviour the dispatch path hits.
+    #
+    # NOTE: `_process_provider_details` takes the *full* validated chat-completion
+    # object (not a single choice) and extracts `.choices[0]` internally.  Passing
+    # the completion here matches exactly what the dispatch loop does upstream.
+    provider_details = model._process_provider_details(validated)  # type: ignore[reportPrivateUsage, arg-type]
     assert provider_details is not None
-    assert provider_details.get('finish_reason') == raw_finish_reason
+    raw_from_provider_details = cast(dict[str, object], provider_details).get('finish_reason')
+    assert raw_from_provider_details == raw_finish_reason
 
 
 @pytest.mark.skipif(not imports_successful(), reason='openai not installed')
-def test_zai_standard_finish_reasons_still_map_nonstream() -> None:
+def test_zai_standard_finish_reasons_still_map_nonstream(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression guard: the widened Literal leaves standard `stop` mapping untouched.
 
     Unlike the non-standard cases above we intentionally use the strict public
@@ -614,6 +631,8 @@ def test_zai_standard_finish_reasons_still_map_nonstream() -> None:
 
     from pydantic_ai.messages import FinishReason
     from pydantic_ai.models.zai import ZaiModel
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
 
     msg = ChatCompletionMessage(role='assistant', content='hello')
     good_choice = Choice(finish_reason='stop', index=0, message=msg)
@@ -641,7 +660,11 @@ def test_zai_standard_finish_reasons_still_map_nonstream() -> None:
         ('network_error', 'error'),
     ],
 )
-async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_finish_reason: str) -> None:
+async def test_zai_nonstd_finish_reason_stream(
+    raw_finish_reason: str,
+    mapped_finish_reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Streaming path: non-standard terminal finish_reason passes widened validation.
 
     Exercises the same three contracts as the non-stream test, but against the
@@ -660,11 +683,14 @@ async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_fi
     `ALLOW_MODEL_REQUESTS = False` dispatch gate.
     """
     from collections.abc import AsyncIterator
+    from typing import cast
 
     from openai.types import chat
 
     from pydantic_ai.messages import FinishReason
     from pydantic_ai.models.zai import ZaiStreamedResponse
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
 
     chunk_a = chat.ChatCompletionChunk.model_construct(
         id='c1',
@@ -702,8 +728,17 @@ async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_fi
     # constructor here to avoid needing to satisfy the unrelated required fields
     # inherited from `OpenAIStreamedResponse` (they're all dead code for the narrow
     # override paths we're exercising).
+    #
+    # We use `object.__setattr__` (instead of `resp._response = ...`) for two strict
+    # pyright gates:
+    #   (1) `_response` is declared protected/private on the base dataclass — direct
+    #       assignment from outside the class triggers `reportPrivateUsage`.
+    #   (2) The strict `_response` field type is `PeekableAsyncStream[...]`; the
+    #       plain `AsyncIterator` we inject here is structurally sufficient for the
+    #       narrow `async for` usage in `_validate_response`, but fails pyright's
+    #       `reportAttributeAccessIssue` for the nominal Peekable wrapper type.
     resp = object.__new__(ZaiStreamedResponse)
-    resp._response = chunk_source()
+    object.__setattr__(resp, '_response', chunk_source())
 
     text_parts: list[str] = []
     last_chunk: chat.ChatCompletionChunk | None = None
@@ -711,8 +746,17 @@ async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_fi
         last_chunk = validated_chunk
         if validated_chunk.choices:
             delta = validated_chunk.choices[0].delta
-            if delta is not None and getattr(delta, 'content', None) is not None:
-                text_parts.append(delta.content)
+            # `delta` here is `ChoiceDelta` (not `ChoiceDelta | None`) — the base
+            # SDK constructors always materialise the delta attribute, so the
+            # `delta is not None` guard would otherwise fire
+            # `reportUnnecessaryComparison` under strict pyright.  We keep the
+            # `None`-guard on `getattr(..., content)` alone (which legitimately
+            # returns `None | str`), then `or ''` the result so appending to
+            # `list[str]` never has a `None`-typed argument — resolving
+            # `reportArgumentType` on the `append(...)` call below.
+            content: str = cast(str, getattr(delta, 'content', None)) or ''
+            if content:
+                text_parts.append(content)
 
     # 1. Incremental deltas continue to stream through even when the terminal chunk
     #    carries a non-standard finish_reason.
@@ -735,6 +779,7 @@ async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_fi
     # 4. The inherited provider-details helper stores the raw value on the terminal
     #    chunk's choice via the same path the live dispatch uses (defined on the
     #    shared OpenAI stream base).
-    stream_provider_details: dict | None = resp._map_provider_details(last_chunk)  # type: ignore[reportPrivateUsage, arg-type]
+    stream_provider_details = resp._map_provider_details(last_chunk)  # type: ignore[reportPrivateUsage, arg-type]
     assert stream_provider_details is not None
-    assert stream_provider_details.get('finish_reason') == raw_finish_reason
+    stream_raw = cast(dict[str, object], stream_provider_details).get('finish_reason')
+    assert stream_raw == raw_finish_reason
