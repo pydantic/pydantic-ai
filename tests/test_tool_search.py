@@ -682,9 +682,8 @@ async def test_search_tools_inherits_agent_tool_retries(tool_retries: int):
 async def test_tool_search_toolset_max_retries_overrides_agent_budget():
     """An explicit `max_retries` on the toolset wins over the agent's tool retry budget.
 
-    Asserted at `get_tools` rather than through an agent run: the capability that owns tool
-    search is auto-injected, so a hand-constructed `ToolSearchToolset` can't be handed to an
-    `Agent` without the outer wrapper tripping the reserved-`search_tools` guard.
+    Asserted at `get_tools` rather than through an agent run: the auto-injected `ToolSearch`
+    capability supplies the agent-level defaults, so this exercises the precedence directly.
     """
     toolset = _create_function_toolset()
     ctx = _build_run_context(None, max_retries=5)
@@ -694,6 +693,40 @@ async def test_tool_search_toolset_max_retries_overrides_agent_budget():
 
     assert inheriting[_SEARCH_TOOLS_NAME].max_retries == 5
     assert overriding[_SEARCH_TOOLS_NAME].max_retries == 2
+
+
+async def test_agent_accepts_pre_wrapped_tool_search_toolset():
+    """A hand-constructed `ToolSearchToolset` in `toolsets=[...]` no longer trips the
+    reserved-`search_tools` guard from the auto-injected `ToolSearch` capability.
+
+    Regression for #6921: the auto-injected `ToolSearch` capability used to wrap the
+    combined toolset *again*, and the outer wrapper's reserved-name guard then fired on
+    the inner wrapper's own `search_tools` function — blaming a nonexistent user tool.
+    The explicit `ToolSearchToolset` should win, and discovery should still work: the
+    model searches, the discovered deferred tool becomes callable, and the run finishes.
+    """
+    calls = 0
+
+    def discover_then_use_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(_SEARCH_TOOLS_NAME, {'queries': ['mortgage']})])
+        if calls == 2:
+            return ModelResponse(
+                parts=[ToolCallPart('calculate_mortgage', {'principal': 300_000, 'rate': 0.05, 'years': 30})]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        NoNativeToolSearchModel(discover_then_use_then_finish),
+        toolsets=[ToolSearchToolset(wrapped=_create_function_toolset())],
+    )
+
+    result = await agent.run('find me a mortgage calculator')
+
+    assert result.output == 'done'
+    assert calls == 3
 
 
 async def test_tool_search_toolset_search_returns_matching_tools():
@@ -5709,6 +5742,7 @@ async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
     cap = ToolSearch(parameter_description='custom queries hint')
     base_toolset = _create_function_toolset()
     wrapped = cap.get_wrapper_toolset(base_toolset)
+    assert wrapped is not None
     ctx = _build_run_context(None)
     tools = await wrapped.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
