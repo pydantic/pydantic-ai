@@ -174,11 +174,6 @@ build-constraint-dependencies = [
 ]
 
 [tool.uv.exclude-newer-package]
-# Test-only, and the wire types it carries are the reference the MCP SDK v1/v2 compat readers are
-# checked against — released 2026-07-28, days inside the rolling window. Drop this line once the
-# window has moved past it. Timezone-explicit because uv resolves a bare date in the local
-# timezone, which would make `uv lock --check` machine-dependent.
-mcp-types = "2026-07-30T00:00:00Z"
 # These are our own packages, not worth defending from supply chain attacks on them.
 pydantic = false
 pydantic-core = false
@@ -188,14 +183,10 @@ pydantic-handlebars = false
 genai-prices = false
 logfire = false
 logfire-api = false
-# OpenAI 3.0 removes the SDK's transitive legacy HTTPX dependency and directly requires HTTPX2.
-# TODO(dsfaccini): Remove after 2026-08-19 01:56 UTC. https://github.com/pydantic/pydantic-ai/issues/7580
-# This admits only the reviewed 3.0.0 artifacts; later OpenAI artifacts remain quarantined.
-openai = "2026-08-12T01:55:49Z"
-# Google Gen AI 2.18.0 is the first release that accepts an injected HTTPX2 client.
-# TODO(dsfaccini): Remove after 2026-08-20 00:13 UTC. https://github.com/pydantic/pydantic-ai/issues/7580
-# This admits only the reviewed 2.18.0 artifacts; later Google Gen AI artifacts remain quarantined.
-google-genai = "2026-08-13T00:12:52Z"
+# Anthropic 1.0 is built on HTTPX2 and drops legacy HTTPX entirely.
+# TODO(dsfaccini): Remove after 2026-08-27 19:59 UTC. https://github.com/pydantic/pydantic-ai/issues/7658
+# This admits only the reviewed 1.0.0 artifacts; later Anthropic artifacts remain quarantined.
+anthropic = "2026-08-20T19:58:59Z"
 
 [dependency-groups]
 dev = [
@@ -234,7 +225,12 @@ dev = [
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
     "blockbuster>=1.5.26,<1.6",
 ]
-lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
+lint = [
+    "griffecli>=2.1.0,<3",
+    "mypy>=1.11.2",
+    "pyright>=1.1.408",
+    "ruff>=0.14.14",
+]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
 exclude = ["/pydantic_ai_slim/pydantic_ai/.agents"]
@@ -257,7 +253,9 @@ include = [
     "tests/**/*.py",
     "docs/**/*.py",
     ".github/scripts/ci_duration.py",
+    ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
@@ -319,7 +317,9 @@ quote-style = "single"
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
 ".github/scripts/ci_duration.py" = ["D"]
+".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
+".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
@@ -342,7 +342,9 @@ include = [
     "examples",
     "clai",
     ".github/scripts/ci_duration.py",
+    ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
@@ -360,6 +362,7 @@ executionEnvironments = [
     # the test file, not under the project root) the same way the runtime
     # `sys.path.insert(...)` at the top of the test does.
     { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [

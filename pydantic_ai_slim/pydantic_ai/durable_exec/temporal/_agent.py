@@ -10,10 +10,8 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from pydantic import ConfigDict, with_config
-from pydantic.errors import PydanticUserError
 from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
-from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 from typing_extensions import deprecated
 
@@ -57,7 +55,6 @@ from ._durability import serialization_user_error
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
-    PAYLOAD_SIZE_ERROR_TYPE,
     temporalize_toolset,
     toolset_temporal_activities,
     with_non_retryable_errors,
@@ -190,16 +187,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             else ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
         )
 
-        # `pydantic_ai.exceptions.UserError` and `pydantic.errors.PydanticUserError` are not retryable,
-        # and neither is an over-limit payload, which would otherwise be resent forever (#7110).
-        retry_policy = copy.copy(activity_config.get('retry_policy') or RetryPolicy())
-        retry_policy.non_retryable_error_types = [
-            *(retry_policy.non_retryable_error_types or []),
-            UserError.__name__,
-            PydanticUserError.__name__,
-            PAYLOAD_SIZE_ERROR_TYPE,
-        ]
-        activity_config['retry_policy'] = retry_policy
+        activity_config['retry_policy'] = with_non_retryable_errors(activity_config.get('retry_policy'))
         self.activity_config = activity_config
 
         model_activity_config = model_activity_config or {}

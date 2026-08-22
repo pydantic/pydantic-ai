@@ -76,7 +76,9 @@ logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b
 openai = ["openai>=3.0.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 google = ["google-genai>=2.18.0"]
-anthropic = ["anthropic>=0.108.0"]
+# `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
+# `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
+anthropic = ["anthropic>=1.0.0"]
 xai = ["xai-sdk>=1.14.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=3.0.0"]
