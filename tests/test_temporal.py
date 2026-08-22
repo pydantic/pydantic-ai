@@ -9509,9 +9509,6 @@ class DurabilityWebSearchAgentWorkflow:
         return result.output
 
 
-@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
-)
 async def test_durability_web_search_in_workflow(allow_model_requests: None, client: Client):
     """Capability-path equivalent of `test_web_search_agent_run_in_workflow`.
 

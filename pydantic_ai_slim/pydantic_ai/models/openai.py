@@ -291,7 +291,8 @@ Using this more broad type for the model name instead of the ChatModel definitio
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 
 The ids in the local `Literal` are bridged because `AllModels` doesn't list them at the floor the
-`openai` extra declares; they arrived in `openai` 3.1.0. Drop them once the floor is bumped past it.
+`openai` extra declares; they arrived in `openai` 3.1.0
+(https://github.com/openai/openai-python/pull/3617). Drop them once the floor is bumped past it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -5036,10 +5037,10 @@ def _map_usage(
         api_flavor=api_flavor,
         details=details,
     )
-    # genai-prices' `RequestUsage.extract` doesn't yet map OpenAI's `cache_write_tokens`, which is nested
-    # under `prompt_tokens_details` (chat) / `input_tokens_details` (responses), unlike Anthropic's top-level
-    # cache fields that it already handles, so lift it manually here.
-    # TODO: Remove this block once genai-prices extracts the nested `cache_write_tokens` field.
+    # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
+    # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
+    # provider's extractor does — Azure's still omits it — so lift it manually here.
+    # TODO: Remove this block once those remaining extractors map it. Check `prices/providers/azure.yml`.
     if _is_str_dict(input_tokens_details):
         cache_write_tokens = input_tokens_details.get('cache_write_tokens')
         if isinstance(cache_write_tokens, int):
@@ -5052,6 +5053,7 @@ def _map_usage(
     # `responses` branch above fills with a synthetic zero. Left unset — not zeroed — when the SDK reports
     # nothing, so a model that doesn't reason stays distinguishable from one that reasoned for free.
     # TODO: Remove this block once genai-prices maps reasoning tokens for every OpenAI-compatible provider.
+    # https://github.com/pydantic/genai-prices/pull/580 (merged; not in 0.1.4 — drop once the floor is past the release that includes it).
     if isinstance(reasoning_tokens, int) and 'output_reasoning_tokens' not in request_usage.__dict__:
         # Extra field, not a declared `RequestUsage` attribute — `setattr` is how `__init__` sets extras.
         setattr(request_usage, 'output_reasoning_tokens', reasoning_tokens)

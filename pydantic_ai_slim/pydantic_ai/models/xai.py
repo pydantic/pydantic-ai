@@ -113,8 +113,9 @@ XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.
 """Possible xAI model names.
 
 The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the
-floor the `xai` extra declares: `grok-build-0.1` arrived in 1.17.0 and `grok-4.5`, `grok-4.5-latest` and
-`grok-4.6` in 1.18.0. Drop each once the floor is bumped past the release that adds it to `ChatModel`.
+floor the `xai` extra declares: `grok-build-0.1` arrived in 1.15.0, `grok-4.5`/`grok-4.5-latest` in
+1.17.1, and `grok-4.6` in 1.18.0. Drop each once the floor is bumped past the release that adds it
+to `ChatModel`. https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
 """
 
 # `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2

@@ -1156,6 +1156,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # real tokens. This undercounts the prompt by the server tools' definitions, but it's the
         # only way to get a count until Anthropic supports them.
         # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
+        # Recheck: POST /v1/messages/count_tokens with a web_search tool. Docs now list those tools: https://platform.claude.com/docs/en/api/messages/count_tokens
         count_tokens_parameters = replace(
             model_request_parameters,
             native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
