@@ -733,7 +733,7 @@ The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent
 
 The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — both schema validation and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).
 
-### Parallel tool calls & concurrency
+### Parallel tool calls & concurrency {#parallel-tool-calls-concurrency}
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`, executing them in the order the model emitted them.
 

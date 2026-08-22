@@ -1,6 +1,6 @@
 We'd love you to contribute to Pydantic AI!
 
-## How we work — the short version
+## How we work — the short version {#how-we-work-the-short-version}
 
 Pydantic AI is maintained by a small team. We set our own priorities based on what benefits the most users, and we work through issues and PRs in that order — not in the order they arrive.
 

@@ -6,6 +6,7 @@
 
 <!-- rule:232 -->
 - Link all concepts, features, and API elements to their docs/reference pages using anchor fragments (`#section-name`) for specific sections — Improves discoverability and reduces user friction by providing direct navigation to relevant documentation context
+- Pin an explicit `{#custom-id}` on any heading whose text carries punctuation between spaces (`&`, `+`, `/`, `-`, `—`, `→`) — the slugifier strips the punctuation and leaves a dash for each space that flanked it, so `## Tools & native abilities` is `#tools--native-abilities` and the single-dash anchor a link is naturally written with silently misses — An explicit id is stable across slugifier changes and reads better than the generated one; `ci.yml` fails the build on an anchor that doesn't resolve
 <!-- rule:66 -->
 - Use reference-style links for API elements: `[ElementName][module.path.ElementName]` — enables hover docs and navigation on the published documentation site — Provides interactive documentation features like tooltips and jump-to-definition that plain backticks cannot support
 <!-- rule:714 -->
