@@ -1,6 +1,6 @@
 <!-- Thank you for contributing to Pydantic AI! -->
 
-<!-- Please read the contributing guide: https://ai.pydantic.dev/contributing/ -->
+<!-- Please read the contributing guide: https://pydantic.dev/docs/ai/project/contributing/ -->
 
 <!-- For non-trivial changes, link an issue that a maintainer has agreed on -->
 <!-- and assigned to you. Unassigned PRs may be auto-closed. -->

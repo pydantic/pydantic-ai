@@ -3958,7 +3958,7 @@ class ToolCallEvent:
 
     args_valid: bool | None = None
     """Whether the tool arguments passed validation.
-    See the [custom validation docs](https://ai.pydantic.dev/tools-advanced/#args-validator) for more info.
+    See the [custom validation docs](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#args-validator) for more info.
 
     - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
     - `False`: Validation was performed and failed.

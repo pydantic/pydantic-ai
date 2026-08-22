@@ -4,7 +4,7 @@ The browser exchanges audio with OpenAI or Azure OpenAI **directly** over WebRTC
 stays the control plane: it relays the browser's SDP offer to the provider (so the API key never reaches the
 browser), then attaches an [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session] to the same call by
 `call_id` and runs the agent's tools server-side. See the
-[realtime guide](https://ai.pydantic.dev/realtime/deployment/#browser-webrtc-server-sideband).
+[realtime guide](https://pydantic.dev/docs/ai/realtime/deployment/#browser-webrtc-server-sideband).
 
 The topology:
 

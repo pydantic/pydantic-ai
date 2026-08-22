@@ -968,7 +968,7 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'To make use of the `span_tree` in an evaluator, you need to call '
         '`logfire.configure(...)` before running an evaluation. For more information, '
         'refer to the documentation at '
-        'https://ai.pydantic.dev/evals/evaluators/span-based/.'
+        'https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
     )
 
 

@@ -15,7 +15,7 @@ above — that section is resolved before you start and is authoritative. This
 workflow is started by `CI` completing, not by the pull request event, so nothing
 here can name the PR itself.
 
-**Pydantic AI** ([ai.pydantic.dev](https://ai.pydantic.dev/)) is a
+**Pydantic AI** ([pydantic.dev/docs/ai](https://pydantic.dev/docs/ai/)) is a
 provider-agnostic GenAI agent framework for Python. It is an open-source
 library where **public API, abstractions, and ergonomics are the product**;
 the bar for changes is high — type safety, backward compatibility, test

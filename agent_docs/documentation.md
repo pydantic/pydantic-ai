@@ -18,7 +18,7 @@
 <!-- rule:34 -->
 - Link to official provider/project docs instead of duplicating model lists, features, or setup details — prevents stale documentation and reduces maintenance burden — Exhaustive inline lists become outdated quickly; authoritative external sources stay current and reduce maintenance
 <!-- rule:138 -->
-- Update all related docs in the same PR when changing functionality, APIs, or capabilities — includes docstrings, comments, external docs (e.g., `ai.pydantic.dev`), and API references — Prevents documentation drift that misleads users about actual behavior, limitations, or API contracts
+- Update all related docs in the same PR when changing functionality, APIs, or capabilities — includes docstrings, comments, external docs (e.g., `pydantic.dev/docs/ai`), and API references — Prevents documentation drift that misleads users about actual behavior, limitations, or API contracts
 <!-- rule:107 -->
 - Register new `docs/` files in `docs/navigation.yml` — Keeps the published pydantic.dev/docs/ai navigation complete and prevents orphaned pages or route drift
 <!-- rule:31 -->
