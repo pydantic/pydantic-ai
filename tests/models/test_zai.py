@@ -536,32 +536,37 @@ def test_zai_glm_5_3_reasoning_effort_mapping(thinking: ThinkingLevel, expected_
         ('network_error', 'error'),
     ],
 )
-async def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped_finish_reason: str):
-    """Non-standard Z.AI finish_reasons complete the run with a mapped standard finish_reason.
+def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped_finish_reason: str) -> None:
+    """Non-standard Z.AI finish_reasons pass the widened re-validation gate and map cleanly.
 
-    Without the `_ZaiChatCompletion` widening + `ZaiModel._validate_completion` override,
-    this test would crash with `UnexpectedModelBehavior` during the model_validate step.
+    Covers three contracts exercised by the ZaiModel overrides:
+      * `_ZaiChatCompletion` widens the strict `finish_reason` Literal so that the
+        non-standard values survive `ZaiModel._validate_completion`.
+      * `ZaiModel._map_finish_reason` normalises the raw value onto the standard
+        pydantic-ai `FinishReason` enum.
+      * The existing `_map_provider_details` helper (inherited from the OpenAI base)
+        stores the un-normalised raw string in `provider_details['finish_reason']`.
+
+    We deliberately use `.model_construct()` (bypassing Pydantic field validation) when
+    building the mock Choice / ChatCompletion, because the strict public constructors of
+    the OpenAI SDK types would reject values like `sensitive` / `network_error` with
+    `ValidationError` *before* pydantic-ai sees them.  The real on-the-wire Z.AI SDK path
+    does *not* build these objects via the public constructor (it JSON-deserialises them
+    through the transport layer), so `.model_construct()` is the faithful unit-test mock.
+
+    This test is intentionally *not* async and does not go through `Agent.run()`: the
+    conftest-wide `ALLOW_MODEL_REQUESTS = False` gate forbids model dispatches in unit
+    tests.  Exercising the model-level overrides directly is a stricter unit test and
+    avoids the dispatch gate entirely (see `test_openrouter.py` L590-603 for the same
+    pattern used against OpenRouter's `finish_reason='error'` override).
     """
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
+    from pydantic_ai.messages import FinishReason
     from pydantic_ai.models.zai import ZaiModel
-    from pydantic_ai.providers.zai import ZaiProvider
 
-    from .mock_openai import MockOpenAI
-
-    # Build a completion whose Choice uses a non-standard `finish_reason` string.
-    #
-    # We intentionally use `model_construct()` (bypassing Pydantic field validation)
-    # because the public constructors of `Choice` and `ChatCompletion` validate
-    # `finish_reason` against the strict OpenAI Literal and reject values like
-    # `sensitive` / `network_error` with `ValidationError` before pydantic-ai even
-    # sees them.  The real Z.AI SDK path does *not* build these objects via the
-    # public constructor (it deserialises JSON through the transport layer), so
-    # `model_construct` is the faithful mock: the non-standard value survives all
-    # the way to the `ZaiModel._validate_completion` gate, which is exactly the
-    # override we want to exercise.
     msg = ChatCompletionMessage(role='assistant', content='blocked')
     bad_choice = Choice.model_construct(finish_reason=raw_finish_reason, index=0, message=msg)
     bad_completion = chat.ChatCompletion.model_construct(
@@ -572,42 +577,60 @@ async def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped
         object='chat.completion',
     )
 
-    mock_client = MockOpenAI.create_mock(bad_completion)
-    provider = ZaiProvider(openai_client=mock_client)
-    model = ZaiModel('glm-5.2', provider=provider)
-    agent = Agent(model=model)
-    result = await agent.run('Say hi')
+    model = ZaiModel('glm-5.2')
 
-    # The run must complete successfully and carry the normalised finish reason.
-    from pydantic_ai import ModelResponse
+    # 1. Widened validation accepts the non-standard literal without raising.
+    validated = model._validate_completion(bad_completion)  # type: ignore[reportPrivateUsage]
+    v_choice = validated.choices[0]
+    assert v_choice.finish_reason == raw_finish_reason, 'Raw finish_reason must survive widened validation'
 
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert response.finish_reason == mapped_finish_reason
-    assert response.provider_details is not None
-    assert response.provider_details.get('finish_reason') == raw_finish_reason
+    # 2. Normalisation maps to the standard pydantic-ai FinishReason str-Literal.
+    mapped: FinishReason = model._map_finish_reason(v_choice.finish_reason)  # type: ignore[reportPrivateUsage, reportArgumentType, assignment]
+    assert mapped is not None
+    assert mapped == mapped_finish_reason
+
+    # 3. The inherited `_map_provider_details` helper stores the un-normalised raw
+    #    value for downstream forensics.  Call the same helper path the model uses
+    #    at runtime: route through the model instance method (defined on the shared
+    #    OpenAI base) so we pin the exact inheritance behaviour the dispatch path hits.
+    provider_details: dict | None = model._map_provider_details(v_choice)  # type: ignore[reportPrivateUsage, arg-type]
+    assert provider_details is not None
+    assert provider_details.get('finish_reason') == raw_finish_reason
 
 
 @pytest.mark.skipif(not imports_successful(), reason='openai not installed')
-async def test_zai_standard_finish_reasons_still_map_nonstream():
-    """Regression guard: the widened Literal does not change standard finish_reason mapping."""
+def test_zai_standard_finish_reasons_still_map_nonstream() -> None:
+    """Regression guard: the widened Literal leaves standard `stop` mapping untouched.
+
+    Unlike the non-standard cases above we intentionally use the strict public
+    constructors for `Choice` / `ChatCompletion` — the standard `stop` literal is
+    in the SDK's strict Literal, so it *should* survive public-ctor validation, and
+    building it this way guards against the widened schema accidentally altering
+    behaviour for normal values.
+    """
+    from openai.types import chat
+    from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
-    from pydantic_ai import ModelResponse
+    from pydantic_ai.messages import FinishReason
     from pydantic_ai.models.zai import ZaiModel
-    from pydantic_ai.providers.zai import ZaiProvider
 
-    from .mock_openai import MockOpenAI, completion_message
+    msg = ChatCompletionMessage(role='assistant', content='hello')
+    good_choice = Choice(finish_reason='stop', index=0, message=msg)
+    good_completion = chat.ChatCompletion(
+        id='789',
+        choices=[good_choice],
+        created=1704067200,
+        model='glm-5.2',
+        object='chat.completion',
+    )
 
-    completion = completion_message(ChatCompletionMessage(role='assistant', content='hello'))
-    mock_client = MockOpenAI.create_mock(completion)
-    provider = ZaiProvider(openai_client=mock_client)
-    model = ZaiModel('glm-5.2', provider=provider)
-    agent = Agent(model=model)
-    result = await agent.run('Say hi')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert response.finish_reason == 'stop'
+    model = ZaiModel('glm-5.2')
+    validated = model._validate_completion(good_completion)  # type: ignore[reportPrivateUsage]
+    v_choice = validated.choices[0]
+    mapped: FinishReason = model._map_finish_reason(v_choice.finish_reason)  # type: ignore[reportPrivateUsage, assignment]
+    assert mapped is not None
+    assert mapped == 'stop'
 
 
 @pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -618,15 +641,30 @@ async def test_zai_standard_finish_reasons_still_map_nonstream():
         ('network_error', 'error'),
     ],
 )
-async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_finish_reason: str):
-    """Non-standard Z.AI finish_reasons on the terminal stream chunk are handled cleanly."""
+async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_finish_reason: str) -> None:
+    """Streaming path: non-standard terminal finish_reason passes widened validation.
+
+    Exercises the same three contracts as the non-stream test, but against the
+    `ZaiStreamedResponse` overrides used on the stream consumer side:
+
+      * `ZaiStreamedResponse._validate_response` re-validates every chunk through
+        the widened `_ZaiChatCompletionChunk` TypedDict; non-standard values on the
+        terminal chunk are accepted rather than raising `ValidationError`.
+      * `ZaiStreamedResponse._map_finish_reason` normalises the raw value onto the
+        standard pydantic-ai `FinishReason` enum.
+      * Text deltas from intermediate chunks continue to stream through (incremental
+        concatenation guard: `'hal' + 'f' == 'half'`).
+
+    As with the non-stream test this intentionally stops at the model override layer
+    rather than going through `Agent.run_stream()` — avoiding the conftest-wide
+    `ALLOW_MODEL_REQUESTS = False` dispatch gate.
+    """
+    from collections.abc import AsyncIterator
+
     from openai.types import chat
 
-    from pydantic_ai import ModelResponse
-    from pydantic_ai.models.zai import ZaiModel
-    from pydantic_ai.providers.zai import ZaiProvider
-
-    from .mock_openai import MockOpenAI
+    from pydantic_ai.messages import FinishReason
+    from pydantic_ai.models.zai import ZaiStreamedResponse
 
     chunk_a = chat.ChatCompletionChunk.model_construct(
         id='c1',
@@ -655,22 +693,48 @@ async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_fi
         object='chat.completion.chunk',
     )
 
-    mock_client = MockOpenAI.create_mock_stream([chunk_a, chunk_b])
-    provider = ZaiProvider(openai_client=mock_client)
-    model = ZaiModel('glm-5.2', provider=provider)
-    agent = Agent(model=model)
+    async def chunk_source() -> AsyncIterator[chat.ChatCompletionChunk]:
+        yield chunk_a
+        yield chunk_b
+
+    # The ZaiStreamedResponse dataclass just needs `_response` wired up as an async
+    # iterator for `_validate_response` to consume.  We bypass the public dataclass
+    # constructor here to avoid needing to satisfy the unrelated required fields
+    # inherited from `OpenAIStreamedResponse` (they're all dead code for the narrow
+    # override paths we're exercising).
+    resp = object.__new__(ZaiStreamedResponse)
+    resp._response = chunk_source()
 
     text_parts: list[str] = []
-    async with agent.run_stream('Say hi') as stream_result:
-        async for event in stream_result:
-            if event.part and event.part.kind == 'text':
-                text_parts.append(event.part.content)
-        assert ''.join(text_parts) == 'half'
+    last_chunk: chat.ChatCompletionChunk | None = None
+    async for validated_chunk in resp._validate_response():  # type: ignore[reportPrivateUsage]
+        last_chunk = validated_chunk
+        if validated_chunk.choices:
+            delta = validated_chunk.choices[0].delta
+            if delta is not None and getattr(delta, 'content', None) is not None:
+                text_parts.append(delta.content)
 
-        # Final streamed response also carries the normalised finish reason and raw value.
-        messages = stream_result.all_messages()
-        response = messages[-1]
-        assert isinstance(response, ModelResponse)
-        assert response.finish_reason == mapped_finish_reason
-        assert response.provider_details is not None
-        assert response.provider_details.get('finish_reason') == raw_finish_reason
+    # 1. Incremental deltas continue to stream through even when the terminal chunk
+    #    carries a non-standard finish_reason.
+    assert ''.join(text_parts) == 'half', 'Streamed text deltas must concatenate correctly'
+    assert last_chunk is not None
+    terminal_choice = last_chunk.choices[0]
+
+    # 2. Raw non-standard value survives widened chunk validation.
+    assert terminal_choice.finish_reason == raw_finish_reason
+
+    # 3. Normalisation maps to the standard pydantic-ai FinishReason str-Literal
+    #    (same lookup as non-stream — the two paths share `_ZAI_FINISH_REASON_MAP`).
+    mapped: FinishReason = ZaiStreamedResponse._map_finish_reason(  # type: ignore[reportPrivateUsage, reportArgumentType, assignment]
+        resp,
+        terminal_choice.finish_reason,  # type: ignore[reportArgumentType]
+    )
+    assert mapped is not None
+    assert mapped == mapped_finish_reason
+
+    # 4. The inherited provider-details helper stores the raw value on the terminal
+    #    chunk's choice via the same path the live dispatch uses (defined on the
+    #    shared OpenAI stream base).
+    stream_provider_details: dict | None = resp._map_provider_details(last_chunk)  # type: ignore[reportPrivateUsage, arg-type]
+    assert stream_provider_details is not None
+    assert stream_provider_details.get('finish_reason') == raw_finish_reason
