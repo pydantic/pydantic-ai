@@ -84,6 +84,16 @@ class RealtimeModelProfile(TypedDict, total=False):
     (Gemini Live's function-declaration `response` schema). Where it can't, a tool that opted in via
     `include_return_schema` gets the schema injected into its description instead, exactly as on a
     standard [`Model`][pydantic_ai.models.Model]."""
+    supports_tool_updates: bool
+    """Whether the model accepts a new tool list mid-session, so tools can be revealed after connect.
+
+    The OpenAI-protocol GA providers (OpenAI, Azure OpenAI) take a `session.update` carrying a fresh
+    `tools` array; Gemini Live fixes its tools at `setup`, and xAI Grok Voice is unverified. When
+    `False` (the default), a session's advertised tools are whatever it connected with, so
+    [`Agent.realtime`][pydantic_ai.agent.AbstractAgent.realtime] rejects a `defer_loading=True`
+    capability that contributes tools before connecting rather than letting a load deliver less than
+    it promised. A capability already loaded in a seeded `message_history` needs no update and is
+    accepted either way."""
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
@@ -130,6 +140,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_seeding_audio': False,
     'supports_async_tool_calls': False,
     'supports_tool_return_schema': False,
+    'supports_tool_updates': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,
     'audio_input_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,

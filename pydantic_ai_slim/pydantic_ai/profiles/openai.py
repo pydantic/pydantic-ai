@@ -428,6 +428,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # wire flag to set, unlike Gemini. The session already runs tools in the background and
         # defers `response.create` while a response is active, so this is true end to end.
         'supports_async_tool_calls': True,
+        # `session.update` accepts a fresh `tools` array mid-session, so a deferred capability's tools
+        # can be revealed after connect.
+        'supports_tool_updates': True,
         'emits_input_speech_events': True,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,

@@ -407,6 +407,7 @@ def test_profile_allow_seeding() -> None:
         supports_async_tool_calls=True,
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
         supports_tool_return_schema=True,
+        supports_tool_updates=False,  # Gemini Live fixes the tool list at `setup`
         # Search grounding only: Live models reject or silently ignore code execution and URL context.
         supported_native_tools=frozenset({WebSearchTool}),
         # Gemini Live never reports user speech start/end; a UI must key off interruption events.

@@ -150,8 +150,10 @@ consumer can observe what was asked and decided. It is not a hook to respond to 
 event in a standard run, nothing waits for the consumer, and no event is emitted when no handler is
 installed and the call is refused.
 
-Tools registered with `defer_loading=True` are rejected in a realtime session for a related reason;
-see [Deferred capability loading](capabilities.md#deferred-capability-loading).
+Tools registered with `defer_loading=True` that no capability owns are rejected in a realtime
+session: they are revealed by [tool search](../tools-advanced.md#tool-search), which a session has no
+surface for. A deferred *capability*'s tools are revealed by loading it instead; see
+[Deferred capability loading](capabilities.md#deferred-capability-loading).
 
 ## Enqueuing prompts from tools
 

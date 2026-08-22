@@ -4794,11 +4794,15 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         response_usage_follows: bool,
         run_step: int,
         reserved_budget: bool,
-    ) -> tuple[ToolReturnPart, None]:
+    ) -> tuple[ToolReturnPart, None, list[str]]:
         del validation_done, execution_prerequisites, response_usage_follows
         del run_step, reserved_budget
         session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
-        return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
+        return (
+            ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id),
+            None,
+            [],
+        )
 
     session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
@@ -4845,11 +4849,15 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
         response_usage_follows: bool,
         run_step: int,
         reserved_budget: bool,
-    ) -> tuple[ToolReturnPart, None]:
+    ) -> tuple[ToolReturnPart, None, list[str]]:
         del validation_done, execution_prerequisites, response_usage_follows
         del run_step, reserved_budget
         session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
-        return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
+        return (
+            ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id),
+            None,
+            [],
+        )
 
     session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)

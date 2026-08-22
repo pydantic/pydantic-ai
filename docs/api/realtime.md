@@ -85,7 +85,8 @@ turn-control verbs ([`CommitAudio`][pydantic_ai.realtime.codec.CommitAudio],
 [`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse],
 [`CancelResponse`][pydantic_ai.realtime.codec.CancelResponse], and
 [`TruncateOutput`][pydantic_ai.realtime.codec.TruncateOutput]) that those session methods emit, plus
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] — which the session sends itself as each tool
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] and
+[`UpdateTools`][pydantic_ai.realtime.codec.UpdateTools] — which the session sends itself as each tool
 completes.
 
 **Connection events** — [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent], the low-level codec

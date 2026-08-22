@@ -26,12 +26,41 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..models import ModelRequestParameters, download_item
+from ..models import ModelRequestParameters, download_item, prepare_return_schemas, resolve_request_tools
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import RealtimeSessionInput
+from .profiles import RealtimeModelProfile
 from .settings import ReconnectPolicy
+
+
+def resolve_realtime_request_tools(
+    parameters: ModelRequestParameters, profile: RealtimeModelProfile
+) -> ModelRequestParameters:
+    """Resolve the tools a realtime session advertises, at connect and at every mid-session reveal.
+
+    Return schemas resolve exactly as `Model.prepare_request` does: cleared on tools that didn't opt
+    in, kept for a model that renders them natively (Gemini Live's function-declaration `response`
+    schema), injected into the description elsewhere.
+
+    Then the same native ↔ local-tool fallback swap the classic agent-run path applies (via
+    `Model._resolve_request_tools`): drop an unsupported native tool when a local fallback (stamped
+    `unless_native=...` by the capability's toolset) is present, drop the redundant local tool when
+    the native tool IS supported, and raise the shared `UserError` (suggesting `local=...`) only when
+    unsupported with no local fallback. Realtime models genuinely default to supporting no native
+    tools, so the default is `frozenset()`, not `SUPPORTED_NATIVE_TOOLS`. No
+    `can_withhold_tool_schemas`/`tool_addition_mode`: a realtime connection can't withhold a schema,
+    and it reveals a tool by re-advertising the whole list rather than through history, so every
+    unrevealed deferred tool resolves to `'withheld'` in the visibility table and a revealed one to
+    `'visible'`.
+
+    Shared so the connect-time advertisement and a `session.update` that re-advertises it can't drift.
+    """
+    parameters = prepare_return_schemas(
+        parameters, supports_tool_return_schema=profile.get('supports_tool_return_schema', False)
+    )
+    return resolve_request_tools(parameters, profile.get('supported_native_tools', frozenset()))
 
 
 def resolve_advertised_tools(

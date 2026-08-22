@@ -189,6 +189,7 @@ async def test_audio_in_server_vad_turn(
         # Voice Live's session config takes `modalities: ['text']`, so text output is supported.
         supports_text_output=True,
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
+        supports_tool_updates=True,  # inherited from the OpenAI realtime profile
         emits_input_speech_events=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
