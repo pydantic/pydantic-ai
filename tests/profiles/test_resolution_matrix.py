@@ -158,6 +158,8 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'grok_reasoning_efforts': frozenset(),
     # GroqModelProfile subclass defaults
     'groq_always_has_web_search_builtin_tool': False,
+    # MistralModelProfile subclass defaults
+    'mistral_supports_media_in_tool_returns': True,
     # BedrockModelProfile subclass defaults
     'bedrock_supports_tool_choice': False,
     'bedrock_tool_result_format': 'text',

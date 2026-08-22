@@ -981,6 +981,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict]), so the raw string is
         no longer recoverable as args on reload.
 
+        `UserPromptPart.source` is also lost, so tool-produced content reloads indistinguishable from
+        a user upload. Provenance is server-authored and `sanitize_messages` strips a client-supplied
+        value, so restoring it on load would defeat the point rather than recover it.
+
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the
         frontend can render approve/reject buttons on reload. On v5, such tool calls are emitted

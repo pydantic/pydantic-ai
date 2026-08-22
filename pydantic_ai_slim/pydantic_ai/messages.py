@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import html
 import mimetypes
 import os
 import warnings
@@ -958,6 +959,74 @@ UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 """A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
 
+@dataclass(repr=False, kw_only=True)
+class ToolReturnProvenance:
+    """The tool call that produced content carried outside its native tool result."""
+
+    tool_name: str
+    """The name of the tool that produced the content."""
+
+    tool_call_id: str
+    """The identifier of the tool call that produced the content."""
+
+    kind: Literal['tool-return-provenance'] = 'tool-return-provenance'
+    """Provenance type identifier.
+
+    Deliberately not `'tool-return'`, which is already the tag of
+    [`ToolReturn`][pydantic_ai.messages.ToolReturn] and is routed on as a discriminator elsewhere.
+    Carried from the first release so that widening the field to a tagged union later does not
+    strand histories written before the tag existed.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _tool_return_content_marker(source: ToolReturnProvenance) -> str:
+    """Render the fixed fallback marker for tool-origin content."""
+    return (
+        f'<pydantic_ai:tool_return tool_name="{html.escape(source.tool_name, quote=True)}" '
+        f'tool_call_id="{html.escape(source.tool_call_id, quote=True)}" />'
+    )
+
+
+def _render_tool_return_content_part(part: UserPromptPart) -> UserPromptPart:
+    """Render a tool-origin marker on the outgoing copy of a `UserPromptPart`.
+
+    Only media earns the marker: text a tool returns is already attributed by the tool result it
+    accompanies, so marking it would change the prompt for every `ToolReturn.content` user on every
+    provider, including those whose tool results carry media natively and never spill.
+    """
+    source = part.source
+    if source is None:
+        return part
+
+    content = part.content
+    if isinstance(content, str) or not any(is_multi_modal_content(item) for item in content):
+        return replace(part, source=None)
+
+    return replace(part, content=[_tool_return_content_marker(source), *content], source=None)
+
+
+def _tool_return_str_and_rendered_prompt(  # pyright: ignore[reportUnusedFunction]
+    part: BaseToolReturnPart, *, wrap_if_error: bool = True
+) -> tuple[str, UserPromptPart | None]:
+    """Split a tool return into text for its tool result and a marked prompt for the files it carries.
+
+    The marker is applied here rather than left to the caller so that a mapper spilling tool media
+    into an ordinary user message cannot forget to attribute it.
+
+    Args:
+        part: The tool return to split.
+        wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+            Set this to `False` when the provider has a native error channel.
+    """
+    tool_response, user_content = part.model_response_str_and_user_content(wrap_if_error=wrap_if_error)
+    if not user_content:
+        return tool_response, None
+    source = ToolReturnProvenance(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+    return tool_response, _render_tool_return_content_part(UserPromptPart(content=user_content, source=source))
+
+
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
 """Type variable for the return value type in `ToolReturn[T]`.
 
@@ -1091,6 +1160,16 @@ class UserPromptPart:
     """The content of the prompt."""
 
     _: KW_ONLY
+
+    source: Annotated[ToolReturnProvenance | None, pydantic.Field(exclude_if=lambda source: source is None)] = None
+    """The semantic origin of content that was not written by the user.
+
+    Stored history stays model-neutral: the field records only which tool call produced the content.
+    [`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages] consumes it when building a
+    request, prefixing a fixed marker to media that could otherwise not be told apart from a user
+    upload, and clearing the field on the outgoing copy. A model driven directly, without
+    `prepare_messages`, sends the content unmarked.
+    """
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
@@ -2984,6 +3063,13 @@ def sanitize_messages(
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
       tool return parts.
+    - [`UserPromptPart.source`][pydantic_ai.messages.UserPromptPart.source] values. Tool-return
+      provenance is server-authored, so a client-supplied value is dropped rather than trusted. Note
+      that this keeps forged provenance out of the stored part; it does not make the rendered marker
+      unforgeable, since that marker is ordinary prompt text a client can also type into `content`.
+      Unlike the strips above, this one is silent: the UI adapters never send `source` to a client,
+      so a value arriving here is either forged or a server-authored part the caller round-tripped
+      through its own history, and warning would fire on the legitimate second case.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -3198,17 +3284,19 @@ def _sanitize_request_parts(
         if strip_system_prompts and isinstance(part, SystemPromptPart):
             stripped_system_prompt = True
             continue
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-            filtered_content = _filter_user_content(
-                part.content,
-                allowed_file_url_schemes,
-                allowed_file_url_force_download,
-                allow_uploaded_files,
-                disallowed_schemes,
-                reset_force_download_values,
-                dropped_uploaded_file_providers,
-            )
-            new_parts.append(replace(part, content=filtered_content))
+        if isinstance(part, UserPromptPart):
+            content = part.content
+            if not isinstance(content, str):
+                content = _filter_user_content(
+                    content,
+                    allowed_file_url_schemes,
+                    allowed_file_url_force_download,
+                    allow_uploaded_files,
+                    disallowed_schemes,
+                    reset_force_download_values,
+                    dropped_uploaded_file_providers,
+                )
+            new_parts.append(replace(part, content=content, source=None))
         elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
             # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
             # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key

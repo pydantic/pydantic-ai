@@ -49,6 +49,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolReturnProvenance,
     UnexpectedModelBehavior,
     UsageLimits,
     UserError,
@@ -7175,7 +7176,11 @@ class TestMultipleToolCalls:
                     tool_call_id='call_good',
                     timestamp=IsDatetime(),
                 ),
-                UserPromptPart(content='extra context', timestamp=IsDatetime()),
+                UserPromptPart(
+                    content='extra context',
+                    source=ToolReturnProvenance(tool_name='good_tool', tool_call_id='call_good'),
+                    timestamp=IsDatetime(),
+                ),
             ]
         )
 
@@ -7196,7 +7201,9 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test')
         assert result.output == 'done'
         assert any(
-            isinstance(part, UserPromptPart) and part.content == 'extra context for the model'
+            isinstance(part, UserPromptPart)
+            and part.content == 'extra context for the model'
+            and part.source is not None
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -9190,6 +9197,7 @@ def test_multimodal_tool_response():
                             ImageUrl(url='https://example.com/chart.jpg', identifier='672a5c'),
                             'The chart shows positive trends.',
                         ],
+                        source=ToolReturnProvenance(tool_name='analyze_data', tool_call_id=IsStr()),
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
@@ -9199,7 +9207,7 @@ def test_multimodal_tool_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='Analysis completed')],
-                usage=RequestUsage(input_tokens=70, output_tokens=6),
+                usage=RequestUsage(input_tokens=77, output_tokens=6),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),

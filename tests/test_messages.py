@@ -51,6 +51,7 @@ from pydantic_ai import (
     ToolDenied,
     ToolReturn,
     ToolReturnPart,
+    ToolReturnProvenance,
     UploadedFile,
     UserError,
     UserPromptPart,
@@ -1373,6 +1374,30 @@ def test_uploaded_file_serialization_roundtrip():
     ]
     serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages
+
+
+def test_tool_return_provenance_serialization_roundtrip():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=[ImageUrl(url='https://example.com/user.png')]),
+                UserPromptPart(
+                    content=[ImageUrl(url='https://example.com/tool-1.png')],
+                    source=ToolReturnProvenance(tool_name='get_image', tool_call_id='call_1'),
+                ),
+                UserPromptPart(
+                    content=[ImageUrl(url='https://example.com/tool-2.png')],
+                    source=ToolReturnProvenance(tool_name='get_image', tool_call_id='call_2'),
+                ),
+            ]
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert 'source' not in serialized[0]['parts'][0]
     assert deserialized == messages
 
 

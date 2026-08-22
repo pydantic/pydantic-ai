@@ -1716,6 +1716,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
             {
                 'parts': [
                     {'text': '[Tool call-1: weather returned: ["sunny","See file weather.png."]]'},
+                    {'text': '<pydantic_ai:tool_return tool_name="weather" tool_call_id="call-1" />'},
                     {'text': 'This is file weather.png:'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
                     {'text': '[Tool plain-call: plain returned: ok]'},

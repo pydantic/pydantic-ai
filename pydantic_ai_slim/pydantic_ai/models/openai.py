@@ -77,6 +77,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -1706,7 +1707,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return tool_param
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
-        file_content: list[UserContent] = []
+        file_prompts: list[UserPromptPart] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 system_prompt_role = self.profile.get('openai_system_prompt_role', None)
@@ -1719,8 +1720,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = part.model_response_str_and_user_content()
-                file_content.extend(tool_file_content)
+                tool_text, file_prompt = _tool_return_str_and_rendered_prompt(part)
+                if file_prompt:
+                    file_prompts.append(file_prompt)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
@@ -1742,8 +1744,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
-        if file_content:
-            yield await self._map_user_prompt(UserPromptPart(content=file_content))
+        for file_prompt in file_prompts:
+            yield await self._map_user_prompt(file_prompt)
 
     async def _map_image_url_item(self, item: ImageUrl) -> ChatCompletionContentPartImageParam:
         """Map an ImageUrl to a chat completion image content part."""

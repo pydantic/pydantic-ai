@@ -34,6 +34,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
@@ -46,9 +47,10 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
-    UserContent,
     UserPromptPart,
     VideoUrl,
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -584,19 +586,27 @@ class MistralModel(Model[Mistral]):
         return _MISTRAL_REASONING_EFFORT_MAP[thinking]
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
-        file_content: list[UserContent] = []
+        file_prompts: list[UserPromptPart] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, files = part.model_response_str_and_user_content()
-                file_content.extend(files)
-                yield MistralToolMessage(
-                    tool_call_id=part.tool_call_id,
-                    content=tool_text,
-                )
+                if part.files and not self.profile.get('mistral_supports_media_in_tool_returns', True):
+                    # Spilled media is held back until every tool result in this request has been
+                    # emitted: a `tool` message may not follow a `user` message, and the assistant
+                    # filler inserted below to separate them carries no `tool_calls` to attach to.
+                    tool_text, file_prompt = _tool_return_str_and_rendered_prompt(part)
+                    # `part.files` is non-empty, so the split always yields a prompt for them.
+                    assert file_prompt is not None
+                    file_prompts.append(file_prompt)
+                    yield MistralToolMessage(tool_call_id=part.tool_call_id, content=tool_text)
+                else:
+                    yield MistralToolMessage(
+                        tool_call_id=part.tool_call_id,
+                        content=await self._map_tool_return_content(part),
+                    )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield MistralUserMessage(content=part.model_response())
@@ -612,8 +622,20 @@ class MistralModel(Model[Mistral]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
-        if file_content:
-            yield await self._map_user_prompt(UserPromptPart(content=file_content))
+        for file_prompt in file_prompts:
+            yield await self._map_user_prompt(file_prompt)
+
+    async def _map_tool_return_content(self, part: ToolReturnPart) -> str | list[MistralContentChunk]:
+        if not part.files:
+            return part.model_response_str()
+
+        content: list[MistralContentChunk] = []
+        for item in part.content_items(mode='str'):
+            if is_multi_modal_content(item):
+                content.append(await self._map_file_to_content_chunk(item, 'tool returns'))
+            elif isinstance(item, str):  # pragma: no branch
+                content.append(MistralTextChunk(text=item))
+        return content
 
     async def _map_messages(  # noqa: C901
         self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
@@ -683,7 +705,7 @@ class MistralModel(Model[Mistral]):
 
         return processed_messages
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:  # noqa: C901
+    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
         content: str | list[MistralContentChunk]
         if isinstance(part.content, str):
             content = part.content
@@ -693,72 +715,68 @@ class MistralModel(Model[Mistral]):
                 if isinstance(item, str | TextContent):
                     text = item if isinstance(item, str) else item.content
                     content.append(MistralTextChunk(text=text))
-                elif isinstance(item, ImageUrl):
-                    if item.force_download:
-                        downloaded = await download_item(item, data_format='base64_uri')
-                        image_url = MistralImageURL(url=downloaded['data'])
-                    else:
-                        image_url = MistralImageURL(url=item.url)
-                    if metadata := item.vendor_metadata:
-                        image_url.detail = metadata.get('detail', 'auto')
-                    content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
-                elif isinstance(item, BinaryContent):
-                    if _is_text_like_media_type(item.media_type):
-                        content.append(
-                            MistralTextChunk(
-                                text=_format_inlined_text_file(
-                                    item.data.decode('utf-8'),
-                                    media_type=item.media_type,
-                                    identifier=item.identifier,
-                                )
-                            )
-                        )
-                    elif item.is_image:
-                        image_url = MistralImageURL(url=item.data_uri)
-                        if metadata := item.vendor_metadata:
-                            image_url.detail = metadata.get('detail', 'auto')
-                        content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
-                    elif item.media_type == 'application/pdf':
-                        content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
-                    else:
-                        raise NotImplementedError(
-                            'BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts'
-                        )
-                elif isinstance(item, DocumentUrl):
-                    if _is_text_like_media_type(item.media_type):
-                        downloaded_text = await download_item(item, data_format='text')
-                        content.append(
-                            MistralTextChunk(
-                                text=_format_inlined_text_file(
-                                    downloaded_text['data'],
-                                    media_type=item.media_type,
-                                    identifier=item.identifier,
-                                )
-                            )
-                        )
-                    elif item.media_type == 'application/pdf':
-                        if item.force_download:
-                            downloaded = await download_item(item, data_format='base64_uri')
-                            content.append(
-                                MistralDocumentURLChunk(document_url=downloaded['data'], type='document_url')
-                            )
-                        else:
-                            content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
-                    else:
-                        raise NotImplementedError(
-                            'DocumentUrl other than text-like or PDF is not supported in Mistral user prompts'
-                        )
-                elif isinstance(item, AudioUrl):
-                    raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
-                elif isinstance(item, VideoUrl):
-                    raise NotImplementedError('VideoUrl is not supported in Mistral user prompts')
-                elif isinstance(item, UploadedFile):
-                    raise NotImplementedError('UploadedFile is not supported in Mistral user prompts')
                 elif isinstance(item, CachePoint):
                     pass
                 else:
-                    assert_never(item)
+                    content.append(await self._map_file_to_content_chunk(item, 'user prompts'))
         return MistralUserMessage(content=content)
+
+    @staticmethod
+    async def _map_file_to_content_chunk(item: MultiModalContent, context: str) -> MistralContentChunk:  # noqa: C901
+        """Map a multimodal file item to its Mistral API content chunk."""
+        if isinstance(item, ImageUrl):
+            if item.force_download:
+                downloaded = await download_item(item, data_format='base64_uri')
+                image_url = MistralImageURL(url=downloaded['data'])
+            else:
+                image_url = MistralImageURL(url=item.url)
+            if metadata := item.vendor_metadata:
+                image_url.detail = metadata.get('detail', 'auto')
+            return MistralImageURLChunk(image_url=image_url, type='image_url')
+        elif isinstance(item, BinaryContent):
+            if _is_text_like_media_type(item.media_type):
+                return MistralTextChunk(
+                    text=_format_inlined_text_file(
+                        item.data.decode('utf-8'), media_type=item.media_type, identifier=item.identifier
+                    )
+                )
+            elif item.is_image:
+                image_url = MistralImageURL(url=item.data_uri)
+                if metadata := item.vendor_metadata:
+                    image_url.detail = metadata.get('detail', 'auto')
+                return MistralImageURLChunk(image_url=image_url, type='image_url')
+            elif item.media_type == 'application/pdf':
+                return MistralDocumentURLChunk(document_url=item.data_uri, type='document_url')
+            else:
+                raise NotImplementedError(
+                    f'BinaryContent other than text-like, image, or PDF is not supported in Mistral {context}'
+                )
+        elif isinstance(item, DocumentUrl):
+            if _is_text_like_media_type(item.media_type):
+                downloaded_text = await download_item(item, data_format='text')
+                return MistralTextChunk(
+                    text=_format_inlined_text_file(
+                        downloaded_text['data'], media_type=item.media_type, identifier=item.identifier
+                    )
+                )
+            elif item.media_type == 'application/pdf':
+                if item.force_download:
+                    downloaded = await download_item(item, data_format='base64_uri')
+                    return MistralDocumentURLChunk(document_url=downloaded['data'], type='document_url')
+                else:
+                    return MistralDocumentURLChunk(document_url=item.url, type='document_url')
+            else:
+                raise NotImplementedError(
+                    f'DocumentUrl other than text-like or PDF is not supported in Mistral {context}'
+                )
+        elif isinstance(item, AudioUrl):
+            raise NotImplementedError(f'AudioUrl is not supported in Mistral {context}')
+        elif isinstance(item, VideoUrl):
+            raise NotImplementedError(f'VideoUrl is not supported in Mistral {context}')
+        elif isinstance(item, UploadedFile):
+            raise NotImplementedError(f'UploadedFile is not supported in Mistral {context}')
+        else:
+            assert_never(item)
 
 
 MistralToolCallId = str | None

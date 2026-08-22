@@ -597,13 +597,37 @@ def test_cache_point_silently_skipped_user_prompt_part(allow_model_requests: Non
     )
 
 
+def test_tool_return_media_is_not_silently_dropped(allow_model_requests: None):
+    """Cohere raises rather than flattening tool-returned media away.
+
+    Unit test, not VCR: the mapper raises before any request is built, so there is no wire
+    exchange to record.
+    """
+    request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_image',
+                tool_call_id='call_1',
+                content=ImageUrl(url='https://example.com/image.png'),
+            )
+        ]
+    )
+
+    with pytest.raises(
+        UserError, match=re.escape('The Cohere integration does not yet support multi-modal content in tool returns.')
+    ):
+        list(CohereModel._map_user_message(request))  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_multimodal(allow_model_requests: None):
     c = completion_message(AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='world')]))
     mock_client = MockAsyncClientV2.create_mock(c)
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match=re.escape('Cohere does not yet support multi-modal inputs.')):
+    with pytest.raises(
+        RuntimeError, match=re.escape('The Cohere integration does not yet support multi-modal user prompts.')
+    ):
         await agent.run(
             [
                 'hello',

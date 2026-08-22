@@ -79,6 +79,8 @@ from ..messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
@@ -481,6 +483,7 @@ async def _seed_request_items(
             # from a prior standard run is stale here: the session advertises its own tools.
             continue
         elif isinstance(part, UserPromptPart):
+            part = _render_tool_return_content_part(part)
             if content := _user_content_items(
                 await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
             ):
@@ -499,7 +502,7 @@ async def _seed_request_items(
                 items.append(_message_item('user', [{'type': 'input_audio', 'audio': base64.b64encode(pcm).decode()}]))
         elif isinstance(part, ToolReturnPart):
             _require_seeded_call(part.tool_name, tool_call_id=part.tool_call_id, seeded_calls=seeded_calls)
-            output, user_content = part.model_response_str_and_user_content()
+            output, user_prompt = _tool_return_str_and_rendered_prompt(part)
             items.append(
                 {
                     'type': 'function_call_output',
@@ -507,10 +510,10 @@ async def _seed_request_items(
                     'output': output,
                 }
             )
-            if user_content and (
+            if user_prompt and (
                 content := _user_content_items(
                     await seed_user_content(
-                        part=UserPromptPart(content=user_content),
+                        part=user_prompt,
                         provider_name=provider_name,
                         supports_images=supports_images,
                     )

@@ -42,9 +42,9 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
-    UserContent,
     UserPromptPart,
     VideoUrl,
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..output import OutputObjectDefinition
@@ -625,15 +625,16 @@ class GroqModel(Model[AsyncGroq]):
         return response_format_param
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
-        file_content: list[UserContent] = []
+        file_prompts: list[UserPromptPart] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = part.model_response_str_and_user_content()
-                file_content.extend(tool_file_content)
+                tool_text, file_prompt = _tool_return_str_and_rendered_prompt(part)
+                if file_prompt:
+                    file_prompts.append(file_prompt)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
@@ -648,8 +649,8 @@ class GroqModel(Model[AsyncGroq]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
-        if file_content:
-            yield await self._map_user_prompt(UserPromptPart(content=file_content))
+        for file_prompt in file_prompts:
+            yield await self._map_user_prompt(file_prompt)
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[chat.ChatCompletionContentPartParam]

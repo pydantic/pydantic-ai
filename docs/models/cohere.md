@@ -90,3 +90,10 @@ settings = CohereModelSettings(
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## Multi-modal limitations
+
+The Cohere integration does not yet map multi-modal content, so a tool returning an image or a document
+raises rather than silently dropping the media. This is a gap in Pydantic AI's Cohere mapper, not in the
+Cohere API, which documents image content blocks in user messages on its vision models; it is tracked in
+[#7646](https://github.com/pydantic/pydantic-ai/issues/7646).

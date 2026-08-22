@@ -53,6 +53,7 @@ from pydantic_ai import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolReturnProvenance,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -62,7 +63,10 @@ from pydantic_ai import (
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import is_multi_modal_content
+from pydantic_ai.messages import (
+    _tool_return_content_marker,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
+)
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -1193,6 +1197,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         assert part.tool_call_id is not None
                         tool_result_content: list[Any] = []
                         colocated_media_content: list[ContentBlockUnionTypeDef] = []
+                        deferred_part_media_content: list[ContentBlockUnionTypeDef] = []
 
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
@@ -1254,14 +1259,23 @@ class BedrockConverseModel(Model[BaseClient]):
                                         colocated_media_content.append(file_block)
                                     else:
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
-                                        deferred_media_content.append(media_note)
-                                        deferred_media_content.append(file_block)
+                                        deferred_part_media_content.append(media_note)
+                                        deferred_part_media_content.append(file_block)
                             else:
                                 tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:
                             tool_result_content.append(
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
                             )
+
+                        if colocated_media_content or deferred_part_media_content:
+                            source = ToolReturnProvenance(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+                            marker: ContentBlockUnionTypeDef = {'text': _tool_return_content_marker(source)}
+                            if colocated_media_content:
+                                colocated_media_content.insert(0, marker)
+                            if deferred_part_media_content:
+                                deferred_media_content.append(marker)
+                                deferred_media_content.extend(deferred_part_media_content)
 
                         success_result: ToolResultBlockOutputTypeDef = {
                             'toolUseId': part.tool_call_id,

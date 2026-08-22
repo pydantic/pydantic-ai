@@ -69,7 +69,7 @@ Some models (e.g. Gemini) natively support semi-structured return values, while 
 For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
 
 - Separate the structured return value from additional content sent to the model
-- Explicitly send content as a separate user message (rather than in the tool result)
+- Explicitly send content outside the tool result while retaining its tool-call origin
 - Include additional metadata that shouldn't be sent to the LLM
 - Reveal deferred tools by name for the next model request
 
@@ -110,10 +110,26 @@ print(result.output)
 
 - **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Tool Output](#function-tool-output) above).
 - **`tools`**: Names of tools marked with `defer_loading=True` that this call made available. Pydantic AI records them in a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] immediately after this call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], in the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The names remain revealed when history is resumed, while the current tool definitions still come from the agent.
-- **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content.
+- **`content`**: Content stored in a separate [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] after the tool result. The part records the originating tool name and call ID in [`UserPromptPart.source`][pydantic_ai.messages.UserPromptPart.source] as a [`ToolReturnProvenance`][pydantic_ai.messages.ToolReturnProvenance], so history persisted with [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] still identifies the content as tool-produced when it is replayed. Use this when you explicitly want content outside the tool result, or when combining structured return values with rich content.
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 
 This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic. For multimodal content that should be sent natively in the tool result (when supported by the model), return it directly from the tool function or include it in `return_value` (see [Tool Output](#function-tool-output) above).
+
+### Tool-return provenance
+
+Media a tool returns directly, or through `return_value`, stays inside the tool result wherever the provider's tool-result API accepts it. Media passed through `content` is a separate message by definition, so it always travels as prompt content — as does directly-returned media on a provider whose tool result cannot carry it.
+
+Whenever media travels that way, Pydantic AI prefixes it on the outgoing request with a fixed marker naming the call it came from:
+
+```text
+<pydantic_ai:tool_return tool_name="click_and_capture" tool_call_id="call_1" />
+```
+
+Only media is marked. Text is already attributed by the tool result it accompanies, so it reaches the model unchanged.
+
+Pydantic AI never adds this marker to user-authored content, but the marker is ordinary text in the prompt rather than a separate channel: it records where content came from and is not something the model can verify, since nothing prevents a user or a tool from writing the same string.
+
+Where Pydantic AI's mapper for a provider can carry the media neither in the tool result nor as prompt content, it raises an error rather than silently dropping it.
 
 ## Custom Tool Schema
 

@@ -62,8 +62,10 @@ from ..messages import (
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    ToolReturnProvenance,
     UserContent,
     UserPromptPart,
+    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
@@ -356,7 +358,7 @@ def _is_tool_result_request(message: ModelMessage) -> bool:
 
 def _build_session_tool_return(
     tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
-) -> tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]:
+) -> tuple[ToolReturnPart, str | Sequence[UserContent] | None]:
     """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
     result_part, user_content, tools_added = build_tool_return_part(
@@ -1593,7 +1595,14 @@ class RealtimeSession:
     ) -> list[RealtimeEvent]:
         request_parts: list[ModelRequestPart] = [result_part]
         if content:
-            request_parts.append(UserPromptPart(content=content))
+            # Content only ever accompanies a successful return: every retry path leaves it unset.
+            assert isinstance(result_part, ToolReturnPart)
+            request_parts.append(
+                UserPromptPart(
+                    content=content,
+                    source=ToolReturnProvenance(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id),
+                )
+            )
         self._insert_tool_return(call_part, self._new_request(request_parts))
         return [FunctionToolResultEvent(part=result_part, content=content)]
 
@@ -2163,11 +2172,21 @@ class RealtimeSession:
             output = result_part.model_response()
             wire_content: list[UserContent] = []
         else:
-            output, wire_content = result_part.model_response_str_and_user_content()
-        if isinstance(user_content, str):
-            wire_content.append(user_content)
-        elif user_content:
-            wire_content.extend(user_content)
+            output, file_content = result_part.model_response_str_and_user_content()
+            wire_content = [*file_content]
+            if isinstance(user_content, str):
+                wire_content.append(user_content)
+            elif user_content:
+                wire_content.extend(user_content)
+            # Rendered as one part so the whole spill shares a single marker, and so the media gate
+            # lives only in `_render_tool_return_content_part`. The content is a list going in, so it
+            # is a list coming out; only the declared `str | Sequence[UserContent]` needs narrowing.
+            source = ToolReturnProvenance(tool_name=call_part.tool_name, tool_call_id=call_part.tool_call_id)
+            rendered_content = _render_tool_return_content_part(
+                UserPromptPart(content=wire_content, source=source)
+            ).content
+            assert not isinstance(rendered_content, str)
+            wire_content = [*rendered_content]
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
         self._reserve_response_request()

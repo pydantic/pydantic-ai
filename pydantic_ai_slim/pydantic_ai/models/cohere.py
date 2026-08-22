@@ -7,7 +7,7 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 
 from .. import ModelHTTPError, usage
 from .._utils import (
@@ -368,24 +368,30 @@ class CohereModel(Model[AsyncClientV2]):
         )
 
     @classmethod
+    def _map_user_prompt(cls, part: UserPromptPart) -> ChatMessageV2:
+        if isinstance(part.content, str):
+            return UserChatMessageV2(role='user', content=part.content)
+
+        cohere_content: list[CohereContent] = []
+        for item in part.content:
+            if isinstance(item, str | TextContent):
+                cohere_content.append(CohereTextContent(text=item if isinstance(item, str) else item.content))
+            elif isinstance(item, CachePoint):
+                continue
+            else:
+                raise RuntimeError('The Cohere integration does not yet support multi-modal user prompts.')
+        return UserChatMessageV2(role='user', content=cohere_content)
+
+    @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                if isinstance(part.content, str):
-                    yield UserChatMessageV2(role='user', content=part.content)
-                else:
-                    cohere_content: list[CohereContent] = []
-                    for c in part.content:
-                        if isinstance(c, str | TextContent):
-                            cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
-                        elif isinstance(c, CachePoint):
-                            continue
-                        else:
-                            raise RuntimeError('Cohere does not yet support multi-modal inputs.')
-                    yield UserChatMessageV2(role='user', content=cohere_content)
+                yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                if part.files:
+                    raise UserError('The Cohere integration does not yet support multi-modal content in tool returns.')
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),

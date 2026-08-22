@@ -72,6 +72,8 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _render_tool_return_content_part,  # pyright: ignore[reportPrivateUsage]
+    _tool_return_str_and_rendered_prompt,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import ModelRequestParameters
 
@@ -397,6 +399,7 @@ async def _seed_request_parts(
             # from a prior standard run is stale here: the session advertises its own tools.
             continue
         elif isinstance(part, UserPromptPart):
+            part = _render_tool_return_content_part(part)
             parts.extend(
                 _genai_user_parts(
                     await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
@@ -409,13 +412,13 @@ async def _seed_request_parts(
             if content:
                 parts.append(genai_types.Part(text=content))
         elif isinstance(part, ToolReturnPart):
-            output, user_content = part.model_response_str_and_user_content()
+            output, user_prompt = _tool_return_str_and_rendered_prompt(part)
             parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))
-            if user_content:
+            if user_prompt:
                 parts.extend(
                     _genai_user_parts(
                         await seed_user_content(
-                            part=UserPromptPart(content=user_content),
+                            part=user_prompt,
                             provider_name=provider_name,
                             supports_images=supports_images,
                         )
