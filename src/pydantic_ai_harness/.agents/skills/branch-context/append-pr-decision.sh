@@ -1,5 +1,5 @@
 #!/bin/bash
-# Append one decision entry to .claude/skills/branch-context/pr-decisions.md
+# Append one decision entry to the adjacent pr-decisions.md.
 #
 # Preferred (named flags -- resistant to arg-order mistakes):
 #   append-pr-decision.sh \
@@ -97,22 +97,30 @@ case "$SOURCE" in
         ;;
 esac
 
-# Must run from a worktree root -- locate the file relative to cwd.
-FILE=".claude/skills/branch-context/pr-decisions.md"
+# Static helpers can be reached through any harness skill root. Live state stays
+# beside the invoked helper, so resolve the directory rather than assuming cwd.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+FILE="$DIR/pr-decisions.md"
 if [ ! -f "$FILE" ]; then
-    echo "error: $FILE not found. Are you at the worktree root? Instantiate it from pr-decisions.template.md first." >&2
+    echo "error: $FILE not found. Initialize branch context before appending a decision." >&2
     exit 1
 fi
 
 DATE="$(date -u +%Y-%m-%d)"
 
-{
-    echo ""
-    echo "## $DATE · $TITLE · iter $ITER"
-    echo "- Decision: $DECISION"
-    echo "- Why: $WHY"
-    echo "- Source: $SOURCE"
-    [ -n "$SUPERSEDES" ] && echo "- Supersedes: $SUPERSEDES"
-} >> "$FILE"
+ENTRY="
+## $DATE · $TITLE · iter $ITER
+- Decision: $DECISION
+- Why: $WHY
+- Source: $SOURCE"
+if [ -n "$SUPERSEDES" ]; then
+    ENTRY="$ENTRY
+- Supersedes: $SUPERSEDES"
+fi
+
+if ! printf '%s\n' "$ENTRY" >> "$FILE"; then
+    echo "error: could not append decision to $FILE" >&2
+    exit 1
+fi
 
 echo "Appended decision to $FILE"

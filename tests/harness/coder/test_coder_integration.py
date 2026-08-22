@@ -31,16 +31,30 @@ else:
 
 pytestmark = pytest.mark.anyio
 
+_SNAPSHOT_OUTPUT_ENVIRONMENT_VARIABLES = (
+    'BUILD_ID',
+    'BUILD_NUMBER',
+    'CI',
+    'CLICOLOR_FORCE',
+    'FORCE_COLOR',
+    'GITHUB_ACTIONS',
+    'PY_COLORS',
+)
+
 
 @pytest.mark.vcr
 async def test_coder_completes_task(
     tmp_path: Path, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv('ANTHROPIC_API_KEY', os.environ.get('ANTHROPIC_API_KEY', 'replay-key'))
-    # The agent's `run_command` runs the workspace test suite in a subprocess whose stdout is snapshotted;
-    # CI-detection env vars would make inline-snapshot print a banner into it that isn't there locally.
-    for ci_env_var in ('CI', 'BUILD_ID', 'BUILD_NUMBER', 'GITHUB_ACTIONS'):
-        monkeypatch.delenv(ci_env_var, raising=False)
+    for environment_variable in ('CLICOLOR_FORCE', 'FORCE_COLOR', 'PY_COLORS'):
+        monkeypatch.setenv(environment_variable, '1')
+    # The agent's `run_command` snapshots subprocess output. These environment variables alter that output.
+    for environment_variable in _SNAPSHOT_OUTPUT_ENVIRONMENT_VARIABLES:
+        monkeypatch.delenv(environment_variable, raising=False)
+    assert all(
+        environment_variable not in os.environ for environment_variable in _SNAPSHOT_OUTPUT_ENVIRONMENT_VARIABLES
+    )
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     (workspace / 'AGENTS.md').write_text(

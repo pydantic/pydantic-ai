@@ -109,7 +109,7 @@ README, or source code.
   `tests/coder/test_coder_integration.py`) that runs it against a real task.
   Any change to that harness's composition, defaults, or instructions
   re-records the cassette in the same PR
-  (`uv run --env-file .env --no-sync pytest <test> --record-mode=rewrite`) —
+  (`uv run --env-file .env --no-sync pytest -p no:cacheprovider <test> --record-mode=rewrite`) —
   a green replay of a stale cassette proves nothing about the new definition.
 - `make lint`, `make typecheck`, and `make test` pass before handoff.
 
