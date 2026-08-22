@@ -77,7 +77,7 @@ with try_import() as imports_successful:
     TextResourceContents = mcp_types.TextResourceContents
     from pydantic import AnyUrl, TypeAdapter
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2, wire_name
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2, mcp_field, wire_name
     from pydantic_ai.mcp import (
         MCPError,
         MCPToolset,
@@ -559,6 +559,40 @@ class TestMCPToolsetIntegration:
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
 
+    async def test_list_tools_returns_deep_copies_not_the_cache(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """`list_tools()` must not hand out the cached list or the cached tool objects: a caller
+        mutating either bypasses the `cache_tools` invalidation lifecycle (`notifications/tools/list_changed`
+        or the last `__aexit__`) and would pollute later calls and `get_tools()` schemas."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_tools()
+            names = [tool.name for tool in first]
+            assert {'echo', 'add', 'boom'} <= set(names)
+
+            cached = toolset._cached_tools  # pyright: ignore[reportPrivateUsage]
+            assert cached is not None
+            # No aliasing: neither the list nor the tool objects are the stored cache.
+            assert first is not cached
+            assert all(copy is not original for copy, original in zip(first, cached))
+
+            # Caller mutation: drop a tool from the returned list and rewrite a nested
+            # input-schema value on another.
+            first.pop()
+            mutated_name = first[0].name
+            mcp_field(first[0], 'input_schema', dict)['type'] = 'mutated'
+
+            # The next call hits the cache and must see the unmutated catalog.
+            second = await toolset.list_tools()
+            assert [tool.name for tool in second] == names
+            assert mcp_field(second[0], 'input_schema', dict)['type'] != 'mutated'
+
+            # `get_tools()` reads through the same cache, so it stays unmutated too.
+            tools = await toolset.get_tools(run_context)
+            assert {'echo', 'add', 'boom'} <= set(tools)
+            assert tools[mutated_name].tool_def.parameters_json_schema.get('type') != 'mutated'
+
     async def test_tool_annotations_keep_the_wire_spelling(
         self, fastmcp_server: FastMCP[None], run_context: RunContext
     ):
@@ -601,6 +635,20 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server, cache_tools=False)
         async with toolset:
             await toolset.get_tools(run_context)
+            assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_list_tools_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
+        """With caching off, every `list_tools()` call fetches afresh and never populates or reads
+        the cache, so caller mutation of one result cannot reach another."""
+        toolset = MCPToolset(fastmcp_server, cache_tools=False)
+        async with toolset:
+            first = await toolset.list_tools()
+            first.pop()
+            first[0].name = 'mutated'
+
+            second = await toolset.list_tools()
+            assert 'mutated' not in [tool.name for tool in second]
+            assert len(second) == len(first) + 1
             assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_call_tool_returns_structured_content(self, fastmcp_server: FastMCP[None], run_context: RunContext):
