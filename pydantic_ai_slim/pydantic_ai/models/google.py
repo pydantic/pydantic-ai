@@ -520,12 +520,22 @@ class GoogleModel(Model[Client]):
         return self._provider.name
 
     @property
+    def _is_google_cloud(self) -> bool:
+        """Whether requests go to Google Cloud (Vertex) rather than the Gemini Developer API.
+
+        Derived from the client's transport rather than the provider name: a Vertex-backed
+        `genai.Client` passed to `GoogleProvider(client=...)` keeps `name` (and thus `system`)
+        as `'google'` for message-history compatibility, so the name alone can't identify
+        the transport.
+        """
+        return bool(self.client.vertexai)
+
+    @property
     def _matching_provider_names(self) -> frozenset[str]:
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
-            return _GOOGLE_CLOUD_PROVIDER_NAMES
-        if self.system in _GEMINI_API_PROVIDER_NAMES:
-            return _GEMINI_API_PROVIDER_NAMES
-        return frozenset({self.system})  # pragma: no cover
+        names = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
+        # Include the provider's own name so files uploaded through this model always
+        # validate against it, even when the name doesn't identify the transport.
+        return names | {self.system}
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -597,7 +607,7 @@ class GoogleModel(Model[Client]):
         config = CountTokensConfigDict(
             http_options=generation_config.get('http_options'),
         )
-        if self._provider.name not in _GEMINI_API_PROVIDER_NAMES:
+        if self._is_google_cloud:
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
@@ -673,7 +683,7 @@ class GoogleModel(Model[Client]):
                 )
             image_config['image_size'] = tool.size
 
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             if tool.output_format is not None:
                 if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
                     raise UserError(
@@ -809,7 +819,7 @@ class GoogleModel(Model[Client]):
         if (
             emits_tool_call_invocations
             and self.profile.get('google_supports_server_side_tool_invocations', False)
-            and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES
+            and not self._is_google_cloud
         ):
             tool_config['include_server_side_tool_invocations'] = True
 
@@ -941,7 +951,7 @@ class GoogleModel(Model[Client]):
             headers.update(extra_headers)
 
         gla_service_tier: _GlaServiceTier | None = None
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             headers.update(_google_cloud_service_tier_headers(_resolve_google_cloud_service_tier(model_settings)))
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
@@ -1231,7 +1241,7 @@ class GoogleModel(Model[Client]):
                 f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
                 f'Expected `provider_name` to be one of {sorted(self._matching_provider_names)!r}.'
             )
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             if not file.file_id.startswith('gs://'):
                 raise UserError(
                     f'UploadedFile for GoogleModel (Google Cloud) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
@@ -1256,12 +1266,12 @@ class GoogleModel(Model[Client]):
             file_uri, mime_type = self._validate_uploaded_file(file)
             return ('file', file_uri, mime_type)
         elif isinstance(file, VideoUrl) and (
-            file.is_youtube or (file.url.startswith('gs://') and self.system in _GOOGLE_CLOUD_PROVIDER_NAMES)
+            file.is_youtube or (file.url.startswith('gs://') and self._is_google_cloud)
         ):
             return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
             if file.force_download or (
-                self.system in _GEMINI_API_PROVIDER_NAMES
+                not self._is_google_cloud
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
                 downloaded_item = await download_item(file, data_format='bytes')

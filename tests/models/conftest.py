@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.google import GoogleProvider
     from tests.cassette_utils import CassetteContext
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
@@ -174,3 +175,20 @@ def cassette_ctx(request: pytest.FixtureRequest, vcr: Cassette) -> CassetteConte
         test_module=test_module,  # pyright: ignore[reportUnknownArgumentType]
         test_dir=test_dir,
     )
+
+
+@pytest.fixture
+def vertex_client_google_provider() -> GoogleProvider:
+    """A Vertex-backed `genai.Client` wrapped in `GoogleProvider`, the construction from #6792.
+
+    `system` stays `'google'` while the transport is Google Cloud (Vertex), so transport
+    (not the provider name) must drive Vertex-vs-Gemini-API behavior.
+    """
+    try:
+        from google.genai import Client
+
+        from pydantic_ai.providers.google import GoogleProvider
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    return GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1'))
