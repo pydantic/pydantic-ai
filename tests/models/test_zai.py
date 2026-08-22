@@ -453,3 +453,363 @@ def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, 
         supports_reasoning_effort=True,
     )
     assert transformed == expected
+
+
+# --- Non-standard finish_reason handling (fixes pydantic/pydantic-ai#7678) ---
+#
+# Z.AI returns `sensitive` (content moderation) and `network_error` (proxy transport)
+# as `finish_reason` values.  Neither is in the OpenAI SDK's strict 5-value Literal, so
+# pydantic-ai's default `_validate_completion` hook (which re-runs `model_validate` with
+# the SDK schema) aborts the run with `UnexpectedModelBehavior`.  The streaming path was
+# lenient because the SDK's chunk constructor is permissive, but with the override in
+# ZaiModel/ZaiStreamedResponse both paths now behave consistently: the widened Literal
+# accepts the raw value, `_map_finish_reason` normalises it to a standard FinishReason,
+# and the raw string stays in `provider_details['finish_reason']` for debugging.
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('raw_finish_reason', 'mapped_finish_reason'),
+    [
+        ('sensitive', 'content_filter'),
+        ('network_error', 'error'),
+    ],
+)
+def test_zai_nonstd_finish_reason_nonstream(
+    raw_finish_reason: str,
+    mapped_finish_reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-standard Z.AI finish_reasons pass the widened re-validation gate and map cleanly.
+
+    Covers three contracts exercised by the ZaiModel overrides:
+      * `_ZaiChatCompletion` widens the strict `finish_reason` Literal so that the
+        non-standard values survive `ZaiModel._validate_completion`.
+      * `ZaiModel._map_finish_reason` normalises the raw value onto the standard
+        pydantic-ai `FinishReason` enum.
+      * The existing `_map_provider_details` helper (inherited from the OpenAI base)
+        stores the un-normalised raw string in `provider_details['finish_reason']`.
+
+    We deliberately use `.model_construct()` (bypassing Pydantic field validation) when
+    building the mock Choice / ChatCompletion, because the strict public constructors of
+    the OpenAI SDK types would reject values like `sensitive` / `network_error` with
+    `ValidationError` *before* pydantic-ai sees them.  The real on-the-wire Z.AI SDK path
+    does *not* build these objects via the public constructor (it JSON-deserialises them
+    through the transport layer), so `.model_construct()` is the faithful unit-test mock.
+
+    This test is intentionally *not* async and does not go through `Agent.run()`: the
+    conftest-wide `ALLOW_MODEL_REQUESTS = False` gate forbids model dispatches in unit
+    tests.  Exercising the model-level overrides directly is a stricter unit test and
+    avoids the dispatch gate entirely (see `test_openrouter.py` L590-603 for the same
+    pattern used against OpenRouter's `finish_reason='error'` override).
+    """
+    from typing import cast
+
+    from openai.types import chat
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from pydantic_ai.messages import FinishReason
+    from pydantic_ai.models.zai import ZaiModel
+
+    # The public `ZaiModel.__init__` -> `ZaiProvider.__init__` chain requires a real
+    # `ZAI_API_KEY` to be configured.  We only need the class to resolve its method
+    # override MRO (no actual dispatch happens), so a dummy value fully satisfies
+    # constructor-time validation and avoids `UserError` in CI runs without API keys.
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
+
+    msg = ChatCompletionMessage(role='assistant', content='blocked')
+    bad_choice = Choice.model_construct(finish_reason=raw_finish_reason, index=0, message=msg)
+    bad_completion = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[bad_choice],
+        created=1704067200,  # 2024-01-01
+        model='glm-5.2',
+        object='chat.completion',
+    )
+
+    model = ZaiModel('glm-5.2')
+
+    # 1. Widened validation accepts the non-standard literal without raising.
+    validated = model._validate_completion(bad_completion)  # type: ignore[reportPrivateUsage]
+    v_choice = validated.choices[0]
+    assert v_choice.finish_reason == raw_finish_reason, 'Raw finish_reason must survive widened validation'
+
+    # 2. Normalisation maps to the standard pydantic-ai FinishReason str-Literal.
+    mapped: FinishReason = model._map_finish_reason(v_choice.finish_reason)  # type: ignore[reportPrivateUsage, reportArgumentType, assignment]
+    assert mapped is not None
+    assert mapped == mapped_finish_reason
+
+    # 3. The inherited `_process_provider_details` helper stores the un-normalised
+    #    raw value for downstream forensics.  Call the same helper path the model
+    #    uses at runtime (defined on the shared OpenAI base) so we pin the exact
+    #    inheritance behaviour the dispatch path hits.
+    #
+    # NOTE: `_process_provider_details` takes the *full* validated chat-completion
+    # object (not a single choice) and extracts `.choices[0]` internally.  Passing
+    # the completion here matches exactly what the dispatch loop does upstream.
+    provider_details = model._process_provider_details(validated)  # type: ignore[reportPrivateUsage, arg-type]
+    assert provider_details is not None
+    raw_from_provider_details = cast(dict[str, object], provider_details).get('finish_reason')
+    assert raw_from_provider_details == raw_finish_reason
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+def test_zai_standard_finish_reasons_still_map_nonstream(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression guard: the widened Literal leaves standard `stop` mapping untouched.
+
+    Unlike the non-standard cases above we intentionally use the strict public
+    constructors for `Choice` / `ChatCompletion` — the standard `stop` literal is
+    in the SDK's strict Literal, so it *should* survive public-ctor validation, and
+    building it this way guards against the widened schema accidentally altering
+    behaviour for normal values.
+    """
+    from openai.types import chat
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from pydantic_ai.messages import FinishReason
+    from pydantic_ai.models.zai import ZaiModel
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
+
+    msg = ChatCompletionMessage(role='assistant', content='hello')
+    good_choice = Choice(finish_reason='stop', index=0, message=msg)
+    good_completion = chat.ChatCompletion(
+        id='789',
+        choices=[good_choice],
+        created=1704067200,
+        model='glm-5.2',
+        object='chat.completion',
+    )
+
+    model = ZaiModel('glm-5.2')
+    validated = model._validate_completion(good_completion)  # type: ignore[reportPrivateUsage]
+    v_choice = validated.choices[0]
+    mapped: FinishReason = model._map_finish_reason(v_choice.finish_reason)  # type: ignore[reportPrivateUsage, assignment]
+    assert mapped is not None
+    assert mapped == 'stop'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('raw_finish_reason', 'mapped_finish_reason'),
+    [
+        ('sensitive', 'content_filter'),
+        ('network_error', 'error'),
+    ],
+)
+async def test_zai_nonstd_finish_reason_stream(
+    raw_finish_reason: str,
+    mapped_finish_reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streaming path: non-standard terminal finish_reason passes widened validation.
+
+    Exercises the same three contracts as the non-stream test, but against the
+    `ZaiStreamedResponse` overrides used on the stream consumer side:
+
+      * `ZaiStreamedResponse._validate_response` re-validates every chunk through
+        the widened `_ZaiChatCompletionChunk` TypedDict; non-standard values on the
+        terminal chunk are accepted rather than raising `ValidationError`.
+      * `ZaiStreamedResponse._map_finish_reason` normalises the raw value onto the
+        standard pydantic-ai `FinishReason` enum.
+      * Text deltas from intermediate chunks continue to stream through (incremental
+        concatenation guard: `'hal' + 'f' == 'half'`).
+
+    As with the non-stream test this intentionally stops at the model override layer
+    rather than going through `Agent.run_stream()` — avoiding the conftest-wide
+    `ALLOW_MODEL_REQUESTS = False` dispatch gate.
+    """
+    from collections.abc import AsyncIterator
+    from typing import cast
+
+    from openai.types import chat
+
+    from pydantic_ai.messages import FinishReason
+    from pydantic_ai.models.zai import ZaiStreamedResponse
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
+
+    chunk_a = chat.ChatCompletionChunk.model_construct(
+        id='c1',
+        choices=[
+            chat.chat_completion_chunk.Choice.model_construct(
+                finish_reason=None,
+                index=0,
+                delta=chat.chat_completion_chunk.ChoiceDelta.model_construct(role='assistant', content='hal'),
+            )
+        ],
+        created=1704067200,
+        model='glm-5.2',
+        object='chat.completion.chunk',
+    )
+    chunk_b = chat.ChatCompletionChunk.model_construct(
+        id='c2',
+        choices=[
+            chat.chat_completion_chunk.Choice.model_construct(
+                finish_reason=raw_finish_reason,
+                index=0,
+                delta=chat.chat_completion_chunk.ChoiceDelta.model_construct(content='f'),
+            )
+        ],
+        created=1704067200,
+        model='glm-5.2',
+        object='chat.completion.chunk',
+    )
+
+    async def chunk_source() -> AsyncIterator[chat.ChatCompletionChunk]:
+        yield chunk_a
+        yield chunk_b
+
+    # The ZaiStreamedResponse dataclass just needs `_response` wired up as an async
+    # iterator for `_validate_response` to consume.  We bypass the public dataclass
+    # constructor here to avoid needing to satisfy the unrelated required fields
+    # inherited from `OpenAIStreamedResponse` (they're all dead code for the narrow
+    # override paths we're exercising).
+    #
+    # We use `object.__setattr__` (instead of `resp._response = ...`) for two strict
+    # pyright gates:
+    #   (1) `_response` is declared protected/private on the base dataclass — direct
+    #       assignment from outside the class triggers `reportPrivateUsage`.
+    #   (2) The strict `_response` field type is `PeekableAsyncStream[...]`; the
+    #       plain `AsyncIterator` we inject here is structurally sufficient for the
+    #       narrow `async for` usage in `_validate_response`, but fails pyright's
+    #       `reportAttributeAccessIssue` for the nominal Peekable wrapper type.
+    resp = object.__new__(ZaiStreamedResponse)
+    object.__setattr__(resp, '_response', chunk_source())
+
+    text_parts: list[str] = []
+    last_chunk: chat.ChatCompletionChunk | None = None
+    async for validated_chunk in resp._validate_response():  # type: ignore[reportPrivateUsage]
+        last_chunk = validated_chunk
+        if validated_chunk.choices:
+            delta = validated_chunk.choices[0].delta
+            # `delta` here is `ChoiceDelta` (not `ChoiceDelta | None`) — the base
+            # SDK constructors always materialise the delta attribute, so the
+            # `delta is not None` guard would otherwise fire
+            # `reportUnnecessaryComparison` under strict pyright.  We keep the
+            # `None`-guard on `getattr(..., content)` alone (which legitimately
+            # returns `None | str`), then `or ''` the result so appending to
+            # `list[str]` never has a `None`-typed argument — resolving
+            # `reportArgumentType` on the `append(...)` call below.
+            content: str = cast(str, getattr(delta, 'content', None)) or ''
+            if content:
+                text_parts.append(content)
+
+    # 1. Incremental deltas continue to stream through even when the terminal chunk
+    #    carries a non-standard finish_reason.
+    assert ''.join(text_parts) == 'half', 'Streamed text deltas must concatenate correctly'
+    assert last_chunk is not None
+    terminal_choice = last_chunk.choices[0]
+
+    # 2. Raw non-standard value survives widened chunk validation.
+    assert terminal_choice.finish_reason == raw_finish_reason
+
+    # 3. Normalisation maps to the standard pydantic-ai FinishReason str-Literal
+    #    (same lookup as non-stream — the two paths share `_ZAI_FINISH_REASON_MAP`).
+    mapped: FinishReason = ZaiStreamedResponse._map_finish_reason(  # type: ignore[reportPrivateUsage, reportArgumentType, assignment]
+        resp,
+        terminal_choice.finish_reason,  # type: ignore[reportArgumentType]
+    )
+    assert mapped is not None
+    assert mapped == mapped_finish_reason
+
+    # 4. The inherited provider-details helper stores the raw value on the terminal
+    #    chunk's choice via the same path the live dispatch uses (defined on the
+    #    shared OpenAI stream base).
+    stream_provider_details = resp._map_provider_details(last_chunk)  # type: ignore[reportPrivateUsage, arg-type]
+    assert stream_provider_details is not None
+    stream_raw = cast(dict[str, object], stream_provider_details).get('finish_reason')
+    assert stream_raw == raw_finish_reason
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+def test_zai_validate_completion_raises_unexpected_behavior_on_malformed_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed SDK completions are normalised to `UnexpectedModelBehavior` on the non-stream path.
+
+    Coverage contract: `ZaiModel._validate_completion` has an `except ValidationError`
+    branch (zai.py L210-L213) whose sole responsibility is to wrap Pydantic validation
+    failures raised by the widened `_ZaiChatCompletion` TypedDict, then re-raise as
+    `UnexpectedModelBehavior` with the same exception message the base class uses.
+
+    Without this test the exception-only branch is un-exercised and the repo-wide
+    `fail_under = 100` coverage rule (pyproject.toml L463) aborts the `coverage
+    report` step of the CI coverage job, which in turn marks the required `check`
+    aggregator red (`ci.yml` L592).
+    """
+    from unittest.mock import MagicMock
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.models.zai import ZaiModel
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
+
+    # Build a deliberately malformed payload: the `model_dump()` dict is missing
+    # three required top-level keys of the chat-completion TypedDict (`id`, `created`,
+    # `object`, and the `choices` list itself has the wrong shape), so
+    # `_ZaiChatCompletion.model_validate` MUST raise `ValidationError` and be caught
+    # and converted by the override.
+    bad = MagicMock(name='malformed-chat-completion')
+    bad.model_dump.return_value = {
+        # missing: id, created, object, model
+        'choices': [
+            {
+                # missing: index, message (role/content)
+                'finish_reason': 'stop',
+            }
+        ],
+    }
+
+    model = ZaiModel('glm-5.2')
+    with pytest.raises(UnexpectedModelBehavior, match=r'Invalid response from') as exc_info:
+        model._validate_completion(bad)  # type: ignore[reportPrivateUsage, arg-type]
+    assert exc_info.value.__cause__ is not None, 'The chain must preserve the original ValidationError'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+async def test_zai_stream_validate_response_raises_unexpected_behavior_on_malformed_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed streaming chunks are normalised to `UnexpectedModelBehavior`.
+
+    Streaming-path counterpart to `test_zai_validate_completion_raises_...`: covers
+    the `except ValidationError` branch inside `ZaiStreamedResponse._validate_response`
+    (zai.py L253-L254) which wraps pydantic-validation failures raised by the widened
+    `_ZaiChatCompletionChunk` TypedDict and re-raises as `UnexpectedModelBehavior`.
+
+    Same coverage-repo rule as the non-stream test: without hitting this except branch
+    the repo-wide fail_under=100 coverage rule marks the CI coverage job red.
+    """
+    from collections.abc import AsyncIterator
+    from unittest.mock import MagicMock
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.models.zai import ZaiStreamedResponse
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
+
+    async def bad_source() -> AsyncIterator[object]:
+        bad_chunk = MagicMock(name='malformed-chunk')
+        # Required fields missing on the chat-completion-chunk TypedDict shape:
+        # created / model / object are absent, the single choice has no index and
+        # the `delta` payload is malformed (no role for the first chunk, etc.).
+        bad_chunk.model_dump.return_value = {
+            'id': 'c-bad',
+            'choices': [{'finish_reason': 'stop'}],  # missing: index, delta
+        }
+        yield bad_chunk
+
+    resp = object.__new__(ZaiStreamedResponse)
+    object.__setattr__(resp, '_model_name', 'glm-5.2')
+    object.__setattr__(resp, '_response', bad_source())
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Invalid response from') as exc_info:
+        async for _ in resp._validate_response():  # type: ignore[reportPrivateUsage]
+            # We never reach the loop body — the very first chunk is malformed, so
+            # `_ZaiChatCompletionChunk.model_validate` raises ValidationError, which
+            # the override converts and raises on the spot.
+            pytest.fail('_validate_response should have raised UnexpectedModelBehavior on the malformed chunk')
+    assert exc_info.value.__cause__ is not None, 'The chain must preserve the original ValidationError'
