@@ -42,7 +42,9 @@ except ImportError as _import_error:  # pragma: no cover
 # streaming constructor is lenient so streams never crash on them, but we still need the
 # widened Literal below so the validated chunk type is accurate.
 _ZAI_EXTRA_FINISH_REASONS = Literal['sensitive', 'network_error']
-_ZAI_FINISH_REASON = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call', 'sensitive', 'network_error']
+_ZAI_FINISH_REASON = Literal[
+    'stop', 'length', 'tool_calls', 'content_filter', 'function_call', 'sensitive', 'network_error'
+]
 
 
 class _ZaiChoice(chat_completion.Choice):
