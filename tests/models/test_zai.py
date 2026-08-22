@@ -559,9 +559,7 @@ async def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped
     base = completion_message(msg)
     finish_reason_value = cast(Any, raw_finish_reason)
     bad_choice = Choice(finish_reason=finish_reason_value, index=0, message=msg)
-    bad_completion = base.__class__(
-        **{**base.model_dump(), 'choices': [bad_choice], 'model': 'glm-5.2'}
-    )
+    bad_completion = base.__class__(**{**base.model_dump(), 'choices': [bad_choice], 'model': 'glm-5.2'})
 
     mock_client = MockOpenAI.create_mock(bad_completion)
     provider = ZaiProvider(openai_client=mock_client)
@@ -668,4 +666,3 @@ async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_fi
         assert response.finish_reason == mapped_finish_reason
         assert response.provider_details is not None
         assert response.provider_details.get('finish_reason') == raw_finish_reason
-
