@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -155,10 +155,8 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
             return False
         return self.allowed_x_handles is not None or self.excluded_x_handles is not None
 
-    def _resolved_native(self) -> XSearchTool:
+    def _resolved_native(
+        self,
+    ) -> XSearchTool | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]:
         """Get the XSearchTool for the fallback, with capability-level overrides applied."""
-        base = self.native if isinstance(self.native, XSearchTool) else XSearchTool()
-        overrides = self._xsearch_kwargs()
-        if not overrides:
-            return base
-        return replace(base, **overrides)
+        return self._resolve_native_with_overrides(XSearchTool, self._xsearch_kwargs())

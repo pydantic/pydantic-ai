@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.exceptions import UserError
@@ -27,8 +27,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     Image generation settings (`quality`, `size`, etc.) are forwarded to the
     [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] used by
     both the native and the local fallback subagent. When passing a custom `native`
-    instance, its settings are also used for the fallback subagent; capability-level
-    fields override any `native` instance settings.
+    instance or factory, its settings are also used for the fallback subagent; capability-level
+    fields override any `native` settings.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -189,13 +189,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
 
-    def _resolved_native(self) -> ImageGenerationTool:
+    def _resolved_native(
+        self,
+    ) -> (
+        ImageGenerationTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
+    ):
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
-        base = self.native if isinstance(self.native, ImageGenerationTool) else ImageGenerationTool()
-        overrides = self._image_gen_kwargs()
-        if not overrides:
-            return base
-        return replace(base, **overrides)
+        return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         if self.fallback_model is None:
