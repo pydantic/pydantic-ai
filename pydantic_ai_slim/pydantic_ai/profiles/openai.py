@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -390,7 +390,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
     return OpenAIModelProfile(
-        json_schema_transformer=OpenAIJsonSchemaTransformer,
+        json_schema_transformer=OpenAINativeJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
@@ -499,6 +499,11 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     * all fields in properties must be marked as required
     """
 
+    strict_supports_length_constraints: ClassVar[bool] = False
+    """Whether the API accepts `minLength`/`maxLength` in strict mode. OpenAI itself does, but this
+    transformer is shared by OpenAI-compatible APIs that may not (e.g. DeepSeek documents them as
+    unsupported), so it's opt-in."""
+
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict)
         self.root_ref = schema.get('$ref')
@@ -544,6 +549,8 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # Track strict-incompatible keys
         incompatible_values: dict[str, Any] = {}
         for key in _STRICT_INCOMPATIBLE_KEYS:
+            if self.strict_supports_length_constraints and key in ('minLength', 'maxLength'):
+                continue
             value = schema.get(key, _sentinel)
             if value is not _sentinel:
                 incompatible_values[key] = value
@@ -620,3 +627,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 elif self.strict is None:  # pragma: no branch
                     self.is_strict_compatible = False
         return schema
+
+
+class OpenAINativeJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    """For OpenAI's own API, which supports `minLength`/`maxLength` in strict mode."""
+
+    strict_supports_length_constraints = True
