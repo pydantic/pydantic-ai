@@ -783,3 +783,94 @@ async def test_zai_nonstd_finish_reason_stream(
     assert stream_provider_details is not None
     stream_raw = cast(dict[str, object], stream_provider_details).get('finish_reason')
     assert stream_raw == raw_finish_reason
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+def test_zai_validate_completion_raises_unexpected_behavior_on_malformed_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed SDK completions are normalised to `UnexpectedModelBehavior` on the non-stream path.
+
+    Coverage contract: `ZaiModel._validate_completion` has an ``except ValidationError``
+    branch (zai.py L210-L213) whose sole responsibility is to wrap Pydantic validation
+    failures raised by the widened `_ZaiChatCompletion` TypedDict, then re-raise as
+    `UnexpectedModelBehavior` with the same exception message the base class uses.
+
+    Without this test the exception-only branch is un-exercised and the repo-wide
+    ``fail_under = 100`` coverage rule (pyproject.toml L463) aborts the `coverage
+    report` step of the CI coverage job, which in turn marks the required ``check``
+    aggregator red (``ci.yml`` L592).
+    """
+    from unittest.mock import MagicMock
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.models.zai import ZaiModel
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
+
+    # Build a deliberately malformed payload: the `model_dump()` dict is missing
+    # three required top-level keys of the chat-completion TypedDict (`id`, `created`,
+    # `object`, and the `choices` list itself has the wrong shape), so
+    # `_ZaiChatCompletion.model_validate` MUST raise `ValidationError` and be caught
+    # and converted by the override.
+    bad = MagicMock(name='malformed-chat-completion')
+    bad.model_dump.return_value = {
+        # missing: id, created, object, model
+        'choices': [
+            {
+                # missing: index, message (role/content)
+                'finish_reason': 'stop',
+            }
+        ],
+    }
+
+    model = ZaiModel('glm-5.2')
+    with pytest.raises(UnexpectedModelBehavior, match=r'Invalid response from') as exc_info:
+        model._validate_completion(bad)  # type: ignore[reportPrivateUsage, arg-type]
+    assert exc_info.value.__cause__ is not None, 'The chain must preserve the original ValidationError'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+async def test_zai_stream_validate_response_raises_unexpected_behavior_on_malformed_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed streaming chunks are normalised to `UnexpectedModelBehavior`.
+
+    Streaming-path counterpart to `test_zai_validate_completion_raises_...`: covers
+    the ``except ValidationError`` branch inside `ZaiStreamedResponse._validate_response`
+    (zai.py L253-L254) which wraps pydantic-validation failures raised by the widened
+    `_ZaiChatCompletionChunk` TypedDict and re-raises as `UnexpectedModelBehavior`.
+
+    Same coverage-repo rule as the non-stream test: without hitting this except branch
+    the repo-wide fail_under=100 coverage rule marks the CI coverage job red.
+    """
+    from collections.abc import AsyncIterator
+    from unittest.mock import MagicMock
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.models.zai import ZaiStreamedResponse
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
+
+    async def bad_source() -> AsyncIterator[object]:
+        bad_chunk = MagicMock(name='malformed-chunk')
+        # Required fields missing on the chat-completion-chunk TypedDict shape:
+        # created / model / object are absent, the single choice has no index and
+        # the `delta` payload is malformed (no role for the first chunk, etc.).
+        bad_chunk.model_dump.return_value = {
+            'id': 'c-bad',
+            'choices': [{'finish_reason': 'stop'}],  # missing: index, delta
+        }
+        yield bad_chunk
+
+    resp = object.__new__(ZaiStreamedResponse)
+    object.__setattr__(resp, '_model_name', 'glm-5.2')
+    object.__setattr__(resp, '_response', bad_source())
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Invalid response from') as exc_info:
+        async for _ in resp._validate_response():  # type: ignore[reportPrivateUsage]
+            # We never reach the loop body — the very first chunk is malformed, so
+            # `_ZaiChatCompletionChunk.model_validate` raises ValidationError, which
+            # the override converts and raises on the spot.
+            pytest.fail('_validate_response should have raised UnexpectedModelBehavior on the malformed chunk')
+    assert exc_info.value.__cause__ is not None, 'The chain must preserve the original ValidationError'
