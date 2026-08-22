@@ -1081,6 +1081,89 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
     assert 'Do not remove the attention labels' in text
 
 
+class CensusClient(FakeClient):
+    """Search counts only: the whole surface the coverage heartbeat touches."""
+
+    def __init__(self, counts: dict[str, int], *, stalest: dict[str, Any] | None = None) -> None:
+        super().__init__()
+        self.counts = counts
+        self.stalest = stalest
+
+    def get(self, path: str) -> Any:
+        self.calls.append(('GET', path, None))
+        assert path.startswith('/search/issues?')
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+        terms = query['q'][0]
+        if '-label:' in terms:
+            # The probe must exclude both queue labels *and* assigned items, or
+            # it reports something a maintainer already owns as unattended.
+            assert terms == (
+                'repo:pydantic/pydantic-ai is:open no:assignee '
+                f'-label:"{monitor._ACTION_LABEL}" -label:"{monitor._ESCALATED_LABEL}"'
+            )
+            assert query['sort'] == ['updated'] and query['order'] == ['asc']
+            return {'total_count': 1 if self.stalest else 0, 'items': [self.stalest] if self.stalest else []}
+        return {'total_count': self.counts[terms], 'items': []}
+
+
+CENSUS_COUNTS = {
+    'repo:pydantic/pydantic-ai is:issue is:open': 361,
+    'repo:pydantic/pydantic-ai is:pr is:open': 141,
+    f'repo:pydantic/pydantic-ai is:open label:"{monitor._ACTION_LABEL}"': 14,
+    f'repo:pydantic/pydantic-ai is:open label:"{monitor._ESCALATED_LABEL}"': 9,
+    'repo:pydantic/pydantic-ai is:open no:assignee': 274,
+}
+
+
+def test_census_counts_coverage_without_fetching_or_writing_anything():
+    client = CensusClient(CENSUS_COUNTS, stalest={'number': 4812, 'updated_at': '2025-06-03T00:00:00Z'})
+
+    assert monitor.census(client, 'pydantic/pydantic-ai', now=NOW) == (
+        ':telescope: Attention coverage for pydantic/pydantic-ai — 361 issues + 141 PRs open; '
+        'queue: 14 active, 9 cooling; 274 unassigned; most stale unattended: #4812 (idle 412d).'
+    )
+    # Count-only by construction: no writes, no pagination, no per-item reads.
+    assert {method for method, _, _ in client.calls} == {'GET'}
+    assert all(
+        urllib.parse.parse_qs(urllib.parse.urlparse(path).query)['per_page'] == ['1'] for _, path, _ in client.calls
+    )
+
+
+def test_census_reports_an_empty_unattended_backlog():
+    client = CensusClient(CENSUS_COUNTS)
+
+    assert monitor.census(client, 'pydantic/pydantic-ai', now=NOW).endswith('274 unassigned; no unattended items.')
+
+
+def test_coverage_output_is_one_plain_text_slack_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / 'github-output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    text = ':telescope: Attention coverage for pydantic/pydantic-ai — no unattended items.'
+
+    monitor._write_coverage(text)
+
+    values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
+    assert json.loads(values['slack_payload']) == {'text': text}
+
+
+def test_census_mode_writes_the_heartbeat_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / 'github-output'
+    monkeypatch.setattr(monitor, 'GitHubClient', lambda token: CensusClient(CENSUS_COUNTS))
+    monkeypatch.setattr(sys, 'argv', ['issue_pr_attention_monitor.py', 'census'])
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+
+    assert monitor.main() == 0
+
+    values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
+    assert json.loads(values['slack_payload']) == {
+        'text': ':telescope: Attention coverage for pydantic/pydantic-ai — 361 issues + 141 PRs open; '
+        'queue: 14 active, 9 cooling; 274 unassigned; no unattended items.'
+    }
+
+
 def test_reconcile_rejects_a_foreign_stage_label():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
     client.timelines[7] = [
@@ -1685,12 +1768,34 @@ def test_operations_workflow_routes_all_notices_to_the_triage_channel():
     assert jobs['reconcile']['permissions']['pull-requests'] == 'write'
     assert jobs['notify']['permissions']['pull-requests'] == 'read'
     assert jobs['finalize']['permissions']['pull-requests'] == 'write'
-    for job_name in ('reconcile', 'notify', 'finalize'):
+    for job_name in ('reconcile', 'notify', 'finalize', 'coverage'):
         checkout = next(
             step for step in jobs[job_name]['steps'] if step.get('uses', '').startswith('actions/checkout@')
         )
         assert checkout['with']['repository'] == '${{ job.workflow_repository }}'
         assert checkout['with']['ref'] == '${{ job.workflow_sha }}'
+        assert checkout['with']['persist-credentials'] is False
+
+
+def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
+    workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
+    text = workflow.read_text()
+    jobs = yaml.safe_load(text)['jobs']
+
+    assert "- cron: '47 6 * * *'" in text
+    assert 'issue_pr_attention_monitor.py census' in text
+    assert 'steps.census.outputs.slack_payload' in text
+    # The heartbeat may follow the pipeline's ordering, so the two search bursts
+    # do not collide, but must never inherit its silence or its failures.
+    assert jobs['coverage']['needs'] == ['reconcile']
+    assert jobs['coverage']['if'] == (
+        '${{ !cancelled() && '
+        "(github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') && "
+        "(github.event.schedule == '47 6 * * *' || github.event_name == 'workflow_dispatch') }}"
+    )
+    assert jobs['coverage']['environment'] == 'pydantic-ai-triage'
+    assert jobs['coverage']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
+    assert 'coverage' in jobs['alert']['needs']
 
 
 def test_monitor_imports_with_stdlib_only():

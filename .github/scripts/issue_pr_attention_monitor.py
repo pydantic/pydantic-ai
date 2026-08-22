@@ -1180,6 +1180,51 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
             output.write(f'slack_payload={json.dumps(payload, separators=(",", ":"))}\n')
 
 
+def _search_count(client: GitHubClient, query: str) -> int:
+    """Return how many items match, without fetching any of them."""
+    # `total_count` is the full match count even though a search page stops at
+    # 1000 results, so one per_page=1 request answers a repository-wide count.
+    result = cast(dict[str, Any], client.get(f'/search/issues?q={urllib.parse.quote_plus(query)}&per_page=1'))
+    return int(result.get('total_count') or 0)
+
+
+def _stalest_unattended(client: GitHubClient, repo: str, *, now: dt.datetime) -> tuple[int, int] | None:
+    query = f'repo:{repo} is:open no:assignee -label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
+    result = cast(
+        dict[str, Any],
+        client.get(f'/search/issues?q={urllib.parse.quote_plus(query)}&sort=updated&order=asc&per_page=1'),
+    )
+    items = cast(list[dict[str, Any]], result.get('items') or [])
+    if not items:
+        return None
+    idle = max(0, (now - _parse_time(str(items[0]['updated_at']))).days)
+    return int(items[0]['number']), idle
+
+
+def census(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
+    """Build the unconditional daily coverage line, so silence becomes visible."""
+    issues = _search_count(client, f'repo:{repo} is:issue is:open')
+    pulls = _search_count(client, f'repo:{repo} is:pr is:open')
+    active = _search_count(client, f'repo:{repo} is:open label:"{_ACTION_LABEL}"')
+    cooling = _search_count(client, f'repo:{repo} is:open label:"{_ESCALATED_LABEL}"')
+    unassigned = _search_count(client, f'repo:{repo} is:open no:assignee')
+    stalest = _stalest_unattended(client, repo, now=now)
+    # Counts and item numbers only: the heartbeat must stay free of issue and PR
+    # prose, which is attacker-controlled text.
+    tail = f'most stale unattended: #{stalest[0]} (idle {stalest[1]}d).' if stalest else 'no unattended items.'
+    return (
+        f':telescope: Attention coverage for {_slack_escape(repo)} — '
+        f'{issues} issues + {pulls} PRs open; queue: {active} active, {cooling} cooling; '
+        f'{unassigned} unassigned; {tail}'
+    )
+
+
+def _write_coverage(text: str) -> None:
+    if output_path := os.environ.get('GITHUB_OUTPUT'):
+        with Path(output_path).open('a', encoding='utf-8') as output:
+            output.write(f'slack_payload={json.dumps({"text": text}, separators=(",", ":"))}\n')
+
+
 _LOGIN_PATTERN = re.compile(r'(?=.{1,39}\Z)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?')
 
 
@@ -1352,7 +1397,7 @@ def _write_summary(lines: Sequence[str]) -> None:
 def main() -> int:
     """Build a snapshot, apply decisions, or reconcile reminders."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'prepare', 'finalize'])
+    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'prepare', 'finalize', 'census'])
     parser.add_argument('--snapshot-path', default='attention-candidates.json')
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
@@ -1381,6 +1426,10 @@ def main() -> int:
         notices = prepare_notices(client, repo, _notice_refs(json.loads(source)), now=now)
         _write_notices(repo, notices)
         lines = [f'prepared {len(notices)} current attention notice(s)']
+    elif args.mode == 'census':
+        coverage = census(client, repo, now=now)
+        _write_coverage(coverage)
+        lines = [coverage]
     else:
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:

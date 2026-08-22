@@ -558,6 +558,17 @@ def test_json_schema_test_data_additional():
     TestModel.model_validate(data)
 
 
+def test_json_schema_test_data_equal_inclusive_bounds():
+    class TestModel(BaseModel):
+        my_int_eq: Annotated[int, Ge(7), Le(7)]
+        my_float_eq: Annotated[float, Ge(7.5), Le(7.5)]
+
+    json_schema = TestModel.model_json_schema()
+    data = _JsonSchemaTestData(json_schema).generate()
+    assert data == snapshot({'my_int_eq': 7, 'my_float_eq': 7.5})
+    TestModel.model_validate(data)
+
+
 def test_chars_wrap():
     class TestModel(BaseModel):
         a: Annotated[set[str], MinLen(4)]
@@ -585,6 +596,32 @@ def test_max_items():
     }
     data = _JsonSchemaTestData(json_schema).generate()
     assert data == snapshot([])
+
+
+@pytest.mark.parametrize('const', ['', False, 0, None])
+def test_json_schema_test_data_falsy_const(const: Any) -> None:
+    schema = {
+        'type': 'object',
+        'required': ['value'],
+        'properties': {'value': {'const': const}},
+    }
+
+    assert _JsonSchemaTestData(schema).generate() == {'value': const}
+
+
+def test_falsy_const_tool_args() -> None:
+    """Regression test for #7629: falsy JSON Schema `const` values must be generated as-is."""
+
+    agent = Agent()
+    calls: list[dict[str, Any]] = []
+
+    @agent.tool_plain
+    def my_tool(empty: Literal[''], flag: Literal[False], zero: Literal[0]) -> str:
+        calls.append({'empty': empty, 'flag': flag, 'zero': zero})
+        return 'ok'
+
+    agent.run_sync('hello', model=TestModel())
+    assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
 
 
 @pytest.mark.parametrize(

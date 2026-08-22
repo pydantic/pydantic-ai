@@ -18,7 +18,7 @@ rules:
       - at-claude.yml
       - bots.yml
       - ci.yml
-      - docs-preview.yml
+      - docs-navigation.yml
       - manually-deploy-docs.yml
       # gh-aw-generated agentic workflow lockfiles (see
       # .github/workflows/README-pydantic-ai-agents.md). gh-aw injects API /

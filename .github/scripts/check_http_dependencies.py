@@ -54,6 +54,17 @@ assert any(
     requirement.name == 'httpx2' and requirement.specifier.contains('2.7') for requirement in openai_dependencies
 )
 
+anthropic_requirements = [requirement for requirement in slim if requirement.name == 'anthropic']
+assert len(anthropic_requirements) == 1
+assert anthropic_requirements[0].specifier.contains('1.0.0')
+assert str(anthropic_requirements[0].marker) == 'extra == "anthropic"'
+
+anthropic_dependencies = [Requirement(value) for value in requires('anthropic') or []]
+assert not any(requirement.name == 'httpx' for requirement in anthropic_dependencies)
+assert any(
+    requirement.name == 'httpx2' and requirement.specifier.contains('2.7') for requirement in anthropic_dependencies
+)
+
 google_extras = {'google', 'google-realtime'}
 google_requirements = [requirement for requirement in slim if requirement.name == 'google-genai']
 assert len(google_requirements) == len(google_extras)

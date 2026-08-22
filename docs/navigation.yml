@@ -294,6 +294,10 @@ navigation:
             path: "browser-use.md"
             source: "harness"
             slug: "harness/browser-use"
+          - page: "Playwright Browser"
+            path: "playwright.md"
+            source: "harness"
+            slug: "harness/playwright"
       - section: "Reasoning, Planning & Delegation"
         slug: ""
         contents:
