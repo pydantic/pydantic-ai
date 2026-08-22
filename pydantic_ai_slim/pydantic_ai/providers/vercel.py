@@ -98,7 +98,7 @@ class VercelProvider(_OpenAICompatibleProvider):
                 'or pass the API key via `VercelProvider(api_key=...)` to use the Vercel provider.'
             )
 
-        default_headers = {'http-referer': 'https://ai.pydantic.dev/', 'x-title': 'pydantic-ai'}
+        default_headers = {'http-referer': 'https://pydantic.dev/docs/ai/', 'x-title': 'pydantic-ai'}
 
         if openai_client is not None:
             self._client = openai_client

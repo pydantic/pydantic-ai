@@ -86,9 +86,9 @@ google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
 xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
 
 [project.urls]
-Homepage = "https://ai.pydantic.dev"
+Homepage = "https://pydantic.dev/docs/ai/"
 Source = "https://github.com/pydantic/pydantic-ai"
-Documentation = "https://ai.pydantic.dev"
+Documentation = "https://pydantic.dev/docs/ai/"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.scripts]

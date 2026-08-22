@@ -288,7 +288,7 @@ Key facts for building realtime agents:
   audio; the sideband session runs tools and builds history (its audio methods raise, and
   `audio_retention` must stay `'transcript_only'`).
 
-See the [Realtime guide](https://ai.pydantic.dev/realtime/) for the full walkthrough.
+See the [Realtime guide](https://pydantic.dev/docs/ai/realtime/overview/) for the full walkthrough.
 
 ## Task Routing Table
 
