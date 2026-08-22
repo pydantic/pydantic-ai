@@ -464,8 +464,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Google (Gemini API and Google Cloud)
     * Bedrock
-    * Cerebras (sent and enum-validated, but the tiers are in private preview, so no effect is
-      observable without access)
+    * Cerebras (sent and enum-validated — HTTP 200 on an ordinary key; the tiers are in private
+      preview, so no effect is observable without access)
     * Crusoe
     * Ollama
     * OpenRouter

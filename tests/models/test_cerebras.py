@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 from inline_snapshot import snapshot
@@ -12,6 +12,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
+from pydantic_ai.settings import ServiceTier
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import iter_message_parts, try_import
@@ -100,6 +101,30 @@ async def test_cerebras_forwards_settings_the_api_honors(
     await model_request(model, prompt, model_settings=tier_settings, model_request_parameters=params)
 
     assert request_capture.body('/chat/completions', index=1)['service_tier'] == snapshot('priority')
+
+
+async def test_cerebras_accepts_every_service_tier(allow_model_requests: None, cerebras_api_key: str, vcr: Cassette):
+    """Every `ServiceTier` value is HTTP 200 on an ordinary Cerebras key.
+
+    Tiers are in Private Preview, so whether a request *gets* that tier is gated. Acceptance is
+    not: `auto` / `default` / `flex` / `priority` all 200 rather than 400.
+    """
+    provider = CerebrasProvider(api_key=cerebras_api_key)
+    model = CerebrasModel('gemma-4-31b', provider=provider)
+    prompt = [ModelRequest.user_text_prompt('Reply with the single word ok.')]
+    tiers = get_args(ServiceTier)
+
+    for tier in tiers:
+        await model_request(model, prompt, model_settings=CerebrasModelSettings(service_tier=tier))
+
+    recorded_requests = vcr.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    sent = [
+        json.loads(request.body).get('service_tier')  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        for request in recorded_requests  # pyright: ignore[reportUnknownVariableType]
+    ]
+    assert sent == list(tiers)
+    recorded_responses = vcr.responses  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    assert [response['status']['code'] for response in recorded_responses] == [200] * len(tiers)  # pyright: ignore[reportUnknownVariableType]
 
 
 async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str, vcr: Cassette):
