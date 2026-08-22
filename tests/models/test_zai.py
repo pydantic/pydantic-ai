@@ -542,24 +542,35 @@ async def test_zai_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped
     Without the `_ZaiChatCompletion` widening + `ZaiModel._validate_completion` override,
     this test would crash with `UnexpectedModelBehavior` during the model_validate step.
     """
-    from typing import cast
-
+    from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.zai import ZaiProvider
 
-    from .mock_openai import MockOpenAI, completion_message
+    from .mock_openai import MockOpenAI
 
     # Build a completion whose Choice uses a non-standard `finish_reason` string.
-    # The SDK constructor accepts arbitrary strings here (pydantic model_validate lenient mode),
-    # so the raw value survives all the way to the pydantic-ai re-validation gate.
+    #
+    # We intentionally use `model_construct()` (bypassing Pydantic field validation)
+    # because the public constructors of `Choice` and `ChatCompletion` validate
+    # `finish_reason` against the strict OpenAI Literal and reject values like
+    # `sensitive` / `network_error` with `ValidationError` before pydantic-ai even
+    # sees them.  The real Z.AI SDK path does *not* build these objects via the
+    # public constructor (it deserialises JSON through the transport layer), so
+    # `model_construct` is the faithful mock: the non-standard value survives all
+    # the way to the `ZaiModel._validate_completion` gate, which is exactly the
+    # override we want to exercise.
     msg = ChatCompletionMessage(role='assistant', content='blocked')
-    base = completion_message(msg)
-    finish_reason_value = cast(Any, raw_finish_reason)
-    bad_choice = Choice(finish_reason=finish_reason_value, index=0, message=msg)
-    bad_completion = base.__class__(**{**base.model_dump(), 'choices': [bad_choice], 'model': 'glm-5.2'})
+    bad_choice = Choice.model_construct(finish_reason=raw_finish_reason, index=0, message=msg)
+    bad_completion = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[bad_choice],
+        created=1704067200,  # 2024-01-01
+        model='glm-5.2',
+        object='chat.completion',
+    )
 
     mock_client = MockOpenAI.create_mock(bad_completion)
     provider = ZaiProvider(openai_client=mock_client)
@@ -609,9 +620,7 @@ async def test_zai_standard_finish_reasons_still_map_nonstream():
 )
 async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_finish_reason: str):
     """Non-standard Z.AI finish_reasons on the terminal stream chunk are handled cleanly."""
-    from typing import cast
-
-    from openai.types.chat import chat_completion_chunk
+    from openai.types import chat
 
     from pydantic_ai import ModelResponse
     from pydantic_ai.models.zai import ZaiModel
@@ -619,27 +628,26 @@ async def test_zai_nonstd_finish_reason_stream(raw_finish_reason: str, mapped_fi
 
     from .mock_openai import MockOpenAI
 
-    finish_reason_cast = cast(Any, raw_finish_reason)
-    chunk_a = chat_completion_chunk.ChatCompletionChunk(
+    chunk_a = chat.ChatCompletionChunk.model_construct(
         id='c1',
         choices=[
-            chat_completion_chunk.Choice(
+            chat.chat_completion_chunk.Choice.model_construct(
                 finish_reason=None,
                 index=0,
-                delta=chat_completion_chunk.ChoiceDelta(role='assistant', content='hal'),
+                delta=chat.chat_completion_chunk.ChoiceDelta.model_construct(role='assistant', content='hal'),
             )
         ],
         created=1704067200,
         model='glm-5.2',
         object='chat.completion.chunk',
     )
-    chunk_b = chat_completion_chunk.ChatCompletionChunk(
+    chunk_b = chat.ChatCompletionChunk.model_construct(
         id='c2',
         choices=[
-            chat_completion_chunk.Choice(
-                finish_reason=finish_reason_cast,
+            chat.chat_completion_chunk.Choice.model_construct(
+                finish_reason=raw_finish_reason,
                 index=0,
-                delta=chat_completion_chunk.ChoiceDelta(content='f'),
+                delta=chat.chat_completion_chunk.ChoiceDelta.model_construct(content='f'),
             )
         ],
         created=1704067200,
