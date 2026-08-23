@@ -1247,31 +1247,79 @@ async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
     ]
 
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (first_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': first_message_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_0',
+                'toolCallName': 'tool_a',
+                'parentMessageId': first_message_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_0', 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'call_0'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (second_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': second_message_id,
+                'delta': 'Note this. ',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': second_message_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call_1',
+                'toolCallName': 'tool_b',
+                'parentMessageId': second_message_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'call_1', 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'call_1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_0',
+                'content': 'A result',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_1',
+                'content': 'B result',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
     announced_ids = [event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START']
-    assert len(announced_ids) == 2
-    first_message_id, second_message_id = announced_ids
-    assert first_message_id != second_message_id
-
-    # The first message is announced empty and closed before its tool call streams.
-    first_end_index = next(
-        i
-        for i, event in enumerate(events)
-        if event['type'] == 'TEXT_MESSAGE_END' and event['messageId'] == first_message_id
-    )
-    first_call_start_index = next(
-        i for i, event in enumerate(events) if event['type'] == 'TOOL_CALL_START' and event['toolCallId'] == 'call_0'
-    )
-    assert first_end_index < first_call_start_index
-    assert not any(
-        event['type'] == 'TEXT_MESSAGE_CONTENT' and event['messageId'] == first_message_id for event in events
-    )
-
-    # The two tool calls parent different assistant messages, the second to the text's message.
-    tool_call_parents = {
-        event['toolCallId']: event['parentMessageId'] for event in events if event['type'] == 'TOOL_CALL_START'
-    }
-    assert tool_call_parents == {'call_0': first_message_id, 'call_1': second_message_id}
-
     streamed_boundaries = [
         (
             ''.join(
@@ -1287,8 +1335,6 @@ async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
         )
         for message_id in announced_ids
     ]
-    assert streamed_boundaries == [('', ['call_0']), ('Note this. ', ['call_1'])]
-
     equivalent_response = ModelResponse(
         parts=[
             ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'),
