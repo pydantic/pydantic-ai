@@ -914,7 +914,6 @@ async def test_zai_stream_no_terminal_finish_reason_chunk(
     from typing import TypeVar
 
     _T = TypeVar('_T', bound=OpenAIStreamedResponse)
-    _async_timeout: Any = getattr(asyncio, 'timeout')
 
     MODEL = 'glm-5.2'
 
@@ -971,12 +970,10 @@ async def test_zai_stream_no_terminal_finish_reason_chunk(
         return ''.join(collected), reason, len(collected)
 
     async def timed_consume_zai() -> tuple[str, object, int]:
-        async with _async_timeout(5):
-            return await consume(ZaiStreamedResponse)
+        return await asyncio.wait_for(consume(ZaiStreamedResponse), timeout=5)
 
     async def timed_consume_openai() -> tuple[str, object, int]:
-        async with _async_timeout(5):
-            return await consume(OpenAIStreamedResponse)
+        return await asyncio.wait_for(consume(OpenAIStreamedResponse), timeout=5)
 
     zai_body: str
     zai_reason: object
