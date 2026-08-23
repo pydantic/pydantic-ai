@@ -616,19 +616,22 @@ class TestWaitRetryAfter:
         fallback.assert_not_called()
 
     def test_retry_after_asctime_date_format(self):
-        """Asctime HTTP dates are timezone-naive but represent UTC per RFC 9110."""
+        """Asctime HTTP dates are timezone-naive but represent UTC per RFC 9110.
+
+        This tests deterministic local header parsing; no provider request is involved.
+        """
         fallback = Mock(return_value=1.0)
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
         retry_time = datetime.now(timezone.utc).timestamp() + 30
         retry_after = datetime.fromtimestamp(retry_time, timezone.utc).strftime('%a %b %d %H:%M:%S %Y')
 
-        request = httpx.Request('GET', 'https://example.com')
-        response = Mock(spec=httpx.Response)
-        response.headers = {'retry-after': retry_after}
-        http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
+        request = httpx2.Request('GET', 'https://example.com')
+        response = httpx2.Response(429, headers={'retry-after': retry_after}, request=request)
+        with pytest.raises(httpx2.HTTPStatusError) as exc_info:
+            response.raise_for_status()
         retry_state = Mock(spec=RetryCallState)
         retry_state.outcome = Mock()
-        retry_state.outcome.exception.return_value = http_error
+        retry_state.outcome.exception.return_value = exc_info.value
 
         assert 25 <= wait_func(retry_state) <= 35
         fallback.assert_not_called()
