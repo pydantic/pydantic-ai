@@ -111,7 +111,7 @@ README, or source code.
   re-records the cassette in the same PR
   (`uv run --env-file .env --no-sync pytest -p no:cacheprovider <test> --record-mode=rewrite`) —
   a green replay of a stale cassette proves nothing about the new definition.
-- `make lint`, `make typecheck`, and `make test` pass before handoff.
+- Run the local verification commands in `AGENTS.md` before handoff.
 
 ## Docs
 
