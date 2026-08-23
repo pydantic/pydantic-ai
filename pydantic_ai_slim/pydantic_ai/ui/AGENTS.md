@@ -38,6 +38,14 @@ history ([#7527](https://github.com/pydantic/pydantic-ai/issues/7527)). Close
 that pair on the spot: the AG-UI event verifier rejects `RUN_FINISHED` while a
 text message is still open.
 
+That content-free pair is not the shape [#2754](https://github.com/pydantic/pydantic-ai/pull/2754)
+removed. Those `THINKING_TEXT_MESSAGE_*` envelopes carried no ID anyone needed —
+thinking already has an outer `THINKING_START`/`THINKING_END` envelope, so the
+inner empty message signalled state and nothing else. An assistant message has no
+outer envelope, so `TEXT_MESSAGE_START` is the only event that can name its ID,
+which is the thing a consumer needs. Emit an empty envelope only when it carries
+something; here it carries the identity.
+
 Native tool returns differ because another native call can follow inside the
 same model response. That path uses a one-off result ID without replacing the
 response parent; regular tool results intentionally retain the request-turn ID

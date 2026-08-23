@@ -1102,6 +1102,11 @@ async def test_tool_only_response_announces_its_assistant_message() -> None:
     Before [#7527](https://github.com/pydantic/pydantic-ai/issues/7527) `parentMessageId` named a
     message no event had started, so a client rebuilding history from the event stream alone had
     nothing to attach the tool call to.
+
+    The announcement leaves the reconstructed message set unchanged: the pinned reducer's
+    `resolveOrCreateAssistantMessage` created that assistant message from `TOOL_CALL_START` alone
+    (case 3), and now resolves the announced one instead (case 1):
+    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L53-L92
     """
 
     async def local_weather(location: str) -> str:
@@ -1189,6 +1194,29 @@ async def test_tool_only_response_announces_its_assistant_message() -> None:
     )
 
     assert message_id != text_message_id
+
+    # The announced message replays as client history without contributing a part: `load_messages`
+    # skips its empty `content`, so the reconstructed response is the tool call alone. Relaxing that
+    # guard would put an empty `TextPart` in every tool-only response's reloaded history.
+    announced_id = next(event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START')
+    tool_call_start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
+    replayed = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id=announced_id,
+                content='',
+                tool_calls=[
+                    ToolCall(
+                        id=tool_call_start['toolCallId'],
+                        function=FunctionCall(name=tool_call_start['toolCallName'], arguments='{"location": "Paris"}'),
+                    )
+                ],
+            )
+        ]
+    )
+    assert [part for message in replayed for part in message.parts] == snapshot(
+        [ToolCallPart(tool_name='local_weather', args='{"location": "Paris"}', tool_call_id=IsStr())]
+    )
 
 
 async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
@@ -5764,6 +5792,11 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
 def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Message]:
     """Build the client tool history needed to round-trip tool-result metadata.
 
+    The assistant message carries `content=''` because the stream announces it with a
+    `TEXT_MESSAGE_START`, which the reducer materializes as `{id, role, content: ''}` before
+    resolving the tool call onto it. Building it without `content` would model the branch the
+    reducer took before that announcement existed.
+
     The pinned reducer creates a content-only `ToolMessage` for `TOOL_CALL_RESULT`:
     https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L439-L506
     It then attaches `REASONING_ENCRYPTED_VALUE(subtype='message')` by message ID:
@@ -5794,7 +5827,7 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
         ):
             tool_message.encrypted_value = event['encryptedValue']
 
-    return [AssistantMessage(id=start['parentMessageId'], tool_calls=[tool_call]), tool_message]
+    return [AssistantMessage(id=start['parentMessageId'], content='', tool_calls=[tool_call]), tool_message]
 
 
 @pytest.mark.parametrize(
