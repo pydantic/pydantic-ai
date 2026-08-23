@@ -516,6 +516,7 @@ def test_zai_glm_5_3_reasoning_effort_mapping(thinking: ThinkingLevel, expected_
         'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': expected_effort}
     }
 
+
 # --- Non-standard finish_reason handling (fixes pydantic/pydantic-ai#7678) ---
 #
 # Z.AI returns `sensitive` (content moderation) and `network_error` (proxy transport)
@@ -548,21 +549,16 @@ def test_zai_nonstd_finish_reason_nonstream(
         non-standard values survive `ZaiModel._validate_completion`.
       * `ZaiModel._map_finish_reason` normalises the raw value onto the standard
         pydantic-ai `FinishReason` enum.
-      * The existing `_map_provider_details` helper (inherited from the OpenAI base)
-        stores the un-normalised raw string in `provider_details['finish_reason']`.
+      * The inherited `_process_provider_details` helper stores the un-normalised
+        raw value in `provider_details['finish_reason']`.
 
-    We deliberately use `.model_construct()` (bypassing Pydantic field validation) when
-    building the mock Choice / ChatCompletion, because the strict public constructors of
-    the OpenAI SDK types would reject values like `sensitive` / `network_error` with
-    `ValidationError` *before* pydantic-ai sees them.  The real on-the-wire Z.AI SDK path
-    does *not* build these objects via the public constructor (it JSON-deserialises them
-    through the transport layer), so `.model_construct()` is the faithful unit-test mock.
-
-    This test is intentionally *not* async and does not go through `Agent.run()`: the
-    conftest-wide `ALLOW_MODEL_REQUESTS = False` gate forbids model dispatches in unit
-    tests.  Exercising the model-level overrides directly is a stricter unit test and
-    avoids the dispatch gate entirely (see `test_openrouter.py` L590-603 for the same
-    pattern used against OpenRouter's `finish_reason='error'` override).
+    Setup follows the mock-construct / snapshot-shaped pattern the repo uses for
+    provider-level override tests: `.model_construct()` (bypassing Pydantic field
+    validation) when building the mock Choice / ChatCompletion, since the strict
+    public constructors of the OpenAI SDK types would reject values like
+    `sensitive` / `network_error` with `ValidationError` *before* pydantic-ai
+    sees them.  See `test_openrouter.py` L590-603 and the provider-fix
+    mock-vs-cassette standard from #6610.
     """
     from typing import cast
 
@@ -667,20 +663,21 @@ async def test_zai_nonstd_finish_reason_stream(
 ) -> None:
     """Streaming path: non-standard terminal finish_reason passes widened validation.
 
-    Exercises the same three contracts as the non-stream test, but against the
-    `ZaiStreamedResponse` overrides used on the stream consumer side:
+    Exercises the same three contracts as the non-stream test, against the
+    `ZaiStreamedResponse` overrides on the stream consumer side:
 
       * `ZaiStreamedResponse._validate_response` re-validates every chunk through
-        the widened `_ZaiChatCompletionChunk` TypedDict; non-standard values on the
-        terminal chunk are accepted rather than raising `ValidationError`.
+        the widened `_ZaiChatCompletionChunk` TypedDict; non-standard terminal
+        chunks are accepted rather than raising `ValidationError`.
       * `ZaiStreamedResponse._map_finish_reason` normalises the raw value onto the
         standard pydantic-ai `FinishReason` enum.
-      * Text deltas from intermediate chunks continue to stream through (incremental
-        concatenation guard: `'hal' + 'f' == 'half'`).
+      * Text deltas from intermediate chunks continue to stream through
+        (`'hal' + 'f' == 'half'` guard).
 
-    As with the non-stream test this intentionally stops at the model override layer
-    rather than going through `Agent.run_stream()` — avoiding the conftest-wide
-    `ALLOW_MODEL_REQUESTS = False` dispatch gate.
+    Setup mirrors the mock-construct / inline-shape pattern from `test_openrouter.py`
+    L590-603 and the #6610 cassette-style standard for provider override unit tests.
+    Avoids `Agent.run_stream()` to skip the conftest-wide `ALLOW_MODEL_REQUESTS = False`
+    dispatch gate.
     """
     from collections.abc import AsyncIterator
     from typing import cast

@@ -75,7 +75,11 @@ class _ZaiChatCompletionChunk(_ChatCompletionChunk):
 
 # Map Z.AI's non-standard finish reasons onto the standard pydantic-ai `FinishReason` enum.
 # The raw string is preserved in `provider_details['finish_reason']` by `_map_provider_details`
-# so the original value never gets lost.  `sensitive` == content moderation stop.
+# so the original value never gets lost.  `sensitive` = content moderation stop.
+# `network_error` (proxy-side transport failure) is reported as `FinishReason='error'`
+# so callers — and pydantic-ai agents themselves — can detect the interrupted
+# generation and handle it as a failure rather than silently accepting a partial
+# response as a clean `stop`.
 _ZAI_FINISH_REASON_MAP: dict[_ZAI_FINISH_REASON, FinishReason] = {
     **_CHAT_FINISH_REASON_MAP,
     'sensitive': 'content_filter',
