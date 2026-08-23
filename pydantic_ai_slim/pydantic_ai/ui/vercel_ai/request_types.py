@@ -43,6 +43,9 @@ class ReasoningUIPart(BaseUIPart):
 
     type: Literal['reasoning'] = 'reasoning'
 
+    id: str | None = None
+    """UI part id from the AI SDK client; accepted but not mapped, see #7703."""
+
     text: str
     """The reasoning text."""
 

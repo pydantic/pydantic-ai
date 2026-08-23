@@ -156,6 +156,52 @@ def test_build_run_input_allows_regenerate_without_message_id():
     assert run_input.message_id is None
 
 
+def test_build_run_input_reasoning_part_id_accepted():
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {'id': 'msg_1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'hi'}]},
+            {
+                'id': 'msg_2',
+                'role': 'assistant',
+                'parts': [{'type': 'reasoning', 'id': 'r1', 'text': 'think', 'state': 'done'}],
+            },
+            {'id': 'msg_3', 'role': 'user', 'parts': [{'type': 'text', 'text': 'and again'}]},
+        ],
+    }
+
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+
+    assert isinstance(run_input, SubmitMessage)
+    reasoning_part = run_input.messages[1].parts[0]
+    assert isinstance(reasoning_part, ReasoningUIPart)
+    assert reasoning_part.id == 'r1'
+
+
+def test_build_run_input_reasoning_part_id_accept_only():
+    """The part-level reasoning id is accepted but never mapped onto `ThinkingPart.id`."""
+    data: dict[str, Any] = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {'id': 'msg_1', 'role': 'assistant', 'parts': [{'type': 'reasoning', 'text': 'think', 'state': 'done'}]}
+        ],
+    }
+
+    # Control: the same body without the part-level id still validates.
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+    assert isinstance(run_input, SubmitMessage)
+
+    data['messages'][0]['parts'][0]['id'] = 'r1'
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+
+    messages = VercelAIAdapter.load_messages(run_input.messages)
+    thinking = messages[0].parts[0]
+    assert isinstance(thinking, ThinkingPart)
+    assert thinking.id is None
+
+
 @pytest.mark.parametrize(
     'part',
     [
@@ -5598,6 +5644,7 @@ async def test_adapter_dump_messages_with_thinking():
                 'parts': [
                     {
                         'type': 'reasoning',
+                        'id': None,
                         'text': 'Let me think about this...',
                         'state': 'done',
                         'provider_metadata': None,
@@ -6505,6 +6552,7 @@ async def test_adapter_dump_messages_text_before_thinking():
                     {'type': 'text', 'text': 'Let me check.', 'state': 'done', 'provider_metadata': None},
                     {
                         'type': 'reasoning',
+                        'id': None,
                         'text': 'Okay, I am checking now.',
                         'state': 'done',
                         'provider_metadata': None,
@@ -7155,6 +7203,7 @@ async def test_adapter_dump_messages_thinking_with_metadata():
                 'parts': [
                     {
                         'type': 'reasoning',
+                        'id': None,
                         'text': 'Let me think about this...',
                         'state': 'done',
                         'provider_metadata': {
