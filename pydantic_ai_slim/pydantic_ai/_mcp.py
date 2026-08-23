@@ -113,6 +113,25 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                             # TODO(Marcelo): Add support for audio content.
                             else:
                                 raise NotImplementedError(f'Unsupported content type: {type(chunk)}')
+                elif isinstance(part, messages.ToolReturnPart):
+                    # The MCP sampling protocol has no tool-result content either, so a tool
+                    # exchange from a prior (non-sampling) turn is rendered as text instead of
+                    # being silently dropped. Mirrors the realtime seeding fallback.
+                    add_msg(
+                        'user',
+                        mcp_types.TextContent(
+                            type='text',
+                            text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {part.model_response_str()}]',
+                        ),
+                    )
+                elif isinstance(part, messages.RetryPromptPart):
+                    output = part.model_response()
+                    text = (
+                        output
+                        if part.tool_name is None
+                        else f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'
+                    )
+                    add_msg('user', mcp_types.TextContent(type='text', text=text))
         else:
             add_msg('assistant', map_from_model_response(pai_message))
     return ''.join(system_prompt), sampling_msgs
@@ -125,6 +144,13 @@ def map_from_model_response(model_response: messages.ModelResponse) -> mcp_types
         if isinstance(part, messages.TextPart):
             text_parts.append(part.content)
         elif isinstance(part, messages.ThinkingPart):
+            continue
+        elif isinstance(part, messages.ToolCallPart):
+            # The MCP sampling protocol has no tool-call content, so render the call as text the
+            # sampling server can still reason over. Mirrors the realtime seeding fallback.
+            text_parts.append(f'[Tool {part.tool_call_id}: {part.tool_name}({part.args_as_json_str()})]')
+        elif isinstance(part, messages.NativeToolCallPart):
+            # Provider-session-bound native tool calls can't round-trip into sampling.
             continue
         else:
             raise exceptions.UnexpectedModelBehavior(f'Unexpected part type: {type(part).__name__}, expected TextPart')
