@@ -8,6 +8,7 @@ import re
 import sys
 import time
 import uuid
+import warnings
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -1037,9 +1038,17 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        event_loop = asyncio.get_running_loop()
     except RuntimeError:
-        event_loop = None
+        # No running loop: fall back to the thread's current (or newly created) loop. `get_event_loop()`
+        # itself emits a `DeprecationWarning` for this exact case since Python 3.10, even though creating
+        # a loop on demand is precisely the fallback we want here, so we silence just that warning.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            try:
+                event_loop = asyncio.get_event_loop()
+            except RuntimeError:
+                event_loop = None
 
     if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()

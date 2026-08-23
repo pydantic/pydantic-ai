@@ -6,6 +6,7 @@ import contextvars
 import functools
 import importlib
 import os
+import subprocess
 import sys
 import threading
 from collections.abc import AsyncIterator
@@ -364,6 +365,51 @@ def test_run_sync_on_undrivable_event_loop():
     assert str(exc_info.value) == snapshot(
         'The current event loop (UndrivableEventLoop) does not implement `run_until_complete()`, which synchronous methods need in order to run their asynchronous implementation. This is the case inside a Temporal workflow, whose event loop can only be driven by Temporal itself. Use the asynchronous method instead, e.g. `await agent.run()` rather than `agent.run_sync()`.'
     )
+
+
+def test_run_sync_no_event_loop_deprecation_warning():
+    """`run_sync()` must not trigger `asyncio`'s "There is no current event loop" `DeprecationWarning`.
+
+    That warning only fires the first time the main thread asks for an event loop without one already
+    set, so it has to be reproduced in a fresh interpreter rather than inside the suite's own process,
+    where anyio/pytest-asyncio have long since set one. See https://github.com/pydantic/pydantic-ai/issues/1196.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-W',
+            'error',
+            '-c',
+            "from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nAgent(TestModel()).run_sync('hi')",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
+
+
+def test_run_stream_sync_no_event_loop_deprecation_warning():
+    """`run_stream_sync()` must not trigger the same event-loop `DeprecationWarning` as `run_sync()`.
+
+    It goes through `pydantic_ai._utils.get_event_loop()` directly rather than through
+    `pydantic_graph`'s copy, so it needs its own fresh-interpreter regression test.
+    See https://github.com/pydantic/pydantic-ai/issues/1196.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-W',
+            'error',
+            '-c',
+            'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\n'
+            "with Agent(TestModel()).run_stream_sync('hi') as stream:\n    stream.get_output()",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
 
 
 def test_run_sync_propagates_not_implemented_error_from_tool():

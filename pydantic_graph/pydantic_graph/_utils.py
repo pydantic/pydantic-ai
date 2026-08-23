@@ -64,9 +64,17 @@ def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        event_loop = asyncio.get_running_loop()
     except RuntimeError:
-        event_loop = None
+        # No running loop: fall back to the thread's current (or newly created) loop. `get_event_loop()`
+        # itself emits a `DeprecationWarning` for this exact case since Python 3.10, even though creating
+        # a loop on demand is precisely the fallback we want here, so we silence just that warning.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            try:
+                event_loop = asyncio.get_event_loop()
+            except RuntimeError:
+                event_loop = None
 
     if event_loop is not None and not _implements_run_until_complete(event_loop):
         # A loop that only its own runtime can drive -- like Temporal's workflow loop -- typically leaves
