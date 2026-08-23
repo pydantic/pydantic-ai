@@ -149,7 +149,7 @@ def map_from_model_response(model_response: messages.ModelResponse) -> mcp_types
             # The MCP sampling protocol has no tool-call content, so render the call as text the
             # sampling server can still reason over. Mirrors the realtime seeding fallback.
             text_parts.append(f'[Tool {part.tool_call_id}: {part.tool_name}({part.args_as_json_str()})]')
-        elif isinstance(part, messages.NativeToolCallPart):
+        elif isinstance(part, (messages.NativeToolCallPart, messages.NativeToolReturnPart)):
             # Provider-session-bound native tool calls can't round-trip into sampling.
             continue
         else:
