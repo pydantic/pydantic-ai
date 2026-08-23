@@ -467,7 +467,7 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 Every streamed tool call carries a `parentMessageId` naming the assistant message that owns it, and that message is always announced by a [`TEXT_MESSAGE_START`](https://docs.ag-ui.com/concepts/events) first — including when the model's response is nothing but tool calls, in which case the message carries no content and is closed immediately. A frontend that rebuilds the conversation from the event stream alone therefore never has to infer that a message exists.
 
-Tool calls attach to whichever assistant message is open when they stream: text appearing before them in the same response shares their message, and text appearing after starts a new one that any later tool calls attach to instead. [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] splits a response the same way, so history the frontend loads has the same message boundaries as history it streamed.
+Tool calls attach to whichever assistant message is open when they stream: text appearing before them in the same response shares their message, and text appearing after starts a new one that any later tool calls attach to instead. [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] splits text and tool calls the same way. It splits on more than that, though — a reasoning, file or compaction part also starts a new assistant message when history is loaded, while the stream keeps the tool calls around it on one — so a response interleaving those with tool calls yields more messages loaded than streamed.
 
 ### Preserving failed tool outcomes
 

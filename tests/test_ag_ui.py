@@ -1198,7 +1198,9 @@ async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
     documents: text appearing after a tool call starts a new message, and any later tool calls
     attach to that one instead of the message announced for the first call. The boundaries the
     stream produces are checked against `AGUIAdapter.dump_messages` for the equivalent
-    `ModelResponse`, so streamed and frontend-loaded histories split the response identically.
+    `ModelResponse`, so streamed and frontend-loaded histories split text and tool calls
+    identically. That equivalence covers this split only: `dump_messages` also flushes on
+    reasoning, file and compaction parts, which the stream does not split on.
     """
 
     async def event_generator():
