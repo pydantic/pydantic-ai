@@ -871,3 +871,138 @@ async def test_zai_stream_validate_response_raises_unexpected_behavior_on_malfor
             # the override converts and raises on the spot.
             pytest.fail('_validate_response should have raised UnexpectedModelBehavior on the malformed chunk')
     assert exc_info.value.__cause__ is not None, 'The chain must preserve the original ValidationError'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+async def test_zai_stream_no_terminal_finish_reason_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hard-drop scenario: stream yields text chunks but never emits a terminal finish_reason.
+
+    Addresses the review-edge case from Samearth17 on #7685:
+
+        > "what happens if the network drops abruptly (e.g. a hard TCP reset or
+        > proxy timeout) before the API sends that final chunk? The stream
+        > iterator would just exhaust, and we'd end up with a stream that
+        > completed where the last finish_reason seen was None across all
+        > chunks."
+
+    We build a 3-chunk text stream that concatenates to `'hello world'` with
+    every `finish_reason=None` and no dedicated terminal chunk, then run both
+    the base `OpenAIStreamedResponse` class and our `ZaiStreamedResponse`
+    override through the same async iterator contract (`.finish_reason`,
+    `.text()`, 5-second timeout) — the two classes must behave identically
+    (no hang, identical parts count, identical recovered body, identical
+    `finish_reason` disposition).  That guarantee means the Z.AI adapter
+    inherits the base class's graceful-drop semantics instead of accidentally
+    diverging when the transport tears down mid-stream.
+
+    Same mock-construct / inline-shape setup as the other provider-override
+    unit tests in this file; no network and no Agent.run_stream so the
+    conftest `ALLOW_MODEL_REQUESTS = False` gate is bypassed.
+    """
+    from collections.abc import AsyncIterator
+
+    from openai.types import chat
+
+    from pydantic_ai.models.openai import OpenAIStreamedResponse
+    from pydantic_ai.models.zai import ZaiStreamedResponse
+
+    monkeypatch.setenv('ZAI_API_KEY', 'sk-test-dummy-00000000')
+
+    import asyncio
+    from typing import TypeVar
+
+    _T = TypeVar('_T', bound=OpenAIStreamedResponse)
+    _async_timeout: Any = getattr(asyncio, 'timeout')
+
+    MODEL = 'glm-5.2'
+
+    def build_chunk(chunk_id: str, content: str | None) -> chat.ChatCompletionChunk:
+        delta_kwargs: dict[str, Any] = {}
+        if chunk_id == 'a':
+            delta_kwargs['role'] = 'assistant'
+        if content is not None:
+            delta_kwargs['content'] = content
+        delta = chat.chat_completion_chunk.ChoiceDelta.model_construct(**delta_kwargs)
+        return chat.ChatCompletionChunk.model_construct(
+            id=f'c-{chunk_id}',
+            choices=[
+                chat.chat_completion_chunk.Choice.model_construct(
+                    finish_reason=None,  # every single chunk: None — never a terminal
+                    index=0,
+                    delta=delta,
+                )
+            ],
+            created=1704067200,
+            model=MODEL,
+            object='chat.completion.chunk',
+        )
+
+    # Three content chunks: "hel" + "lo " + "world" = "hello world".
+    # Role-assistant delta is bundled into chunk A alongside the first
+    # content piece (matching how the OpenAI SDK's chunk constructor
+    # serialises the very first streamed chunk).
+    chunk_a = build_chunk('a', 'hel')
+    chunk_b = build_chunk('b', 'lo ')
+    chunk_c = build_chunk('c', 'world')
+
+    async def chunk_source() -> AsyncIterator[chat.ChatCompletionChunk]:
+        yield chunk_a
+        yield chunk_b
+        yield chunk_c
+
+    async def consume(cls: type[_T]) -> tuple[str, object, int]:
+        resp: _T = object.__new__(cls)
+        object.__setattr__(resp, '_model_name', MODEL)
+        object.__setattr__(resp, '_response', chunk_source())
+        object.__setattr__(resp, 'finish_reason', None)
+
+        collected: list[str] = []
+        async for validated in resp._validate_response():  # type: ignore[reportPrivateUsage]
+            if validated.choices:
+                delta = validated.choices[0].delta
+                c: str = cast(str, getattr(delta, 'content', None)) or ''
+                if c:
+                    collected.append(c)
+        # Read whatever the stream handler stashed (if anything) as the
+        # finish_reason for the "no terminal chunk" case.
+        reason: object = getattr(resp, 'finish_reason', 'NO_ATTR')
+        return ''.join(collected), reason, len(collected)
+
+    async def timed_consume_zai() -> tuple[str, object, int]:
+        async with _async_timeout(5):
+            return await consume(ZaiStreamedResponse)
+
+    async def timed_consume_openai() -> tuple[str, object, int]:
+        async with _async_timeout(5):
+            return await consume(OpenAIStreamedResponse)
+
+    zai_body: str
+    zai_reason: object
+    zai_parts: int
+    openai_body: str
+    openai_reason: object
+    openai_parts: int
+    zai_body, zai_reason, zai_parts = await timed_consume_zai()
+    openai_body, openai_reason, openai_parts = await timed_consume_openai()
+
+    # 1. Both classes consume the stream within the 5s timeout: no TCP-drop hang.
+    # 2. Text deltas arrive in full regardless of missing terminal chunk.
+    assert zai_body == 'hello world', zai_body
+    assert openai_body == 'hello world', openai_body
+
+    # 3. Critical parity assertion: Z.AI adapter matches the OpenAI base
+    #    class exactly on part count AND finish_reason disposition for the
+    #    "silent no-terminal-chunk hard drop" scenario.  Whatever baseline
+    #    value OpenAIStreamedResponse leaves finish_reason at (None / default)
+    #    the ZaiStreamedResponse must leave it at the same value — that way
+    #    downstream consumers observe identical behaviour regardless of
+    #    whether they're talking to OpenAI or Z.AI through a proxy that
+    #    mid-stream TCP-resets.
+    assert zai_parts == openai_parts == 3, (zai_parts, openai_parts)
+    assert zai_reason is openai_reason, (
+        f'ZaiStreamedResponse finish_reason ({zai_reason!r}) must match '
+        f'OpenAIStreamedResponse baseline ({openai_reason!r}) on hard-drop '
+        'without a terminal finish_reason chunk.'
+    )
