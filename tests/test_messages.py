@@ -2094,6 +2094,16 @@ class TestInstructionParts:
         msg = message(deserialized, ModelRequest)
         assert msg.instructions == 'static part\n\ndynamic part'
 
+    def test_instruction_part_serialization_round_trip(self):
+        """InstructionPart survives the canonical message adapter round trip."""
+        original = ModelRequest(parts=[InstructionPart(content='cached instructions', dynamic=True)])
+
+        serialized = ModelMessagesTypeAdapter.dump_json([original])
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+        msg = message(deserialized, ModelRequest)
+        assert msg.parts == [InstructionPart(content='cached instructions', dynamic=True)]
+
     def test_repr(self):
         """InstructionPart repr omits default values."""
         part = InstructionPart(content='hello')
