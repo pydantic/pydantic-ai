@@ -385,9 +385,7 @@ async def test_history_repair_stats_recorded_on_model_request_span():
         tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
         model = InstrumentedModel(
             MyModel(),
-            InstrumentationSettings(
-                tracer_provider=tracer_provider, meter_provider=NoOpMeterProvider()
-            ),
+            InstrumentationSettings(tracer_provider=tracer_provider, meter_provider=NoOpMeterProvider()),
         )
         await model.request(
             [ModelRequest(parts=[UserPromptPart('hello')])],
