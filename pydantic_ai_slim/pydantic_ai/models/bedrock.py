@@ -899,6 +899,10 @@ class BedrockConverseModel(Model[BaseClient]):
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
         provider_details = {'finish_reason': raw_finish_reason}
+        # Carry the guardrail assessment through when the guardrail config sets `trace: "enabled"`:
+        # it reports which policy fired, at what confidence, and the guardrail coverage.
+        if trace := response.get('trace'):
+            provider_details['trace'] = trace
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
@@ -1735,13 +1739,20 @@ class BedrockStreamedResponse(StreamedResponse):
                         continue
                     case {'messageStop': message_stop}:
                         raw_finish_reason = message_stop['stopReason']
-                        self.provider_details = {'finish_reason': raw_finish_reason}
+                        # Merge rather than replace: the `metadata` event (which carries the guardrail
+                        # `trace` when the guardrail config sets `trace: "enabled"`) may have arrived
+                        # before `messageStop`, and vice versa.
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                     case {'metadata': metadata}:
                         if 'usage' in metadata:  # pragma: no branch
                             self._usage += _map_usage(
                                 metadata['usage'], self._provider_name, self._provider_url, self._model_name
                             )
+                        # Guardrail assessment (which policy fired, at what confidence) arrives on the
+                        # metadata event; merge it into whatever `messageStop` already recorded.
+                        if 'trace' in metadata:
+                            self.provider_details = {**(self.provider_details or {}), 'trace': metadata['trace']}
                     case {'contentBlockStart': content_block_start}:
                         index = content_block_start['contentBlockIndex']
                         start = content_block_start['start']
