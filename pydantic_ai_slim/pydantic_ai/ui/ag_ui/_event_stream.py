@@ -282,6 +282,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
+        # Keep streamed assistant-message boundaries aligned with `dump_messages`, which flushes
+        # before each non-text response part. Thinking has its own AG-UI message, but a later tool
+        # call still needs a fresh assistant parent rather than the one used before this part.
+        if self._use_reasoning and not follows_thinking:
+            self.new_message_id()
         self._reasoning_message_id = str(uuid4())
         self._reasoning_started = False
 
@@ -413,6 +418,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         from ag_ui.core import ActivitySnapshotEvent
 
+        # `AGUIAdapter._dump_response_parts` flushes before a compaction activity. Keep the
+        # parent ID used by subsequent tool calls in sync with that loaded-history boundary.
+        self.new_message_id()
         yield ActivitySnapshotEvent(
             message_id=str(uuid4()),
             activity_type=COMPACTION_ACTIVITY_TYPE,

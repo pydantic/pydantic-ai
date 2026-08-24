@@ -1655,6 +1655,38 @@ async def test_thinking() -> None:
     )
 
 
+async def test_streamed_tool_calls_split_after_thinking_boundary() -> None:
+    """Tool calls after a reasoning part use a fresh assistant parent, matching loaded history.
+
+    ``AGUIAdapter.dump_messages`` flushes the assistant message before a ``ThinkingPart``. The
+    event stream must advance its parent ID at the same boundary so a client that stores streamed
+    and loaded histories observes the same assistant-message segmentation (see #7713).
+    """
+
+    async def source() -> AsyncIterator[PartStartEvent | PartEndEvent]:
+        first = ToolCallPart(tool_name='first', args='{}', tool_call_id='call_0')
+        yield PartStartEvent(index=0, part=first, previous_part_kind=None)
+        yield PartEndEvent(index=0, part=first, next_part_kind='thinking')
+        thinking = ThinkingPart(content='pondering')
+        yield PartStartEvent(index=1, part=thinking, previous_part_kind='tool-call')
+        yield PartEndEvent(index=1, part=thinking, next_part_kind='tool-call')
+        second = ToolCallPart(tool_name='second', args='{}', tool_call_id='call_1')
+        yield PartStartEvent(index=2, part=second, previous_part_kind='thinking')
+        yield PartEndEvent(index=2, part=second, next_part_kind=None)
+
+    stream = AGUIEventStream(create_input(UserMessage(id='msg_1', content='Run tools')), ag_ui_version='0.1.13')
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in stream.encode_stream(stream.transform_stream(source()))
+    ]
+    tool_events = [event for event in events if event['type'] == 'TOOL_CALL_START']
+
+    assert [event['parentMessageId'] for event in tool_events] == snapshot(
+        [IsStr(), IsStr()]
+    )
+    assert tool_events[0]['parentMessageId'] != tool_events[1]['parentMessageId']
+
+
 @requires_ag_ui('0.1.13')
 async def test_thinking_with_signature() -> None:
     """Test that ReasoningEncryptedValueEvent is emitted with thinking metadata."""
