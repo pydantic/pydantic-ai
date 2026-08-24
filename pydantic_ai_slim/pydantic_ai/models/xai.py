@@ -1095,7 +1095,7 @@ class XaiStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
-            # Local state to avoid re-emmiting duplicate events.
+            # Local state to avoid re-emitting duplicate events.
             prev_reasoning_content = ''
             prev_encrypted_content = ''
             seen_tool_call_ids: set[str] = set()
