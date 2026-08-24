@@ -727,11 +727,11 @@ print(result.output)
 
 When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
 
-`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning a response with no text output — either an empty response, or one containing only [thinking](capabilities/thinking.md) content, which some reasoning models emit after completing their work through a tool call. There's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
+`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning a response with no text output — an empty response, one whose text parts are all empty strings (as some OpenAI-compatible gateways produce), or one containing only [thinking](capabilities/thinking.md) content, which some reasoning models emit after completing their work through a tool call. There's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
 
 `None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
 
-- **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty or thinking-only model response is still also treated as `None`, as with `str | None`.
+- **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty, blank-text, or thinking-only model response is still also treated as `None`, as with `str | None`.
 - **Explicit output mode markers** — e.g. `output_type=ToolOutput(int | None)`, `output_type=NativeOutput([int, None])`, or `output_type=PromptedOutput([int, None])`: `None` is included as a branch of the structured schema the wrapper generates. The model commits by calling the tool with `null` (for `ToolOutput`) or by selecting the `NoneType` branch of the discriminated schema (for `NativeOutput`/`PromptedOutput`). An empty response is **not** accepted — once you've opted into an explicit structured output mode, the model is expected to commit through the schema.
 
 !!! note
@@ -968,16 +968,16 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Cancelling Streams
 
-Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager, so cleanup runs deterministically when you stop consuming events — leaving the `async with` block cancels the background run task.
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager, so cleanup runs deterministically when you stop consuming events — leaving the `async with` block cancels the background run task. To stop a non-streaming run, see [Cancelling a Run](agent.md#cancelling-a-run); to bound how long a single step may take, see [Timeouts](timeouts.md).
 
 !!! note "Model support"
-    The Google, xAI, and Hugging Face SDKs expose streaming only as async iterators, which limits when [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] can interrupt an in-flight chunk read. See the [Google](models/google.md#streaming-cancellation), [xAI](models/xai.md#streaming-cancellation), and [Hugging Face](models/huggingface.md#streaming-cancellation) provider docs for the recommended pattern.
+    The Google, xAI, and Hugging Face SDKs expose streaming only as async iterators, without documented per-stream transport handles. Pydantic AI safely interrupts its active iterator pulls, but the SDKs do not guarantee that closing the local iterator immediately stops remote generation or billing. See the [Google](models/google.md#streaming-cancellation), [xAI](models/xai.md#streaming-cancellation), and [Hugging Face](models/huggingface.md#streaming-cancellation) provider notes.
 
 #### Cleaning up `run_stream_events`
 
 [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager that yields an async iterator over events:
 
-```python {title="stream_cancel_run_stream_events.py"}
+```python {title="stream_cancel_stream_events.py"}
 from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
 
 agent = Agent('openai:gpt-5.2')
@@ -997,13 +997,13 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-`run_stream_events()` does not expose a `cancel()` method. If you need an explicit model-response cancellation handle, use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`agent.iter()`][pydantic_ai.agent.Agent.iter].
+The yielded [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents] handle exposes `cancel()` to cancel the whole run (see [Cancelling a Run](agent.md#cancelling-a-run)); continued iteration then raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]. It also provides `all_messages()`, `new_messages()`, `usage`, and the completed `result`. From inside a tool or `event_stream_handler`, use [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] instead. As a response-level alternative, [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] from `run_stream()` stops only the current model response.
 
 #### Cancelling `run_stream`
 
 Call `cancel()` on the [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] to cancel the stream:
 
-```python {title="stream_cancel_run_stream.py"}
+```python {title="stream_cancel_stream.py"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5.2')
@@ -1033,7 +1033,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
 
 !!! warning "Interrupted tool calls"
-    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, and when the history is reused in another run the partial tool calls are [repaired automatically](message-history.md#making-histories-provider-valid). If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
+    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, and when the history is reused in another run the partial tool calls are [repaired automatically](message-history.md#making-histories-provider-valid). If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], call [`agent_run.cancel()`][pydantic_ai.run.AgentRun.cancel] to stop the whole run as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
 
 #### Cancelling with `iter`
 
@@ -1060,38 +1060,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-#### Message History After Cancellation
-
-When a stream is cancelled mid-generation, the response is recorded with `state='interrupted'` in the message history. The history includes any partial content that was received before cancellation:
-
-```python {title="stream_cancel_history.py"}
-from pydantic_ai import Agent
-
-agent = Agent('openai:gpt-5.2')
-
-
-async def main():
-    async with agent.run_stream('Tell me about Python') as result:
-        async for text in result.stream_text(delta=True):
-            break
-        await result.cancel()
-
-    messages = result.all_messages()  # (1)!
-    print(messages[-1].state)  # (2)!
-    #> interrupted
-```
-
-1. The message history includes the interrupted response with any partial content that was received before cancellation.
-2. The interrupted response state lets your application decide whether to keep, inspect, or discard the partial response before reusing the history.
-
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
-
-!!! note "Reusing interrupted history"
-    Interrupted history can be passed directly into another run. Before the next model request, Pydantic AI [repairs the transcript](message-history.md#making-histories-provider-valid): any tool call that never received a result — including one whose arguments were cut off mid-stream — is answered with a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] telling the model it was interrupted.
-
-!!! info "Usage tracking for cancelled streams"
-    Token usage reported by `usage` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
-    For OpenAI chat completions, [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings] can improve in-stream usage reporting by requesting cumulative usage data with each chunk, but cancelled-stream usage is still best-effort.
+To abort the run itself rather than just the current response -- and for how cancellation is recorded in message history -- see [Cancelling a Run](agent.md#cancelling-a-run).
 
 ## Examples
 

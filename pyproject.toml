@@ -49,7 +49,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,retries,logfire]=={{ version }}",
+    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,logfire]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -77,13 +77,19 @@ duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
 tavily = ["pydantic-ai-slim[tavily]=={{ version }}"]
 exa = ["pydantic-ai-slim[exa]=={{ version }}"]
 web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
+retries = ["pydantic-ai-slim[retries]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
+mcp-tasks = ["pydantic-ai-slim[mcp-tasks]=={{ version }}"]
+realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
+openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
+google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
+xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
 
 [project.urls]
-Homepage = "https://ai.pydantic.dev"
+Homepage = "https://pydantic.dev/docs/ai/"
 Source = "https://github.com/pydantic/pydantic-ai"
-Documentation = "https://ai.pydantic.dev"
+Documentation = "https://pydantic.dev/docs/ai/"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.scripts]
@@ -95,7 +101,6 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
-pydantic-docs = { git = "https://github.com/pydantic/pydantic-docs" }
 
 [tool.uv.workspace]
 members = [
@@ -109,8 +114,24 @@ members = [
 [tool.uv]
 # `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
 required-version = ">=0.9.25"
-default-groups = ["dev", "lint", "docs"]
+default-groups = ["dev", "lint"]
 exclude-newer = "7 days"
+conflicts = [
+    # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
+    # deliberately locks FastMCP 3 (the FastMCP 4 CI job layers `--with` overrides onto the
+    # frozen lock). Lock-side forks only: pip resolves `[mcp,mcp-tasks]` together fine — in the
+    # mcp-tasks fork the extra's pre-release floor opts the shared `fastmcp-slim` range into the
+    # FastMCP 4 betas. Every `--all-extras` invocation in CI and the Makefile carries
+    # `--no-extra mcp-tasks` to stay on the dev side of the fork.
+    [
+        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
+        { group = "dev" },
+    ],
+    [
+        { package = "pydantic-ai", extra = "mcp-tasks" },
+        { group = "dev" },
+    ],
+]
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -143,6 +164,15 @@ constraint-dependencies = [
     "torch>=2.13.0",
     "transformers>=5.5.0",
 ]
+build-constraint-dependencies = [
+    # hatchling 1.32.0 (2026-08-11) bumped its default core metadata version to 2.5,
+    # which the pinned gh-action-pypi-publish validator rejects as "not a valid
+    # metadata version". Ceiling until the publish action (or PyPI's own validator)
+    # catches up. Affects `uv build`'s PEP 517 build isolation, not runtime installs.
+    # Not covered by `exclude-newer` above: hatchling 1.32.0 rolls out of that
+    # 7-day window on 2026-08-18, so this needs its own explicit ceiling.
+    "hatchling<1.32",
+]
 
 [tool.uv.exclude-newer-package]
 # These are our own packages, not worth defending from supply chain attacks on them.
@@ -154,11 +184,16 @@ pydantic-handlebars = false
 genai-prices = false
 logfire = false
 logfire-api = false
+# Anthropic 1.0 is built on HTTPX2 and drops legacy HTTPX entirely.
+# TODO(dsfaccini): Remove after 2026-08-27 19:59 UTC. https://github.com/pydantic/pydantic-ai/issues/7658
+# This admits only the reviewed 1.0.0 artifacts; later Anthropic artifacts remain quarantined.
+anthropic = "2026-08-20T19:58:59Z"
 
 [dependency-groups]
 dev = [
     "anyio>=4.7.0",
     "asgi-lifespan>=2.1.0",
+    "httpx>=0.27",
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
@@ -183,23 +218,20 @@ dev = [
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
-    # `fastmcp` package alongside. FastMCP 4 uses MCP SDK v2, which is not yet supported (#6661).
-    "fastmcp>=3.3.0,<4",
+    # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
+    "fastmcp>=3.3.0,<5",
+    # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
+    # the compat readers' field-name pairs against the real v2 models while running against v1.
+    "mcp-types>=2.0.0",
+    # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
+    "blockbuster>=1.5.26,<1.6",
 ]
-lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
-docs = [
-    "black>=24.10.0",
-    "mkdocs>=1.6.1",
-    "mkdocs-glightbox>=0.4.0",
-    "mkdocs-llmstxt>=0.2.0",
-    "mkdocs-redirects>=1.2.2",
-    "mkdocs-material[imaging]>=9.7.0",
-    "mkdocstrings-python>=2.0.0",
-    "griffe-warnings-deprecated>=1.1.0",
-    "pydantic-docs",
+lint = [
+    "griffecli>=2.1.0,<3",
+    "mypy>=1.11.2",
+    "pyright>=1.1.408",
+    "ruff>=0.14.14",
 ]
-docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
-
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
 exclude = ["/pydantic_ai_slim/pydantic_ai/.agents"]
@@ -222,7 +254,9 @@ include = [
     "tests/**/*.py",
     "docs/**/*.py",
     ".github/scripts/ci_duration.py",
+    ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
@@ -231,6 +265,7 @@ include = [
     ".github/scripts/test_agentic_workflow_guard.py",
     ".github/scripts/agent_spend_report.py",
     ".github/scripts/test_agent_spend_report.py",
+    ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
 ]
 
@@ -283,11 +318,14 @@ quote-style = "single"
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
 ".github/scripts/ci_duration.py" = ["D"]
+".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
+".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
 ".github/scripts/test_agent_spend_report.py" = ["D"]
+".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 
 [tool.pyright]
@@ -305,7 +343,9 @@ include = [
     "examples",
     "clai",
     ".github/scripts/ci_duration.py",
+    ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
@@ -318,15 +358,17 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
-    { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `extraPaths` lets pyright resolve the shim package (which sits next to
     # the test file, not under the project root) the same way the runtime
     # `sys.path.insert(...)` at the top of the test does.
     { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
+    "examples/pydantic_ai_examples/realtime_voice.py",       # optional, untyped `sounddevice` audio dep
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
@@ -335,7 +377,7 @@ files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "docs/.hooks", ".github/scripts/test_ci_duration.py"]
+testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
 filterwarnings = [
     "error",
@@ -357,6 +399,11 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
+    # `enable_otlp` is set as `tests/test_dbos.py` does.
+    # TODO(dsfaccini): Drop this once DBOS moves to the `opentelemetry-instrumentation-logging`
+    # handler. https://github.com/dbos-inc/dbos-transact-py/issues/821
+    "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     "ignore: Core Pydantic V1 functionality:UserWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
@@ -458,4 +505,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,fpr,aci'
+ignore-words-list = 'asend,fpr,aci,gage'

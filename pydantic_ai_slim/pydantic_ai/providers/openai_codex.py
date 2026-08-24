@@ -2,11 +2,11 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator
 
-import httpx
+import httpx2
 
+from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.auth.openai_codex import OpenAICodexAuth, OpenAICodexCredentials, OpenAICodexCredentialSource
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
@@ -23,7 +23,7 @@ except ImportError as _import_error:  # pragma: no cover
 # Base URL observed in the pinned official Codex client for ChatGPT-authenticated requests.
 # `OpenAICodexProvider.base_url` exposes it, so it stays private rather than becoming the one public
 # base-URL constant in any provider module.
-_BASE_URL = httpx.URL('https://chatgpt.com/backend-api/codex')
+_BASE_URL = httpx2.URL('https://chatgpt.com/backend-api/codex')
 _RESPONSES_PATH = f'{_BASE_URL.path}/responses'
 
 # The official Codex CLI sends `User-Agent: codex_cli_rs/<version>`, which was once needed to route
@@ -33,11 +33,11 @@ _RESPONSES_PATH = f'{_BASE_URL.path}/responses'
 # User-Agent and identify ourselves through the `originator` header instead.
 
 
-class _OpenAICodexHTTPAuth(httpx.Auth):
+class _OpenAICodexHTTPAuth(httpx2.Auth):
     def __init__(self, credential_source: OpenAICodexCredentialSource) -> None:
         self._credential_source = credential_source
 
-    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+    async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
         if not self._is_trusted_openai_codex_url(request.url):
             yield request
             return
@@ -46,7 +46,7 @@ class _OpenAICodexHTTPAuth(httpx.Auth):
         if replayable:
             try:
                 request.content
-            except httpx.RequestNotRead:
+            except httpx2.RequestNotRead:
                 replayable = False
 
         credentials = await self._credential_source.get_credentials()
@@ -61,7 +61,7 @@ class _OpenAICodexHTTPAuth(httpx.Auth):
             self._apply(request, credentials)
             yield request
 
-    def _apply(self, request: httpx.Request, credentials: OpenAICodexCredentials) -> None:
+    def _apply(self, request: httpx2.Request, credentials: OpenAICodexCredentials) -> None:
         request.headers['Authorization'] = f'Bearer {credentials.access_token.get_secret_value()}'
         request.headers['ChatGPT-Account-ID'] = credentials.account_id.get_secret_value()
         request.headers['originator'] = 'pydantic-ai'
@@ -70,7 +70,7 @@ class _OpenAICodexHTTPAuth(httpx.Auth):
         else:
             request.headers.pop('X-OpenAI-Fedramp', None)
 
-    def _is_trusted_openai_codex_url(self, url: httpx.URL) -> bool:
+    def _is_trusted_openai_codex_url(self, url: httpx2.URL) -> bool:
         raw_path = url.raw_path.partition(b'?')[0]
         path_segments = url.path.split('/')
         return (
@@ -84,7 +84,7 @@ class _OpenAICodexHTTPAuth(httpx.Auth):
             and '..' not in path_segments
         )
 
-    def _is_replayable_request(self, request: httpx.Request) -> bool:
+    def _is_replayable_request(self, request: httpx2.Request) -> bool:
         """Whether re-sending the request after a refresh is safe.
 
         Both Responses flavors the backend serves create nothing that a replay would duplicate —
@@ -108,7 +108,7 @@ class OpenAICodexProvider(Provider[AsyncOpenAI]):
     Args:
         credential_source: Application-owned credentials. Defaults to [`OpenAICodexAuth`]
             [pydantic_ai.auth.openai_codex.OpenAICodexAuth] and its managed local credential store.
-        http_client: A dedicated caller-owned HTTP client with no existing auth and
+        http_client: A dedicated caller-owned `httpx2.AsyncClient` with no existing auth and
             `follow_redirects=False`. OpenAI Codex authentication is installed on this client,
             and the provider never closes it.
     """
@@ -152,23 +152,17 @@ class OpenAICodexProvider(Provider[AsyncOpenAI]):
         self,
         *,
         credential_source: OpenAICodexCredentialSource | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         if credential_source is None:
             credential_source = OpenAICodexAuth()
         self._credential_source = credential_source
 
         if http_client is None:
-            http_client = create_async_http_client()
+            http_client = create_async_httpx2_client()
             self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-        else:
-            if http_client.auth is not None:
-                raise UserError('`http_client` must not already have authentication configured.')
-            if http_client.follow_redirects:
-                raise UserError('`http_client` must have `follow_redirects=False`.')
-        # A client the base class recreates after close is re-authenticated through `_set_http_client`.
-        http_client.auth = _OpenAICodexHTTPAuth(credential_source)
+            self._http_client_factory = create_async_httpx2_client
+        http_client = self._prepare_http_client(http_client)
 
         # AsyncOpenAI requires a non-empty API key even though the HTTP auth layer
         # replaces the generated Authorization header before every request.
@@ -178,6 +172,16 @@ class OpenAICodexProvider(Provider[AsyncOpenAI]):
             http_client=http_client,
         )
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _prepare_http_client(self, http_client: AsyncHTTPClient) -> httpx2.AsyncClient:
+        if not isinstance(http_client, httpx2.AsyncClient):
+            raise UserError('`http_client` must be an `httpx2.AsyncClient`.')
+        if http_client.auth is not None:
+            raise UserError('`http_client` must not already have authentication configured.')
+        if http_client.follow_redirects:
+            raise UserError('`http_client` must have `follow_redirects=False`.')
         http_client.auth = _OpenAICodexHTTPAuth(self._credential_source)
+        return http_client
+
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        http_client = self._prepare_http_client(http_client)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

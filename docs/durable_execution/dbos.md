@@ -162,7 +162,7 @@ Function tools and event stream handlers registered on the agent directly or thr
 * Skip the decorator if durability isn't needed, so you avoid the extra DB checkpoint write.
 * If the function needs to enqueue tasks or invoke other DBOS workflows, run it inside the agent's main workflow (not as a step).
 
-Other than that, any agent and toolset will just work!
+All other agents and toolsets are supported.
 
 ### Agent Run Context and Dependencies
 
@@ -188,6 +188,8 @@ A durability `event_stream_handler=` and a separately registered `ProcessEventSt
 A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs workflow-side against replayed model events.
 
 Because the model stream is consumed inside the step, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
+
+[`CancellationToken`][pydantic_ai.CancellationToken] cannot be passed to a DBOS durable run, and [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] raises a clear [`UserError`][pydantic_ai.exceptions.UserError] inside a step-wrapped unit (a dynamic or MCP tool, or an `event_stream_handler`) whose recorded result would replay without re-running on recovery. A plain function tool runs at workflow level under DBOS, where `cancel()` works and is replay-consistent. To stop a run from outside, cancel the DBOS workflow.
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `DBOSDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `DBOSAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 

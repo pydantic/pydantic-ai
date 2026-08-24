@@ -21,7 +21,13 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
-from ._toolset import CallToolParams, GetToolsParams, heartbeating, resolve_tool_activity_config
+from ._toolset import (
+    CallToolParams,
+    GetToolsParams,
+    heartbeating,
+    resolve_tool_activity_config,
+    tool_result_payload_errors,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -118,19 +124,20 @@ def temporalize_mcp_toolset(
             'ActivityConfig',
             {'summary': f'call tool: {toolset.id}:{name}', **activity_config, **config},
         )
-        result = await execute_activity(
-            activity=call_tool_activity_def,
-            args=[
-                CallToolParams(
-                    name=name,
-                    tool_args=tool_args,
-                    serialized_run_context=run_context_type.serialize_run_context(ctx),
-                    tool_def=tool.tool_def,
-                ),
-                ctx.deps,
-            ],
-            **merged_config,
-        )
+        with tool_result_payload_errors(name):
+            result = await execute_activity(
+                activity=call_tool_activity_def,
+                args=[
+                    CallToolParams(
+                        name=name,
+                        tool_args=tool_args,
+                        serialized_run_context=run_context_type.serialize_run_context(ctx),
+                        tool_def=tool.tool_def,
+                    ),
+                    ctx.deps,
+                ],
+                **merged_config,
+            )
         return unwrap_tool_call_result(result)
 
     return DurableMCPToolset(

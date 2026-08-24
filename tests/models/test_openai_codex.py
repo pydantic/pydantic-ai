@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import httpx
+import httpx2
 import pytest
 from pydantic import JsonValue, SecretStr
 from vcr.cassette import Cassette
@@ -216,7 +216,7 @@ async def test_openai_codex_forced_stream_rejects_a_response_that_never_complete
 async def test_openai_codex_login_required_error_survives_the_sdk_transport_wrapper(
     allow_model_requests: None, entry_point: str
 ) -> None:
-    """The OpenAI SDK turns everything raised inside `httpx.AsyncClient.send` into an
+    """The OpenAI SDK turns everything raised inside `httpx2.AsyncClient.send` into an
     `APIConnectionError`, which would otherwise reduce the actionable "run `clai auth login openai-codex`"
     to `ModelAPIError: Connection error.` at the only boundary a user sees.
 
@@ -233,11 +233,11 @@ async def test_openai_codex_login_required_error_survives_the_sdk_transport_wrap
                 'OpenAI Codex subscription login is required. Run `clai auth login openai-codex`.'
             )
 
-    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+    def handle(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('no request should be sent without credentials')
 
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         provider = OpenAICodexProvider(credential_source=LoggedOutCredentialSource(), http_client=client)
         model = OpenAIResponsesModel('gpt-5.5', provider=provider)
 
@@ -270,10 +270,10 @@ async def test_openai_codex_refresh_failure_still_falls_over_in_fallback_model(a
         ) -> OpenAICodexCredentials:
             raise OpenAICodexRefreshError('Unable to reach the OpenAI Codex authentication service.')
 
-    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+    def handle(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('no request should be sent without credentials')
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         provider = OpenAICodexProvider(credential_source=UnreachableCredentialSource(), http_client=client)
         model = OpenAIResponsesModel('gpt-5.5', provider=provider)
 
@@ -291,10 +291,10 @@ async def test_openai_codex_count_tokens_reports_the_endpoint_is_not_served(allo
     cassette of a challenge page would pin the edge's error rendering rather than our behavior.
     """
 
-    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+    def handle(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('count_tokens must not reach the wire on a backend without the endpoint')
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         provider = OpenAICodexProvider(credential_source=OpenAICodexStaticCredentialSource(), http_client=client)
         model = OpenAIResponsesModel('gpt-5.5', provider=provider)
 
@@ -484,7 +484,7 @@ async def test_openai_codex_compaction_is_served_and_takes_neither_profile_flag(
 
     recorded_requests = vcr.requests  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     run_path, compact_path = (
-        httpx.URL(request.uri).path  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        httpx2.URL(request.uri).path  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         for request in recorded_requests  # pyright: ignore[reportUnknownVariableType]
     )
     assert run_path == snapshot('/backend-api/codex/responses')
@@ -499,7 +499,13 @@ async def test_openai_codex_compaction_is_served_and_takes_neither_profile_flag(
     assert isinstance(compacted.parts[0], CompactionPart)
     assert compacted.parts[0].provider_name == snapshot('openai-codex')
     assert compacted.parts[0].provider_details == snapshot(
-        {'id': IsStr(), 'encrypted_content': IsStr(), 'type': 'compaction', 'created_by': None}
+        {
+            'id': IsStr(),
+            'encrypted_content': IsStr(),
+            'type': 'compaction',
+            'created_by': None,
+            'pydantic_ai_standing_prompt_planted': True,
+        }
     )
     assert compacted.provider_name == snapshot('openai-codex')
     assert compacted.provider_details == snapshot({'compaction': True})

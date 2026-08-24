@@ -4,7 +4,8 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 
 import anyio
-import httpx
+import httpx as legacy_httpx
+import httpx2
 import pytest
 from pydantic import SecretStr
 
@@ -33,7 +34,7 @@ def _credentials(*, revision: str = 'revision-1', fedramp: bool = False) -> Open
     )
 
 
-class OneShotAsyncStream(httpx.AsyncByteStream):
+class OneShotAsyncStream(httpx2.AsyncByteStream):
     def __init__(self, content: bytes, *, fail: bool = False) -> None:
         self.content = content
         self.fail = fail
@@ -44,7 +45,7 @@ class OneShotAsyncStream(httpx.AsyncByteStream):
         if self.iterations > 1:
             raise AssertionError('stream was consumed more than once')
         if self.fail:
-            raise httpx.ReadError('simulated stream failure')
+            raise httpx2.ReadError('simulated stream failure')
         yield self.content
 
 
@@ -81,11 +82,11 @@ async def test_provider_adds_one_coherent_credential_snapshot() -> None:
     source = CredentialSource(_credentials(fedramp=True))
     captured_headers: list[dict[str, str]] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         captured_headers.append(dict(request.headers))
-        return httpx.Response(200, json={'ok': True})
+        return httpx2.Response(200, json={'ok': True})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         response = await client.post(f'{OPENAI_CODEX_BASE_URL}/responses', json={'model': 'gpt-5.5'})
 
@@ -101,12 +102,12 @@ async def test_provider_replays_one_responses_401_after_forced_refresh() -> None
     source = CredentialSource()
     request_count = 0
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal request_count
         request_count += 1
-        return httpx.Response(401)
+        return httpx2.Response(401)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         response = await client.post(f'{OPENAI_CODEX_BASE_URL}/responses', json={'model': 'gpt-5.5'})
 
@@ -120,13 +121,13 @@ async def test_provider_replays_buffered_request_and_drains_401_response() -> No
     response_stream = OneShotAsyncStream(b'unauthorized')
     request_bodies: list[bytes] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         request_bodies.append(request.content)
         if len(request_bodies) == 1:
-            return httpx.Response(401, stream=response_stream)
-        return httpx.Response(200, json={'ok': True})
+            return httpx2.Response(401, stream=response_stream)
+        return httpx2.Response(200, json={'ok': True})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         response = await client.post(f'{OPENAI_CODEX_BASE_URL}/responses', content=b'{"model":"gpt-5.5"}')
 
@@ -140,13 +141,13 @@ async def test_provider_does_not_replay_unbuffered_request_body() -> None:
     request_stream = OneShotAsyncStream(b'{"model":"gpt-5.5"}')
     request_count = 0
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal request_count
         request_count += 1
         assert await request.aread() == b'{"model":"gpt-5.5"}'
-        return httpx.Response(401)
+        return httpx2.Response(401)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         response = await client.post(f'{OPENAI_CODEX_BASE_URL}/responses', content=request_stream)
 
@@ -160,14 +161,14 @@ async def test_provider_does_not_replay_when_401_body_cannot_be_drained() -> Non
     source = CredentialSource()
     request_count = 0
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal request_count
         request_count += 1
-        return httpx.Response(401, stream=OneShotAsyncStream(b'', fail=True))
+        return httpx2.Response(401, stream=OneShotAsyncStream(b'', fail=True))
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
-        with pytest.raises(httpx.ReadError, match='simulated stream failure'):
+        with pytest.raises(httpx2.ReadError, match='simulated stream failure'):
             await client.post(f'{OPENAI_CODEX_BASE_URL}/responses', json={'model': 'gpt-5.5'})
 
     assert request_count == 1
@@ -198,7 +199,7 @@ async def test_concurrent_401_recovery_rotates_rejected_revision_once() -> None:
     initial_requests = 0
     replay_authorizations: list[str] = []
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal initial_requests
         authorization = request.headers['authorization']
         if authorization == 'Bearer access-revision-a':
@@ -206,11 +207,11 @@ async def test_concurrent_401_recovery_rotates_rejected_revision_once() -> None:
             if initial_requests == 2:
                 both_initial_requests.set()
             await both_initial_requests.wait()
-            return httpx.Response(401)
+            return httpx2.Response(401)
         replay_authorizations.append(authorization)
-        return httpx.Response(200, json={'ok': True})
+        return httpx2.Response(200, json={'ok': True})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         statuses: list[int] = []
 
@@ -232,12 +233,12 @@ async def test_provider_does_not_replay_other_endpoints() -> None:
     source = CredentialSource()
     request_count = 0
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal request_count
         request_count += 1
-        return httpx.Response(401)
+        return httpx2.Response(401)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         response = await client.get(f'{OPENAI_CODEX_BASE_URL}/models')
 
@@ -248,7 +249,7 @@ async def test_provider_does_not_replay_other_endpoints() -> None:
 
 async def test_provider_does_not_close_caller_owned_client() -> None:
     source = CredentialSource()
-    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(200)))
     provider = OpenAICodexProvider(credential_source=source, http_client=client)
 
     async with provider:
@@ -287,13 +288,13 @@ async def test_provider_owned_client_closes_and_recreates_with_auth() -> None:
 )
 async def test_provider_never_adds_credentials_off_trusted_origin_or_path(url: str) -> None:
     source = CredentialSource()
-    captured_headers: list[httpx.Headers] = []
+    captured_headers: list[httpx2.Headers] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         captured_headers.append(request.headers)
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         await client.post(url, json={'model': 'gpt-5.5'})
 
@@ -312,13 +313,13 @@ async def test_provider_never_adds_credentials_off_trusted_origin_or_path(url: s
 )
 async def test_provider_does_not_follow_initial_redirects(location: str) -> None:
     source = CredentialSource()
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(307, headers={'location': location})
+        return httpx2.Response(307, headers={'location': location})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         response = await client.post(f'{OPENAI_CODEX_BASE_URL}/responses', content=b'sensitive prompt')
 
@@ -329,15 +330,15 @@ async def test_provider_does_not_follow_initial_redirects(location: str) -> None
 
 async def test_provider_does_not_follow_redirect_after_401_replay() -> None:
     source = CredentialSource()
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(401)
-        return httpx.Response(307, headers={'location': 'https://example.com/collect'})
+            return httpx2.Response(401)
+        return httpx2.Response(307, headers={'location': 'https://example.com/collect'})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         response = await client.post(f'{OPENAI_CODEX_BASE_URL}/responses', content=b'sensitive prompt')
 
@@ -346,8 +347,20 @@ async def test_provider_does_not_follow_redirect_after_401_replay() -> None:
     assert all(request.content == b'sensitive prompt' for request in requests)
 
 
+async def test_provider_rejects_legacy_httpx_client() -> None:
+    client = legacy_httpx.AsyncClient()
+    try:
+        with pytest.raises(UserError, match=r'must be an `httpx2\.AsyncClient`'):
+            OpenAICodexProvider(
+                credential_source=CredentialSource(),
+                http_client=client,  # pyright: ignore[reportArgumentType]
+            )
+    finally:
+        await client.aclose()
+
+
 async def test_provider_rejects_caller_client_with_existing_auth() -> None:
-    client = httpx.AsyncClient(auth=('user', 'password'))
+    client = httpx2.AsyncClient(auth=('user', 'password'))
     try:
         with pytest.raises(UserError, match='must not already have authentication'):
             OpenAICodexProvider(credential_source=CredentialSource(), http_client=client)
@@ -356,7 +369,7 @@ async def test_provider_rejects_caller_client_with_existing_auth() -> None:
 
 
 async def test_provider_rejects_caller_client_that_follows_redirects() -> None:
-    client = httpx.AsyncClient(follow_redirects=True)
+    client = httpx2.AsyncClient(follow_redirects=True)
     try:
         with pytest.raises(UserError, match='follow_redirects=False'):
             OpenAICodexProvider(credential_source=CredentialSource(), http_client=client)
@@ -371,7 +384,7 @@ async def test_provider_preserves_falsey_credential_source() -> None:
             return False  # pragma: no cover
 
     source = FalseySource()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(200))) as client:
         OpenAICodexProvider(credential_source=source, http_client=client)
         await client.post(f'{OPENAI_CODEX_BASE_URL}/responses', json={'model': 'gpt-5.5'})
 
