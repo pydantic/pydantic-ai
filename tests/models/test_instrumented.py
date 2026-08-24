@@ -369,13 +369,26 @@ async def test_instrumented_model_wrapped_model_server_attributes(capfire: Captu
     )
 
 
-async def test_history_repair_stats_recorded_on_model_request_span(capfire: CaptureLogfire):
+async def test_history_repair_stats_recorded_on_model_request_span():
     """`history_repair_stats_ctx` counters are emitted as span attributes on the model request span."""
-    history_repair_stats_ctx.set(
+    from opentelemetry.metrics import NoOpMeterProvider
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    token = history_repair_stats_ctx.set(
         HistoryRepairStats(dropped_orphaned_results=1, synthesized_tool_returns=2, merged_messages=3)
     )
     try:
-        model = InstrumentedModel(MyModel(), InstrumentationSettings())
+        exporter = InMemorySpanExporter()
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        model = InstrumentedModel(
+            MyModel(),
+            InstrumentationSettings(
+                tracer_provider=tracer_provider, meter_provider=NoOpMeterProvider()
+            ),
+        )
         await model.request(
             [ModelRequest(parts=[UserPromptPart('hello')])],
             model_settings=None,
@@ -388,12 +401,14 @@ async def test_history_repair_stats_recorded_on_model_request_span(capfire: Capt
             ),
         )
     finally:
-        history_repair_stats_ctx.set(None)
+        history_repair_stats_ctx.reset(token)
 
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    chat_spans = [s for s in spans if s['attributes'].get('gen_ai.operation.name') == 'chat']
+    chat_spans = [
+        s for s in exporter.get_finished_spans() if (s.attributes or {}).get('gen_ai.operation.name') == 'chat'
+    ]
     assert len(chat_spans) == 1
-    attrs = chat_spans[0]['attributes']
+    attrs = chat_spans[0].attributes
+    assert attrs is not None
     assert attrs['pydantic_ai.history_repair.dropped_orphaned_results'] == 1
     assert attrs['pydantic_ai.history_repair.synthesized_tool_returns'] == 2
     assert attrs['pydantic_ai.history_repair.merged_messages'] == 3

@@ -97,12 +97,12 @@ __all__ = (
 
 @asynccontextmanager
 async def _history_repair_stats_scope(stats: HistoryRepairStats) -> AsyncGenerator[None]:
-    """Bind history-repair counters to the current request and reset them on exit."""
-    history_repair_stats_ctx.set(stats)
+    """Bind history-repair counters to the current request and restore the previous value on exit."""
+    token = history_repair_stats_ctx.set(stats)
     try:
         yield
     finally:
-        history_repair_stats_ctx.set(None)
+        history_repair_stats_ctx.reset(token)
 
 
 T = TypeVar('T')
