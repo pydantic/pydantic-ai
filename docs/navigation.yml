@@ -134,6 +134,8 @@ navigation:
       - page: "OpenAI"
         path: "models/openai.md"
         slug: "models/openai"
+        aliases:
+          - "providers/openai"
       - page: "Anthropic"
         path: "models/anthropic.md"
         slug: "models/anthropic"
@@ -566,6 +568,8 @@ navigation:
         path: "multi-agent-applications.md"
         slug: "guides/multi-agent-applications"
         aliases:
+          - "core-concepts/multi-agent-systems"
+          - "multi-agent"
           - "multi-agent-applications"
       - page: "Web Chat UI"
         path: "web.md"
@@ -688,6 +692,7 @@ navigation:
           - "api/pydantic_graph/persistence"
           - "api/pydantic_graph/mermaid"
           - "api/pydantic_graph/state"
+          - "guides/graph"
       - section: "Graph Builder"
         slug: ""
         contents:
@@ -722,6 +727,8 @@ navigation:
           - page: "Overview"
             path: "ui/overview.md"
             slug: "integrations/ui/overview"
+            aliases:
+              - "integrations/ui"
           - page: "AG-UI"
             path: "ui/ag-ui.md"
             slug: "integrations/ui/ag-ui"
