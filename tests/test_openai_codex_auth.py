@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import anyio
-import httpx
+import httpx2
 import pytest
 from anyio.lowlevel import checkpoint
 from pydantic import SecretStr
@@ -203,10 +203,10 @@ async def test_login_checks_the_store_before_spending_the_sign_in(method: str, t
     not_a_directory = tmp_path / 'occupied'
     not_a_directory.write_text('')
 
-    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+    def handle(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('no upstream request may be sent before the store is known usable')
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         auth = OpenAICodexAuth(path=not_a_directory / 'auth.json', http_client=client)
         with pytest.raises(OpenAICodexCredentialsError, match='Unable to lock'):
             if method == 'browser':
@@ -227,10 +227,10 @@ async def test_login_rejects_a_malformed_store_before_spending_the_sign_in(tmp_p
     path = tmp_path / 'auth.json'
     path.write_text(json.dumps({'version': 999, 'providers': {}}), encoding='utf-8')
 
-    def handle(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+    def handle(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('no upstream request may be sent before the store is known usable')
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         auth = OpenAICodexAuth(path=path, http_client=client)
         with pytest.raises(OpenAICodexCredentialsError, match=r'malformed|unsupported'):
             await auth.login_browser(lambda url: None, timeout=10)
@@ -299,7 +299,7 @@ async def test_concurrent_refresh_is_single_flight_and_preserves_omitted_tokens(
     refreshed_access_token, _ = _tokens(expires_in=3600)
     refresh_requests = 0
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal refresh_requests
         assert request.url.path == '/oauth/token'
         assert request.headers['content-type'] == 'application/json'
@@ -310,10 +310,10 @@ async def test_concurrent_refresh_is_single_flight_and_preserves_omitted_tokens(
             'refresh_token': _REFRESH_TOKEN,
         }
         refresh_requests += 1
-        return httpx.Response(200, json={'access_token': refreshed_access_token})
+        return httpx2.Response(200, json={'access_token': refreshed_access_token})
 
     store = MemoryStore(current)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         auth = OpenAICodexAuth(store=store, http_client=client)
         results: list[OpenAICodexCredentials] = []
 
@@ -337,14 +337,14 @@ async def test_rejected_revision_is_refreshed_only_once_concurrently() -> None:
     refreshed_access_token, _ = _tokens(expires_in=3600)
     refresh_requests = 0
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal refresh_requests
         refresh_requests += 1
         await anyio.sleep(0)
-        return httpx.Response(200, json={'access_token': refreshed_access_token})
+        return httpx2.Response(200, json={'access_token': refreshed_access_token})
 
     store = MemoryStore(current)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         auth = OpenAICodexAuth(store=store, http_client=client)
         results: list[OpenAICodexCredentials] = []
 
@@ -367,15 +367,15 @@ async def test_cancellation_during_refresh_still_persists_rotated_token() -> Non
     request_started = anyio.Event()
     allow_response = anyio.Event()
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx2.Request) -> httpx2.Response:
         request_started.set()
         await allow_response.wait()
-        return httpx.Response(200, json={'access_token': refreshed_access_token})
+        return httpx2.Response(200, json={'access_token': refreshed_access_token})
 
     store = MemoryStore(current)
     scopes: list[anyio.CancelScope] = []
     completed = False
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         auth = OpenAICodexAuth(store=store, http_client=client)
 
         async def rotate() -> None:
@@ -417,10 +417,10 @@ async def test_cancellation_after_refresh_response_still_completes_save() -> Non
     scopes: list[anyio.CancelScope] = []
     completed = False
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'access_token': refreshed_access_token})
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'access_token': refreshed_access_token})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         auth = OpenAICodexAuth(store=store, http_client=client)
 
         async def rotate() -> None:
@@ -451,12 +451,12 @@ async def test_refresh_and_save_has_bounded_timeout(monkeypatch: pytest.MonkeyPa
     current = _credentials(expires_in=-60)
     monkeypatch.setattr('pydantic_ai.auth.openai_codex._REFRESH_AND_SAVE_TIMEOUT', 0.01)
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx2.Request) -> httpx2.Response:
         await anyio.sleep_forever()
         raise AssertionError('unreachable')  # pragma: no cover
 
     store = MemoryStore(current)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexRefreshError, match='timed out'):
             await OpenAICodexAuth(store=store, http_client=client).refresh()
 
@@ -472,11 +472,11 @@ async def test_refresh_rejects_new_access_token_conflicting_with_retained_id_tok
         }
     )
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'access_token': conflicting_access})
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'access_token': conflicting_access})
 
     store = MemoryStore(current)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexAccountMismatchError, match='different ChatGPT account'):
             await OpenAICodexAuth(store=store, http_client=client).refresh()
 
@@ -487,11 +487,11 @@ async def test_refresh_rejects_account_switch_without_replacing_credentials() ->
     current = _credentials(expires_in=-60)
     access_token, id_token = _tokens(account_id='different-account')
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'access_token': access_token, 'id_token': id_token})
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'access_token': access_token, 'id_token': id_token})
 
     store = MemoryStore(current)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         auth = OpenAICodexAuth(store=store, http_client=client)
         with pytest.raises(OpenAICodexAccountMismatchError, match='different ChatGPT account'):
             await auth.refresh()
@@ -517,10 +517,10 @@ async def test_refresh_maps_protocol_failures_to_typed_errors(
 ) -> None:
     current = _credentials(expires_in=-60)
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status_code, json=body)
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json=body)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(error_type, match=message):
             await OpenAICodexAuth(store=MemoryStore(current), http_client=client).refresh()
 
@@ -537,10 +537,10 @@ async def test_refresh_uses_existing_account_when_new_tokens_omit_account_claims
     )
     refreshed_access = _jwt({'exp': int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())})
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'access_token': refreshed_access})
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'access_token': refreshed_access})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         refreshed = await OpenAICodexAuth(store=MemoryStore(current), http_client=client).refresh()
 
     assert refreshed.account_id.get_secret_value() == _ACCOUNT_ID
@@ -550,10 +550,10 @@ async def test_refresh_uses_existing_account_when_new_tokens_omit_account_claims
 async def test_refresh_rejects_expired_or_incomplete_success_response() -> None:
     current = _credentials(expires_in=-60)
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={})
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexRefreshError, match='without a usable access token'):
             await OpenAICodexAuth(store=MemoryStore(current), http_client=client).refresh()
 
@@ -561,14 +561,14 @@ async def test_refresh_rejects_expired_or_incomplete_success_response() -> None:
 @pytest.mark.parametrize('operation', ['refresh', 'revoke'])
 async def test_oauth_refresh_and_revoke_never_follow_redirects(operation: str) -> None:
     current = _credentials(expires_in=-60)
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(307, headers={'location': 'https://example.com/collect'})
+        return httpx2.Response(307, headers={'location': 'https://example.com/collect'})
 
     store = MemoryStore(current)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle), follow_redirects=True) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle), follow_redirects=True) as client:
         auth = OpenAICodexAuth(store=store, http_client=client)
         if operation == 'refresh':
             with pytest.raises(OpenAICodexRefreshError, match='refresh failed'):
@@ -584,10 +584,10 @@ async def test_refresh_network_error_does_not_retain_refresh_token() -> None:
     current = _credentials(expires_in=-60)
     sentinel = current.refresh_token.get_secret_value()
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError(f'failed with {sentinel}', request=request)
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError(f'failed with {sentinel}', request=request)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexRefreshError) as exc_info:
             await OpenAICodexAuth(store=MemoryStore(current), http_client=client).refresh()
 
@@ -632,18 +632,18 @@ async def test_device_login_pending_then_success(
     sleep = AsyncMock()
     monkeypatch.setattr('pydantic_ai.auth._openai_codex_oauth._sleep', sleep)
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal poll_count
         if request.url.path.endswith('/deviceauth/usercode'):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={'device_auth_id': 'device-id', **start_body},
             )
         if request.url.path.endswith('/deviceauth/token'):
             poll_count += 1
             if poll_count == 1:
-                return httpx.Response(403)
-            return httpx.Response(
+                return httpx2.Response(403)
+            return httpx2.Response(
                 200,
                 json={
                     'authorization_code': 'authorization-code',
@@ -656,14 +656,14 @@ async def test_device_login_pending_then_success(
         assert form['redirect_uri'] == ['https://auth.openai.com/deviceauth/callback']
         assert form['code'] == ['authorization-code']
         assert form['code_verifier'] == [verifier]
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
         )
 
     store = MemoryStore()
     started_at = datetime.now(timezone.utc)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         credentials = await OpenAICodexAuth(store=store, http_client=client).login_device(shown.append, timeout=1800)
 
     assert credentials is store.credentials
@@ -687,10 +687,10 @@ async def test_device_login_pending_then_success(
     ],
 )
 async def test_device_login_rejects_invalid_start_responses(status_code: int, body: object, message: str) -> None:
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status_code, json=body)
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json=body)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexOAuthError, match=message):
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
@@ -713,17 +713,17 @@ async def test_device_login_rejects_invalid_start_responses(status_code: int, bo
     ],
 )
 async def test_device_login_rejects_terminal_poll_responses(status_code: int, body: object, message: str) -> None:
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/deviceauth/usercode'):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': 1},
             )
         if isinstance(body, bytes):
-            return httpx.Response(status_code, content=body)
-        return httpx.Response(status_code, json=body)
+            return httpx2.Response(status_code, content=body)
+        return httpx2.Response(status_code, json=body)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexOAuthError, match=message):
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
@@ -738,20 +738,20 @@ async def test_device_login_handles_slow_down_and_authorization_pending(
     sleep = AsyncMock()
     monkeypatch.setattr('pydantic_ai.auth._openai_codex_oauth._sleep', sleep)
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal poll_count
         if request.url.path.endswith('/deviceauth/usercode'):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': 1},
             )
         if request.url.path.endswith('/deviceauth/token'):
             poll_count += 1
             if poll_count == 1:
-                return httpx.Response(400, json={'error': 'slow_down'})
+                return httpx2.Response(400, json={'error': 'slow_down'})
             if poll_count == 2:
-                return httpx.Response(400, json={'error': {'code': 'authorization_pending'}})
-            return httpx.Response(
+                return httpx2.Response(400, json={'error': {'code': 'authorization_pending'}})
+            return httpx2.Response(
                 200,
                 json={
                     'authorization_code': 'authorization-code',
@@ -759,12 +759,12 @@ async def test_device_login_handles_slow_down_and_authorization_pending(
                     'code_verifier': verifier,
                 },
             )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
     assert [call.args for call in sleep.await_args_list] == [(6.0,), (6.0,)]
@@ -785,18 +785,18 @@ async def test_device_login_backs_off_and_retries_after_a_transport_failure(
     sleep = AsyncMock()
     monkeypatch.setattr('pydantic_ai.auth._openai_codex_oauth._sleep', sleep)
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal poll_count
         if request.url.path.endswith('/deviceauth/usercode'):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': 1},
             )
         if request.url.path.endswith('/deviceauth/token'):
             poll_count += 1
             if poll_count == 1:
-                raise httpx.ReadTimeout('simulated poll timeout')
-            return httpx.Response(
+                raise httpx2.ReadTimeout('simulated poll timeout')
+            return httpx2.Response(
                 200,
                 json={
                     'authorization_code': 'authorization-code',
@@ -804,12 +804,12 @@ async def test_device_login_backs_off_and_retries_after_a_transport_failure(
                     'code_verifier': verifier,
                 },
             )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         credentials = await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
     assert credentials.access_token.get_secret_value() == access_token
@@ -822,21 +822,21 @@ async def test_browser_login_starts_listener_before_presenting_url() -> None:
     access_token, id_token = _tokens()
     authorization_urls: list[str] = []
 
-    def handle_auth(request: httpx.Request) -> httpx.Response:
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == '/oauth/token'
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
         )
 
     store = MemoryStore()
     credentials: OpenAICodexCredentials | None = None
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as auth_client:
         auth = OpenAICodexAuth(store=store, http_client=auth_client)
         async with anyio.create_task_group() as task_group:
 
             async def send_callback(callback_url: str) -> None:
-                async with httpx.AsyncClient(trust_env=False) as callback_client:
+                async with httpx2.AsyncClient(trust_env=False) as callback_client:
                     parsed_callback = urlsplit(callback_url)
                     not_found = await callback_client.get(
                         f'{parsed_callback.scheme}://{parsed_callback.netloc}/unexpected'
@@ -892,7 +892,7 @@ async def test_browser_oauth_error_callback_is_terminal() -> None:
     async def open_url(authorization_url: str) -> None:
         query = parse_qs(urlsplit(authorization_url).query)
         callback_url = f'{query["redirect_uri"][0]}?error=access_denied&state={query["state"][0]}'
-        async with httpx.AsyncClient(trust_env=False) as callback_client:
+        async with httpx2.AsyncClient(trust_env=False) as callback_client:
             response = await callback_client.get(callback_url)
             assert response.status_code == 400
 
@@ -910,35 +910,35 @@ async def test_browser_oauth_error_callback_is_terminal() -> None:
 async def test_browser_login_reports_token_exchange_failures(
     token_status: int, token_body: object, message: str
 ) -> None:
-    def handle_auth(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(token_status, json=token_body)
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(token_status, json=token_body)
 
     async def open_url(authorization_url: str) -> None:
         query = parse_qs(urlsplit(authorization_url).query)
         callback_url = f'{query["redirect_uri"][0]}?code=authorization-code&state={query["state"][0]}'
-        async with httpx.AsyncClient(trust_env=False) as callback_client:
+        async with httpx2.AsyncClient(trust_env=False) as callback_client:
             response = await callback_client.get(callback_url)
             assert response.status_code == 500
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as auth_client:
         with pytest.raises(OpenAICodexOAuthError, match=message):
             await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(open_url, timeout=5)
 
 
 async def test_oauth_code_exchange_never_follows_redirects() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handle_auth(request: httpx.Request) -> httpx.Response:
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(307, headers={'location': 'https://example.com/collect'})
+        return httpx2.Response(307, headers={'location': 'https://example.com/collect'})
 
     async def open_url(authorization_url: str) -> None:
         query = parse_qs(urlsplit(authorization_url).query)
         callback_url = f'{query["redirect_uri"][0]}?code=authorization-code&state={query["state"][0]}'
-        async with httpx.AsyncClient(trust_env=False) as callback_client:
+        async with httpx2.AsyncClient(trust_env=False) as callback_client:
             assert (await callback_client.get(callback_url)).status_code == 500
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth), follow_redirects=True) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth), follow_redirects=True) as client:
         with pytest.raises(OpenAICodexOAuthError, match='exchange failed'):
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
 
@@ -960,8 +960,8 @@ async def test_oauth_code_exchange_never_follows_redirects() -> None:
 async def test_browser_login_rejects_incomplete_token_claims(
     access_payload: dict[str, object], id_payload: dict[str, object], message: str
 ) -> None:
-    def handle_auth(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'access_token': _jwt(access_payload),
@@ -973,10 +973,10 @@ async def test_browser_login_rejects_incomplete_token_claims(
     async def open_url(authorization_url: str) -> None:
         query = parse_qs(urlsplit(authorization_url).query)
         callback_url = f'{query["redirect_uri"][0]}?code=authorization-code&state={query["state"][0]}'
-        async with httpx.AsyncClient(trust_env=False) as callback_client:
+        async with httpx2.AsyncClient(trust_env=False) as callback_client:
             assert (await callback_client.get(callback_url)).status_code == 500
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as client:
         with pytest.raises(OpenAICodexOAuthError, match=message):
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
 
@@ -1004,8 +1004,8 @@ async def test_browser_login_rejects_conflicting_token_account_claims(conflict: 
         }
     )
 
-    def handle_auth(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'access_token': access_token,
@@ -1017,10 +1017,10 @@ async def test_browser_login_rejects_conflicting_token_account_claims(conflict: 
     async def open_url(authorization_url: str) -> None:
         query = parse_qs(urlsplit(authorization_url).query)
         callback_url = f'{query["redirect_uri"][0]}?code=authorization-code&state={query["state"][0]}'
-        async with httpx.AsyncClient(trust_env=False) as callback_client:
+        async with httpx2.AsyncClient(trust_env=False) as callback_client:
             assert (await callback_client.get(callback_url)).status_code == 500
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as client:
         with pytest.raises(OpenAICodexOAuthError, match=r'different ChatGPT accounts|disagree'):
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
 
@@ -1028,8 +1028,8 @@ async def test_browser_login_rejects_conflicting_token_account_claims(conflict: 
 async def test_browser_login_rejects_invalid_jwt_claims() -> None:
     invalid_claims_token = 'header.bm90LWpzb24.signature'
 
-    def handle_auth(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 'access_token': invalid_claims_token,
@@ -1041,10 +1041,10 @@ async def test_browser_login_rejects_invalid_jwt_claims() -> None:
     async def open_url(authorization_url: str) -> None:
         query = parse_qs(urlsplit(authorization_url).query)
         callback_url = f'{query["redirect_uri"][0]}?code=authorization-code&state={query["state"][0]}'
-        async with httpx.AsyncClient(trust_env=False) as callback_client:
+        async with httpx2.AsyncClient(trust_env=False) as callback_client:
             assert (await callback_client.get(callback_url)).status_code == 500
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as client:
         with pytest.raises(OpenAICodexOAuthError, match='invalid JWT claims'):
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
 
@@ -1052,8 +1052,8 @@ async def test_browser_login_rejects_invalid_jwt_claims() -> None:
 async def test_browser_login_uses_allowlisted_fallback_port() -> None:
     access_token, id_token = _tokens()
 
-    def handle_auth(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
         )
@@ -1062,12 +1062,12 @@ async def test_browser_login_uses_allowlisted_fallback_port() -> None:
         query = parse_qs(urlsplit(authorization_url).query)
         assert urlsplit(query['redirect_uri'][0]).port == 1457
         callback_url = f'{query["redirect_uri"][0]}?code=authorization-code&state={query["state"][0]}'
-        async with httpx.AsyncClient(trust_env=False) as callback_client:
+        async with httpx2.AsyncClient(trust_env=False) as callback_client:
             response = await callback_client.get(callback_url)
             assert response.status_code == 200
 
     occupied = await anyio.create_tcp_listener(local_host='127.0.0.1', local_port=1455)
-    async with occupied, httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
+    async with occupied, httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as auth_client:
         await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(open_url, timeout=5)
 
 
@@ -1092,8 +1092,8 @@ async def test_browser_login_runs_sync_presentation_callback_in_worker_thread() 
     main_thread = threading.get_ident()
     callback_threads: list[int] = []
 
-    def handle_auth(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
         )
@@ -1105,7 +1105,7 @@ async def test_browser_login_runs_sync_presentation_callback_in_worker_thread() 
         with urllib.request.urlopen(callback_url, timeout=5) as response:
             assert response.status == 200
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as auth_client:
         credentials = await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(
             open_url, timeout=5
         )
@@ -1125,10 +1125,10 @@ async def test_browser_login_ignores_a_replayed_callback() -> None:
     access_token, id_token = _tokens()
     exchanges = 0
 
-    def handle_auth(request: httpx.Request) -> httpx.Response:
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
         nonlocal exchanges
         exchanges += 1
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
         )
@@ -1149,7 +1149,7 @@ async def test_browser_login_ignores_a_replayed_callback() -> None:
         for thread in threads:
             thread.join()
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as auth_client:
         credentials = await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(
             open_url, timeout=10
         )
@@ -1168,8 +1168,8 @@ async def test_browser_login_survives_a_malformed_callback_request() -> None:
     """
     access_token, id_token = _tokens()
 
-    def handle_auth(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_auth(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={'access_token': access_token, 'refresh_token': _REFRESH_TOKEN, 'id_token': id_token},
         )
@@ -1186,7 +1186,7 @@ async def test_browser_login_survives_a_malformed_callback_request() -> None:
         with urllib.request.urlopen(callback_url, timeout=5) as response:
             assert response.status == 200
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_auth)) as auth_client:
         credentials = await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(
             open_url, timeout=10
         )
@@ -1195,8 +1195,8 @@ async def test_browser_login_survives_a_malformed_callback_request() -> None:
 
 
 async def test_device_login_reports_presentation_failure() -> None:
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': 1},
         )
@@ -1204,7 +1204,7 @@ async def test_device_login_reports_presentation_failure() -> None:
     def fail(code: OpenAICodexDeviceCode) -> None:
         raise RuntimeError('presentation failed')
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexOAuthError, match='Unable to present'):
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(fail)
 
@@ -1214,15 +1214,15 @@ async def test_device_polling_respects_effective_timeout(timeout: float, monkeyp
     if timeout > 900:
         monkeypatch.setattr('pydantic_ai.auth._openai_codex_oauth._DEVICE_CODE_LIFETIME', 0.01)
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/deviceauth/usercode'):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': 1},
             )
-        return httpx.Response(403)
+        return httpx2.Response(403)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexOAuthError, match='timed out'):
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(
                 lambda code: None, timeout=timeout
@@ -1248,9 +1248,9 @@ async def test_device_login_falls_back_when_the_issuer_expiry_is_naive() -> None
     shown: list[OpenAICodexDeviceCode] = []
     started = datetime.now(timezone.utc)
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/deviceauth/usercode'):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     'device_auth_id': 'device-id',
@@ -1259,10 +1259,10 @@ async def test_device_login_falls_back_when_the_issuer_expiry_is_naive() -> None
                     'expires_at': '2026-08-06T12:00:00',
                 },
             )
-        return httpx.Response(403)
+        return httpx2.Response(403)
 
     with anyio.fail_after(30):
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
             with pytest.raises(OpenAICodexOAuthError, match='timed out'):
                 await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(shown.append, timeout=0.01)
 
@@ -1279,9 +1279,9 @@ async def test_device_polling_stops_at_the_issuer_deadline() -> None:
     shown: list[OpenAICodexDeviceCode] = []
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=0.01)
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/deviceauth/usercode'):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     'device_auth_id': 'device-id',
@@ -1290,11 +1290,11 @@ async def test_device_polling_stops_at_the_issuer_deadline() -> None:
                     'expires_at': expires_at.isoformat(),
                 },
             )
-        return httpx.Response(403)
+        return httpx2.Response(403)
 
     # Bounded so a regression fails the run instead of polling for the full fallback lifetime.
     with anyio.fail_after(30):
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
             with pytest.raises(OpenAICodexOAuthError, match='timed out'):
                 await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(shown.append, timeout=1800)
 
@@ -1310,16 +1310,16 @@ async def test_sync_presentation_callback_cannot_defeat_login_timeout(method: st
         callback_started.set()
         release_callback.wait(5)
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path.endswith('/deviceauth/usercode')
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': 1},
         )
 
     started_at = anyio.current_time()
     try:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
             auth = OpenAICodexAuth(store=MemoryStore(), http_client=client)
             with pytest.raises(OpenAICodexOAuthError, match='timed out'):
                 if method == 'browser':
@@ -1345,10 +1345,10 @@ async def test_login_timeout_must_be_finite_and_positive(timeout: float) -> None
 async def test_oauth_validation_error_does_not_retain_secret_in_exception_chain() -> None:
     sentinel = 'plaintext-validation-secret'
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=json.dumps({'access_token': sentinel, 'unexpected': sentinel}))
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=json.dumps({'access_token': sentinel, 'unexpected': sentinel}))
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         with pytest.raises(OpenAICodexOAuthError) as exc_info:
             await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
@@ -1366,12 +1366,12 @@ async def test_logout_cancellation_waits_for_delete_and_custom_lock_release() ->
     scopes: list[anyio.CancelScope] = []
     completed = False
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx2.Request) -> httpx2.Response:
         request_started.set()
         await allow_response.wait()
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         auth = OpenAICodexAuth(store=store, http_client=client)
 
         async def logout() -> None:
@@ -1405,13 +1405,13 @@ async def test_logout_without_credentials_is_idempotent() -> None:
 async def test_logout_reports_successful_upstream_revocation() -> None:
     requests: list[dict[str, object]] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         requests.append(json.loads(request.content))
         assert request.extensions['timeout'] == {'connect': 10, 'read': 10, 'write': 10, 'pool': 10}
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     store = MemoryStore(_credentials())
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         result = await OpenAICodexAuth(store=store, http_client=client).logout()
 
     assert store.credentials is None
@@ -1425,13 +1425,13 @@ async def test_logout_reports_successful_upstream_revocation() -> None:
 async def test_logout_always_removes_local_credentials(local_only: bool) -> None:
     revoke_requests = 0
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         nonlocal revoke_requests
         revoke_requests += 1
-        return httpx.Response(500)
+        return httpx2.Response(500)
 
     store = MemoryStore(_credentials())
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         result = await OpenAICodexAuth(store=store, http_client=client).logout(local_only=local_only)
 
     assert store.credentials is None

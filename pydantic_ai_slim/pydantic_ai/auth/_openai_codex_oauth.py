@@ -13,15 +13,15 @@ from typing import TypeVar
 from urllib.parse import parse_qs, urlsplit
 
 import anyio
-import httpx
+import httpx2
 from anyio.abc import SocketStream
 from anyio.streams.stapled import MultiListener
 from anyio.to_thread import run_sync as run_sync_in_worker
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
+from .._http import create_async_httpx2_client
 from .._utils import BaseExceptionGroup
 from ..exceptions import UserError
-from ..models import create_async_http_client
 from .openai_codex import (
     OpenAICodexAccountMismatchError,
     OpenAICodexAuthError,
@@ -158,7 +158,7 @@ class _JwtClaims(BaseModel):
 
 
 class OpenAICodexOAuthClient:
-    def __init__(self, http_client: httpx.AsyncClient | None) -> None:
+    def __init__(self, http_client: httpx2.AsyncClient | None) -> None:
         self._http_client = http_client
 
     async def login_browser(
@@ -177,7 +177,7 @@ class OpenAICodexOAuthClient:
         # way. Changing it to a literal loopback address breaks browser login outright.
         redirect_uri = f'http://localhost:{port}{_CALLBACK_PATH}'
         authorization_url = str(
-            httpx.URL(
+            httpx2.URL(
                 _AUTHORIZE_URL,
                 params={
                     'response_type': 'code',
@@ -447,7 +447,7 @@ class OpenAICodexOAuthClient:
         self,
         connection: SocketStream,
         *,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         redirect_uri: str,
         verifier: str,
         expected_state: str,
@@ -503,7 +503,7 @@ class OpenAICodexOAuthClient:
 
     async def _exchange_code(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         *,
         code: SecretStr,
         redirect_uri: str,
@@ -577,7 +577,7 @@ class OpenAICodexOAuthClient:
             revision=secrets.token_urlsafe(18),
         )
 
-    def _validate_response(self, response: httpx.Response, model: type[_ModelT], message: str) -> _ModelT:
+    def _validate_response(self, response: httpx2.Response, model: type[_ModelT], message: str) -> _ModelT:
         try:
             validated = model.model_validate_json(response.content)
         except ValidationError:
@@ -589,7 +589,7 @@ class OpenAICodexOAuthClient:
         # raw token. Raising here leaves `__context__` empty, which the secret-leak tests assert.
         raise OpenAICodexOAuthError(message) from None
 
-    def _error_code(self, response: httpx.Response) -> str | None:
+    def _error_code(self, response: httpx2.Response) -> str | None:
         """Return the lower-cased error code, as the official client's own classifier does.
 
         Every caller compares the result against literals, so normalizing once here is what keeps a
@@ -604,28 +604,28 @@ class OpenAICodexOAuthClient:
 
     async def _send(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         method: str,
         url: str,
         *,
         json: dict[str, str] | None = None,
         data: dict[str, str] | None = None,
         timeout: float | None = None,
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         try:
             if timeout is None:
                 return await client.request(method, url, json=json, data=data, follow_redirects=False)
             return await client.request(method, url, json=json, data=data, timeout=timeout, follow_redirects=False)
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             pass
         raise OpenAICodexOAuthError('Unable to reach the OpenAI Codex authentication service.') from None
 
     @asynccontextmanager
-    async def _client(self) -> AsyncGenerator[httpx.AsyncClient]:
+    async def _client(self) -> AsyncGenerator[httpx2.AsyncClient]:
         if self._http_client is not None:
             yield self._http_client
         else:
-            async with create_async_http_client(timeout=_REQUEST_TIMEOUT, connect=_CONNECT_TIMEOUT) as client:
+            async with create_async_httpx2_client(timeout=_REQUEST_TIMEOUT, connect=_CONNECT_TIMEOUT) as client:
                 yield client
 
 

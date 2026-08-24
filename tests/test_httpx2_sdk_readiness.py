@@ -87,10 +87,12 @@ import warnings
 
 import httpx2
 
+from pydantic_ai.auth.openai_codex import OpenAICodexAuth
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.gateway import gateway_provider
-from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.github import GitHubProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
 
 async def construct_providers():
@@ -103,6 +105,13 @@ async def construct_providers():
             'openai', api_key='test', base_url='https://gateway.example.com', http_client=client
         )
         assert gateway.client._client is client
+
+        codex_provider = OpenAICodexProvider(
+            credential_source=OpenAICodexAuth(),
+            http_client=client,
+        )
+        assert codex_provider.client._client is client
+        OpenAIResponsesModel('gpt-5.5', provider=codex_provider)
 
 
 asyncio.run(construct_providers())

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Protocol
 
 import anyio
-import httpx
+import httpx2
 from anyio.lowlevel import checkpoint
 from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
 
@@ -186,7 +186,7 @@ class OpenAICodexAuth(OpenAICodexCredentialSource):
         *,
         store: OpenAICodexCredentialStore | None = None,
         path: Path | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         if store is not None and path is not None:
             raise UserError('`store` and `path` are mutually exclusive')
