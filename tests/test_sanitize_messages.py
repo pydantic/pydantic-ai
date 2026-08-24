@@ -5,6 +5,7 @@ import warnings
 import pytest
 
 from pydantic_ai import (
+    CompactionPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -20,7 +21,7 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
 )
-from pydantic_ai.messages import sanitize_messages
+from pydantic_ai.messages import STANDING_PROMPT_PLANTED_KEY, sanitize_messages
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
@@ -97,6 +98,65 @@ def test_sanitize_messages_keeps_trailing_native_tool_calls():
         warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
         assert sanitize_messages(paired) == paired
         assert sanitize_messages(lone) == lone
+
+
+def test_sanitize_messages_strips_compaction_provenance_stamp():
+    stamped = CompactionPart(
+        provider_name='openai',
+        provider_details={
+            'encrypted_content': 'stamped-encrypted',
+            STANDING_PROMPT_PLANTED_KEY: True,
+        },
+    )
+    unstamped = CompactionPart(
+        provider_name='openai',
+        provider_details={'encrypted_content': 'unstamped-encrypted'},
+    )
+    text = TextPart(content='unaffected')
+    messages: list[ModelMessage] = [ModelResponse(parts=[stamped, unstamped, text])]
+
+    sanitized = sanitize_messages(messages)
+
+    response = message(sanitized, ModelResponse)
+    assert response.parts == snapshot(
+        [
+            CompactionPart(
+                provider_name='openai',
+                provider_details={'encrypted_content': 'stamped-encrypted'},
+            ),
+            unstamped,
+            text,
+        ]
+    )
+    assert response.parts[0] is not stamped
+    assert response.parts[1] is unstamped
+    assert response.parts[2] is text
+    assert stamped.provider_details == {
+        'encrypted_content': 'stamped-encrypted',
+        STANDING_PROMPT_PLANTED_KEY: True,
+    }
+
+
+def test_sanitize_messages_strips_compaction_parts_for_mixed_custody():
+    """`strip_compaction_parts=True` drops compaction parts so a client-supplied boundary can't
+    hide trusted server-side history the sanitized messages are combined with; a response left
+    with no parts is dropped entirely. Off by default: pure client custody honors the client's
+    boundaries."""
+    compaction_only = ModelResponse(
+        parts=[CompactionPart(content='Client summary.', provider_name='openai')],
+    )
+    mixed = ModelResponse(
+        parts=[CompactionPart(content='Another summary.', provider_name='openai'), TextPart(content='kept')],
+    )
+    messages: list[ModelMessage] = [compaction_only, ModelRequest.user_text_prompt('hi'), mixed]
+
+    stripped = sanitize_messages(messages, strip_compaction_parts=True)
+    assert not any(isinstance(part, CompactionPart) for message in stripped for part in message.parts)
+    assert message_part(stripped, TextPart, message_index=1).content == 'kept'
+    assert len(stripped) == 2  # the compaction-only response is dropped entirely
+
+    kept = sanitize_messages(messages)
+    assert sum(isinstance(part, CompactionPart) for message in kept for part in message.parts) == 2
 
 
 def test_sanitize_messages_strips_dangling_call_exposed_by_dropped_tail():

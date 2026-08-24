@@ -1,0 +1,90 @@
+name: Agent Spend Report
+
+# Weekly waste report for the `gh-aw` agentic workflows, delivered privately to
+# Slack. The static guard (`agentic_workflow_guard.py`, run in CI) catches known
+# anti-patterns at review time; this catches quantitative drift and workflows
+# that die quietly — both failure modes from #6766 looked green on the Actions
+# tab. Cost data goes to Slack rather than a public issue.
+#
+# This workflow runs no model and consumes no MiniMax budget: it reads the
+# `agent` artifact each gh-aw run already uploads.
+
+on:
+  schedule:
+    # Mondays 09:00 UTC, before the weekly sweeps fan out.
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: agent-spend-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    if: github.repository == 'pydantic/pydantic-ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      slack_payload: ${{ steps.report.outputs.slack_payload }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Measure agentic workflow spend
+        id: report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python .github/scripts/agent_spend_report.py --days 7
+
+  # Posts every week, not only when something is wrong. The weekly message is the
+  # heartbeat that proves this monitor is still alive — a reporter that speaks only on
+  # alert dies indistinguishably from a quiet week, which is the #6766 failure mode it
+  # exists to catch. The report leads with an alert section when there is one.
+  notify:
+    needs: report
+    # not cancelled(): a partial measurement is still worth delivering.
+    if: ${{ !cancelled() && needs.report.outputs.slack_payload != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pydantic-ai-triage
+    permissions: {}
+    steps:
+      - name: Post the spend report privately
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: ${{ needs.report.outputs.slack_payload }}
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+
+  # Without this, a crash before `$GITHUB_OUTPUT` is written leaves `slack_payload`
+  # empty, `notify` skipped, and no message at all — the monitor would fail as quietly
+  # as the workflows it watches. `needs` spans every job because `failure()` only sees
+  # this job's own dependencies: with `needs: report` alone, a `report` that succeeds
+  # followed by a `notify` Slack rejection turns the run red and sends nothing.
+  notify-failure:
+    needs: [report, notify]
+    if: ${{ !cancelled() && (contains(needs.*.result, 'failure') || needs.report.outputs.slack_payload == '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pydantic-ai-triage
+    permissions: {}
+    steps:
+      - name: Report that the spend report itself failed
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: |
+            {
+              "text": ":warning: Agent spend report failed to produce a report — no spend data this week. <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            }
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook

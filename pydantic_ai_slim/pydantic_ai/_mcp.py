@@ -7,12 +7,14 @@ from typing import Literal
 from typing_extensions import assert_never
 
 from . import exceptions, messages
+from ._mcp_compat import mcp_field, mcp_optional_field
 
 try:
+    # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
-except ImportError as _import_error:
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `mcp` package to use the MCP server, '
+        'Please install the `mcp` package to use the MCP integrations, '
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
 
@@ -21,8 +23,8 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
     """Convert from MCP create message request parameters to pydantic-ai messages."""
     pai_messages: list[messages.ModelMessage] = []
     request_parts: list[messages.ModelRequestPart] = []
-    if params.systemPrompt:
-        request_parts.append(messages.SystemPromptPart(content=params.systemPrompt))
+    if system_prompt := mcp_optional_field(params, 'system_prompt', str):
+        request_parts.append(messages.SystemPromptPart(content=system_prompt))
     response_parts: list[messages.ModelResponsePart] = []
     for msg in params.messages:
         content = msg.content
@@ -37,7 +39,10 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 user_part_content: str | Sequence[messages.UserContent] = content.text
             elif isinstance(content, (mcp_types.ImageContent, mcp_types.AudioContent)):
                 user_part_content = [
-                    messages.BinaryContent(data=base64.b64decode(content.data), media_type=content.mimeType)
+                    messages.BinaryContent(
+                        data=base64.b64decode(content.data),
+                        media_type=mcp_field(content, 'mime_type', str),
+                    )
                 ]
             elif isinstance(content, list):
                 raise NotImplementedError('list content type is not yet supported')

@@ -21,9 +21,6 @@ from .messages import (
     ToolReturnPart,
 )
 
-DEFERRED_CAPABILITY_TOOL_METADATA_KEY = 'pydantic_ai_deferred_capability_tool'
-"""Tool metadata key marking function tools owned by an on-demand capability."""
-
 if TYPE_CHECKING:
     from .messages import ModelMessage
 
@@ -139,7 +136,28 @@ _TYPED_PART_TAGS_BY_TYPE[LoadCapabilityReturnPart] = 'capability-load-return'
 
 
 def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
-    """Parse message history to find capabilities loaded via the `load_capability` tool."""
+    """Parse visible history to find capabilities loaded via `load_capability`.
+
+    Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
+    state at its exact position in a response. This is deliberately provider-agnostic:
+    over-counting can expose tools whose load evidence is no longer visible, while
+    under-counting once only permitted a redundant, idempotent load. Now that availability
+    gates execution, an under-count also *refuses* the call — see
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] for when that
+    is wrong and what is tracked to fix it.
+
+    Only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] is scanned —
+    the one definition of the boundary — so only pairs entirely after the boundary count.
+    """
+    # This module loads while `messages` is still mid-import (see the module-level import note),
+    # and `post_compaction_window` is defined after that point, so it can only be imported at call time.
+    from .messages import post_compaction_window
+
+    return _parse_loaded_capabilities(post_compaction_window(messages))
+
+
+def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
+    """Parse capability-load evidence from an already-selected message window."""
     call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()
     for msg in messages:

@@ -457,7 +457,17 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 | [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, handler: `[`WrapRunHandler`][pydantic_ai.capabilities.WrapRunHandler]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Wrap the entire run |
 | [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, error: BaseException) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Handle run errors (see [error hooks](#error-hooks)) |
 
-`wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with both [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.iter()`][pydantic_ai.agent.Agent.iter].
+`wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.iter()`][pydantic_ai.agent.Agent.iter], and [realtime sessions](../realtime/capabilities.md) — a realtime session is a run, so all four hooks fire once around it, with `wrap_run`'s handler resolving when the session closes. Check [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] to branch behavior, and use [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] (set once the session is connected) to interact with the live session.
+
+!!! warning "Tearing down tasks you spawn"
+    A run is cancelled — via [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel], a [`CancellationToken`][pydantic_ai.CancellationToken], an `asyncio.wait_for` timeout, or an enclosing task group — by cancelling the single asyncio task that drives it. Work the run `await`s inline receives the `CancelledError` automatically; a task you start yourself with `asyncio.create_task(...)` runs on a **different** task and does **not**, so a capability that spawns tasks must tear them down itself.
+
+    Prefer structured concurrency ([`anyio.create_task_group()`](https://anyio.readthedocs.io/en/stable/tasks.html) with `async with`): the run's cancellation flows through the `async with` and children are cancelled on scope exit, with no manual cleanup. If you keep raw tasks, cancel and drain them in a `try`/`finally` in `wrap_run` (issue every `task.cancel()` first, then a single `await asyncio.gather(*tasks, return_exceptions=True)`), and wrap that teardown in `anyio.CancelScope(shield=True)` so it still completes when the run is already being cancelled. A raw `task.cancel()` can pierce even a shielded scope, so for work that must finish regardless, keep it on its own task and protect it with [`asyncio.shield()`](https://docs.python.org/3/library/asyncio-task.html#asyncio.shield) (holding a strong reference to the task) — awaiting the task directly would not help, since cancelling the run's task propagates the `CancelledError` into the task it's awaiting. A sub-agent run you launch on a background task is likewise yours to cancel and drain — only sub-agents you `await` inline are torn down for you.
+
+!!! note "Observing cancellation"
+    A cancellation reaches a capability as an `asyncio.CancelledError`: through a `wrap_*` hook's `handler()` await (catch it around `await handler(...)`), or at the run's terminal funnel [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error], whose `error` is a `BaseException`. It does **not** reach the recovery-oriented `Exception`-typed hooks — [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error], [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error], [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] — because a cancellation is a terminal control signal, not a failure of that step you could recover from.
+
+    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work — on Python 3.11+ the run re-asserts the cancellation at the next step boundary (best-effort on Python 3.10).
 
 ### Node hooks
 
@@ -470,8 +480,10 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 
 [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] fires for every node in the [agent graph](../agent.md#iterating-over-an-agents-graph) ([`UserPromptNode`][pydantic_ai.agent.UserPromptNode], [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode], [`CallToolsNode`][pydantic_ai.agent.CallToolsNode]). Override this to observe node transitions, add per-step logging, or modify graph progression:
 
+Node hooks fire however the run is driven: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter] all take the same path.
+
 !!! note
-    `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next]. However, they are **not** called when iterating with bare `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter], since that uses the graph run's internal iteration. Always use `agent_run.next(node)` to advance the run if you need `wrap_node_run` hooks to fire.
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] is the exception: it hands you the result as soon as the final output is found mid-stream, so the model request that produced it gets `before_node_run` but not `wrap_node_run` or `after_node_run`. If a hook does cleanup or result rewriting that has to run for every node, drive the run with `agent.run()` or `agent.iter()` instead.
 
 ```python {title="node_logging_example.py"}
 from __future__ import annotations
@@ -578,6 +590,10 @@ All tool hooks receive a `tool_def` parameter with the [`ToolDefinition`][pydant
 
 To skip validation and provide pre-validated args, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `wrap_tool_validate`.
 
+A tool call can only be [deferred](../deferred-tools.md) once its arguments have been validated, since whoever resolves the deferral is shown those arguments. [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] can therefore be raised from `after_tool_validate`, and from `wrap_tool_validate` once its `handler()` has returned; raising one from `before_tool_validate`, from `wrap_tool_validate` before it calls `handler()`, or from `on_tool_validate_error` (which only runs because validation failed) raises a [`UserError`][pydantic_ai.exceptions.UserError] naming the hook. A permitted deferral behaves exactly like one from a tool's [`args_validator`](../tools-advanced.md#args-validator): the tool isn't executed, the retry budget is untouched, and the call joins the run's [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests].
+
+`after_tool_validate` stays a reliable gate on validated arguments: it runs even when the `args_validator` or `wrap_tool_validate` already deferred the call, so rejecting there (with `ModelRetry` or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]) wins over that deferral, deferring there replaces it, and the args it returns are the ones the deferred call carries.
+
 **Execution hooks** — `args` is always the validated `dict[str, Any]`:
 
 | Hook | Signature | Purpose |
@@ -588,6 +604,8 @@ To skip validation and provide pre-validated args, raise [`SkipToolValidation(ar
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 To skip execution and provide a replacement result, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `wrap_tool_execute`.
+
+Any execution hook can defer the call, but raise `ApprovalRequired`/`CallDeferred` from `before_tool_execute` (or from `wrap_tool_execute` before it calls `handler()`) so the tool function doesn't run: a deferral from `after_tool_execute`, or from `wrap_tool_execute` after `handler()` returned, is accepted but the tool has already executed, so its side effects happened and its result is discarded.
 
 Tool validation and execution hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to request a retry, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a failed tool result without retrying. See [triggering retries and tool failures](../hooks.md#triggering-retries-with-modelretry) for the full pattern.
 
@@ -627,6 +645,9 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 - [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** side of the agent retry budget, matching the [output hook](#output-hooks) lifecycle.
 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
+
+!!! note "On a deferred capability"
+    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-available capability. Before that there is nothing for it to govern: an unloaded capability's tools are neither advertised to the model nor callable.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
@@ -676,6 +697,30 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, stream: AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]) -> AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]` | Observe, filter, or transform streamed events |
+
+The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer. It also wraps a [realtime session's](../realtime/capabilities.md) event iterator, where the stream additionally contains realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
+
+When a consumer closes the event stream before exhausting it, Pydantic AI also closes each wrapper returned by `wrap_run_event_stream` if it provides an `aclose()` method. Custom wrappers should use `try`/`finally` for teardown and may safely await cleanup there, but must not yield events while handling `GeneratorExit` because the consumer has gone away.
+
+Because a wrapper that closes its own input and a composed capability that closes every wrapper it built can both reach the same stream, `aclose()` may be called more than once. Async generators are idempotent here, so a `try`/`finally` wrapper needs nothing extra; a wrapper implementing `aclose()` by hand should make repeat calls a no-op.
+
+!!! warning "A processor shapes the whole stream, not just the handler's view"
+    The run has one event stream, so a capability that drops or rewrites events changes what *every*
+    consumer sees — including the text an [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]
+    caller gets from [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text].
+
+    Some events are also control signals. [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent]
+    tells [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] that the final output has
+    started, so a processor that drops it makes `run_stream()` wait for the whole model response
+    before handing back the result instead of streaming it. The run's output is unchanged. Filter
+    deliberately.
+
+    It does not reach the run's output. The [`ModelResponse`][pydantic_ai.messages.ModelResponse] is
+    accumulated from the raw model stream before a processor sees the events, so
+    [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] and the final validated
+    output are unaffected — dropping events only changes when a partial snapshot is emitted, not what
+    it contains. To observe without changing anything, take the stream and yield each event through
+    unchanged.
 
 ```python {title="event_stream_example.py"}
 from collections.abc import AsyncIterable
@@ -979,7 +1024,7 @@ assert combined.capabilities[1] is rate_limit_hooks
 
 ### Sharing state between capabilities
 
-Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar]: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first.
+Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar] set from an async function: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first. A sync [`Hooks`](../hooks.md) function can't be the writer: it runs on a separate thread, so values it sets are not visible to the rest of the run.
 
 ### Testing custom capabilities
 

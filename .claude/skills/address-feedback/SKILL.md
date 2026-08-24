@@ -1,6 +1,7 @@
 ---
 name: address-feedback
-description: Find and address unresolved PR review comments for the current branch, then summarize the changes and help reply to and resolve threads after user approval.
+description: Find and address unresolved PR review comments for the current branch, then continue
+  the canonical push, reply, reaction, and resolution workflow.
 ---
 
 # Address PR Review Feedback
@@ -16,9 +17,9 @@ Find and address all review comments on the PR for the current branch. For each 
 
 3. **Fix the code**: Make the necessary changes to address each comment.
 
-4. **Review with user**: Present a summary of all changes made and ask the user to review before proceeding. Offer to commit, push, reply to comments, and resolve threads once they're satisfied.
+4. **Continue the PR loop**: Follow `pushing-commits-to-the-repo` from its `Before you push` section.
 
-5. **Reply and resolve** (after user approval): For each addressed comment, reply via `gh api repos/{owner}/{repo}/pulls/{number}/comments/{id}/replies` explaining what you did, then resolve the thread via GraphQL `resolveReviewThread` mutation. To find thread IDs, query `repository.pullRequest.reviewThreads` via GraphQL.
+5. **Use the canonical close-out**: Apply every required reply, reaction, and resolution step from that workflow. For each completed comment, explain what changed or why no change was needed. Then resolve the thread via GraphQL `resolveReviewThread`. Leave threads open only when a decision or another person's response is pending.
 
 Always read the relevant code before making changes.
 

@@ -9,6 +9,7 @@ from pydantic import Discriminator, Tag
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
@@ -220,16 +221,46 @@ def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
     )
 
 
-def guard_run_context_enqueue(
-    ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str
-) -> RunContext[AgentDepsT]:
-    """Return a copy of `ctx` whose `enqueue()` raises, for running user code inside a durable unit.
+class CancelGuard(RunCancellation):
+    """Replaces the run's live cancellation controller inside a durable unit.
+
+    `ctx.cancel()` inside a durable unit would be replay-divergent: on recovery (DBOS) or
+    cache hit (Prefect), the unit's recorded result is replayed without re-running the code, so
+    the cancellation would silently not happen again; cancelling raises an explanatory
+    `UserError` instead. (Temporal gets the same protection structurally: the live controller
+    never crosses the activity serialization boundary.)
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._guard_message = message
+
+    def cancel(self) -> None:
+        raise UserError(self._guard_message)
+
+
+def cancel_not_supported_message(unit_noun: str, container_noun: str) -> str:
+    """The shared `ctx.cancel()` error, worded for one engine's durable unit and container."""
+    return (
+        f'`cancel` is not supported inside a durable {unit_noun}: the durable runtime replays '
+        f"the {unit_noun}'s recorded result without re-running your code, so the cancellation "
+        f'would silently not happen again on recovery. Cancel the {container_noun} instead.'
+    )
+
+
+def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str) -> RunContext[AgentDepsT]:
+    """Return a copy of `ctx` whose `enqueue()` and `cancel()` raise, for user code in a durable unit.
 
     Used by the in-process engines (DBOS steps, Prefect tasks) that pass the live context into
     the durable unit. Temporal reconstructs its context across the activity boundary and installs
-    the same guard in `deserialize_run_context` instead.
+    the enqueue guard in `deserialize_run_context` instead (its `cancel` protection is
+    structural: the live controller is never serialized).
     """
-    return replace(ctx, pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)))
+    return replace(
+        ctx,
+        pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
+        _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
+    )
 
 
 def unwrap_recorded_tool_call_result(result: Any) -> Any:
@@ -470,11 +501,11 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
             return await self.wrapped.get_tools(ctx)
         cache_key = self.id or ''
         if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
-            return {name: self._mcp_toolset.tool_for_tool_def(tool_def) for name, tool_def in cached.items()}
+            return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
         tool_defs = await self._get_tools_operation(ctx)
         if self._mcp_toolset.cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
-        return {name: self._mcp_toolset.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         if not self._mcp_toolset.include_instructions:
@@ -492,7 +523,6 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         if not self._in_durable_context():
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         config = self._resolve_tool_config(tool, name)
-        # No engine's resolver currently permits inline MCP tools.
-        if config is False:  # pragma: no cover
+        if config is False:
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         return await self._call_tool_operation(name, tool_args, ctx, tool, config)
