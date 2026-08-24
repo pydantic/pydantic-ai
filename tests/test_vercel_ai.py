@@ -3256,8 +3256,6 @@ async def test_run_stream_cancelled():
     )
     assert not any(isinstance(event, dict) and event['type'] in {'error', 'finish'} for event in events)
 
-
-
 async def test_run_stream_native_cancellation_token():
     token = CancellationToken()
     token.cancel()
@@ -4139,8 +4137,6 @@ async def test_adapter_dispatch_request():
             '[DONE]',
         ]
     )
-
-
 
 async def test_adapter_dispatch_request_cancellation_token():
     token = CancellationToken()
