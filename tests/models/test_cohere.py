@@ -860,3 +860,93 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
     assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+
+
+def test_cohere_process_response_tool_call_with_none_arguments():
+    """A zero-argument tool call comes back from Cohere with `arguments=None` (see
+    `ToolCallV2Function.arguments: typing.Optional[str] = None` in the Cohere SDK). It must
+    still produce a `ToolCallPart` instead of being silently dropped.
+    """
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    response = completion_message(
+        AssistantMessageResponse(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                ToolCallV2(
+                    id='1',
+                    function=ToolCallV2Function(arguments=None, name='get_current_time'),
+                    type='function',
+                )
+            ],
+        )
+    )
+
+    result = m._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.parts == snapshot([ToolCallPart(tool_name='get_current_time', args=None, tool_call_id='1')])
+
+
+def test_cohere_process_response_tool_call_with_empty_string_arguments():
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    response = completion_message(
+        AssistantMessageResponse(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                ToolCallV2(
+                    id='2',
+                    function=ToolCallV2Function(arguments='', name='get_current_time'),
+                    type='function',
+                )
+            ],
+        )
+    )
+
+    result = m._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.parts == snapshot([ToolCallPart(tool_name='get_current_time', args='', tool_call_id='2')])
+
+
+def test_cohere_process_response_tool_call_with_real_arguments_unchanged():
+    """Regression: a normal tool call with real arguments must be processed exactly as before."""
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    response = completion_message(
+        AssistantMessageResponse(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                ToolCallV2(
+                    id='3',
+                    function=ToolCallV2Function(arguments='{"loc_name": "San Fransisco"}', name='get_location'),
+                    type='function',
+                )
+            ],
+        )
+    )
+
+    result = m._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.parts == snapshot(
+        [ToolCallPart(tool_name='get_location', args='{"loc_name": "San Fransisco"}', tool_call_id='3')]
+    )
+
+
+def test_cohere_process_response_malformed_tool_call_without_function_skipped():
+    """Regression: a malformed tool call with no `function` at all must still be skipped
+    without raising.
+    """
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    response = completion_message(
+        AssistantMessageResponse(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                ToolCallV2(id='4', function=None, type='function'),
+            ],
+        )
+    )
+
+    result = m._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.parts == snapshot([])
