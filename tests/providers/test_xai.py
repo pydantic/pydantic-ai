@@ -41,7 +41,7 @@ async def test_xai_pass_xai_client() -> None:
     xai_client = AsyncClient(api_key='api-key')
     try:
         provider = XaiProvider(xai_client=xai_client)
-        assert provider.client == xai_client
+        assert provider.client is xai_client
     finally:
         await xai_client.close()
 

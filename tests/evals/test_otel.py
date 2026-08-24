@@ -98,7 +98,10 @@ async def test_context_subtree_concurrent():
 
 @pytest.fixture
 def span_tree() -> SpanTree:
-    """Fixture that creates a span tree with a predefined structure and attributes."""
+    """Build deterministic input for pure tree queries, which have no provider request to record with VCR.
+
+    Live Logfire/OTel capture is exercised separately by the `context_subtree` tests above.
+    """
 
     def make_span(
         name: str,

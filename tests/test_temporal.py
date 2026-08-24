@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import re
 import sys
@@ -252,7 +253,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsInt, IsStr, message, try_import
+    from .conftest import IsDatetime, IsInt, IsList, IsStr, message, try_import
 
 with try_import() as anthropic_imports_successful:
     import anthropic
@@ -914,81 +915,111 @@ class BasicSpan:
     children: list[BasicSpan] = field(default_factory=list['BasicSpan'])
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
-
-def _parallel_tool_span_key(span: BasicSpan) -> tuple[int, str, int] | None:
-    """Return a canonical key for direct agent-run children created by parallel tool calls."""
-    import json
-
-    if span.content.startswith('running tool: '):
-        return 1, span.content.removeprefix('running tool: '), 0
-
-    spans = [span]
-    while spans:
-        current = spans.pop()
-        if current.content.startswith('{'):
-            try:
-                event: Any = json.loads(current.content)
-            except json.JSONDecodeError:
-                pass
-            else:
-                event_kind = event.get('event_kind')
-                part = event.get('part')
-                if event_kind in {'function_tool_call', 'function_tool_result'} and isinstance(part, dict):
-                    tool_name = cast(dict[str, Any], part).get('tool_name')
-                    if isinstance(tool_name, str):
-                        return (0, tool_name, 0) if event_kind == 'function_tool_call' else (1, tool_name, 1)
-        spans.extend(current.children)
-    return None
+    def walk(self) -> Iterator[BasicSpan]:
+        yield self
+        for child in self.children:
+            yield from child.walk()
 
 
-def _normalize_parallel_tool_span_order(span: BasicSpan) -> None:
-    """Canonicalize exporter order between model turns without disturbing sequential spans."""
-    chat_positions = [index for index, child in enumerate(span.children) if child.content.startswith('chat ')]
-    for start, end in zip(chat_positions, [*chat_positions[1:], len(span.children)]):
-        keyed_children = [
-            (index, key, span.children[index])
-            for index in range(start + 1, end)
-            if (key := _parallel_tool_span_key(span.children[index])) is not None
-        ]
-        if len({key[1] for _, key, _ in keyed_children}) > 1:
-            ordered_children = [child for _, _, child in sorted(keyed_children, key=lambda item: item[1])]
-            for (index, _, _), child in zip(keyed_children, ordered_children):
-                span.children[index] = child
+def _assert_agent_run_causality(root_span: BasicSpan, run_name: str) -> None:
+    """Pin sequential model turns and each tool's lifecycle while allowing cross-tool interleaving."""
+    run_span = next(span for span in root_span.walk() if span.content == run_name)
+    model_positions = [index for index, child in enumerate(run_span.children) if child.content.startswith('chat ')]
+    get_tools_positions = [
+        index for index, child in enumerate(run_span.children) if child.content.endswith('__get_tools')
+    ]
+    run_steps = [
+        next(span.content for span in child.walk() if span.content.startswith('ctx.run_step='))
+        for child in run_span.children
+        if child.content.startswith('chat ')
+    ]
+    assert run_steps == ['ctx.run_step=1', 'ctx.run_step=2', 'ctx.run_step=3']
+    assert len(get_tools_positions) == 1
+    assert get_tools_positions[0] < model_positions[0]
 
-    for child in span.children:
-        _normalize_parallel_tool_span_order(child)
+    lifecycle_by_tool: dict[str, list[str]] = {}
+    positions_by_tool: dict[str, list[int]] = {}
+    output_events: list[tuple[str, int]] = []
+    for index, child in enumerate(run_span.children):
+        output_event_span = next((span for span in child.walk() if '"event_kind": "output_tool_' in span.content), None)
+        if output_event_span is not None:
+            output_event = cast(dict[str, Any], json.loads(output_event_span.content))
+            output_events.append((cast(str, output_event['event_kind']), index))
+
+        if child.content.startswith('running tool: '):
+            tool_name = child.content.removeprefix('running tool: ')
+            phase = 'run'
+        else:
+            event_span = next((span for span in child.walk() if '"event_kind": "function_tool_' in span.content), None)
+            if event_span is None:
+                continue
+            event = cast(dict[str, Any], json.loads(event_span.content))
+            event_kind = cast(str, event['event_kind'])
+            tool_name = cast(str, cast(dict[str, Any], event['part'])['tool_name'])
+            phase = {'function_tool_call': 'call', 'function_tool_result': 'result'}[event_kind]
+        lifecycle_by_tool.setdefault(tool_name, []).append(phase)
+        positions_by_tool.setdefault(tool_name, []).append(index)
+
+    assert lifecycle_by_tool == {
+        'get_country': ['call', 'run', 'result'],
+        'get_product_name': ['call', 'run', 'result'],
+        'get_weather': ['call', 'run', 'result'],
+    }
+    assert all(
+        model_positions[0] < index < model_positions[1]
+        for tool in ('get_country', 'get_product_name')
+        for index in positions_by_tool[tool]
+    )
+    assert all(model_positions[1] < index < model_positions[2] for index in positions_by_tool['get_weather'])
+    assert [event_kind for event_kind, _ in output_events] == ['output_tool_call', 'output_tool_result']
+    assert all(model_positions[2] < index for _, index in output_events)
 
 
-async def test_normalize_parallel_tool_span_order() -> None:
+def test_agent_run_causality_rejects_invalid_order() -> None:
+    """A VCR request cannot exercise the test-only tree matcher used by the Temporal span snapshots."""
+
     def event(tool_name: str, event_kind: str) -> BasicSpan:
-        return BasicSpan(content=f'{{"part": {{"tool_name": "{tool_name}"}}, "event_kind": "{event_kind}"}}')
+        return BasicSpan(content=json.dumps({'part': {'tool_name': tool_name}, 'event_kind': event_kind}))
+
+    def chat(step: int) -> BasicSpan:
+        return BasicSpan(content='chat model', children=[BasicSpan(content=f'ctx.run_step={step}')])
 
     run_span = BasicSpan(
         content='agent run',
         children=[
-            BasicSpan(content='chat model'),
-            event('product', 'function_tool_call'),
-            BasicSpan(content='running tool: product'),
-            event('country', 'function_tool_call'),
-            event('product', 'function_tool_result'),
-            BasicSpan(content='running tool: country'),
-            event('country', 'function_tool_result'),
-            BasicSpan(content='chat model'),
+            BasicSpan(content='StartActivity:agent__test__mcp__get_tools'),
+            chat(1),
+            event('get_country', 'function_tool_call'),
+            BasicSpan(content='running tool: get_country'),
+            event('get_country', 'function_tool_result'),
+            event('get_product_name', 'function_tool_call'),
+            BasicSpan(content='running tool: get_product_name'),
+            event('get_product_name', 'function_tool_result'),
+            chat(2),
+            event('get_weather', 'function_tool_call'),
+            BasicSpan(content='running tool: get_weather'),
+            event('get_weather', 'function_tool_result'),
+            chat(3),
+            event('final_result', 'output_tool_call'),
+            event('final_result', 'output_tool_result'),
         ],
     )
+    root_span = BasicSpan(content='workflow', children=[run_span])
+    _assert_agent_run_causality(root_span, 'agent run')
 
-    _normalize_parallel_tool_span_order(run_span)
+    run_span.children[3], run_span.children[4] = run_span.children[4], run_span.children[3]
+    with pytest.raises(AssertionError):
+        _assert_agent_run_causality(root_span, 'agent run')
+    run_span.children[3], run_span.children[4] = run_span.children[4], run_span.children[3]
 
-    assert [child.content for child in run_span.children] == [
-        'chat model',
-        '{"part": {"tool_name": "country"}, "event_kind": "function_tool_call"}',
-        '{"part": {"tool_name": "product"}, "event_kind": "function_tool_call"}',
-        'running tool: country',
-        '{"part": {"tool_name": "country"}, "event_kind": "function_tool_result"}',
-        'running tool: product',
-        '{"part": {"tool_name": "product"}, "event_kind": "function_tool_result"}',
-        'chat model',
-    ]
+    run_span.children[7], run_span.children[8] = run_span.children[8], run_span.children[7]
+    with pytest.raises(AssertionError):
+        _assert_agent_run_causality(root_span, 'agent run')
+    run_span.children[7], run_span.children[8] = run_span.children[8], run_span.children[7]
+
+    run_span.children[-2], run_span.children[-1] = run_span.children[-1], run_span.children[-2]
+    with pytest.raises(AssertionError):
+        _assert_agent_run_causality(root_span, 'agent run')
 
 
 async def test_complex_agent_run_in_workflow(
@@ -1040,8 +1071,6 @@ async def test_complex_agent_run_in_workflow(
 
     def _normalize_json_spans(span: BasicSpan) -> None:
         """Normalize non-deterministic tool_call_ids in JSON event spans."""
-        import json
-
         for child in span.children:
             if child.content.startswith('{'):
                 try:
@@ -1061,7 +1090,7 @@ async def test_complex_agent_run_in_workflow(
 
     assert root_span is not None
     _normalize_json_spans(root_span)
-    _normalize_parallel_tool_span_order(root_span)
+    _assert_agent_run_causality(root_span, 'complex_agent run')
 
     assert root_span == snapshot(
         BasicSpan(
@@ -1070,7 +1099,7 @@ async def test_complex_agent_run_in_workflow(
                 BasicSpan(content='RunWorkflow:ComplexAgentWorkflow'),
                 BasicSpan(
                     content='complex_agent run',
-                    children=[
+                    children=IsList(
                         BasicSpan(
                             content='StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
                             children=[
@@ -1439,7 +1468,8 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
-                    ],
+                        check_order=False,
+                    ),
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
             ],
@@ -8854,8 +8884,6 @@ async def test_durability_complex_agent_logfire_span_tree(
 
     def _normalize_json_spans(span: BasicSpan) -> None:
         """Normalize non-deterministic tool_call_ids in JSON event spans."""
-        import json
-
         for child in span.children:
             if child.content.startswith('{'):
                 try:
@@ -8875,7 +8903,7 @@ async def test_durability_complex_agent_logfire_span_tree(
 
     assert root_span is not None
     _normalize_json_spans(root_span)
-    _normalize_parallel_tool_span_order(root_span)
+    _assert_agent_run_causality(root_span, 'durability_complex_agent_logfire run')
 
     assert root_span == snapshot(
         BasicSpan(
@@ -8884,7 +8912,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                 BasicSpan(content='RunWorkflow:ComplexDurableAgentLogfireWorkflow'),
                 BasicSpan(
                     content='durability_complex_agent_logfire run',
-                    children=[
+                    children=IsList(
                         BasicSpan(
                             content='StartActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__get_tools',
                             children=[
@@ -9265,7 +9293,8 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                    ],
+                        check_order=False,
+                    ),
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexDurableAgentLogfireWorkflow'),
             ],
