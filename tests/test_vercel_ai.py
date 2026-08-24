@@ -156,7 +156,27 @@ def test_build_run_input_allows_regenerate_without_message_id():
     assert run_input.message_id is None
 
 
-def test_build_run_input_reasoning_part_id_accepted():
+@pytest.mark.parametrize(
+    'reasoning_part, expected_ui_id, expected_thinking_id',
+    [
+        ({'type': 'reasoning', 'text': 'think', 'state': 'done'}, None, None),
+        ({'type': 'reasoning', 'id': 'ui-r1', 'text': 'think', 'state': 'done'}, 'ui-r1', None),
+        (
+            {
+                'type': 'reasoning',
+                'id': 'ui-r1',
+                'text': 'think',
+                'state': 'done',
+                'providerMetadata': {'pydantic_ai': {'id': 'provider-r1'}},
+            },
+            'ui-r1',
+            'provider-r1',
+        ),
+    ],
+)
+def test_build_run_input_reasoning_part_id_mapping(
+    reasoning_part: dict[str, Any], expected_ui_id: str | None, expected_thinking_id: str | None
+):
     data = {
         'trigger': 'submit-message',
         'id': 'req_123',
@@ -165,7 +185,7 @@ def test_build_run_input_reasoning_part_id_accepted():
             {
                 'id': 'msg_2',
                 'role': 'assistant',
-                'parts': [{'type': 'reasoning', 'id': 'r1', 'text': 'think', 'state': 'done'}],
+                'parts': [reasoning_part],
             },
             {'id': 'msg_3', 'role': 'user', 'parts': [{'type': 'text', 'text': 'and again'}]},
         ],
@@ -174,44 +194,19 @@ def test_build_run_input_reasoning_part_id_accepted():
     run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
 
     assert isinstance(run_input, SubmitMessage)
-    reasoning_part = run_input.messages[1].parts[0]
-    assert isinstance(reasoning_part, ReasoningUIPart)
-    assert reasoning_part.id == 'r1'
+    parsed_reasoning_part = run_input.messages[1].parts[0]
+    assert isinstance(parsed_reasoning_part, ReasoningUIPart)
+    assert parsed_reasoning_part.id == expected_ui_id
+
+    messages = VercelAIAdapter.load_messages(run_input.messages)
+    thinking_part = messages[1].parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.id == expected_thinking_id
 
 
 def test_reasoning_part_id_serialization():
     assert 'id' not in ReasoningUIPart(text='think').model_dump()
     assert ReasoningUIPart(id='r1', text='think').model_dump()['id'] == 'r1'
-
-
-def test_build_run_input_reasoning_part_id_accept_only():
-    """The part-level reasoning id is accepted but never mapped onto `ThinkingPart.id`."""
-    data: dict[str, Any] = {
-        'trigger': 'submit-message',
-        'id': 'req_123',
-        'messages': [
-            {'id': 'msg_1', 'role': 'assistant', 'parts': [{'type': 'reasoning', 'text': 'think', 'state': 'done'}]}
-        ],
-    }
-
-    # Control: the same body without the part-level id still validates.
-    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
-    assert isinstance(run_input, SubmitMessage)
-
-    data['messages'][0]['parts'][0]['id'] = 'r1'
-    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
-
-    messages = VercelAIAdapter.load_messages(run_input.messages)
-    thinking = messages[0].parts[0]
-    assert isinstance(thinking, ThinkingPart)
-    assert thinking.id is None
-
-    data['messages'][0]['parts'][0]['providerMetadata'] = {'pydantic_ai': {'id': 'provider-r1'}}
-    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
-    messages = VercelAIAdapter.load_messages(run_input.messages)
-    thinking = messages[0].parts[0]
-    assert isinstance(thinking, ThinkingPart)
-    assert thinking.id == 'provider-r1'
 
 
 @pytest.mark.parametrize(
