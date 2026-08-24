@@ -1247,7 +1247,9 @@ class TestPositionalCompatibility:
         assert SlidingWindowCompaction(None, 1_000, 40).keep_messages == 40
 
     def test_summarizing_compaction(self):
-        assert SummarizingCompaction('openai:gpt-4o', None, 1_000, 15).keep_messages == 15
+        strategy = SummarizingCompaction('openai:gpt-4o', None, 1_000, 15, None, '{messages}', len)
+        assert strategy.keep_messages == 15
+        assert strategy.tokenizer is len
 
     def test_clear_tool_results(self):
         assert ClearToolResults(None, 1_000, 5).keep_pairs == 5
@@ -1269,6 +1271,7 @@ class TestPositionalCompatibility:
         cases = [
             (SlidingWindowCompaction, 'max_fraction'),
             (SummarizingCompaction, 'max_fraction'),
+            (SummarizingCompaction, 'instructions'),
             (ClearToolResults, 'max_fraction'),
             (DeduplicateFileReads, 'max_fraction'),
             (TieredCompaction, 'target_fraction'),

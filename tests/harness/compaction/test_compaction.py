@@ -2141,6 +2141,43 @@ class TestSummarizingCompactionModel:
             request_limit=4, tool_calls_limit=2
         )
 
+    @pytest.mark.anyio
+    async def test_summarizer_agent_gets_the_default_instructions(self):
+        comp = SummarizingCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
+        messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
+
+        mock_result = AsyncMock()
+        mock_result.output = 'Default-instructions summary.'
+        with patch('pydantic_ai.Agent') as MockAgent:
+            mock_agent_instance = AsyncMock()
+            mock_agent_instance.run.return_value = mock_result
+            MockAgent.return_value = mock_agent_instance
+            await comp.before_model_request(_make_ctx(), _make_request_context(messages))
+
+        assert MockAgent.call_args.kwargs['instructions'] == comp.instructions
+        assert 'context summarization assistant' in MockAgent.call_args.kwargs['instructions']
+
+    @pytest.mark.anyio
+    async def test_instructions_override_reaches_the_summarizer_agent(self):
+        required = 'Required endpoint instruction.'
+        comp = SummarizingCompaction(
+            max_messages=3,
+            keep_messages=1,
+            preserve_first_user_message=False,
+            instructions=required,
+        )
+        messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
+
+        mock_result = AsyncMock()
+        mock_result.output = 'Overridden-instructions summary.'
+        with patch('pydantic_ai.Agent') as MockAgent:
+            mock_agent_instance = AsyncMock()
+            mock_agent_instance.run.return_value = mock_result
+            MockAgent.return_value = mock_agent_instance
+            await comp.before_model_request(_make_ctx(), _make_request_context(messages))
+
+        assert MockAgent.call_args.kwargs['instructions'] == required
+
     def test_default_prompt_has_structured_sections(self):
         from pydantic_ai_harness.compaction._summarizing_compaction import _DEFAULT_SUMMARY_PROMPT
 

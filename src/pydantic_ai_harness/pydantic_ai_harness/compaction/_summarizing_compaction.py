@@ -86,6 +86,10 @@ preamble, no markdown fences.
 </messages>\
 """
 
+_DEFAULT_INSTRUCTIONS = (
+    'You are a context summarization assistant. Extract the most important information from conversations.'
+)
+
 _SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
 
 # Anchored-incremental update instruction (opencode mechanism): the previous summary is fed
@@ -310,6 +314,14 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """Prompt template for generating summaries.
 
     Must contain a ``{messages}`` placeholder.
+    """
+
+    instructions: str = field(default=_DEFAULT_INSTRUCTIONS, kw_only=True)
+    """Instructions for the internal agent that writes the summary.
+
+    `summary_prompt` shapes the user turn of the summary request; this sets the internal
+    agent's static instructions, which Pydantic AI sends in the request's system prompt.
+    Override it when the summarizer endpoint requires a fixed leading instruction.
     """
 
     tokenizer: Callable[[str], int] | None = None
@@ -624,7 +636,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
         agent: Agent[None, str] = Agent(
             cast('Model[Any] | str', model),
-            instructions='You are a context summarization assistant. Extract the most important information from conversations.',
+            instructions=self.instructions,
         )
         result = await agent.run(prompt, usage=ctx.usage, usage_limits=reserved_usage_limits(ctx.usage_limits))
         return result.output.strip()
