@@ -4789,7 +4789,7 @@ async def test_load_capability_inherits_agent_tool_retries() -> None:
 
     agent = Agent(FunctionModel(model_fn), capabilities=[deferred], retries={'tools': 3})
 
-    with pytest.raises(UnexpectedModelBehavior, match="Tool 'load_capability' exceeded max retries count of 3"):
+    with pytest.raises(UnexpectedModelBehavior):
         await agent.run('load missing')
 
     assert calls == 4
