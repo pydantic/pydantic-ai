@@ -31,7 +31,6 @@ assert len(slim_httpx2) == 1 and slim_httpx2[0].marker is None
 
 openai_extras = {
     'openai',
-    'openai-codex',
     'openrouter',
     'bedrock-mantle',
     'zai',
