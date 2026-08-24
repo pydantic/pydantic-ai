@@ -259,7 +259,7 @@ Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](h
 
 **Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
 
-  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://ai.pydantic.dev/" class="md-typeset" style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
+  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://pydantic.dev/docs/ai/" class="md-typeset" style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
       <input
       type="email"
       id="email_input"
@@ -449,10 +449,10 @@ This format is defined in Markdown and suited for LLMs and AI coding assistants 
 
 Two formats are available:
 
-- [`llms.txt`](https://ai.pydantic.dev/llms.txt): a file containing a brief description
+- [`llms.txt`](https://pydantic.dev/docs/ai/llms.txt): a file containing a brief description
   of the project, along with links to the different sections of the documentation. The structure
   of this file is described in details [here](https://llmstxt.org/#format).
-- [`llms-full.txt`](https://ai.pydantic.dev/llms-full.txt): Similar to the `llms.txt` file,
+- [`llms-full.txt`](https://pydantic.dev/docs/ai/llms-full.txt): Similar to the `llms.txt` file,
   but every link content is included. Note that this file may be too large for some LLMs.
 
 As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.

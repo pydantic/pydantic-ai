@@ -3958,7 +3958,7 @@ class ToolCallEvent:
 
     args_valid: bool | None = None
     """Whether the tool arguments passed validation.
-    See the [custom validation docs](https://ai.pydantic.dev/tools-advanced/#args-validator) for more info.
+    See the [custom validation docs](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#args-validator) for more info.
 
     - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
     - `False`: Validation was performed and failed.
@@ -4191,7 +4191,7 @@ class RealtimeOutputSpeechStartEvent:
     """The provider started playing the model's audio to the listener.
 
     Only reported where the provider, rather than your code, holds the audio on its way to the
-    listener: on a [WebRTC sideband](../realtime/lifecycle.md#browser-webrtc) the media flows
+    listener: on a [WebRTC sideband](../realtime/deployment.md#browser-webrtc-server-sideband) the media flows
     browser ↔ provider, so the session never sees audio and this is its only signal that the model has
     become audible. An ordinary session owns the audio and knows when it starts playing it, so no
     provider reports this there.

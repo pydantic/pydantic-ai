@@ -206,7 +206,7 @@ def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
             'your tools or models return, configure Temporal external storage (or a claim-check '
             '`payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers '
             'every payload in both directions. '
-            'See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads'
+            'See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads'
         ) from exc
 
 

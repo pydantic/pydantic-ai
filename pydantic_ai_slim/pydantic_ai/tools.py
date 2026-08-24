@@ -577,7 +577,7 @@ class ToolDefinition:
     (Gemini 2.5+); Anthropic and Bedrock leave it off unless you explicitly set `strict=True`.
 
     Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. See
-    [Strict Mode](https://ai.pydantic.dev/tools-advanced/#strict-mode) for the full per-provider table.
+    [Strict Mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode) for the full per-provider table.
     """
 
     sequential: bool = False
