@@ -43,8 +43,8 @@ class ReasoningUIPart(BaseUIPart):
 
     type: Literal['reasoning'] = 'reasoning'
 
-    id: str | None = None
-    """UI part id from the AI SDK client; accepted but not mapped, see #7703."""
+    id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    """UI part ID from the AI SDK client; not mapped to `ThinkingPart.id`."""
 
     text: str
     """The reasoning text."""

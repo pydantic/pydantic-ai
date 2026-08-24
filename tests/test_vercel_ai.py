@@ -179,6 +179,11 @@ def test_build_run_input_reasoning_part_id_accepted():
     assert reasoning_part.id == 'r1'
 
 
+def test_reasoning_part_id_serialization():
+    assert 'id' not in ReasoningUIPart(text='think').model_dump()
+    assert ReasoningUIPart(id='r1', text='think').model_dump()['id'] == 'r1'
+
+
 def test_build_run_input_reasoning_part_id_accept_only():
     """The part-level reasoning id is accepted but never mapped onto `ThinkingPart.id`."""
     data: dict[str, Any] = {
@@ -200,6 +205,13 @@ def test_build_run_input_reasoning_part_id_accept_only():
     thinking = messages[0].parts[0]
     assert isinstance(thinking, ThinkingPart)
     assert thinking.id is None
+
+    data['messages'][0]['parts'][0]['providerMetadata'] = {'pydantic_ai': {'id': 'provider-r1'}}
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+    messages = VercelAIAdapter.load_messages(run_input.messages)
+    thinking = messages[0].parts[0]
+    assert isinstance(thinking, ThinkingPart)
+    assert thinking.id == 'provider-r1'
 
 
 @pytest.mark.parametrize(
@@ -5644,7 +5656,6 @@ async def test_adapter_dump_messages_with_thinking():
                 'parts': [
                     {
                         'type': 'reasoning',
-                        'id': None,
                         'text': 'Let me think about this...',
                         'state': 'done',
                         'provider_metadata': None,
@@ -6552,7 +6563,6 @@ async def test_adapter_dump_messages_text_before_thinking():
                     {'type': 'text', 'text': 'Let me check.', 'state': 'done', 'provider_metadata': None},
                     {
                         'type': 'reasoning',
-                        'id': None,
                         'text': 'Okay, I am checking now.',
                         'state': 'done',
                         'provider_metadata': None,
@@ -7203,7 +7213,6 @@ async def test_adapter_dump_messages_thinking_with_metadata():
                 'parts': [
                     {
                         'type': 'reasoning',
-                        'id': None,
                         'text': 'Let me think about this...',
                         'state': 'done',
                         'provider_metadata': {
