@@ -640,85 +640,41 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
 
 
-def test_json_schema_test_data_int_two_sided_inclusive_span():
-    """Regression test for #7696: the inclusive `maximum` must be reachable for integer schemas."""
-
-    int_schema = {
-        'type': 'object',
-        'required': ['value'],
-        'properties': {'value': {'type': 'integer', 'minimum': 2, 'maximum': 5}},
-    }
-    number_schema = {
-        'type': 'object',
-        'required': ['value'],
-        'properties': {'value': {'type': 'number', 'minimum': 2, 'maximum': 5}},
-    }
-
-    assert [_JsonSchemaTestData(int_schema, seed=seed).generate()['value'] for seed in range(4)] == snapshot(
-        [2, 3, 4, 5]
-    )
-    assert [_JsonSchemaTestData(number_schema, seed=seed).generate()['value'] for seed in range(4)] == snapshot(
-        [2.0, 3.0, 4.0, 2.0]
-    )
-
-    class TestModel(BaseModel):
-        my_int_range: Annotated[int, Gt(5), Lt(15)]
-
-    data = _JsonSchemaTestData(TestModel.model_json_schema()).generate()
-    assert data == snapshot({'my_int_range': 6})
-    TestModel.model_validate(data)
-
-
-def test_exclusive_int_bounds_ceiling_reachable():
-    """Regression test for #7696: exclusive bounds convert to inclusive candidates, so the ceiling is reachable."""
-
-    schema = {
-        'type': 'object',
-        'required': ['value'],
-        'properties': {'value': {'type': 'integer', 'exclusiveMinimum': 5, 'exclusiveMaximum': 15}},
-    }
-
-    assert _JsonSchemaTestData(schema).generate() == snapshot({'value': 6})
-
-    values = [_JsonSchemaTestData(schema, seed=seed).generate()['value'] for seed in range(9)]
-    assert max(values) == 14
-
-
-def test_int_inclusive_upper_bound_reachable_output_type():
-    """Regression test for #7696: inclusive integer `maximum` is reachable through `output_type`."""
+def test_int_inclusive_upper_bound_reachable():
+    """Integer generation includes its ceiling while `number` generation remains unchanged."""
 
     class MyOutput(BaseModel):
-        value: Annotated[int, Field(ge=2, le=5)]
+        integer: Annotated[int, Field(ge=2, le=5)]
+        number: Annotated[float, Field(ge=2, le=5)]
 
-    outputs = [Agent(TestModel(seed=seed), output_type=MyOutput).run_sync('hello').output.value for seed in range(4)]
-    assert outputs == snapshot([2, 3, 4, 5])
+    agent = Agent(output_type=MyOutput)
+    outputs = [agent.run_sync('hello', model=TestModel(seed=seed)).output for seed in range(4)]
 
-    sweep = [Agent(TestModel(seed=seed), output_type=MyOutput).run_sync('hello').output.value for seed in range(8)]
-    assert max(sweep) == 5
-
-
-def test_int_inclusive_upper_bound_reachable_function_tool():
-    """Regression test for #7696: inclusive integer `maximum` is reachable through function tool args."""
-
-    agent = Agent()
-    calls: list[int] = []
-
-    @agent.tool_plain
-    def my_tool(value: Annotated[int, Field(ge=2, le=5)]) -> int:
-        calls.append(value)
-        return value
-
-    for seed in range(4):
-        agent.run_sync('hello', model=TestModel(seed=seed))
-
-    assert calls == snapshot([2, 3, 4, 5])
+    assert [(output.integer, output.number) for output in outputs] == snapshot([(2, 2.0), (3, 3.0), (4, 4.0), (5, 2.0)])
 
 
-def test_number_fractional_span_preserved():
-    """`number` generation keeps its existing span while integer spans include the inclusive `maximum` (#7696)."""
+@pytest.mark.parametrize(
+    ('bounds', 'expected'),
+    [
+        ({'minimum': 2.5, 'maximum': 5.5}, [3, 4, 5]),
+        ({'exclusiveMinimum': 2.5, 'exclusiveMaximum': 5.5}, [3, 4, 5]),
+        ({'minimum': 2, 'exclusiveMinimum': 2, 'maximum': 5, 'exclusiveMaximum': 5}, [3, 4]),
+    ],
+)
+def test_int_fractional_bounds_normalized(bounds: dict[str, float], expected: list[int]):
+    """Numeric JSON Schema bounds must be normalized to valid integer candidates."""
+    schema = {'type': 'object', 'required': ['value'], 'properties': {'value': {'type': 'integer', **bounds}}}
 
-    class MyOutput(BaseModel):
-        value: Annotated[float, Field(ge=2, le=5)]
+    values = [_JsonSchemaTestData(schema, seed=seed).generate()['value'] for seed in range(len(expected))]
 
-    outputs = [Agent(TestModel(seed=seed), output_type=MyOutput).run_sync('hello').output.value for seed in range(4)]
-    assert outputs == snapshot([2.0, 3.0, 4.0, 2.0])
+    assert values == expected
+
+
+def test_int_empty_range_uses_model_validation_error():
+    """An impossible integer range must not leak an arithmetic error."""
+
+    class ImpossibleOutput(BaseModel):
+        value: Annotated[int, Field(ge=3, le=2)]
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        Agent(TestModel(), output_type=ImpossibleOutput).run_sync('hello')
