@@ -1687,6 +1687,39 @@ async def test_streamed_tool_calls_split_after_thinking_boundary() -> None:
     assert tool_events[0]['parentMessageId'] != tool_events[1]['parentMessageId']
 
 
+@pytest.mark.parametrize(
+    ('boundary', 'next_kind'),
+    [
+        (FilePart(content=BinaryImage(data=b'file', media_type='image/png')), 'file'),
+        (CompactionPart(content='summary'), 'compaction'),
+    ],
+)
+async def test_streamed_tool_calls_split_after_non_text_boundary(
+    boundary: FilePart | CompactionPart, next_kind: str
+) -> None:
+    """Tool calls after file/compaction parts use the same boundary as dumped history."""
+
+    async def source() -> AsyncIterator[PartStartEvent | PartEndEvent]:
+        first = ToolCallPart(tool_name='first', args='{}', tool_call_id='call_0')
+        yield PartStartEvent(index=0, part=first, previous_part_kind=None)
+        yield PartEndEvent(index=0, part=first, next_part_kind=next_kind)
+        yield PartStartEvent(index=1, part=boundary, previous_part_kind='tool-call')
+        yield PartEndEvent(index=1, part=boundary, next_part_kind='tool-call')
+        second = ToolCallPart(tool_name='second', args='{}', tool_call_id='call_1')
+        yield PartStartEvent(index=2, part=second, previous_part_kind=next_kind)
+        yield PartEndEvent(index=2, part=second, next_part_kind=None)
+
+    stream = AGUIEventStream(create_input(UserMessage(id='msg_1', content='Run tools')), ag_ui_version='0.1.19')
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in stream.encode_stream(stream.transform_stream(source()))
+    ]
+    tool_events = [event for event in events if event['type'] == 'TOOL_CALL_START']
+
+    assert len(tool_events) == 2
+    assert tool_events[0]['parentMessageId'] != tool_events[1]['parentMessageId']
+
+
 @requires_ag_ui('0.1.13')
 async def test_thinking_with_signature() -> None:
     """Test that ReasoningEncryptedValueEvent is emitted with thinking metadata."""

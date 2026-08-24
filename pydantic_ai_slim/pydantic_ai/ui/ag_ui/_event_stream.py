@@ -18,6 +18,7 @@ from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
+    FilePart,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -413,19 +414,26 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:
+        # Keep the parent ID boundary even when the negotiated protocol version does not expose
+        # activity events. `dump_messages` flushes before every compaction part.
+        self.new_message_id()
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
             return
 
         from ag_ui.core import ActivitySnapshotEvent
 
-        # `AGUIAdapter._dump_response_parts` flushes before a compaction activity. Keep the
-        # parent ID used by subsequent tool calls in sync with that loaded-history boundary.
-        self.new_message_id()
         yield ActivitySnapshotEvent(
             message_id=str(uuid4()),
             activity_type=COMPACTION_ACTIVITY_TYPE,
             content=compaction_payload(part),
         )
+
+    async def handle_file(self, part: FilePart) -> AsyncIterator[BaseEvent]:
+        # AG-UI has no native file event. The history adapter nevertheless flushes around files
+        # when file data is preserved, so advance the assistant parent for subsequent tool calls.
+        self.new_message_id()
+        return
+        yield  # Make this an async generator
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
