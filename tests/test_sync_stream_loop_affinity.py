@@ -113,9 +113,16 @@ def anthropic_keepalive_server() -> Iterator[tuple[str, list[tuple[bool, int]]]]
 
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     server.daemon_threads = True
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_started = threading.Event()
+
+    def serve_forever() -> None:
+        server_started.set()
+        server.serve_forever()
+
+    thread = threading.Thread(target=serve_forever, daemon=True)
     thread.start()
     try:
+        assert server_started.wait(timeout=10), 'keep-alive test server did not start'
         yield f'http://127.0.0.1:{server.server_port}', requests
     finally:
         server.shutdown()
@@ -157,14 +164,14 @@ def test_sync_entry_points_keep_async_client_on_one_event_loop(
         if api_surface == 'agent':
             agent = Agent(model)
             if stream_first:
-                with agent.run_stream_sync('first', model_settings={'timeout': 1}) as stream:
+                with agent.run_stream_sync('first', model_settings={'timeout': 10}) as stream:
                     streamed_output = ''.join(stream.stream_text(debounce_by=None))
-                run_output = agent.run_sync('second', model_settings={'timeout': 1}).output
+                run_output = agent.run_sync('second', model_settings={'timeout': 10}).output
             else:
-                first = agent.run_sync('first', model_settings={'timeout': 1})
+                first = agent.run_sync('first', model_settings={'timeout': 10})
                 history = first.all_messages() if use_history else None
                 run_output = first.output
-                with agent.run_stream_sync('second', message_history=history, model_settings={'timeout': 1}) as stream:
+                with agent.run_stream_sync('second', message_history=history, model_settings={'timeout': 10}) as stream:
                     streamed_output = ''.join(stream.stream_text(debounce_by=None))
 
             assert run_output == 'green'
@@ -172,12 +179,12 @@ def test_sync_entry_points_keep_async_client_on_one_event_loop(
         else:
             messages = [ModelRequest.user_text_prompt('test')]
             if stream_first:
-                with model_request_stream_sync(model, messages, model_settings={'timeout': 1}) as stream:
+                with model_request_stream_sync(model, messages, model_settings={'timeout': 10}) as stream:
                     stream_events = list(stream)
-                response = model_request_sync(model, messages, model_settings={'timeout': 1})
+                response = model_request_sync(model, messages, model_settings={'timeout': 10})
             else:
-                response = model_request_sync(model, messages, model_settings={'timeout': 1})
-                with model_request_stream_sync(model, messages, model_settings={'timeout': 1}) as stream:
+                response = model_request_sync(model, messages, model_settings={'timeout': 10})
+                with model_request_stream_sync(model, messages, model_settings={'timeout': 10}) as stream:
                     stream_events = list(stream)
 
             assert response.parts

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pytest_mock import MockerFixture
@@ -12,7 +13,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
-    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
+    from pydantic_evals.otel.span_tree import AttributeValue, SpanNode, SpanQuery, SpanTree
 
 with try_import() as logfire_import_successful:
     import logfire
@@ -96,20 +97,39 @@ async def test_context_subtree_concurrent():
 
 
 @pytest.fixture
-async def span_tree() -> SpanTree:
+def span_tree() -> SpanTree:
     """Fixture that creates a span tree with a predefined structure and attributes."""
-    # Create spans with a tree structure and attributes
-    with context_subtree() as tree:
-        with logfire.span('root', level='0'):
-            with logfire.span('child1', level='1', type='important'):
-                with logfire.span('grandchild1', level='2', type='important'):
-                    pass
-                with logfire.span('grandchild2', level='2', type='normal'):
-                    pass
-            with logfire.span('child2', level='1', type='normal'):
-                with logfire.span('grandchild3', level='2', type='normal'):
-                    pass
-    assert isinstance(tree, SpanTree)
+
+    def make_span(
+        name: str,
+        span_id: int,
+        parent_span_id: int | None,
+        start: int,
+        duration: int,
+        **attributes: AttributeValue,
+    ) -> SpanNode:
+        start_timestamp = datetime.fromtimestamp(start, tz=timezone.utc)
+        return SpanNode(
+            name=name,
+            trace_id=1,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            start_timestamp=start_timestamp,
+            end_timestamp=start_timestamp + timedelta(seconds=duration),
+            attributes=attributes,
+        )
+
+    tree = SpanTree()
+    tree.add_spans(
+        [
+            make_span('root', 1, None, 1, 11, level='0'),
+            make_span('child1', 3, 1, 2, 5, level='1', type='important'),
+            make_span('grandchild1', 5, 3, 3, 1, level='2', type='important'),
+            make_span('grandchild2', 7, 3, 5, 1, level='2', type='normal'),
+            make_span('child2', 9, 1, 8, 3, level='1', type='normal'),
+            make_span('grandchild3', 11, 9, 9, 1, level='2', type='normal'),
+        ]
+    )
     return tree
 
 

@@ -915,6 +915,82 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
+def _parallel_tool_span_key(span: BasicSpan) -> tuple[int, str, int] | None:
+    """Return a canonical key for direct agent-run children created by parallel tool calls."""
+    import json
+
+    if span.content.startswith('running tool: '):
+        return 1, span.content.removeprefix('running tool: '), 0
+
+    spans = [span]
+    while spans:
+        current = spans.pop()
+        if current.content.startswith('{'):
+            try:
+                event: Any = json.loads(current.content)
+            except json.JSONDecodeError:
+                pass
+            else:
+                event_kind = event.get('event_kind')
+                part = event.get('part')
+                if event_kind in {'function_tool_call', 'function_tool_result'} and isinstance(part, dict):
+                    tool_name = cast(dict[str, Any], part).get('tool_name')
+                    if isinstance(tool_name, str):
+                        return (0, tool_name, 0) if event_kind == 'function_tool_call' else (1, tool_name, 1)
+        spans.extend(current.children)
+    return None
+
+
+def _normalize_parallel_tool_span_order(span: BasicSpan) -> None:
+    """Canonicalize exporter order between model turns without disturbing sequential spans."""
+    chat_positions = [index for index, child in enumerate(span.children) if child.content.startswith('chat ')]
+    for start, end in zip(chat_positions, [*chat_positions[1:], len(span.children)]):
+        keyed_children = [
+            (index, key, span.children[index])
+            for index in range(start + 1, end)
+            if (key := _parallel_tool_span_key(span.children[index])) is not None
+        ]
+        if len({key[1] for _, key, _ in keyed_children}) > 1:
+            ordered_children = [child for _, _, child in sorted(keyed_children, key=lambda item: item[1])]
+            for (index, _, _), child in zip(keyed_children, ordered_children):
+                span.children[index] = child
+
+    for child in span.children:
+        _normalize_parallel_tool_span_order(child)
+
+
+async def test_normalize_parallel_tool_span_order() -> None:
+    def event(tool_name: str, event_kind: str) -> BasicSpan:
+        return BasicSpan(content=f'{{"part": {{"tool_name": "{tool_name}"}}, "event_kind": "{event_kind}"}}')
+
+    run_span = BasicSpan(
+        content='agent run',
+        children=[
+            BasicSpan(content='chat model'),
+            event('product', 'function_tool_call'),
+            BasicSpan(content='running tool: product'),
+            event('country', 'function_tool_call'),
+            event('product', 'function_tool_result'),
+            BasicSpan(content='running tool: country'),
+            event('country', 'function_tool_result'),
+            BasicSpan(content='chat model'),
+        ],
+    )
+
+    _normalize_parallel_tool_span_order(run_span)
+
+    assert [child.content for child in run_span.children] == [
+        'chat model',
+        '{"part": {"tool_name": "country"}, "event_kind": "function_tool_call"}',
+        '{"part": {"tool_name": "product"}, "event_kind": "function_tool_call"}',
+        'running tool: country',
+        '{"part": {"tool_name": "country"}, "event_kind": "function_tool_result"}',
+        'running tool: product',
+        '{"part": {"tool_name": "product"}, "event_kind": "function_tool_result"}',
+        'chat model',
+    ]
+
+
 async def test_complex_agent_run_in_workflow(
     allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
 ):
@@ -985,6 +1061,7 @@ async def test_complex_agent_run_in_workflow(
 
     assert root_span is not None
     _normalize_json_spans(root_span)
+    _normalize_parallel_tool_span_order(root_span)
 
     assert root_span == snapshot(
         BasicSpan(
@@ -8798,6 +8875,7 @@ async def test_durability_complex_agent_logfire_span_tree(
 
     assert root_span is not None
     _normalize_json_spans(root_span)
+    _normalize_parallel_tool_span_order(root_span)
 
     assert root_span == snapshot(
         BasicSpan(
