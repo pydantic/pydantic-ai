@@ -1744,6 +1744,26 @@ def test_vercel_xai_grok():
     )
 
 
+def test_vercel_groq_gpt_oss():
+    """Vercel routes `groq/...` through `groq_model_profile` (#7550).
+
+    The suffix after the first `/` keeps its own `openai/gpt-oss` prefix, which is what
+    `groq_model_profile` gates on.
+    """
+    from pydantic_ai.providers.vercel import VercelProvider
+
+    profile = VercelProvider.model_profile('groq/openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': True,
+        }
+    )
+
+
 # =============================================================================
 # Heroku — routes model names through family profiles (issue #6022)
 # =============================================================================
