@@ -938,12 +938,12 @@ async def test_zai_stream_no_terminal_finish_reason_chunk(
             object='chat.completion.chunk',
         )
 
-    # Three content chunks: "hel" + "lo " + "world" = "hello world".
+    # Three content chunks: "hell" + "o " + "world" = "hello world".
     # Role-assistant delta is bundled into chunk A alongside the first
     # content piece (matching how the OpenAI SDK's chunk constructor
     # serialises the very first streamed chunk).
-    chunk_a = build_chunk('a', 'hel')
-    chunk_b = build_chunk('b', 'lo ')
+    chunk_a = build_chunk('a', 'hell')
+    chunk_b = build_chunk('b', 'o ')
     chunk_c = build_chunk('c', 'world')
 
     async def chunk_source() -> AsyncIterator[chat.ChatCompletionChunk]:
