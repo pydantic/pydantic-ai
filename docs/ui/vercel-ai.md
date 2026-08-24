@@ -57,6 +57,7 @@ When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — 
 
 ```py {title="run_stream.py"}
 import json
+from collections.abc import AsyncIterator
 from http import HTTPStatus
 
 from fastapi import FastAPI
@@ -64,7 +65,7 @@ from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, RunCancelled
+from pydantic_ai import Agent, CancellationToken, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -72,14 +73,16 @@ agent = Agent('openai:gpt-5.2')
 
 app = FastAPI()
 
+cancellation_tokens: dict[str, CancellationToken] = {}
+
 
 async def on_cancel(cancelled: RunCancelled) -> None:
     messages = cancelled.all_messages()  # (1)!
     print(f'cancelled after {len(messages)} messages')
 
 
-@app.post('/chat')
-async def chat(request: Request) -> Response:
+@app.post('/chat/{chat_id}')
+async def chat(chat_id: str, request: Request) -> Response:
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
         run_input = VercelAIAdapter.build_run_input(await request.body())
@@ -91,10 +94,26 @@ async def chat(request: Request) -> Response:
         )
 
     adapter = VercelAIAdapter(agent=agent, run_input=run_input, accept=accept)
-    event_stream = adapter.run_stream(on_cancel=on_cancel)
+    cancellation_token = CancellationToken()
+    cancellation_tokens[chat_id] = cancellation_token
+    event_stream = adapter.run_stream(
+        cancellation_token=cancellation_token, on_cancel=on_cancel
+    )
 
-    sse_event_stream = adapter.encode_stream(event_stream)
-    return StreamingResponse(sse_event_stream, media_type=accept)
+    async def encode_stream() -> AsyncIterator[str]:
+        try:
+            async for event in adapter.encode_stream(event_stream):
+                yield event
+        finally:
+            cancellation_tokens.pop(chat_id, None)
+
+    return StreamingResponse(encode_stream(), media_type=accept)
+
+
+@app.post('/chat/{chat_id}/cancel', status_code=HTTPStatus.NO_CONTENT)
+async def cancel_chat(chat_id: str) -> None:
+    if token := cancellation_tokens.get(chat_id):
+        token.cancel()
 ```
 
 1. The resumable history to persist -- pass it as `message_history` to a later run to resume the conversation.
