@@ -2167,7 +2167,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if instructions_override is not None:
             instructions = instructions_override
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
                 return await self.client.responses.compact(
                     input=openai_messages,

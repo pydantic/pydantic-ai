@@ -8,7 +8,8 @@ import pytest
 from typing_extensions import assert_never
 
 from pydantic_ai import Agent, ModelHTTPError
-from pydantic_ai.models import infer_model
+from pydantic_ai.messages import ModelRequest
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.providers.gateway import gateway_provider
 
 from .conftest import TestEnv, try_import
@@ -217,6 +218,30 @@ async def test_explicit_gateway_provider_suggests_gateway_model_id(allow_model_r
         assert model.model_id == 'openai:gpt-5.2-proo'
         with pytest.raises(ModelHTTPError) as exc_info:
             await Agent(model).run('hello')
+
+    assert exc_info.value.suggested_model_id == 'gateway/openai:gpt-5.2-pro'
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+async def test_gateway_openai_compaction_suggests_gateway_model_id(allow_model_requests: None):
+    async with _openai_model_not_found_client() as http_client:
+        provider = gateway_provider(
+            'openai',
+            api_key='test-key',
+            base_url='https://gateway.example.com/proxy',
+            http_client=http_client,
+        )
+        model = OpenAIResponsesModel('gpt-5.2-proo', provider=provider)
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.compact_messages(
+                ModelRequestContext(
+                    model=model,
+                    messages=[ModelRequest.user_text_prompt('hello')],
+                    model_settings=None,
+                    model_request_parameters=ModelRequestParameters(),
+                )
+            )
 
     assert exc_info.value.suggested_model_id == 'gateway/openai:gpt-5.2-pro'
 
