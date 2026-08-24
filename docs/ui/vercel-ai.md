@@ -55,6 +55,9 @@ When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — 
 !!! note "Client disconnects are external cancellation"
     Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [the two kinds of cancellation](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
 
+!!! note
+    The in-memory token registry below requires a single server process or sticky routing. In a multi-worker deployment, route the cancel request to the worker that owns the run using shared coordination such as a message broker.
+
 ```py {title="run_stream.py"}
 import json
 from collections.abc import AsyncIterator
@@ -105,7 +108,8 @@ async def chat(chat_id: str, request: Request) -> Response:
             async for event in adapter.encode_stream(event_stream):
                 yield event
         finally:
-            cancellation_tokens.pop(chat_id, None)
+            if cancellation_tokens.get(chat_id) is cancellation_token:
+                cancellation_tokens.pop(chat_id, None)
 
     return StreamingResponse(encode_stream(), media_type=accept)
 
