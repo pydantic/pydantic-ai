@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Literal, TypeAlias
 
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, ModelRequest
@@ -14,7 +15,6 @@ from pydantic_ai.direct import model_request_stream_sync, model_request_sync
 from .conftest import try_import
 
 with try_import() as imports_successful:
-    import httpx2
     from anthropic import AsyncAnthropic
 
     from pydantic_ai.models.anthropic import AnthropicModel
