@@ -3292,13 +3292,18 @@ async def test_run_stream_cancellation_token():
         )
     ]
 
-    assert events == [
-        {'type': 'start'},
-        {'type': 'abort', 'reason': 'The agent run was cancelled.'},
-        '[DONE]',
-    ]
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
     assert len(cancelled) == 1
-    assert cancelled[0].all_messages() == []
+    assert cancelled[0].all_messages() == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())])]
+    )
 
 
 async def test_adapter_uses_request_id_as_conversation_id():
@@ -4178,13 +4183,18 @@ async def test_adapter_dispatch_request_cancellation_token():
 
     await response.stream_response(send)
 
-    assert chunks == [
-        {'type': 'start'},
-        {'type': 'abort', 'reason': 'The agent run was cancelled.'},
-        '[DONE]',
-    ]
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
     assert len(cancelled) == 1
-    assert cancelled[0].all_messages() == []
+    assert cancelled[0].all_messages() == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())])]
+    )
 
 
 async def test_adapter_dispatch_request_explicit_run_id():
