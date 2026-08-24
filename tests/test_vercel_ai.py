@@ -3295,6 +3295,7 @@ async def test_run_stream_cancellation_token():
     assert events == [
         {'type': 'start'},
         {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+        {'type': 'finish-step'},
         '[DONE]',
     ]
     assert len(cancelled) == 1
@@ -4181,6 +4182,7 @@ async def test_adapter_dispatch_request_cancellation_token():
     assert chunks == [
         {'type': 'start'},
         {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+        {'type': 'finish-step'},
         '[DONE]',
     ]
     assert len(cancelled) == 1
