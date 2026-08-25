@@ -1259,21 +1259,59 @@ def _weekly_state(labels: set[str]) -> Literal['active', 'cooling', 'other']:
     return 'active' if _ACTION_LABEL in labels else 'other'
 
 
+def _weekly_search(
+    client: GitHubClient,
+    repo: str,
+    owner: str,
+    state: Literal['active', 'cooling', 'other'],
+) -> tuple[int, list[dict[str, Any]]]:
+    query = urllib.parse.quote_plus(_weekly_query(repo, owner, state))
+    result = cast(
+        dict[str, Any],
+        client.get(f'/search/issues?q={query}&sort=updated&order=asc&per_page={_WEEKLY_ITEM_LIMIT}'),
+    )
+    return int(result.get('total_count') or 0), cast(list[dict[str, Any]], result.get('items') or [])
+
+
+def _weekly_status(item: Mapping[str, Any], timeline: Sequence[dict[str, Any]], owner: str, *, now: dt.datetime) -> str:
+    """Describe recent interaction without scanning or interpreting discussion prose."""
+    parts = ['pull request' if 'pull_request' in item else 'issue']
+    if opened := item.get('created_at'):
+        parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
+    if comments := int(item.get('comments') or 0):
+        parts.append(f'{comments} issue comment{"" if comments == 1 else "s"}')
+    replies = [
+        event
+        for event in timeline
+        if event.get('event') in {'commented', 'reviewed'} and _actor(event) and _event_time(event) is not None
+    ]
+    if replies:
+        last = replies[-1]
+        parts.append(f'last reply/review @{_actor(last)} {_age(now, cast(dt.datetime, _event_time(last)))}')
+    owner_replies = [event for event in replies if _actor(event).casefold() == owner.casefold()]
+    if owner_replies:
+        last_owner = owner_replies[-1]
+        parts.append(f'owner replied/reviewed {_age(now, cast(dt.datetime, _event_time(last_owner)))}')
+    else:
+        parts.append('no owner reply/review in recent history')
+    return ' · '.join(parts)
+
+
 def _weekly_items(
     client: GitHubClient,
     repo: str,
     owner: str,
     state: Literal['active', 'cooling', 'other'],
+    matches: Sequence[dict[str, Any]],
     *,
     limit: int,
     now: dt.datetime,
 ) -> list[str]:
     if not limit:
         return []
-    matches = _rotated_search(client, _weekly_query(repo, owner, state), order='asc', limit=limit, slot=0)
     lines: list[str] = []
     phrases = {'active': 'awaiting maintainer action', 'cooling': 'channel escalation cooling', 'other': 'assigned'}
-    for match in matches:
+    for match in matches[:limit]:
         number = int(match['number'])
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
         assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
@@ -1283,24 +1321,27 @@ def _weekly_items(
             or _weekly_state(_labels(current)) != state
         ):
             continue
-        timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100', count=3)
-        idle = _age(now, _parse_time(str(current['updated_at'])))
-        status = _slack_escape(_status(client, repo, current, timeline, now=now))
+        timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100')
+        updated = _age(now, _parse_time(str(current['updated_at'])))
+        title = _slack_escape(str(current.get('title') or ''))[:120]
+        status = _slack_escape(_weekly_status(current, timeline, owner, now=now))
         lines.append(
-            f'• <https://github.com/{repo}/issues/{number}|#{number}> — {phrases[state]} · idle {idle} · {status}'
+            f'• <https://github.com/{repo}/issues/{number}|#{number}> {title} — {phrases[state]} · updated {updated} · '
+            f'{status}'
         )
     return lines
 
 
 def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
-    """Build a bounded, metadata-only Monday view of each maintainer's assignments."""
+    """Build a bounded Monday view of each maintainer's assignments."""
     if repo not in REPOSITORIES:
         raise ValueError(f'Unsupported repository: {repo}')
     lines = [f':spiral_calendar_pad: *Monday maintainer queues — {_slack_escape(repo)}* · {now.date().isoformat()}']
     states: tuple[Literal['active', 'cooling', 'other'], ...] = ('active', 'cooling', 'other')
     for owner in MAINTAINER_OWNERS:
-        counts = {state: _search_count(client, _weekly_query(repo, owner, state)) for state in states}
-        total = sum(counts.values())
+        found = {state: _weekly_search(client, repo, owner, state) for state in states}
+        counts = {state: result[0] for state, result in found.items()}
+        total = _search_count(client, f'repo:{repo} is:open assignee:{owner}')
         name = _MAINTAINER_NAMES[owner]
         if not total:
             lines.extend(['', f'*{name}* (`{owner}`) — clear'])
@@ -1314,7 +1355,7 @@ def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
         )
         remaining = _WEEKLY_ITEM_LIMIT
         for state in states:
-            details = _weekly_items(client, repo, owner, state, limit=remaining, now=now)
+            details = _weekly_items(client, repo, owner, state, found[state][1], limit=remaining, now=now)
             lines.extend(details)
             remaining -= len(details)
             if not remaining:

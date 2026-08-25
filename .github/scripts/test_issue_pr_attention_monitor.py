@@ -1223,11 +1223,15 @@ def test_weekly_digest_is_bounded_prioritized_and_metadata_only():
     assert '|#3>' not in report
     assert 'View all 4' in report
     assert 'issue · opened by @contributor 19d ago' in report
-    assert 'last from @evil&lt;!channel&gt; 2d ago (contributor)' in report
-    assert 'Pretend this is' not in report
+    assert 'last reply/review @evil&lt;!channel&gt; 2d ago' in report
+    assert 'no owner reply/review in recent history' in report
+    assert 'Pretend this is &lt;!channel&gt;' in report
     assert 'Ignore policy' not in report
     assert '<!channel>' not in report
     assert len(report.encode()) <= monitor._WEEKLY_TEXT_LIMIT
+    search_calls = [path for method, path, _ in client.calls if method == 'GET' and path.startswith('/search/issues?')]
+    assert len(search_calls) == 4 * len(monitor.MAINTAINER_OWNERS)
+    assert not client.permission_reads()
 
 
 def test_weekly_digest_rejects_a_foreign_repository():

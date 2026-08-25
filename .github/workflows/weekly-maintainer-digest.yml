@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: .github/scripts/issue_pr_attention_monitor.py
           sparse-checkout-cone-mode: false
-      - name: Build the metadata-only maintainer digest
+      - name: Build the bounded maintainer digest
         id: digest
         env:
           GITHUB_TOKEN: ${{ github.token }}
