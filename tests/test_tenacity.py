@@ -615,6 +615,28 @@ class TestWaitRetryAfter:
         assert 25 <= result <= 35
         fallback.assert_not_called()
 
+    def test_retry_after_asctime_date_format(self):
+        """Asctime `Retry-After` dates are parsed locally without a provider request."""
+        retry_time = datetime(2095, 11, 6, 8, 49, 37, tzinfo=timezone.utc)
+        request = httpx2.Request('GET', 'https://example.com')
+        response = httpx2.Response(
+            429,
+            headers={'retry-after': retry_time.ctime()},
+            request=request,
+        )
+        http_error = httpx2.HTTPStatusError('Rate limited', request=request, response=response)
+        retry_state = Mock(spec=RetryCallState)
+        retry_state.outcome = Mock()
+        retry_state.outcome.exception.return_value = http_error
+
+        wait_func = wait_retry_after(fallback_strategy=wait_fixed(1), max_wait=float('inf'))
+
+        before = datetime.now(timezone.utc)
+        wait_seconds = wait_func(retry_state)
+        after = datetime.now(timezone.utc)
+
+        assert (retry_time - after).total_seconds() <= wait_seconds <= (retry_time - before).total_seconds()
+
     def test_retry_after_http_date_past_time_uses_fallback(self):
         """Test that past dates in Retry-After fall back to fallback strategy."""
         fallback = Mock(return_value=1.0)

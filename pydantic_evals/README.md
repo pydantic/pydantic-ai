@@ -9,14 +9,14 @@
 This is a library for evaluating non-deterministic (or "stochastic") functions in Python. It provides a simple,
 Pythonic interface for defining and running stochastic functions, and analyzing the results of running those functions.
 
-While this library is developed as part of [Pydantic AI](https://ai.pydantic.dev), it only uses Pydantic AI for a small
+While this library is developed as part of [Pydantic AI](https://pydantic.dev/docs/ai/), it only uses Pydantic AI for a small
 subset of generative functionality internally, and it is designed to be used with arbitrary "stochastic function"
 implementations. In particular, it can be used with other (non-Pydantic AI) AI libraries, agent frameworks, etc.
 
 As with Pydantic AI, this library prioritizes type safety and use of common Python syntax over esoteric, domain-specific
 use of Python syntax.
 
-Full documentation is available at [ai.pydantic.dev/evals](https://ai.pydantic.dev/evals).
+Full documentation is available at [pydantic.dev/docs/ai/evals](https://pydantic.dev/docs/ai/evals/evals/).
 
 ## Example
 
@@ -80,8 +80,8 @@ Pydantic Evals uses OpenTelemetry to record traces for each case in your evaluat
 You can send these traces to any OpenTelemetry-compatible backend. For the best experience, we recommend [Pydantic Logfire](https://logfire.pydantic.dev/docs), which includes custom views for evals:
 
 <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-  <img src="https://ai.pydantic.dev/img/logfire-evals-overview.png" alt="Logfire Evals Overview" width="48%">
-  <img src="https://ai.pydantic.dev/img/logfire-evals-case.png" alt="Logfire Evals Case View" width="48%">
+  <img src="https://pydantic.dev/docs/ai/img/logfire-evals-overview.png" alt="Logfire Evals Overview" width="48%">
+  <img src="https://pydantic.dev/docs/ai/img/logfire-evals-case.png" alt="Logfire Evals Case View" width="48%">
 </div>
 
 You'll see full details about the inputs, outputs, token usage, execution durations, etc. And you'll have access to the full trace for each case — ideal for debugging, writing path-aware evaluators, or running the similar evaluations against production traces.
@@ -102,4 +102,4 @@ logfire.configure(
 my_dataset.evaluate_sync(my_task)
 ```
 
-[Read more about the Logfire integration here.](https://ai.pydantic.dev/evals/#logfire-integration)
+[Read more about the Logfire integration here.](https://pydantic.dev/docs/ai/evals/how-to/logfire-integration/)

@@ -105,7 +105,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             lambda: UsageLimitExceeded('limit hit'),
             {
                 'message': 'limit hit. Consider raising the limit, or see the docs on usage limits '
-                'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+                'for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
             },
         ),
         (lambda: ConcurrencyLimitExceeded('too many'), {'message': 'too many'}),

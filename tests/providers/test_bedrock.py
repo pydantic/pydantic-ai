@@ -235,8 +235,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert cohere_profile is not None
     assert cohere_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
-    deepseek_profile = provider.model_profile('deepseek.deepseek-r1')
-    deepseek_model_profile_mock.assert_called_with('deepseek-r1')
+    deepseek_profile = provider.model_profile('deepseek.r1-v1:0')
+    deepseek_model_profile_mock.assert_called_with('r1')
     assert deepseek_profile is not None
     assert deepseek_profile.get('ignore_streamed_leading_whitespace', False) is True
     assert deepseek_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()

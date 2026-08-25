@@ -638,3 +638,40 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+
+
+def test_int_inclusive_upper_bound_reachable():
+    """Plain inclusive integer ranges include their ceiling without changing other ranges."""
+
+    class MyOutput(BaseModel):
+        integer: Annotated[int, Field(ge=2, le=5)]
+        integer_float_bounds: Annotated[int, Field(ge=2.0, le=5.0)]
+        exclusive_minimum: Annotated[int, Field(ge=2, gt=1, le=5)]
+        exclusive_integer: Annotated[int, Field(ge=2, le=5, lt=5)]
+        number: Annotated[float, Field(ge=2, le=5)]
+
+    agent = Agent(output_type=MyOutput)
+    outputs = [agent.run_sync('hello', model=TestModel(seed=seed)).output for seed in range(4)]
+
+    assert [
+        (
+            output.integer,
+            output.integer_float_bounds,
+            output.exclusive_minimum,
+            output.exclusive_integer,
+            output.number,
+        )
+        for output in outputs
+    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 4, 4.0), (5, 5, 2, 2, 2.0)])
+
+    def generated_values(minimum: float, maximum: float, seeds: list[int]) -> list[Any]:
+        schema = {
+            'type': 'object',
+            'required': ['value'],
+            'properties': {'value': {'type': 'integer', 'minimum': minimum, 'maximum': maximum}},
+        }
+        return [_JsonSchemaTestData(schema, seed=seed).generate()['value'] for seed in seeds]
+
+    assert generated_values(2.5, 5.5, list(range(4))) == [2.5, 3.5, 4.5, 2.5]
+    assert generated_values(2.0, 5.5, list(range(5))) == [2.0, 3.0, 4.0, 5.0, 2.5]
+    assert generated_values(0.0, 1e20, [10**20]) == [10**20]
