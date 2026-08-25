@@ -612,6 +612,7 @@ async def test_document_citations(
 NativeCitationReplayProvider = Literal['anthropic-messages', 'bedrock-converse', 'openai-responses']
 
 
+@pytest.mark.vcr(match_on=['method', 'scheme', 'host', 'port', 'path', 'query', 'body'])
 @pytest.mark.parametrize(
     'provider',
     [
@@ -665,4 +666,5 @@ async def test_native_citation_replay_after_persisted_history(
     assert citations_from_messages(first_result.all_messages())
 
     history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
-    await agent.run('Continue.', message_history=history)
+    second_result = await agent.run('Continue.', message_history=history)
+    assert second_result.output
