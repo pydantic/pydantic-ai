@@ -2428,7 +2428,7 @@ def _revealed_tool_names(
     deferred_capability_ids: set[str],
     loaded_capability_ids: set[str],
 ) -> set[str]:
-    """Drop reveals for tools this run doesn't define, and those whose owning capability isn't available yet.
+    """Drop reveals for tools this run doesn't define, and those whose owning capability isn't active yet.
 
     History outlives configuration, so it can name a tool the current run has no definition for. Such
     a name can't be revealed — there is no schema to show — and every consumer already guards on

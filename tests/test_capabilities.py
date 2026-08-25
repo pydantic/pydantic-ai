@@ -137,7 +137,7 @@ from pydantic_ai.toolsets._capability_owned import (
     tool_defs_from_pre_definition_load_returns,
 )
 from pydantic_ai.toolsets._deferred_capability_loader import (
-    LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -4807,7 +4807,7 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='always-on')
+    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='always-on')
     retry_messages: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -4849,7 +4849,7 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='deferred')
+    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='deferred')
     retry_messages: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:

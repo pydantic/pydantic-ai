@@ -20,8 +20,8 @@ LOAD_CAPABILITY_TOOL_DESCRIPTION = (
     'Load a listed capability whenever it is plausibly relevant to the task.'
     ' Loading makes the capability instructions and any tools it provides available.'
 )
-LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE = (
-    'Capability {capability_id!r} is already available. '
+LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE = (
+    'Capability {capability_id!r} is already active. '
     'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
 )
 
@@ -76,7 +76,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         if capability is None:
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
         if capability_id in ctx.active_capability_ids:
-            raise ModelRetry(LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
+            raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
         parts = [
             InstructionPart(content=instruction, dynamic=True)
