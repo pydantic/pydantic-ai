@@ -6,8 +6,13 @@ state for the pending message queue, not part of the wire-serializable message h
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Generator, Sequence
+from concurrent.futures import CancelledError as FutureCancelledError, Future, InvalidStateError
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field
+from threading import Event, Lock
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from ._uuid import uuid7
@@ -64,6 +69,8 @@ interleaved exchange (e.g. a synthetic tool call + result — a `ModelResponse` 
 `ModelRequest`). The assembled sequence must end in a `ModelRequest` so the agent has something to
 respond to.
 """
+
+_RUN_ENDED_MESSAGE = '`enqueue` is not available because the agent run is no longer accepting messages.'
 
 
 def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessage]:
@@ -164,3 +171,91 @@ class PendingMessage:
                 'items that form one), so the agent has a request to respond to.'
             )
         return cls(messages=messages, priority=priority)
+
+
+class _PendingMessageBridge:
+    def __init__(self, queue: list[PendingMessage]) -> None:
+        self.queue = queue
+        self._loop = asyncio.get_running_loop()
+        self._closed = Event()
+        self._waiting: set[Future[None]] = set()
+        self._lock = Lock()
+
+    def append(self, pending: PendingMessage) -> None:
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            if running_loop is not self._loop:
+                raise UserError('`enqueue` cannot be called from a different event loop than the agent run.')
+            self._append(pending)
+            return
+
+        result: Future[None] = Future()
+        with self._lock:
+            if self._closed.is_set():
+                raise UserError(_RUN_ENDED_MESSAGE)
+            self._waiting.add(result)
+
+        def append() -> None:
+            try:
+                self._append(pending)
+            except BaseException as e:
+                with suppress(InvalidStateError):
+                    result.set_exception(e)
+            else:
+                with suppress(InvalidStateError):
+                    result.set_result(None)
+
+        try:
+            self._loop.call_soon_threadsafe(append)
+            result.result()
+        except FutureCancelledError as e:
+            raise UserError(_RUN_ENDED_MESSAGE) from e
+        finally:
+            with self._lock:
+                self._waiting.discard(result)
+
+    def _append(self, pending: PendingMessage) -> None:
+        if self._closed.is_set():
+            raise UserError(_RUN_ENDED_MESSAGE)
+        self.queue.append(pending)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed.set()
+            waiting = tuple(self._waiting)
+        for result in waiting:
+            result.cancel()
+
+
+_pending_message_bridge: ContextVar[_PendingMessageBridge | None] = ContextVar('_pending_message_bridge', default=None)
+
+
+@contextmanager
+def bind_pending_message_queue(queue: list[PendingMessage]) -> Generator[None]:
+    """Bind `queue` to its run loop for the lifetime of an agent run."""
+    bridge = _PendingMessageBridge(queue)
+    token = _pending_message_bridge.set(bridge)
+    try:
+        yield
+    finally:
+        bridge.close()
+        _pending_message_bridge.reset(token)
+
+
+def append_pending_message(queue: list[PendingMessage], pending: PendingMessage) -> None:
+    """Append on the run loop when called from a sync callback owned by that run."""
+    bridge = _pending_message_bridge.get()
+    if bridge is None or bridge.queue is not queue:
+        queue.append(pending)
+    else:
+        bridge.append(pending)
+
+
+def close_pending_message_queue(queue: list[PendingMessage]) -> None:
+    """Stop sync callbacks from appending after the run's final drain."""
+    bridge = _pending_message_bridge.get()
+    if bridge is not None and bridge.queue is queue:
+        bridge.close()

@@ -22,7 +22,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from pydantic_ai import Capability as TopLevelCapability, _agent_graph
+from pydantic_ai import Capability as TopLevelCapability, _agent_graph, _enqueue, _utils
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
@@ -17548,6 +17548,109 @@ async def test_pending_messages_accessible_on_run_context():
             ),
         ]
     )
+
+
+async def test_enqueue_from_sync_callback_mutates_queue_on_agent_loop():
+    """A sync callback never mutates the pending-message queue from its worker thread."""
+    agent_thread = threading.get_ident()
+
+    class LoopOwnedQueue(list[PendingMessage]):
+        def append(self, pending: PendingMessage) -> None:
+            assert threading.get_ident() == agent_thread
+            super().append(pending)
+
+    queue = LoopOwnedQueue()
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=queue)
+
+    def enqueue_from_nested_loop() -> None:
+        async def enqueue() -> None:
+            with pytest.raises(UserError, match='different event loop'):
+                ctx.enqueue('from nested loop')
+
+        asyncio.run(enqueue())
+
+    with _enqueue.bind_pending_message_queue(queue):
+        await _utils.run_in_executor(ctx.enqueue, 'from worker')
+        await _utils.run_in_executor(enqueue_from_nested_loop)
+
+    assert len(queue) == 1
+
+
+async def test_enqueue_from_inline_sync_callback_does_not_deadlock():
+    queue: list[PendingMessage] = []
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=queue)
+
+    with _enqueue.bind_pending_message_queue(queue), _utils.disable_threads():
+        await _utils.run_in_executor(ctx.enqueue, 'inline')
+
+    _enqueue.close_pending_message_queue(queue)
+    assert len(queue) == 1
+
+
+async def test_enqueue_from_abandoned_sync_callback_is_rejected_after_run():
+    started = threading.Event()
+    release = threading.Event()
+    returned = threading.Event()
+    errors: list[UserError] = []
+    queue: list[PendingMessage] = []
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=queue)
+
+    def enqueue_late() -> None:
+        started.set()
+        release.wait()
+        try:
+            ctx.enqueue('too late')
+        except UserError as e:
+            errors.append(e)
+        finally:
+            returned.set()
+
+    with _enqueue.bind_pending_message_queue(queue), _utils.abandon_threads_on_cancel():
+        task = asyncio.create_task(_utils.run_in_executor(enqueue_late))
+        assert await asyncio.to_thread(started.wait, 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    release.set()
+    assert await asyncio.to_thread(returned.wait, 1)
+    assert queue == []
+    assert len(errors) == 1
+    assert 'no longer accepting messages' in str(errors[0])
+
+
+async def test_enqueue_run_teardown_releases_sync_callback_waiting_on_loop(monkeypatch: pytest.MonkeyPatch):
+    scheduled: list[Callable[[], None]] = []
+    returned = threading.Event()
+    errors: list[UserError] = []
+    queue: list[PendingMessage] = []
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=queue)
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, 'call_soon_threadsafe', scheduled.append)
+
+    def enqueue() -> None:
+        try:
+            ctx.enqueue('waiting')
+        except UserError as e:
+            errors.append(e)
+        finally:
+            returned.set()
+
+    with _enqueue.bind_pending_message_queue(queue):
+        callback_context = contextvars.copy_context()
+        thread = threading.Thread(target=callback_context.run, args=(enqueue,))
+        thread.start()
+        while not scheduled:
+            await asyncio.sleep(0)
+
+    while not returned.is_set():
+        await asyncio.sleep(0)
+    thread.join()
+    scheduled[0]()
+
+    assert queue == []
+    assert len(errors) == 1
+    assert 'no longer accepting messages' in str(errors[0])
 
 
 async def test_enqueue_with_no_args_is_a_noop():

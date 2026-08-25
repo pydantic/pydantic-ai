@@ -14,7 +14,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, append_pending_message
 from .exceptions import UserError
 
 if TYPE_CHECKING:
@@ -417,12 +417,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
-        Safe to call from anywhere a `RunContext` is available — async tools,
-        sync tools (auto-wrapped in a thread executor by Pydantic AI), and
-        capability hooks. The drain only iterates the queue between graph nodes
-        (in `before_model_request` and `after_node_run`), never concurrently
-        with the tool body, so `list.append` from a worker thread doesn't race
-        the drain.
+        Safe to call from async tools, capability hooks, and sync callbacks dispatched
+        through Pydantic AI's thread executor. During a standard agent run, calls from
+        those sync callbacks are marshalled onto the event loop that owns the run.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -451,7 +448,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent's queue (e.g. the
                 synthetic context from `Agent.system_prompt_parts`), since there'd be nowhere
-                to deliver the message.
+                to deliver the message; if a sync callback outlives its run; or if called from
+                a different event loop than the run.
         """
         if self.pending_messages is None:
             raise UserError(
@@ -461,7 +459,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
             return None
-        self.pending_messages.append(pending)
+        append_pending_message(self.pending_messages, pending)
         return pending.enqueue_id
 
     def cancel(self) -> None:

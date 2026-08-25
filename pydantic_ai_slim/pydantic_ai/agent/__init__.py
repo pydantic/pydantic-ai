@@ -31,6 +31,7 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
+    _enqueue,
     _instructions,
     _output,
     _system_prompt,
@@ -1798,6 +1799,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            stack.enter_context(_enqueue.bind_pending_message_queue(state.pending_messages))
 
             # Bind the run's cancellation controller to this task and register the token BEFORE any
             # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind

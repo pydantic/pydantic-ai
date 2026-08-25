@@ -127,3 +127,5 @@ A `priority` controls delivery:
 - `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages — a follow-up task that shouldn't interrupt in-flight work.
 
 Both priorities drain however you drive the run — `agent.run()`, explicit `AgentRun.next()`, and a bare `async for node in agent_run:` loop all deliver enqueued messages. See [message history docs](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run) for details.
+
+`RunContext.enqueue()` is safe in sync tools dispatched through Pydantic AI's thread executor. In a standard run, the queue update is marshalled back to the run's event loop. Calls to `AgentRun.enqueue()` from unrelated threads must be marshalled onto that loop by the caller.

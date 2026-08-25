@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
+from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority, close_pending_message_queue
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
@@ -144,6 +144,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         leftover_asap = _drain_by_priority(ctx.pending_messages, 'asap')
         when_idle = _drain_by_priority(ctx.pending_messages, 'when_idle')
         if not leftover_asap and not when_idle:
+            close_pending_message_queue(ctx.pending_messages)
             return result
 
         drained = [*leftover_asap, *when_idle]
