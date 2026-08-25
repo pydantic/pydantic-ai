@@ -248,13 +248,13 @@ def _make_document_block(
     if format not in _SUPPORTED_DOCUMENT_FORMATS:
         raise UserError(f'Unsupported document format: {format}')
     document: DocumentBlockTypeDef = {'name': name, 'format': format, 'source': source}
-    if include_citations:
+    if include_citations and format in {'txt', 'pdf'}:
         document['citations'] = {'enabled': True}
     return {'document': document}
 
 
 def _make_document_source(data: bytes, media_type: str, *, include_citations: bool) -> DocumentSourceTypeDef:
-    if include_citations and media_type.startswith('text/'):
+    if include_citations and media_type == 'text/plain':
         try:
             return {'text': data.decode()}
         except UnicodeDecodeError as e:
