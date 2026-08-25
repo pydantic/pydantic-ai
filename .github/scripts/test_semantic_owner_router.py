@@ -824,7 +824,7 @@ def test_daily_recovery_routes_six_recently_active_legacy_items():
         legacy=list(range(1, 8)),
     )
 
-    selected = router.select_batch(client, CORE, None, None, legacy_limit=6)
+    selected = router.select_batch(client, CORE, None, None, legacy_recovery=True)
 
     assert [selection['number'] for selection in selected] == [1, 2, 3, 4, 5, 6]
     queries = [
@@ -840,9 +840,7 @@ def test_daily_recovery_routes_six_recently_active_legacy_items():
         'repo:pydantic/pydantic-ai is:open created:>=2026-08-18 -draft:true '
         '-assignee:adtyavrdhn -assignee:DouweM -assignee:dsfaccini -assignee:mpfaffenberger '
         'sort:created-asc',
-        'repo:pydantic/pydantic-ai is:open created:<2026-08-18 -draft:true '
-        '-assignee:adtyavrdhn -assignee:DouweM -assignee:dsfaccini -assignee:mpfaffenberger '
-        'sort:updated-desc',
+        'repo:pydantic/pydantic-ai is:open created:<2026-08-18 -draft:true no:assignee sort:updated-desc',
     ]
 
 
@@ -853,7 +851,7 @@ def test_daily_recovery_keeps_post_rollout_item_ahead_of_legacy_batch():
         legacy=[8],
     )
 
-    selected = router.select_batch(client, CORE, None, None, legacy_limit=6)
+    selected = router.select_batch(client, CORE, None, None, legacy_recovery=True)
 
     assert [selection['number'] for selection in selected] == [7]
     assert not any(
@@ -983,9 +981,6 @@ def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pyte
     selected = dict(line.split('=', 1) for line in output.read_text().splitlines())
     assert selected == {
         'should_assign': 'true',
-        'number': '7',
-        'owner': 'adtyavrdhn',
-        'evidence': 'label:streaming',
         'routes': '[{"number":7,"owner":"adtyavrdhn","evidence":"label:streaming"}]',
     }
 
@@ -1020,7 +1015,7 @@ def test_cli_daily_recovery_outputs_six_matrix_routes(tmp_path: Path, monkeypatc
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
     monkeypatch.setenv('GITHUB_REPOSITORY', CORE)
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
-    monkeypatch.setenv('ROUTING_LEGACY_LIMIT', '6')
+    monkeypatch.setenv('ROUTING_LEGACY_RECOVERY', 'true')
     monkeypatch.delenv('ROUTING_ISSUE_NUMBER', raising=False)
     monkeypatch.delenv('ROUTING_PULL_REQUEST_NUMBER', raising=False)
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
@@ -1030,12 +1025,7 @@ def test_cli_daily_recovery_outputs_six_matrix_routes(tmp_path: Path, monkeypatc
 
     selected = dict(line.split('=', 1) for line in output.read_text().splitlines())
     routes = json.loads(selected.pop('routes'))
-    assert selected == {
-        'should_assign': 'true',
-        'number': '1',
-        'owner': 'dsfaccini',
-        'evidence': 'label:MCP',
-    }
+    assert selected == {'should_assign': 'true'}
     assert [route['number'] for route in routes] == [1, 2, 3, 4, 5, 6]
 
 
@@ -1043,6 +1033,15 @@ def test_cli_failure_is_redacted(monkeypatch: pytest.MonkeyPatch, capsys: pytest
     monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
     monkeypatch.delenv('GITHUB_TOKEN', raising=False)
     monkeypatch.delenv('GH_TOKEN', raising=False)
+
+    assert router.main() == 1
+    assert capsys.readouterr().err == 'owner routing failed: ValueError\n'
+
+
+def test_cli_rejects_non_boolean_legacy_recovery(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('ROUTING_LEGACY_RECOVERY', '6')
 
     assert router.main() == 1
     assert capsys.readouterr().err == 'owner routing failed: ValueError\n'
@@ -1096,8 +1095,8 @@ def test_workflow_is_notification_first_and_least_privilege():
     prepare, notify, assign = jobs['route']['steps'][1:]
     select_step = jobs['select']['steps'][1]
     assert select_step['env']['ROUTING_PARTICIPANT_LOGIN'] == '${{ github.event.comment.user.login }}'
-    assert select_step['env']['ROUTING_LEGACY_LIMIT'] == (
-        "${{ (github.event.schedule == '40 7 * * *' || inputs.legacy_recovery) && '6' || '0' }}"
+    assert select_step['env']['ROUTING_LEGACY_RECOVERY'] == (
+        "${{ github.event.schedule == '40 7 * * *' || inputs.legacy_recovery }}"
     )
     assert prepare['id'] == 'prepare'
     assert prepare['env']['ROUTE_NUMBER'] == '${{ matrix.route.number }}'

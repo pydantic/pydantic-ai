@@ -519,7 +519,8 @@ def _recovery_numbers(
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
     created = f'created:<{_RECOVERY_EPOCH}' if legacy else f'created:>={_RECOVERY_EPOCH}'
     order = 'updated-desc' if legacy else 'created-asc'
-    query = f'repo:{repo} is:open {created} -draft:true {negatives} sort:{order}'
+    assignees = 'no:assignee' if legacy else negatives
+    query = f'repo:{repo} is:open {created} -draft:true {assignees} sort:{order}'
     return _search_numbers(client, query)
 
 
@@ -547,11 +548,9 @@ def select_batch(
     pull_request_number: str | None,
     participant_login: str | None = None,
     *,
-    legacy_limit: int = 0,
+    legacy_recovery: bool = False,
 ) -> list[Selection]:
     """Select an event item, one recent recovery, or a bounded legacy batch."""
-    if not 0 <= legacy_limit <= _LEGACY_BATCH_LIMIT:
-        raise ValueError(f'legacy recovery limit must be between 0 and {_LEGACY_BATCH_LIMIT}')
     repo = _repository(repo)
     if number := event_number(issue_number, pull_request_number):
         if participant_login:
@@ -561,13 +560,13 @@ def select_batch(
         return [decision_for(client, repo, number, participant_login=participant_login)]
     qualified = _qualified_owners(client, repo)
     recent = _select_numbers(client, repo, _recovery_numbers(client, repo, qualified), limit=1)
-    if recent or legacy_limit == 0:
+    if recent or not legacy_recovery:
         return recent
     return _select_numbers(
         client,
         repo,
         _recovery_numbers(client, repo, qualified, legacy=True),
-        limit=legacy_limit,
+        limit=_LEGACY_BATCH_LIMIT,
     )
 
 
@@ -693,26 +692,22 @@ def main() -> int:
             _summary(f'#{args.number}: ' + ('prepared routing intent' if payload else 'route changed'))
             return 0
         if args.mode == 'select':
-            legacy_limit_value = os.environ.get('ROUTING_LEGACY_LIMIT', '0')
-            if legacy_limit_value not in {'0', str(_LEGACY_BATCH_LIMIT)}:
-                raise ValueError('ROUTING_LEGACY_LIMIT must be 0 or 6')
+            legacy_recovery_value = os.environ.get('ROUTING_LEGACY_RECOVERY', 'false')
+            if legacy_recovery_value not in {'false', 'true'}:
+                raise ValueError('ROUTING_LEGACY_RECOVERY must be false or true')
             selected = select_batch(
                 client,
                 repo,
                 os.environ.get('ROUTING_ISSUE_NUMBER'),
                 os.environ.get('ROUTING_PULL_REQUEST_NUMBER'),
                 os.environ.get('ROUTING_PARTICIPANT_LOGIN'),
-                legacy_limit=int(legacy_limit_value),
+                legacy_recovery=legacy_recovery_value == 'true',
             )
             decisions = [selection['decision'] for selection in selected if selection['decision'] is not None]
             first = selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
-            decision = first['decision']
             _output(
                 {
                     'should_assign': str(bool(decisions)).lower(),
-                    'number': first['number'],
-                    'owner': decision['owner'] if decision else '',
-                    'evidence': decision['evidence'] if decision else '',
                     'routes': json.dumps(decisions, separators=(',', ':')),
                 }
             )

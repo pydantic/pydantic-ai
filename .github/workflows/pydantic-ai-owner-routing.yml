@@ -55,14 +55,14 @@ jobs:
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
           sparse-checkout-cone-mode: false
-      - name: Select one exact item
+      - name: Select routing decisions
         id: select
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ROUTING_ISSUE_NUMBER: ${{ github.event.issue.number }}
           ROUTING_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           ROUTING_PARTICIPANT_LOGIN: ${{ github.event.comment.user.login }}
-          ROUTING_LEGACY_LIMIT: ${{ (github.event.schedule == '40 7 * * *' || inputs.legacy_recovery) && '6' || '0' }}
+          ROUTING_LEGACY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.legacy_recovery }}
         run: python .github/scripts/semantic_owner_router.py select
 
   route:
