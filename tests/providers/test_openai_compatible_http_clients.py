@@ -223,11 +223,15 @@ for module, error_hint in {IMPORT_GUARD_CASES!r}:
 
 if failures:
     raise AssertionError("\\n".join(failures))
+
+print("all import guards checked")
 """
     result = subprocess.run([sys.executable, '-c', code], text=True, capture_output=True)
     diagnostics = f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}'
 
     assert result.returncode == 0, diagnostics
+    # The sentinel guards against a clean early exit (e.g. `SystemExit(0)`) skipping later providers.
+    assert 'all import guards checked' in result.stdout, diagnostics
 
 
 @pytest.mark.anyio
