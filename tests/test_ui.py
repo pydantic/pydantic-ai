@@ -363,7 +363,6 @@ async def test_event_stream_close_finalizes_native_stream_without_protocol_trail
     async def event_generator() -> AsyncIterator[NativeEvent]:
         try:
             yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
-            yield PartStartEvent(index=0, part=TextPart(content='Hello'))
             await asyncio.sleep(30)  # pragma: no cover
         finally:
             finalized.set()

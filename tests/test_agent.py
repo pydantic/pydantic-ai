@@ -4925,6 +4925,52 @@ async def test_run_stream_messages_skips_partials_without_a_response_start() -> 
     assert responses[0].parts == [TextPart(content='hello world')]
 
 
+async def test_run_stream_messages_skips_tool_returns_without_a_request_start() -> None:
+    """Tool-result events arriving with no request start are skipped instead of raising.
+
+    The request-side mirror of `test_run_stream_messages_skips_partials_without_a_response_start`: a
+    capability rewriting the run's event stream can drop the boundary the projection accumulates tool
+    returns against, so the growing `incomplete` snapshot is skipped and only the authoritative request
+    from the end event is yielded.
+
+    Not a VCR test: a capability rewriting the event stream is local behavior.
+    """
+
+    @dataclass
+    class DropRequestStartCapability(AbstractCapability[object]):
+        async def wrap_run_event_stream(
+            self, ctx: RunContext[object], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                if not isinstance(event, ModelRequestStartEvent):
+                    yield event
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[DropRequestStartCapability()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'result'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    tool_requests = [
+        message
+        for message in messages
+        if isinstance(message, ModelRequest) and message.parts and isinstance(message.parts[0], ToolReturnPart)
+    ]
+    # Without the start boundary there is nothing to accumulate against, so no `incomplete` snapshot is
+    # yielded — only the committed request that `ModelRequestEndEvent` carries.
+    assert [request.state for request in tool_requests] == ['complete']
+    assert isinstance(messages[-1], AgentRunResultEvent)
+
+
 async def test_run_stream_messages_yields_enqueued_non_request_messages() -> None:
     """An enqueued `ModelResponse` reaches the projection through its delivery event.
 
