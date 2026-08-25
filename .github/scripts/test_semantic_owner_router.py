@@ -764,6 +764,97 @@ def test_recovery_skips_full_assignee_list_without_starving_the_next():
     assert selected['number'] == 8
 
 
+class RecoveryClient(FakeClient):
+    def __init__(
+        self,
+        values: dict[int, dict[str, Any]],
+        *,
+        recent: list[int],
+        legacy: list[int],
+    ) -> None:
+        super().__init__(values)
+        self.recent = recent
+        self.legacy = legacy
+
+    def post(self, path: str, payload: Mapping[str, object]) -> Any:
+        if path == '/graphql':
+            variables = payload['variables']
+            assert isinstance(variables, Mapping)
+            if 'number' not in variables:
+                self.calls.append(('POST', path, payload))
+                query = str(variables['query'])
+                numbers = self.recent if 'created:>=' in query else self.legacy
+                return {'data': {'search': {'nodes': [{'number': number} for number in numbers]}}}
+        return super().post(path, payload)
+
+
+def test_daily_recovery_routes_six_recently_active_legacy_items():
+    client = RecoveryClient(
+        {number: item(number, labels=['MCP']) for number in range(1, 8)},
+        recent=[],
+        legacy=list(range(1, 8)),
+    )
+
+    selected = router.select_batch(client, CORE, None, None, legacy_limit=6)
+
+    assert [selection['number'] for selection in selected] == [1, 2, 3, 4, 5, 6]
+    queries = [
+        str(cast(Mapping[str, object], payload)['variables']['query'])
+        for method, path, payload in client.calls
+        if method == 'POST'
+        and path == '/graphql'
+        and isinstance(payload, Mapping)
+        and isinstance(payload.get('variables'), Mapping)
+        and 'query' in payload['variables']
+    ]
+    assert queries == [
+        'repo:pydantic/pydantic-ai is:open created:>=2026-08-18 -draft:true '
+        '-assignee:adtyavrdhn -assignee:DouweM -assignee:dsfaccini -assignee:mpfaffenberger '
+        'sort:created-asc',
+        'repo:pydantic/pydantic-ai is:open created:<2026-08-18 -draft:true '
+        '-assignee:adtyavrdhn -assignee:DouweM -assignee:dsfaccini -assignee:mpfaffenberger '
+        'sort:updated-desc',
+    ]
+
+
+def test_daily_recovery_keeps_post_rollout_item_ahead_of_legacy_batch():
+    client = RecoveryClient(
+        {7: item(7, labels=['MCP']), 8: item(8, labels=['tools'])},
+        recent=[7],
+        legacy=[8],
+    )
+
+    selected = router.select_batch(client, CORE, None, None, legacy_limit=6)
+
+    assert [selection['number'] for selection in selected] == [7]
+    assert not any(
+        'created:<' in str(cast(Mapping[str, object], payload)['variables']['query'])
+        for method, path, payload in client.calls
+        if method == 'POST'
+        and path == '/graphql'
+        and isinstance(payload, Mapping)
+        and isinstance(payload.get('variables'), Mapping)
+        and 'query' in payload['variables']
+    )
+
+
+def test_regular_recovery_never_queries_legacy_items():
+    client = RecoveryClient({8: item(8, labels=['tools'])}, recent=[], legacy=[8])
+
+    selected = router.select_batch(client, CORE, None, None)
+
+    assert selected == []
+    assert not any(
+        'created:<' in str(cast(Mapping[str, object], payload)['variables']['query'])
+        for method, path, payload in client.calls
+        if method == 'POST'
+        and path == '/graphql'
+        and isinstance(payload, Mapping)
+        and isinstance(payload.get('variables'), Mapping)
+        and 'query' in payload['variables']
+    )
+
+
 @pytest.mark.parametrize(
     'value',
     [
@@ -866,6 +957,7 @@ def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pyte
         'number': '7',
         'owner': 'adtyavrdhn',
         'evidence': 'label:streaming',
+        'routes': '[{"number":7,"owner":"adtyavrdhn","evidence":"label:streaming"}]',
     }
 
     output.write_text('')
@@ -886,6 +978,36 @@ def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pyte
         'owner': 'adtyavrdhn',
         'evidence': 'label:streaming',
     }
+
+
+def test_cli_daily_recovery_outputs_six_matrix_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / 'github-output'
+    client = RecoveryClient(
+        {number: item(number, labels=['MCP']) for number in range(1, 8)},
+        recent=[],
+        legacy=list(range(1, 8)),
+    )
+    monkeypatch.setattr(router.attention, 'GitHubClient', lambda token: client)
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('GITHUB_REPOSITORY', CORE)
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setenv('ROUTING_LEGACY_LIMIT', '6')
+    monkeypatch.delenv('ROUTING_ISSUE_NUMBER', raising=False)
+    monkeypatch.delenv('ROUTING_PULL_REQUEST_NUMBER', raising=False)
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+    monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
+
+    assert router.main() == 0
+
+    selected = dict(line.split('=', 1) for line in output.read_text().splitlines())
+    routes = json.loads(selected.pop('routes'))
+    assert selected == {
+        'should_assign': 'true',
+        'number': '1',
+        'owner': 'dsfaccini',
+        'evidence': 'label:MCP',
+    }
+    assert [route['number'] for route in routes] == [1, 2, 3, 4, 5, 6]
 
 
 def test_cli_failure_is_redacted(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
@@ -936,10 +1058,22 @@ def test_workflow_is_notification_first_and_least_privilege():
         'issues': 'write',
         'pull-requests': 'write',
     }
+    assert jobs['route']['strategy'] == {
+        'fail-fast': False,
+        'max-parallel': 1,
+        'matrix': {'route': '${{ fromJSON(needs.select.outputs.routes) }}'},
+    }
+    assert jobs['route']['concurrency']['group'] == 'semantic-owner-${{ github.repository }}-${{ matrix.route.number }}'
     prepare, notify, assign = jobs['route']['steps'][1:]
     select_step = jobs['select']['steps'][1]
     assert select_step['env']['ROUTING_PARTICIPANT_LOGIN'] == '${{ github.event.comment.user.login }}'
+    assert select_step['env']['ROUTING_LEGACY_LIMIT'] == (
+        "${{ (github.event.schedule == '40 7 * * *' || inputs.legacy_recovery) && '6' || '0' }}"
+    )
     assert prepare['id'] == 'prepare'
+    assert prepare['env']['ROUTE_NUMBER'] == '${{ matrix.route.number }}'
+    assert prepare['env']['ROUTE_OWNER'] == '${{ matrix.route.owner }}'
+    assert prepare['env']['ROUTE_EVIDENCE'] == '${{ matrix.route.evidence }}'
     assert notify['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
     assert notify['with']['payload'] == '${{ steps.prepare.outputs.slack_payload }}'
     assert notify['with']['errors'] is True

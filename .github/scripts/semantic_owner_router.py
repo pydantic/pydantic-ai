@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministically assign one open item to its semantic maintainer owner."""
+"""Deterministically assign open items to their semantic maintainer owners."""
 
 from __future__ import annotations
 
@@ -19,10 +19,8 @@ import issue_pr_attention_monitor as attention
 _REPOSITORIES = attention.REPOSITORIES
 _OWNERS = frozenset(attention.MAINTAINER_OWNERS)
 _MANUAL_OWNER = 'adtyavrdhn'
-# Everything before this rollout watermark was handled by the one-time manual
-# audit. Keeping it fixed makes later outages recoverable without draining years
-# of historical backlog into the triage channel.
 _RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
+_LEGACY_BATCH_LIMIT = 6
 _FILE_LIMIT = 100
 _ASSIGNEE_LIMIT = 10
 _PARTICIPATION_TIMELINE_PAGES = 2
@@ -479,10 +477,66 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
     )
 
 
-def _recovery_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
+def _recovery_numbers(
+    client: attention.GitHubClient,
+    repo: str,
+    qualified: Sequence[str],
+    *,
+    legacy: bool = False,
+) -> list[int]:
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
-    query = f'repo:{repo} is:open created:>={_RECOVERY_EPOCH} -draft:true {negatives} sort:created-asc'
+    created = f'created:<{_RECOVERY_EPOCH}' if legacy else f'created:>={_RECOVERY_EPOCH}'
+    order = 'updated-desc' if legacy else 'created-asc'
+    query = f'repo:{repo} is:open {created} -draft:true {negatives} sort:{order}'
     return _search_numbers(client, query)
+
+
+def _select_numbers(
+    client: attention.GitHubClient,
+    repo: str,
+    numbers: Sequence[int],
+    *,
+    limit: int,
+) -> list[Selection]:
+    selected: list[Selection] = []
+    for number in numbers:
+        selection = decision_for(client, repo, number)
+        if selection['decision'] is not None:
+            selected.append(selection)
+            if len(selected) == limit:
+                break
+    return selected
+
+
+def select_batch(
+    client: attention.GitHubClient,
+    repo: str,
+    issue_number: str | None,
+    pull_request_number: str | None,
+    participant_login: str | None = None,
+    *,
+    legacy_limit: int = 0,
+) -> list[Selection]:
+    """Select an event item, one recent recovery, or a bounded legacy batch."""
+    if not 0 <= legacy_limit <= _LEGACY_BATCH_LIMIT:
+        raise ValueError(f'legacy recovery limit must be between 0 and {_LEGACY_BATCH_LIMIT}')
+    repo = _repository(repo)
+    if number := event_number(issue_number, pull_request_number):
+        if participant_login:
+            owner = _participant_owner(participant_login)
+            if owner is None or client.maintainer_login(repo, owner, refresh=True) is None:
+                return [Selection(number=number, decision=None, status='non-maintainer-response')]
+        return [decision_for(client, repo, number, participant_login=participant_login)]
+    qualified = _qualified_owners(client, repo)
+    recent = _select_numbers(client, repo, _recovery_numbers(client, repo, qualified), limit=1)
+    if recent or legacy_limit == 0:
+        return recent
+    return _select_numbers(
+        client,
+        repo,
+        _recovery_numbers(client, repo, qualified, legacy=True),
+        limit=legacy_limit,
+    )
 
 
 def select(
@@ -492,20 +546,9 @@ def select(
     pull_request_number: str | None,
     participant_login: str | None = None,
 ) -> Selection:
-    """Select exactly the event item or one recovery candidate."""
-    repo = _repository(repo)
-    if number := event_number(issue_number, pull_request_number):
-        if participant_login:
-            owner = _participant_owner(participant_login)
-            if owner is None or client.maintainer_login(repo, owner, refresh=True) is None:
-                return Selection(number=number, decision=None, status='non-maintainer-response')
-        return decision_for(client, repo, number, participant_login=participant_login)
-    qualified = _qualified_owners(client, repo)
-    for number in _recovery_numbers(client, repo, qualified):
-        selection = decision_for(client, repo, number)
-        if selection['decision'] is not None:
-            return selection
-    return Selection(number=0, decision=None, status='nothing-to-route')
+    """Select exactly the event item or one recent recovery candidate."""
+    selected = select_batch(client, repo, issue_number, pull_request_number, participant_login)
+    return selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
 
 
 def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> bool:
@@ -618,23 +661,33 @@ def main() -> int:
             _summary(f'#{args.number}: ' + ('prepared routing intent' if payload else 'route changed'))
             return 0
         if args.mode == 'select':
-            selected = select(
+            legacy_limit_value = os.environ.get('ROUTING_LEGACY_LIMIT', '0')
+            if legacy_limit_value not in {'0', str(_LEGACY_BATCH_LIMIT)}:
+                raise ValueError('ROUTING_LEGACY_LIMIT must be 0 or 6')
+            selected = select_batch(
                 client,
                 repo,
                 os.environ.get('ROUTING_ISSUE_NUMBER'),
                 os.environ.get('ROUTING_PULL_REQUEST_NUMBER'),
                 os.environ.get('ROUTING_PARTICIPANT_LOGIN'),
+                legacy_limit=int(legacy_limit_value),
             )
-            decision = selected['decision']
+            decisions = [selection['decision'] for selection in selected if selection['decision'] is not None]
+            first = selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
+            decision = first['decision']
             _output(
                 {
-                    'should_assign': str(decision is not None).lower(),
-                    'number': selected['number'],
+                    'should_assign': str(bool(decisions)).lower(),
+                    'number': first['number'],
                     'owner': decision['owner'] if decision else '',
                     'evidence': decision['evidence'] if decision else '',
+                    'routes': json.dumps(decisions, separators=(',', ':')),
                 }
             )
-            _summary(f'#{selected["number"]}: {selected["status"]}' if selected['number'] else selected['status'])
+            if decisions:
+                _summary(', '.join(f'#{route["number"]}' for route in decisions) + ': route')
+            else:
+                _summary(f'#{first["number"]}: {first["status"]}' if first['number'] else first['status'])
             return 0
         if args.number is None or args.owner is None or args.evidence is None:
             parser.error('assign requires --number, --owner, and --evidence')
