@@ -389,67 +389,105 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
     )
 
 
+def _anthropic_replayable_web_citation() -> Citation:
+    return Citation(
+        sources=[
+            WebCitationSource(
+                url='https://example.com/source',
+                title='Source',
+                excerpts=['supporting passage'],
+            )
+        ],
+        provider_details={'encrypted_index': 'opaque-web-index'},
+    )
+
+
 @pytest.mark.parametrize(
-    'citation',
+    ('provider_name', 'citations'),
     [
         pytest.param(
-            Citation(sources=[WebCitationSource(url='https://example.com/source')]),
+            'anthropic',
+            [Citation(sources=[WebCitationSource(url='https://example.com/source')])],
             id='missing-native-details',
         ),
         pytest.param(
-            Citation(
-                sources=[
-                    DocumentCitationSource(
-                        title='Report',
-                        excerpts=['source text'],
-                        provider_details={
-                            'type': 'char_location',
-                            'document_index': -1,
-                            'start_char_index': 0,
-                            'end_char_index': 11,
-                        },
-                    )
-                ]
-            ),
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'char_location',
+                                'document_index': -1,
+                                'start_char_index': 0,
+                                'end_char_index': 11,
+                            },
+                        )
+                    ]
+                )
+            ],
             id='negative-document-index',
         ),
         pytest.param(
-            Citation(
-                sources=[
-                    DocumentCitationSource(
-                        title='Report',
-                        excerpts=['source text'],
-                        provider_details={
-                            'type': 'char_location',
-                            'document_index': 0,
-                            'start_char_index': 11,
-                            'end_char_index': 0,
-                        },
-                    )
-                ]
-            ),
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'char_location',
+                                'document_index': 0,
+                                'start_char_index': 11,
+                                'end_char_index': 0,
+                            },
+                        )
+                    ]
+                )
+            ],
             id='reversed-character-range',
         ),
         pytest.param(
-            Citation(
-                sources=[
-                    DocumentCitationSource(
-                        title='Report',
-                        excerpts=['source text'],
-                        provider_details={
-                            'type': 'page_location',
-                            'document_index': 0,
-                            'start_page_number': 0,
-                            'end_page_number': 1,
-                        },
-                    )
-                ]
-            ),
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'page_location',
+                                'document_index': 0,
+                                'start_page_number': 0,
+                                'end_page_number': 1,
+                            },
+                        )
+                    ]
+                )
+            ],
             id='zero-page-number',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                _anthropic_replayable_web_citation(),
+                Citation(sources=[WebCitationSource(url='https://example.com/incomplete')]),
+            ],
+            id='valid-and-invalid-citations-all-fall-back',
+        ),
+        pytest.param(
+            'openai',
+            [_anthropic_replayable_web_citation()],
+            id='foreign-provider-citations-fall-back',
         ),
     ],
 )
-async def test_anthropic_unreconstructable_citations_replay_as_text(allow_model_requests: None, citation: Citation):
+async def test_anthropic_unreconstructable_citations_replay_as_text(
+    allow_model_requests: None, provider_name: str, citations: list[Citation]
+):
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
     )
@@ -462,10 +500,10 @@ async def test_anthropic_unreconstructable_citations_replay_as_text(allow_model_
                     parts=[
                         TextPart(
                             'The source supports this claim.',
-                            citations=[citation],
+                            citations=citations,
                         )
                     ],
-                    provider_name='anthropic',
+                    provider_name=provider_name,
                 ),
                 ModelRequest(parts=[UserPromptPart('Continue.')]),
             ]

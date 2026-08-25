@@ -1800,56 +1800,79 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
     )
 
 
+def _bedrock_replayable_citation() -> Citation:
+    return Citation(
+        sources=[
+            WebCitationSource(
+                url='https://ai.pydantic.dev',
+                title='Pydantic AI',
+                provider_details={'domain': 'ai.pydantic.dev'},
+            )
+        ],
+        anchor=ContentCitationAnchor(start=0, end=8),
+    )
+
+
 @pytest.mark.parametrize(
-    ('provider_name', 'citation'),
+    ('provider_name', 'citations'),
     [
         pytest.param(
             'bedrock',
-            Citation(
-                sources=[DocumentCitationSource(title='Returns policy')],
-                anchor=ContentCitationAnchor(start=0, end=8),
-            ),
+            [
+                Citation(
+                    sources=[DocumentCitationSource(title='Returns policy')],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                )
+            ],
             id='incomplete',
         ),
         pytest.param(
             'anthropic',
-            Citation(
-                sources=[
-                    WebCitationSource(
-                        url='https://ai.pydantic.dev',
-                        title='Pydantic AI',
-                        provider_details={'location': {'web': {'url': 'https://ai.pydantic.dev'}}},
-                    )
-                ],
-                anchor=ContentCitationAnchor(start=0, end=8),
-            ),
+            [_bedrock_replayable_citation()],
             id='foreign',
         ),
         pytest.param(
             'bedrock',
-            Citation(
-                sources=[
-                    DocumentCitationSource(
-                        title='Returns policy',
-                        provider_details={'location': {'documentChar': {'documentIndex': -1, 'start': 0, 'end': 8}}},
-                    )
-                ],
-                anchor=ContentCitationAnchor(start=0, end=8),
-            ),
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={
+                                'location': {'documentChar': {'documentIndex': -1, 'start': 0, 'end': 8}}
+                            },
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                )
+            ],
             id='negative-index',
         ),
         pytest.param(
             'bedrock',
-            Citation(
-                sources=[
-                    DocumentCitationSource(
-                        title='Returns policy',
-                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 8, 'end': 0}}},
-                    )
-                ],
-                anchor=ContentCitationAnchor(start=0, end=8),
-            ),
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 8, 'end': 0}}},
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                )
+            ],
             id='reversed-range',
+        ),
+        pytest.param(
+            'bedrock',
+            [
+                _bedrock_replayable_citation(),
+                Citation(
+                    sources=[DocumentCitationSource(title='Incomplete source')],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                ),
+            ],
+            id='valid-and-invalid-citations-all-fall-back',
         ),
     ],
 )
@@ -1858,7 +1881,7 @@ async def test_bedrock_citations_replay_as_text_when_incomplete_or_foreign(
     bedrock_provider: BedrockProvider,
     mocker: MockerFixture,
     provider_name: str,
-    citation: Citation,
+    citations: list[Citation],
 ) -> None:
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     mock_converse = mocker.patch.object(model.client, 'converse')
@@ -1872,7 +1895,7 @@ async def test_bedrock_citations_replay_as_text_when_incomplete_or_foreign(
         ModelMessagesTypeAdapter.dump_json(
             [
                 ModelRequest(parts=[UserPromptPart('What is the return window?')]),
-                ModelResponse(parts=[TextPart('Returns.', citations=[citation])], provider_name=provider_name),
+                ModelResponse(parts=[TextPart('Returns.', citations=citations)], provider_name=provider_name),
                 ModelRequest(parts=[UserPromptPart('Continue.')]),
             ]
         )

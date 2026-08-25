@@ -2007,7 +2007,7 @@ def _map_responses_citation_for_replay(
     ):
         return None
     index = (citation.provider_details or {}).get('index')
-    if not isinstance(index, int) or isinstance(index, bool):
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
         return None
     return responses.response_output_text_param.AnnotationFileCitation(
         type='file_citation', file_id=source.document_id, filename=source.title, index=index

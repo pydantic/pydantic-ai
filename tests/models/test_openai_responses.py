@@ -331,8 +331,44 @@ async def test_openai_responses_citations_replay_only_for_same_provider(allow_mo
     }
 
 
+@pytest.mark.parametrize(
+    'citations',
+    [
+        pytest.param(
+            [
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com/source', title='Source')],
+                    anchor=MarkerCitationAnchor(start=20, end=40),
+                )
+            ],
+            id='invalid-marker-range',
+        ),
+        pytest.param(
+            [
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com/valid', title='Valid')],
+                    anchor=MarkerCitationAnchor(start=0, end=10),
+                ),
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com/invalid', title='Invalid')],
+                    anchor=MarkerCitationAnchor(start=20, end=40),
+                ),
+            ],
+            id='valid-and-invalid-citations-all-fall-back',
+        ),
+        pytest.param(
+            [
+                Citation(
+                    sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')],
+                    provider_details={'index': -1},
+                )
+            ],
+            id='negative-file-citation-index',
+        ),
+    ],
+)
 async def test_openai_responses_unreconstructable_citations_replay_with_empty_annotations(
-    allow_model_requests: None,
+    allow_model_requests: None, citations: list[Citation]
 ):
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
@@ -346,12 +382,7 @@ async def test_openai_responses_unreconstructable_citations_replay_with_empty_an
                             'The source supports this claim.',
                             id='msg-historical',
                             provider_name='openai',
-                            citations=[
-                                Citation(
-                                    sources=[WebCitationSource(url='https://example.com/source', title='Source')],
-                                    anchor=MarkerCitationAnchor(start=20, end=40),
-                                )
-                            ],
+                            citations=citations,
                         )
                     ],
                     provider_name='openai',
