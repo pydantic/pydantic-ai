@@ -1125,7 +1125,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
     try:
         from pydantic_ai.providers.xai import XaiProvider
         from tests.models.xai_proto_cassettes import xai_proto_cassette_session
-    except ImportError:  # pragma: no cover
+    except ImportError:
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)

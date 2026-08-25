@@ -563,8 +563,7 @@ class WaitForNonStreamingAgentTimeoutWorkflow:
 
 
 async def _slow_nonstreaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    await asyncio.sleep(10)
-    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+    return await asyncio.Future[ModelResponse]()
 
 
 _wait_for_nonstreaming_agent = Agent(
