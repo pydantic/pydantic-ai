@@ -12,10 +12,13 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    BinaryImage,
     CachePoint,
+    DocumentUrl,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -41,13 +44,17 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception,
 with try_import() as imports_successful:
     import cohere
     from cohere import (
+        AssistantChatMessageV2,
         AssistantMessageResponse,
         AsyncClientV2,
         ChatResponse,
+        ImageUrl as CohereImageUrl,
+        ImageUrlContent as CohereImageUrlContent,
         TextAssistantMessageResponseContentItem,
         TextContent as CohereTextContent,
         ToolCallV2,
         ToolCallV2Function,
+        ToolChatMessageV2,
         UserChatMessageV2,
     )
     from cohere.core.api_error import ApiError
@@ -570,7 +577,8 @@ def test_text_content_in_request(allow_model_requests: None):
             )
         ]
     )
-    assert list(CohereModel._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    assert list(m._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
         [
             UserChatMessageV2(
                 content=[
@@ -586,7 +594,8 @@ def test_text_content_in_request(allow_model_requests: None):
 
 def test_cache_point_silently_skipped_user_prompt_part(allow_model_requests: None):
     req = ModelRequest(parts=[UserPromptPart(content=['Hello there!', CachePoint()])])
-    assert list(CohereModel._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    assert list(m._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
         [
             UserChatMessageV2(
                 content=[
@@ -604,14 +613,80 @@ async def test_multimodal(allow_model_requests: None):
     agent = Agent(m)
 
     with pytest.raises(RuntimeError, match=re.escape('Cohere does not yet support multi-modal inputs.')):
-        await agent.run(
-            [
-                'hello',
-                ImageUrl(
-                    url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
-                ),
-            ]
-        )
+        await agent.run(['hello', DocumentUrl(url='https://example.com/document.pdf')])
+
+
+async def test_image_input_requires_a_vision_model(allow_model_requests: None):
+    c = completion_message(AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='world')]))
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(
+        UserError, match=re.escape("Image inputs are not supported by the Cohere model 'command-r7b-12-2024'.")
+    ):
+        await agent.run(['hello', ImageUrl(url='https://example.com/image.png')])
+
+
+def test_image_input_on_a_vision_model(allow_model_requests: None):
+    m = CohereModel('command-a-vision-07-2025', provider=CohereProvider(api_key='foobar'))
+    req = ModelRequest(
+        parts=[
+            UserPromptPart(
+                content=[
+                    'hello',
+                    ImageUrl(url='https://example.com/image.png'),
+                    BinaryImage(data=b'fake', media_type='image/png'),
+                ]
+            )
+        ]
+    )
+    assert list(m._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        [
+            UserChatMessageV2(
+                content=[
+                    CohereTextContent(text='hello'),
+                    CohereImageUrlContent(image_url=CohereImageUrl(url='https://example.com/image.png')),
+                    CohereImageUrlContent(image_url=CohereImageUrl(url='data:image/png;base64,ZmFrZQ==')),
+                ]
+            )
+        ]
+    )
+
+
+def test_tool_returned_image_spills_into_a_user_message(allow_model_requests: None):
+    """A Cohere tool result is text-only, so a tool-returned image rides in a trailing user message.
+
+    Before, the image was dropped and the tool result was sent as an empty string.
+    """
+    m = CohereModel('command-a-vision-07-2025', provider=CohereProvider(api_key='foobar'))
+    image = BinaryImage(data=b'fake', media_type='image/png')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show me the chart')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_chart', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_chart', content=image, tool_call_id='call_1')],
+        ),
+    ]
+    assert m._map_messages(messages, ModelRequestParameters()) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        [
+            UserChatMessageV2(content='show me the chart'),
+            AssistantChatMessageV2(
+                tool_calls=[
+                    ToolCallV2(
+                        id='call_1', type='function', function=ToolCallV2Function(name='get_chart', arguments='{}')
+                    )
+                ]
+            ),
+            ToolChatMessageV2(tool_call_id='call_1', content=f'See file {image.identifier}.'),
+            UserChatMessageV2(
+                content=[
+                    CohereTextContent(text=f'This is file {image.identifier}:'),
+                    CohereImageUrlContent(image_url=CohereImageUrl(url='data:image/png;base64,ZmFrZQ==')),
+                ]
+            ),
+        ]
+    )
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

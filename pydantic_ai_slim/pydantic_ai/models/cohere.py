@@ -7,7 +7,7 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 
 from .. import ModelHTTPError, usage
 from .._utils import (
@@ -16,10 +16,12 @@ from .._utils import (
     is_str_dict as _is_str_dict,
 )
 from ..messages import (
+    BinaryContent,
     CachePoint,
     CompactionPart,
     FilePart,
     FinishReason,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -35,6 +37,7 @@ from ..messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -57,6 +60,8 @@ try:
         ChatFinishReason,
         ChatMessageV2,
         Content as CohereContent,
+        ImageUrl as CohereImageUrl,
+        ImageUrlContent as CohereImageUrlContent,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
         TextContent as CohereTextContent,
@@ -367,29 +372,20 @@ class CohereModel(Model[AsyncClientV2]):
             ),
         )
 
-    @classmethod
-    def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
+    def _map_user_message(self, message: ModelRequest) -> Iterable[ChatMessageV2]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                if isinstance(part.content, str):
-                    yield UserChatMessageV2(role='user', content=part.content)
-                else:
-                    cohere_content: list[CohereContent] = []
-                    for c in part.content:
-                        if isinstance(c, str | TextContent):
-                            cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
-                        elif isinstance(c, CachePoint):
-                            continue
-                        else:
-                            raise RuntimeError('Cohere does not yet support multi-modal inputs.')
-                    yield UserChatMessageV2(role='user', content=cohere_content)
+                yield self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
+                file_content.extend(tool_file_content)
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
+                    content=tool_text,
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -407,6 +403,34 @@ class CohereModel(Model[AsyncClientV2]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
+
+        if file_content:
+            # Cohere tool results are text-only, so media a tool returned rides in a trailing user
+            # message, the same fallback OpenAI Chat, Groq, Hugging Face and xAI use.
+            yield self._map_user_prompt(UserPromptPart(content=file_content))
+
+    def _map_user_prompt(self, part: UserPromptPart) -> UserChatMessageV2:
+        if isinstance(part.content, str):
+            return UserChatMessageV2(role='user', content=part.content)
+
+        cohere_content: list[CohereContent] = []
+        for item in part.content:
+            if isinstance(item, str | TextContent):
+                cohere_content.append(CohereTextContent(text=item if isinstance(item, str) else item.content))
+            elif isinstance(item, ImageUrl):
+                cohere_content.append(self._map_image_url(item.url))
+            elif isinstance(item, BinaryContent) and item.is_image:
+                cohere_content.append(self._map_image_url(item.data_uri))
+            elif isinstance(item, CachePoint):
+                continue
+            else:
+                raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+        return UserChatMessageV2(role='user', content=cohere_content)
+
+    def _map_image_url(self, url: str) -> CohereImageUrlContent:
+        if not self.profile.get('cohere_supports_image_content'):
+            raise UserError(f'Image inputs are not supported by the Cohere model {self._model_name!r}.')
+        return CohereImageUrlContent(type='image_url', image_url=CohereImageUrl(url=url))
 
 
 def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:

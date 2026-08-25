@@ -74,6 +74,29 @@ agent = Agent(model)
 ...
 ```
 
+## Image inputs
+
+Cohere's [vision models](https://docs.cohere.com/docs/image-inputs) accept images in user messages,
+so an [`ImageUrl`][pydantic_ai.messages.ImageUrl] or an image
+[`BinaryContent`][pydantic_ai.messages.BinaryContent] is sent as an `image_url` content block:
+
+```python
+from pydantic_ai import Agent, ImageUrl
+from pydantic_ai.models.cohere import CohereModel
+
+model = CohereModel('command-a-vision-07-2025')
+agent = Agent(model)
+prompt = ['What breed is this dog?', ImageUrl(url='https://iili.io/3Hs4FMg.png')]
+...
+```
+
+On a model without vision support, an image raises a
+[`UserError`][pydantic_ai.exceptions.UserError].
+
+Cohere tool results are text-only, so an image a tool returns is referenced by identifier in the tool
+result and sent in full in a following user message. Other content kinds (documents, audio, video)
+are not supported in either position.
+
 ## Model settings
 
 You can customize model behavior using [`CohereModelSettings`][pydantic_ai.models.cohere.CohereModelSettings]:
