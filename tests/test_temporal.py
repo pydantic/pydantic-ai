@@ -8337,7 +8337,7 @@ async def test_temporal_cancellation_rejects_enqueue(client: Client) -> None:
             UsageLimitExceeded,
             (
                 'Exceeded the total_tokens_limit of 50 (total_tokens=165). Consider raising the limit, or see the docs '
-                'on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+                'on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
             ),
         ):
             await client.execute_workflow(
