@@ -127,25 +127,18 @@ if the head changes, capture the new SHA and restart the loop.
 1. **Watch CI to a terminal state.** Require the `CI` workflow, including coverage, to succeed for
    the captured SHA. Don't idle. If it fails, diagnose: fix if the failure is yours; if it's a known
    flake or pre-existing on main, say so with evidence.
-2. **Wait for a standards review on the captured SHA.** Every accepted `CI Review` must have a
-   matching `Reviewed at <captured SHA>` marker: normally it is `APPROVED`; for a bot-authored PR,
-   a `COMMENT` also needs an explicit `APPROVE` verdict. Its review commit field is not authoritative.
-   A `REQUEST_CHANGES` verdict, or a `COMMENT` with `REQUEST_CHANGES` or no verdict, is not approval.
-   Enumerate every active requesting review and triage active `CI Review` feedback before fallback:
-   any valid finding that requires a push restarts the lifecycle. Any human requester keeps the PR
-   incomplete until that human re-reviews or a maintainer dismisses it; do not dismiss a human request.
-   Only if the remaining `CI Review` bot request suppresses a replacement `CI Review`, run current-head
-   `douwebot`, triage every finding, then have a maintainer dismiss or supersede only that bot request.
-   That successful comment-only fallback with the bot request cleared satisfies this gate. If `CI Review`
-   skips because the PR is a fork or the actor is ineligible, use the same fallback. Validate it from
-   the run's Checkout PR head or label-event context: the immutable `pull_request.head.sha` actually
-   checked out must equal the captured SHA. Do not compare a generic workflow or check `head_sha`, which
-   may be the base context for `pull_request_target`. After completion, recheck that the live PR head
-   still equals the captured SHA; otherwise restart the loop and reapply the label for the new head.
-   Any other current-head run—including `noop`, failure, or another skip—leaves the gate unsatisfied:
-   retry once only when its cause may have cleared, then use the documented fallback or safe escalation.
-   A stale-head result restarts the loop. If neither reviewer can safely run, keep the PR incomplete
-   and escalate for maintainer carry-forward or another explicit safe hosted-review path.
+2. **Wait for a standards review on the captured SHA.**
+   [`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
+   and [`.github/workflows/bots.yml`](../../../.github/workflows/bots.yml) are the source of truth
+   for eligibility and fallback mechanics. Every accepted review must cover the captured SHA: `CI
+   Review` needs a matching `Reviewed at <captured SHA>` marker and `APPROVED`; a bot-authored PR may
+   instead use a `COMMENT` with an explicit `APPROVE`. Triage existing `CI Review` feedback before a
+   fallback; any valid finding and push restarts the lifecycle. A human request remains blocking until
+   that human re-reviews or a maintainer dismisses it; do not dismiss a human request. When the source
+   workflow permits the `douwebot` fallback, accept it only when the labeled PR head is the captured
+   SHA and the live head remains unchanged after completion. Triage all of its findings, then only a
+   maintainer may dismiss or supersede the remaining `CI Review` bot request. Missing, stale, `noop`,
+   or failed reviews are unsatisfied; retry when appropriate, otherwise escalate.
 3. **Triage every comment** (bots and humans alike). For each one:
    - **Valid** → fix it, run targeted verification, commit, pass the fresh pre-push gate, push, and
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
