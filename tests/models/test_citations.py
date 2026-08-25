@@ -6,6 +6,7 @@ from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 import pytest
+from typing_extensions import assert_never
 
 from pydantic_ai import (
     Agent,
@@ -290,8 +291,8 @@ def _web_citation_agent(
         model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
         tool = WebSearchTool(max_uses=1)
         prompt = "Use web search to find Pydantic AI's GitHub repository and cite it."
-    else:
-        raise AssertionError(f'Unknown provider: {case.provider}')
+    else:  # pragma: no cover
+        assert_never(case.provider)
 
     return Agent(model, capabilities=[NativeTool(tool)], model_settings=settings), prompt
 

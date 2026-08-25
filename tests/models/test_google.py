@@ -5512,6 +5512,14 @@ def test_google_retrieved_context_preserves_distinct_excerpts():
     )
 
 
+def test_google_retrieved_context_preserves_rag_chunk_identity():
+    context = GroundingChunkRetrievedContext(rag_chunk=RagChunk(text='excerpt', chunk_id='chunk-1'))
+
+    assert _map_grounding_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
+        excerpts=['excerpt'], provider_details={'rag_chunk': {'chunk_id': 'chunk-1'}}
+    )
+
+
 def test_google_grounding_uses_unique_segment_text_to_find_part():
     source = WebCitationSource(url='https://example.com')
     metadata = GroundingMetadata(
@@ -5751,6 +5759,41 @@ async def test_google_stream_text_text_then_text_continues_trailing_text():
 
     assert streamed_response.get().parts == [TextPart('firstsecond third')]
     assert sum(isinstance(event, PartStartEvent) for event in events) == 1
+
+
+async def test_google_stream_shorter_chunk_after_tool_starts_new_text():
+    """A shorter chunk after a tool part must not merge text across that tool call."""
+    chunks = [
+        GenerateContentResponse(
+            candidates=[
+                Candidate(
+                    content=Content(
+                        parts=[Part(text='before'), Part(function_call={'name': 'tool', 'args': {}})], role='model'
+                    )
+                )
+            ],
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='after')], role='model'))],
+            model_version='gemini-test',
+        ),
+    ]
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
+        _provider_name='google',
+        _model_id_namespace='google',
+        _provider_url='',
+    )
+
+    _ = [event async for event in streamed_response]
+
+    parts = streamed_response.get().parts
+    assert parts[0] == TextPart('before')
+    assert isinstance(parts[1], ToolCallPart)
+    assert parts[2] == TextPart('after')
 
 
 async def test_google_stream_citations_can_reference_earlier_grounding_chunks():
