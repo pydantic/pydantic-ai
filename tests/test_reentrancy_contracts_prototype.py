@@ -32,8 +32,8 @@ def _run_and_signal(operation: Callable[[], None], started: ProcessEvent) -> Non
 
 
 def _assert_completes_in_subprocess(operation: Callable[[], None]) -> None:
-    if 'fork' in multiprocessing.get_all_start_methods():
-        context = multiprocessing.get_context('fork')
+    if 'forkserver' in multiprocessing.get_all_start_methods():
+        context = multiprocessing.get_context('forkserver')
     else:
         context = multiprocessing.get_context('spawn')
     started = context.Event()
