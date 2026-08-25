@@ -1071,11 +1071,11 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
                     settings=cast(
                         OpenRouterWebSearchToolSettings,
                         {
-                            'engine': 'exa',
-                            'mode': 'auto',
-                            'max_results': 5,
-                            'max_total_results': 8,
-                            'max_characters': 5_000,
+                            'openrouter_engine': 'exa',
+                            'openrouter_mode': 'auto',
+                            'openrouter_max_results': 5,
+                            'openrouter_max_total_results': 8,
+                            'openrouter_max_characters': 5_000,
                             'search_context_size': 'low',
                         },
                     ),
@@ -1336,7 +1336,7 @@ async def test_openrouter_advisor_tool_settings(allow_model_requests: None) -> N
             NativeTool(
                 AdvisorTool(
                     model='anthropic/claude-opus-4.8',
-                    settings=OpenRouterAdvisorToolSettings(forward_transcript=True),
+                    settings=OpenRouterAdvisorToolSettings(openrouter_forward_transcript=True),
                 )
             )
         ],

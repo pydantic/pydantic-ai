@@ -256,26 +256,32 @@ class OpenRouterUsageConfig(TypedDict, total=False):
 class OpenRouterWebSearchToolSettings(WebSearchToolSettings, total=False):
     """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
-    engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity']
+    # ALL FIELDS MUST BE `openrouter_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER PROVIDERS' SETTINGS.
+
+    openrouter_engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity']
     """The search engine OpenRouter should use."""
 
-    mode: Literal['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced']
+    openrouter_mode: Literal[
+        'instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced'
+    ]
     """The engine-specific search mode."""
 
-    max_results: int
+    openrouter_max_results: int
     """The maximum results returned by each search call."""
 
-    max_total_results: int
+    openrouter_max_total_results: int
     """The maximum results returned across all search calls in one request."""
 
-    max_characters: int
+    openrouter_max_characters: int
     """The maximum content characters returned for each result."""
 
 
 class OpenRouterAdvisorToolSettings(AdvisorToolSettings, total=False):
     """OpenRouter-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
 
-    forward_transcript: bool
+    # ALL FIELDS MUST BE `openrouter_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER PROVIDERS' SETTINGS.
+
+    openrouter_forward_transcript: bool
     """Whether OpenRouter should include the conversation transcript in the advisor request."""
 
 
@@ -987,7 +993,7 @@ class OpenRouterModel(OpenAIChatModel):
             advisor_settings = cast(OpenRouterAdvisorToolSettings, advisor.settings or {})
             parameters: dict[str, Any] = {
                 'model': advisor.model,
-                'forward_transcript': advisor_settings.get('forward_transcript', False),
+                'forward_transcript': advisor_settings.get('openrouter_forward_transcript', False),
                 **({'max_completion_tokens': advisor.max_tokens} if advisor.max_tokens is not None else {}),
             }
             tools.append(cast(chat.ChatCompletionToolParam, {'type': 'openrouter:advisor', 'parameters': parameters}))
@@ -1008,7 +1014,7 @@ class OpenRouterModel(OpenAIChatModel):
                 {
                     key: value
                     for key in ('engine', 'mode', 'max_results', 'max_total_results', 'max_characters')
-                    if (value := web_search_settings.get(key)) is not None
+                    if (value := web_search_settings.get(f'openrouter_{key}')) is not None
                 }
             )
             tools.append(

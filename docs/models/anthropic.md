@@ -621,14 +621,16 @@ agent = Agent(
     capabilities=[
         NativeTool(
             WebSearchTool(
-                settings=AnthropicWebSearchToolSettings(response_inclusion='excluded')
+                settings=AnthropicWebSearchToolSettings(
+                    anthropic_response_inclusion='excluded'
+                )
             )
         ),
         NativeTool(
             WebFetchTool(
                 settings=AnthropicWebFetchToolSettings(
-                    use_cache=False,
-                    response_inclusion='excluded',
+                    anthropic_use_cache=False,
+                    anthropic_response_inclusion='excluded',
                 )
             )
         ),
@@ -636,9 +638,10 @@ agent = Agent(
 )
 ```
 
-Setting any option selects Anthropic's `web_search_20260318` or `web_fetch_20260318` tool version.
-These options require a model and client that support the newer versions. Without them, Pydantic AI
-keeps using the existing model- and client-specific web tool versions.
+Setting any option selects Anthropic's `web_search_20260318` or `web_fetch_20260318` tool version,
+which requires a model and client that support it; on one that doesn't, the API returns an error.
+When no option is set, Pydantic AI keeps using the existing model- and client-specific web tool
+versions.
 
 ## Code Execution Tool Version
 

@@ -235,11 +235,11 @@ from pydantic_ai.native_tools import WebSearchTool
 
 tool = WebSearchTool(
     settings=OpenRouterWebSearchToolSettings(
-        engine='exa',
-        mode='auto',
-        max_results=5,
-        max_total_results=10,
-        max_characters=5_000,
+        openrouter_engine='exa',
+        openrouter_mode='auto',
+        openrouter_max_results=5,
+        openrouter_max_total_results=10,
+        openrouter_max_characters=5_000,
     ),
     search_context_size='high',
     user_location={'city': 'London', 'country': 'GB'},
@@ -275,7 +275,7 @@ for annotation in annotations:
 ```
 
 !!! note "Only non-native search reports its sources"
-    Models whose downstream provider runs the search natively — OpenAI and Anthropic among them — return no annotations at all, so `provider_details` has no `annotations` entry for those. The normal OpenRouter provider details remain available. Set `settings=OpenRouterWebSearchToolSettings(engine='exa')` on `WebSearchTool` to use OpenRouter's search engine and receive source annotations.
+    Models whose downstream provider runs the search natively — OpenAI and Anthropic among them — return no annotations at all, so `provider_details` has no `annotations` entry for those. The normal OpenRouter provider details remain available. Set `settings=OpenRouterWebSearchToolSettings(openrouter_engine='exa')` on `WebSearchTool` to use OpenRouter's search engine and receive source annotations.
 
 !!! note "Engine-specific parameters"
     Engine behavior comes from OpenRouter's [Beta server-tool documentation](https://openrouter.ai/docs/guides/features/server-tools/web-search): native provider search ignores `search_context_size`; `user_location` works only with native search; and domain-filter support varies (native OpenAI ignores `excluded_domains`). The server tool can make zero or several searches when it is available to the model. `max_uses` caps a request when OpenRouter uses a non-native search engine or Anthropic's native search; other native providers, including the OpenAI model in this example, ignore it. OpenRouter does not support [`WebSearchTool.external_web_access`][pydantic_ai.native_tools.WebSearchTool.external_web_access].
@@ -298,7 +298,7 @@ agent = Agent(
         NativeTool(
             AdvisorTool(
                 model='anthropic/claude-opus-4.8',
-                settings=OpenRouterAdvisorToolSettings(forward_transcript=True),
+                settings=OpenRouterAdvisorToolSettings(openrouter_forward_transcript=True),
             )
         )
     ],

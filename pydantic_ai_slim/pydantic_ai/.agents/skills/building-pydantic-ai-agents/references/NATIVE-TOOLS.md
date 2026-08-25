@@ -51,16 +51,19 @@ agent = Agent(
     capabilities=[
         NativeTool(
             WebSearchTool(
-                settings=AnthropicWebSearchToolSettings(response_inclusion='excluded')
+                settings=AnthropicWebSearchToolSettings(
+                    anthropic_response_inclusion='excluded'
+                )
             )
         )
     ],
 )
 ```
 
-This follows the model-settings pattern: the native tool accepts a shared base settings type, and
-provider modules expose typed subclasses such as `AnthropicWebSearchToolSettings`. Only the matching
-provider adapter reads those settings.
+This follows the model-settings pattern: the native tool accepts a shared base settings type,
+provider modules expose typed subclasses such as `AnthropicWebSearchToolSettings`, and every key is
+prefixed with its provider name (`anthropic_use_cache`, `openrouter_engine`). Only the matching
+provider adapter reads its keys, so settings for several providers can be merged into one dict.
 
 ## Dynamic Native Tool Configuration
 
