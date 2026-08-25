@@ -57,6 +57,10 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 openai_chat_thinking_field='reasoning_content',
                 # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
                 openai_chat_send_back_thinking_parts='field',
+                # DeepSeek's Responses endpoint documents merging each function call into the
+                # assistant message adjacent to it, unlike the official Responses API, so an
+                # assistant item between two calls strands the first one without its output.
+                openai_responses_supports_interleaved_function_calls=False,
                 # Reasoning-capable models do not support tool_choice=required; use startswith so
                 # future deepseek-v4-* SKUs are covered automatically without listing each one.
                 openai_supports_tool_choice_required=(

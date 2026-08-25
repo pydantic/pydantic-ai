@@ -12,6 +12,7 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 
@@ -51,6 +52,7 @@ class VercelProvider(_OpenAICompatibleProvider):
             'bedrock': amazon_model_profile,
             'cohere': cohere_model_profile,
             'deepseek': deepseek_model_profile,
+            'groq': groq_model_profile,
             'mistral': mistral_model_profile,
             'openai': openai_model_profile,
             'vertex': google_model_profile,
@@ -98,7 +100,7 @@ class VercelProvider(_OpenAICompatibleProvider):
                 'or pass the API key via `VercelProvider(api_key=...)` to use the Vercel provider.'
             )
 
-        default_headers = {'http-referer': 'https://ai.pydantic.dev/', 'x-title': 'pydantic-ai'}
+        default_headers = {'http-referer': 'https://pydantic.dev/docs/ai/', 'x-title': 'pydantic-ai'}
 
         if openai_client is not None:
             self._client = openai_client
