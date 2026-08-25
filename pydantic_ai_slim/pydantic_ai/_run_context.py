@@ -339,6 +339,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         call this now? — and no catalog sense to collide with. So `is_tool_available` reads "revealed,
         and its owning capability is active".
 
+        Two axes, deliberately not mixed. *Configuration* is set once by the author: a capability is
+        either **deferred** (`defer_loading=True`) or **always-on**. *Runtime* is derived per step:
+        **loaded** records what the model asked for, **active** what is in force. So "always-on" is
+        the antonym of "deferred", never of "active" — an always-on capability is always active, and
+        a deferred one becomes active once loaded.
+
         Distinct from `capabilities`, the full registry (including deferred ones not yet
         loaded). See `loaded_capability_ids` for the subset the model explicitly loaded.
 
