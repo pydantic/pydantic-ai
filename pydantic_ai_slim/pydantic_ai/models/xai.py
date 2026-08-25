@@ -1119,12 +1119,12 @@ class XaiStreamedResponse(StreamedResponse):
             # once the stream completes.
             x_search_return_parts: dict[str, NativeToolReturnPart] = {}
             last_citations: Sequence[str] = ()
-            last_inline_citations: Sequence[chat_pb2.InlineCitation] = ()
+            last_response: chat_types.Response | None = None
 
             async for response, chunk in self._response:
                 self._update_response_state(response)
                 last_citations = response.citations
-                last_inline_citations = response.inline_citations
+                last_response = response
 
                 prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
                     response=response,
@@ -1134,13 +1134,16 @@ class XaiStreamedResponse(StreamedResponse):
                 for event in reasoning_events:
                     yield event
 
-                # Handle text content (property filters for ROLE_ASSISTANT)
-                if chunk.content:
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='content',
-                        content=chunk.content,
-                    ):
-                        yield event
+                # Each xAI output has its own content and citation offsets. Keep the output index
+                # as the vendor part ID so citations can be attached to the corresponding TextPart.
+                for output_chunk in chunk.proto.outputs:
+                    delta = output_chunk.delta
+                    if delta.role == chat_pb2.MessageRole.ROLE_ASSISTANT and delta.content:
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id=('content', output_chunk.index),
+                            content=delta.content,
+                        ):
+                            yield event
 
                 # Handle tool calls/tool results from *this chunk*.
                 #
@@ -1203,13 +1206,19 @@ class XaiStreamedResponse(StreamedResponse):
             # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
             _attach_x_search_citations(x_search_return_parts.values(), last_citations)
 
-            if isinstance(part := self._parts_manager.get_part_by_vendor_id('content'), TextPart):
-                citations = _map_inline_citations(last_inline_citations, part.content)
-                if citations:
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='content', content='', citations=citations
+            if last_response is not None:
+                for output in last_response.proto.outputs:
+                    message = output.message
+                    vendor_part_id = ('content', output.index)
+                    if message.role == chat_pb2.MessageRole.ROLE_ASSISTANT and isinstance(
+                        part := self._parts_manager.get_part_by_vendor_id(vendor_part_id), TextPart
                     ):
-                        yield event
+                        citations = _map_inline_citations(message.citations, part.content)
+                        if citations:
+                            for event in self._parts_manager.handle_text_delta(
+                                vendor_part_id=vendor_part_id, content='', citations=citations
+                            ):
+                                yield event
 
     @property
     def model_name(self) -> str:

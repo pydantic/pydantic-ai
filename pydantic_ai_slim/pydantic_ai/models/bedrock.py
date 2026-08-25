@@ -257,8 +257,8 @@ def _make_document_source(data: bytes, media_type: str, *, include_citations: bo
     if include_citations and media_type.startswith('text/'):
         try:
             return {'text': data.decode()}
-        except UnicodeDecodeError:
-            pass
+        except UnicodeDecodeError as e:
+            raise UserError('Bedrock citations require UTF-8 text documents') from e
     return {'bytes': data}
 
 
@@ -434,7 +434,7 @@ def _map_citation_source(
 
 
 def _map_citations(
-    citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], anchor: ContentCitationAnchor
+    citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], anchor: ContentCitationAnchor | None
 ) -> list[Citation] | None:
     sources = [_map_citation_source(citation) for citation in citations]
     return [Citation(sources=sources, anchor=anchor)] if sources else None
@@ -909,9 +909,9 @@ class BedrockConverseModel(Model[BaseClient]):
                     items.append(TextPart(content=text))
                 elif citations_content := item.get('citationsContent'):
                     text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
-                    if text:
-                        anchor = ContentCitationAnchor(start=0, end=len(text))
-                        citations = _map_citations(citations_content.get('citations', []), anchor)
+                    anchor = ContentCitationAnchor(start=0, end=len(text)) if text else None
+                    citations = _map_citations(citations_content.get('citations', []), anchor)
+                    if citations:
                         items.append(TextPart(content=text, citations=citations))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
@@ -1290,7 +1290,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                             f'Document {next(document_count)}',
                                             uf_format,
                                             uf_source,
-                                            include_citations=settings.get('include_citations', False),
+                                            include_citations=False,
                                         )
                                     )
                             elif is_multi_modal_content(item):
@@ -1299,7 +1299,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 file_block = await self._map_file_to_content_block(
                                     cast(ImageUrl | DocumentUrl | VideoUrl | BinaryContent, item),
                                     document_count,
-                                    include_citations=settings.get('include_citations', False),
+                                    include_citations=False,
                                 )
                                 kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
                                 if kind in profile.get(

@@ -1499,6 +1499,66 @@ async def test_xai_stream_inline_citations(allow_model_requests: None) -> None:
     ]
 
 
+async def test_xai_stream_inline_citations_multiple_outputs(allow_model_requests: None) -> None:
+    """Citation offsets are relative to their individual xAI output."""
+    first_text = 'First [1].'
+    second_text = 'Second [2].'
+    first_citation = chat_pb2.InlineCitation(
+        start_index=6,
+        end_index=9,
+        web_citation=chat_pb2.WebCitation(url='https://first.example.com'),
+    )
+    second_citation = chat_pb2.InlineCitation(
+        start_index=7,
+        end_index=10,
+        web_citation=chat_pb2.WebCitation(url='https://second.example.com'),
+    )
+
+    first_response = create_response(content=first_text)
+    first_response.proto.outputs[0].message.citations.append(first_citation)
+    final_response = create_response(content=first_text)
+    final_response.proto.outputs[0].message.citations.append(first_citation)
+    second_response = create_response(content=second_text, index=1)
+    second_response.proto.outputs[0].message.citations.append(second_citation)
+    final_response.proto.outputs.append(second_response.proto.outputs[0])
+
+    mock_client = MockXai.create_mock_stream(
+        [
+            [
+                (first_response, create_stream_chunk(content=first_text, index=0)),
+                (final_response, create_stream_chunk(content=second_text, index=1, finish_reason='stop')),
+            ]
+        ]
+    )
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    async with agent.run_stream('Cite two sources.') as result:
+        await result.get_output()
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    assert [part for part in response_message.parts if isinstance(part, TextPart)] == [
+        TextPart(
+            content=first_text,
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://first.example.com')],
+                    anchor=MarkerCitationAnchor(start=6, end=9),
+                )
+            ],
+        ),
+        TextPart(
+            content=second_text,
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://second.example.com')],
+                    anchor=MarkerCitationAnchor(start=7, end=10),
+                )
+            ],
+        ),
+    ]
+
+
 async def test_xai_stream_x_search_inventory_is_not_a_text_citation(allow_model_requests: None) -> None:
     """X Search URLs remain a tool-result inventory, not citations for assistant text."""
     source_urls = [
