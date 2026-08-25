@@ -770,7 +770,7 @@ def test_bedrock_prepare_request_thinking_auto_output_mode(supports_json_schema:
 @skip_if_no_google
 def test_google_auto_tuple_filters_tool_defs():
     """When resolve_tool_choice returns ('auto', [...]), Google filters tool_defs to only include allowed tools."""
-    mock_client = MagicMock()
+    mock_client = MagicMock(vertexai=False)
     provider = GoogleProvider(client=mock_client)
     m = GoogleModel('gemini-2.0-flash', provider=provider)
     params = ModelRequestParameters(
