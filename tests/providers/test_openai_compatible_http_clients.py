@@ -194,11 +194,11 @@ IMPORT_GUARD_CASES = [
 
 
 def test_openai_compatible_provider_import_guards() -> None:
-    # One child amortizes interpreter and coverage startup. Keep each provider's guarded `openai` import ahead of
-    # success-path side effects and cross-provider imports so sharing the child does not change the behavior under test.
+    # One child amortizes interpreter and coverage startup; the assertion prevents cases from preloading one another.
     code = f"""
 import builtins
 import importlib
+import sys
 
 original_import = builtins.__import__
 
@@ -211,8 +211,10 @@ builtins.__import__ = import_without_openai
 
 failures = []
 for module, error_hint in {IMPORT_GUARD_CASES!r}:
+    provider_module = f"pydantic_ai.providers.{{module}}"
+    assert provider_module not in sys.modules, f"{{provider_module!r}} was already imported"
     try:
-        importlib.import_module(f"pydantic_ai.providers.{{module}}")
+        importlib.import_module(provider_module)
     except ImportError as exc:
         if error_hint not in str(exc):
             failures.append(f"{{module!r}}: expected {{error_hint!r}} in {{str(exc)!r}}")
@@ -221,14 +223,11 @@ for module, error_hint in {IMPORT_GUARD_CASES!r}:
 
 if failures:
     raise AssertionError("\\n".join(failures))
-
-print("openai-compatible import guards complete")
 """
     result = subprocess.run([sys.executable, '-c', code], text=True, capture_output=True)
     diagnostics = f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}'
 
     assert result.returncode == 0, diagnostics
-    assert result.stdout.rstrip().endswith('openai-compatible import guards complete'), diagnostics
 
 
 @pytest.mark.anyio
