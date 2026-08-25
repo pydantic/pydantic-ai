@@ -37,6 +37,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
       }
       ... on PullRequest {
         number state isDraft changedFiles
+        author { login }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
         files(first: 100) { nodes { path } pageInfo { hasNextPage } }
@@ -371,6 +372,28 @@ def _pull_request_draft_status(item: Mapping[str, Any]) -> str | None:
     return 'draft' if value else None
 
 
+def _pull_request_precedence(
+    client: attention.GitHubClient,
+    repo: str,
+    number: int,
+    item: Mapping[str, Any],
+) -> Selection | None:
+    if draft_status := _pull_request_draft_status(item):
+        return Selection(number=number, decision=None, status=draft_status)
+    author = item.get('author')
+    author_login = cast(Mapping[str, object], author).get('login') if isinstance(author, Mapping) else None
+    if isinstance(author_login, str):
+        key = author_login.casefold()
+        owner = next((candidate for candidate in _OWNERS if candidate.casefold() == key), None)
+        if owner is not None and client.maintainer_login(repo, owner, refresh=True) is not None:
+            return Selection(
+                number=number,
+                decision=Decision(number=number, owner=owner, evidence=f'author:{owner}'),
+                status='route',
+            )
+    return None
+
+
 def decision_for(
     client: attention.GitHubClient,
     repo: str,
@@ -399,8 +422,8 @@ def decision_for(
     if len(normalized['assignees']) >= _ASSIGNEE_LIMIT:
         return Selection(number=number, decision=None, status='assignee-capacity')
     is_pull_request = item.get('__typename') == 'PullRequest'
-    if is_pull_request and (draft_status := _pull_request_draft_status(item)) is not None:
-        return Selection(number=number, decision=None, status=draft_status)
+    if is_pull_request and (precedence := _pull_request_precedence(client, repo, number, item)) is not None:
+        return precedence
     participant = _participant_decision(client, repo, number, participant_login)
     if participant is not None:
         return Selection(number=number, decision=participant, status='route')
@@ -592,11 +615,35 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     return True
 
 
-def _slack_payload(repo: str, decision: Decision, mentions_value: str) -> str:
+def _routing_reason(decision: Decision, mention: str) -> str:
+    evidence = decision['evidence']
+    owner = decision['owner']
+    if evidence == f'participant:{owner}':
+        return f'{mention} was the most recent qualified maintainer to participate.'
+    if evidence == f'author:{owner}':
+        return f'{mention} authored this pull request.'
+    source, separator, detail = evidence.partition(':')
+    if separator and detail and source in {'label', 'path'}:
+        return f'Matched ownership {source} `{detail}`.'
+    if evidence.startswith('manual:'):
+        return 'Automatic routing could not determine an available semantic owner, so this needs manual triage.'
+    raise ValueError('routing evidence cannot be explained')
+
+
+def _slack_payload(repo: str, item_type: str, decision: Decision, mentions_value: str) -> str:
     """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
     mentions = attention.slack_mentions(mentions_value, decision['owner'])
-    text = f'Routing intent: {repo}#{decision["number"]} → {mentions[decision["owner"]]}\nWhy: {decision["evidence"]}'
+    mention = mentions[decision['owner']]
+    if item_type == 'Issue':
+        kind, path = 'Issue', 'issues'
+    elif item_type == 'PullRequest':
+        kind, path = 'Pull request', 'pull'
+    else:
+        raise ValueError('item type is not canonical')
+    number = decision['number']
+    item = f'<https://github.com/{repo}/{path}/{number}|{repo}#{number}>'
+    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision, mention)}'
     return json.dumps({'text': text}, separators=(',', ':'))
 
 
@@ -607,6 +654,12 @@ def prepare_current(
     mentions_value: str,
 ) -> str | None:
     """Build a notice only while the selected route still matches GitHub."""
+    item = _fetch_item(client, repo, expected['number'])
+    if item is None:
+        return None
+    item_type = item.get('__typename')
+    if not isinstance(item_type, str):
+        raise RuntimeError('GitHub returned invalid routing metadata')
     current = decision_for(
         client,
         repo,
@@ -615,7 +668,7 @@ def prepare_current(
     )
     if current['decision'] != expected:
         return None
-    return _slack_payload(repo, expected, mentions_value)
+    return _slack_payload(repo, item_type, expected, mentions_value)
 
 
 def _output(values: Mapping[str, object]) -> None:

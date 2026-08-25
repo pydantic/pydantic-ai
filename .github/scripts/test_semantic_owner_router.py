@@ -34,6 +34,7 @@ def item(
     labels: list[str] | None = None,
     assignees: list[str] | None = None,
     pull_request: bool = False,
+    author: str = 'contributor',
     state: str = 'open',
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
@@ -47,6 +48,7 @@ def item(
     }
     if pull_request:
         value['pull_request'] = {'url': f'https://api.github.com/pulls/{number}'}
+        value['author'] = {'login': author}
     return value
 
 
@@ -105,6 +107,7 @@ class FakeClient(router.attention.GitHubClient):
                     value.update(
                         {
                             'isDraft': number in self.drafts,
+                            'author': source['author'],
                             'changedFiles': self.changed_counts.get(number, len(filenames)),
                             'files': {
                                 'nodes': [{'path': filename} for filename in filenames],
@@ -148,12 +151,29 @@ def test_repository_allowlist_is_exact():
         router.select(client, 'attacker/repository', None, None)
 
 
-def test_graphql_projection_never_requests_title_body_or_author():
+def test_graphql_projection_never_requests_title_or_body():
     compact = ''.join(router._ITEM_QUERY.split()).casefold()
 
     assert 'title' not in compact
     assert 'body' not in compact
-    assert 'author' not in compact
+
+
+@pytest.mark.parametrize(
+    ('permission', 'expected'),
+    [
+        ('write', ('adtyavrdhn', 'author:adtyavrdhn')),
+        ('read', ('dsfaccini', 'path:pydantic_ai_slim/pydantic_ai/models/')),
+    ],
+)
+def test_pr_author_precedence_requires_current_maintainer_permission(permission: str, expected: tuple[str, str]):
+    client = FakeClient({7: item(7, pull_request=True, author='adtyavrdhn')})
+    client.permissions['adtyavrdhn'] = permission
+    client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision is not None
+    assert (decision['owner'], decision['evidence']) == expected
 
 
 @pytest.mark.parametrize(
@@ -808,21 +828,44 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
     with pytest.raises(ValueError, match='selected owner'):
         router._slack_payload(  # pyright: ignore[reportPrivateUsage]
             CORE,
+            'Issue',
             router.Decision(number=7, owner='DouweM', evidence='label:durable exec'),
             value,
         )
 
 
-def test_notification_payload_contains_only_canonical_fields():
+@pytest.mark.parametrize(
+    ('item_type', 'decision', 'expected'),
+    [
+        (
+            'Issue',
+            router.Decision(number=7177, owner='dsfaccini', evidence='participant:dsfaccini'),
+            'Routing intent: Issue <https://github.com/pydantic/pydantic-ai/issues/7177|pydantic/pydantic-ai#7177> '
+            '→ <@UDAVID>\nWhy: <@UDAVID> was the most recent qualified maintainer to participate.',
+        ),
+        (
+            'PullRequest',
+            router.Decision(number=7, owner='adtyavrdhn', evidence='author:adtyavrdhn'),
+            'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
+            '→ <@UADITYA>\nWhy: <@UADITYA> authored this pull request.',
+        ),
+        (
+            'PullRequest',
+            router.Decision(number=7, owner='dsfaccini', evidence='path:pydantic_ai_slim/pydantic_ai/models/'),
+            'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
+            '→ <@UDAVID>\nWhy: Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
+        ),
+    ],
+)
+def test_notification_is_linked_typed_and_explained(item_type: str, decision: router.Decision, expected: str):
     payload = router._slack_payload(  # pyright: ignore[reportPrivateUsage]
-        HARNESS,
-        router.Decision(number=620, owner='dsfaccini', evidence='label:cap:compaction'),
+        CORE,
+        item_type,
+        decision,
         MENTIONS,
     )
 
-    assert json.loads(payload) == {
-        'text': 'Routing intent: pydantic/pydantic-ai-harness#620 → <@UDAVID>\nWhy: label:cap:compaction'
-    }
+    assert json.loads(payload)['text'] == expected
 
 
 def test_no_attacker_text_is_used_in_output_or_notification():
@@ -834,7 +877,7 @@ def test_no_attacker_text_is_used_in_output_or_notification():
     assert decision is not None
     serialized = json.dumps(decision)
     assert attacker not in serialized
-    assert attacker not in router._slack_payload(CORE, decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
+    assert attacker not in router._slack_payload(CORE, 'Issue', decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_stale_route_is_not_prepared():
