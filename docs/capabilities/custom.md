@@ -2,7 +2,7 @@
 
 To build your own [capability](overview.md), subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction — and re-run at run setup on the replacement instance when [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns one (see [Per-run state isolation](#per-run-state-isolation)); [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] is always called per-run — and **lifecycle hooks** that fire during each run.
 
-Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-available capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
+Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-on capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
 
 ```python {title="custom_capability_plain.py"}
 from typing import Any
@@ -48,7 +48,7 @@ class MyCapability(AbstractCapability[None]):
         self.label = label
 ```
 
-When [`defer_loading=True`](on-demand.md), provide a stable explicit `id`; history replay depends on it, and Pydantic AI rejects deferred capabilities without one. For always-available capabilities, omitting `id` still derives a run-local id from the class name.
+When [`defer_loading=True`](on-demand.md), provide a stable explicit `id`; history replay depends on it, and Pydantic AI rejects deferred capabilities without one. For always-on capabilities, omitting `id` still derives a run-local id from the class name.
 
 ## Typing dependencies
 
@@ -647,7 +647,7 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
 !!! note "On a deferred capability"
-    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-available capability. Before that there is nothing for it to govern: an unloaded capability's tools are neither advertised to the model nor callable.
+    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-on capability. Before that there is nothing for it to govern: an unloaded capability's tools are neither advertised to the model nor callable.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass

@@ -4511,6 +4511,35 @@ async def test_temporal_run_context_without_anchored_evidence_still_answers_avai
     assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
 
 
+@pytest.mark.parametrize('carried', [True, False, None])
+async def test_temporal_run_context_accepts_the_legacy_capability_loaded_key(carried: bool | None):
+    """A payload written under the old field name still lands on `capability_active`.
+
+    An activity can be dispatched by one worker version and replayed by another, and
+    `serialize_run_context` is a documented override point, so both a mid-deployment payload and a
+    subclass written against the old name reach here. Without the mapping the value would sit in
+    `__dict__` under a name nothing reads, and the guard would report `capability_active` as a
+    field that never crossed the boundary.
+
+    `None` is the case that matters most and is easiest to miss: it is what every activity dispatched
+    *outside* capability dispatch carries, so a mapping keyed on the value rather than on the key's
+    presence breaks the common path while passing for `True`.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), capability_active=carried)
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    renamed = {'capability_active': 'capability_loaded', 'active_capability_ids': 'available_capability_ids'}
+    legacy_payload = {renamed.get(name, name): value for name, value in wire.items()}
+    assert 'capability_loaded' in legacy_payload
+    assert 'available_capability_ids' in legacy_payload
+
+    reconstructed = TemporalRunContext.deserialize_run_context(legacy_payload, deps=None)
+
+    assert reconstructed.capability_active is carried
+    # The second rename rides the same mapping: without it the guard would report
+    # `active_capability_ids` as a field that never crossed the boundary.
+    assert reconstructed.active_capability_ids == set()
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -4648,7 +4677,7 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
 async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_activity():
     """The definition form must answer, not raise, for a tool a capability contributed.
 
-    `is_tool_available` consults `available_capability_ids` for any tool carrying a
+    `is_tool_available` consults `active_capability_ids` for any tool carrying a
     `capability_id`, and the `capabilities` registry deliberately doesn't cross the boundary. The
     docs send toolset authors to the definition form precisely because it works inside `get_tools`,
     which under Temporal runs in an activity — so the ids travel as a snapshot.
@@ -4666,7 +4695,7 @@ async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_a
         TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
     )
 
-    assert reconstructed.available_capability_ids == {'guarded'}
+    assert reconstructed.active_capability_ids == {'guarded'}
     loaded = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
     assert reconstructed.is_tool_available(loaded) is True
 
@@ -4753,7 +4782,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     # one, which reads the registry — and that is guarded, so it raises rather than quietly
     # reporting no capabilities are active.
     with pytest.raises(UserError, match="'capabilities' is not available"):
-        _ = reconstructed.available_capability_ids
+        _ = reconstructed.active_capability_ids
     # Same for the on-demand set that `is_tool_available` consults: an older subclass doesn't carry
     # it either, so the base property reads the guarded registry and raises rather than reporting an
     # empty set, which would silently answer "no capability is deferred" for every tool.

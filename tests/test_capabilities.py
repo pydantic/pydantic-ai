@@ -137,7 +137,7 @@ from pydantic_ai.toolsets._capability_owned import (
     tool_defs_from_pre_definition_load_returns,
 )
 from pydantic_ai.toolsets._deferred_capability_loader import (
-    LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -2869,7 +2869,7 @@ def test_combined_capability_get_model_settings_deferred():
     class DynamicSettingsCap(AbstractCapability):
         def get_model_settings(self) -> Callable[[RunContext], _ModelSettings]:
             def settings(ctx: RunContext) -> _ModelSettings:
-                seen_dynamic_loaded.append(ctx.capability_loaded)
+                seen_dynamic_loaded.append(ctx.capability_active)
                 return _ModelSettings(temperature=0.2)
 
             return settings
@@ -2914,7 +2914,7 @@ async def test_deferred_hooks_do_not_fire_until_capability_is_loaded() -> None:
 
     @hooks.on.before_model_request
     async def record(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
-        seen_loaded.append(ctx.capability_loaded)
+        seen_loaded.append(ctx.capability_active)
         return request_context
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -4807,7 +4807,7 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='always-on')
+    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='always-on')
     retry_messages: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -4849,7 +4849,7 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='deferred')
+    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='deferred')
     retry_messages: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -11233,7 +11233,7 @@ async def _registered_capability_context(
             self, ctx: RunContext, request_context: ModelRequestContext
         ) -> ModelRequestContext:
             captured_capabilities.update(ctx.capabilities)
-            captured_available_ids.update(ctx.available_capability_ids)
+            captured_available_ids.update(ctx.active_capability_ids)
             return request_context
 
     agent = Agent(
