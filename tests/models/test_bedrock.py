@@ -3415,6 +3415,49 @@ async def test_bedrock_delta_renders_announcement_and_plain_tool_spec(
     assert 'defer_loading' not in json.dumps(request['toolConfig'])
 
 
+async def test_bedrock_tool_results_lead_multi_reveal_turn(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Two tools revealed in one turn keep every `toolResult` block ahead of the announcement text."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    tools = [
+        ToolDefinition(name='first_tool', defer_loading=True),
+        ToolDefinition(name='second_tool', defer_loading=True),
+    ]
+    parameters = ModelRequestParameters(function_tools=tools, revealed_tool_names={tool.name for tool in tools})
+    settings, parameters = model.prepare_request(None, parameters)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='load_capability', args={'id': 'first'}, tool_call_id='tooluse_1'),
+                ToolCallPart(tool_name='load_capability', args={'id': 'second'}, tool_call_id='tooluse_2'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='tooluse_1'),
+                ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='tooluse_2'),
+                ToolAvailabilityDeltaPart(tools_added=['second_tool']),
+            ]
+        ),
+    ]
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await model.request(model.prepare_messages(history, parameters), settings, parameters)
+
+    *_, last_message = mock_converse.call_args.kwargs['messages']
+    assert [next(iter(block)) for block in last_message['content']] == ['toolResult', 'toolResult', 'text', 'text']
+    assert [block['toolResult']['toolUseId'] for block in last_message['content'][:2]] == ['tooluse_1', 'tooluse_2']
+
+
 async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
     """Hallucinated tool names with invalid chars (e.g. dots) are sanitized when replayed to Bedrock."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)

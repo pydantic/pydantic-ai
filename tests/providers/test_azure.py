@@ -126,9 +126,9 @@ def test_azure_provider_realtime_rejects_entra_auth(auth: str, monkeypatch: pyte
 
 
 def test_azure_provider_with_http_client():
-    import httpx
+    import httpx2
 
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = AzureProvider(
         azure_endpoint='https://project-id.openai.azure.com/',
         api_key='1234567890',

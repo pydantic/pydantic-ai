@@ -6,9 +6,11 @@ from unittest.mock import patch
 from urllib.parse import urlparse
 
 import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, UserError
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
 from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
@@ -60,6 +62,7 @@ def test_init_with_base_url(
     assert isinstance(provider, provider_cls)
     assert provider.base_url == f'https://example.com/{route}/'
     assert provider.client.api_key == 'foobar'
+    assert isinstance(provider.client._client, httpx2.AsyncClient)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_is_gateway_provider():
@@ -85,6 +88,36 @@ def test_gateway_google_sets_static_ws_bearer_auth():
     provider = gateway_provider('google', api_key='gw-key', base_url=GATEWAY_BASE_URL)
     headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
     assert headers is not None and headers['Authorization'] == 'Bearer gw-key'
+    assert isinstance(provider.client._api_client._async_httpx_client, httpx2.AsyncClient)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_gateway_google_preserves_caller_owned_httpx2_client():
+    async with httpx2.AsyncClient() as http_client:
+        provider = gateway_provider('google', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
+
+        assert provider.client._api_client._async_httpx_client is http_client  # pyright: ignore[reportPrivateUsage]
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+async def test_gateway_google_recreates_owned_httpx2_client():
+    provider = gateway_provider('google', api_key='gw-key', base_url=GATEWAY_BASE_URL)
+    first_client = provider.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(first_client, httpx2.AsyncClient)
+
+    async with provider:
+        pass
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(second_client, httpx2.AsyncClient)
+        assert second_client is not first_client
+        request = httpx2.Request('GET', provider.base_url)
+        for hook in second_client.event_hooks['request']:
+            await hook(request)
+        assert request.headers['Authorization'] == 'Bearer gw-key'
 
 
 def test_gateway_google_ws_bearer_auth_skips_unusable_clients():
@@ -121,7 +154,7 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
 
 
 async def test_init_with_http_client():
-    async with httpx.AsyncClient() as http_client:
+    async with httpx2.AsyncClient() as http_client:
         provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
         assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
 
@@ -129,13 +162,13 @@ async def test_init_with_http_client():
 async def test_init_with_http_client_preserves_existing_event_hooks():
     # Unit (not VCR): this checks local HTTPX hook merging by inspecting and invoking event hooks directly;
     # cassette playback would not exercise hook ordering or preservation.
-    async def existing_request_hook(request: httpx.Request) -> None:
+    async def existing_request_hook(request: httpx2.Request) -> None:
         request.headers['X-Existing-Request-Hook'] = 'kept'
 
-    async def existing_response_hook(response: httpx.Response) -> None:
+    async def existing_response_hook(response: httpx2.Response) -> None:
         response.headers['X-Existing-Response-Hook'] = 'kept'
 
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         event_hooks={'request': [existing_request_hook], 'response': [existing_response_hook]}
     ) as http_client:
         provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
@@ -143,14 +176,14 @@ async def test_init_with_http_client_preserves_existing_event_hooks():
         assert existing_request_hook in http_client.event_hooks['request']
         assert existing_response_hook in http_client.event_hooks['response']
 
-        request = httpx.Request('GET', provider.base_url)
+        request = httpx2.Request('GET', provider.base_url)
         for hook in http_client.event_hooks['request']:
             await hook(request)
 
         assert request.headers['X-Existing-Request-Hook'] == 'kept'
         assert request.headers['Authorization'] == 'Bearer foobar'
 
-        response = httpx.Response(200, request=request)
+        response = httpx2.Response(200, request=request)
         for hook in http_client.event_hooks['response']:
             await hook(response)
 
@@ -160,10 +193,10 @@ async def test_init_with_http_client_preserves_existing_event_hooks():
 async def test_init_with_http_client_replaces_existing_gateway_hook():
     # Unit (not VCR): this checks local HTTPX hook replacement by inspecting and invoking event hooks directly;
     # cassette playback would not exercise Gateway hook deduplication.
-    async def existing_request_hook(request: httpx.Request) -> None:
+    async def existing_request_hook(request: httpx2.Request) -> None:
         request.headers['X-Existing-Request-Hook'] = 'kept'
 
-    async with httpx.AsyncClient(event_hooks={'request': [existing_request_hook]}) as http_client:
+    async with httpx2.AsyncClient(event_hooks={'request': [existing_request_hook]}) as http_client:
         first_provider = gateway_provider('openai', http_client=http_client, api_key='first', base_url=GATEWAY_BASE_URL)
         second_provider = gateway_provider(
             'openai', http_client=http_client, api_key='second', base_url=GATEWAY_BASE_URL
@@ -174,12 +207,84 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
         assert http_client.event_hooks['request'][0] == existing_request_hook
         assert len(http_client.event_hooks['request']) == 2
 
-        request = httpx.Request('GET', second_provider.base_url)
+        request = httpx2.Request('GET', second_provider.base_url)
         for hook in http_client.event_hooks['request']:
             await hook(request)
 
         assert request.headers['X-Existing-Request-Hook'] == 'kept'
         assert request.headers['Authorization'] == 'Bearer second'
+
+
+@pytest.mark.parametrize('provider_name', ['openai', 'google-cloud'])
+async def test_gateway_provider_hooks_a_caller_owned_legacy_http_client(
+    provider_name: Literal['openai', 'google-cloud'],
+):
+    # Unit (not VCR): the OpenAI and Google routes default to HTTPX2 but still accept the deprecated
+    # `httpx.AsyncClient` through v2, and a missing auth hook on it would fail silently (every gateway
+    # request 401s) rather than at construction. Invoking the hooks directly pins that they were installed;
+    # cassette playback wouldn't exercise hook installation.
+    async with httpx.AsyncClient() as http_client:
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`httpx\.AsyncClient` support .* is deprecated'):
+            provider = gateway_provider(
+                provider_name, http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL
+            )
+
+        request = httpx.Request('GET', provider.base_url)
+        for hook in http_client.event_hooks['request']:
+            await hook(request)
+        assert request.headers['Authorization'] == 'Bearer gw-key'
+
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+async def test_non_openai_gateway_provider_recreates_owned_http_client():
+    provider = gateway_provider('groq', api_key='foobar', base_url=GATEWAY_BASE_URL)
+
+    async with provider:
+        pass
+    original_http_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+
+    async with provider:
+        pass
+
+    assert provider._own_http_client is not original_http_client  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_non_openai_gateway_provider_preserves_custom_http_client():
+    async with httpx.AsyncClient() as http_client:
+        provider = gateway_provider('groq', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
+
+        async with provider:
+            pass
+
+        assert not http_client.is_closed
+
+
+async def test_non_openai_gateway_provider_rejects_httpx2_client():
+    async with httpx2.AsyncClient() as http_client:
+        with pytest.raises(
+            UserError,
+            match=re.escape('`httpx2.AsyncClient` is only supported for OpenAI, Google and Anthropic Gateway routes.'),
+        ):
+            gateway_provider(  # pyright: ignore[reportCallIssue]
+                'groq',
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                api_key='foobar',
+                base_url=GATEWAY_BASE_URL,
+            )
+
+
+async def test_anthropic_gateway_provider_rejects_legacy_httpx_client():
+    async with httpx.AsyncClient() as http_client:
+        with pytest.raises(UserError, match=re.escape('The Anthropic Gateway route requires an `httpx2.AsyncClient`.')):
+            gateway_provider(  # pyright: ignore[reportCallIssue]
+                'anthropic',
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                api_key='foobar',
+                base_url=GATEWAY_BASE_URL,
+            )
 
 
 @pytest.fixture

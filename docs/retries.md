@@ -6,7 +6,7 @@
 
 | Layer | What it re-attempts | Configured with | What it adds to message history |
 |---|---|---|---|
-| [Transport](#transport-retries) | The same HTTP request to the provider | [`AsyncTenacityTransport`][pydantic_ai.retries.AsyncTenacityTransport] on your HTTP client | Nothing — the agent never sees the attempts |
+| [Transport](#transport-retries) | The same HTTP request to the provider | [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport] on your HTTP client | Nothing — the agent never sees the attempts |
 | [Model fallback](#model-fallback-is-not-a-retry) | The same request against a *different* model | [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] | Only the winning response |
 | [Tool](#tool-retries) | One tool call, by asking the model to correct it | `retries={'tools': N}` and per-tool limits | A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] in place of the tool's result |
 | [Output](#output-retries) | The model's final answer, by asking it to correct it | `retries={'output': N}` and [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] | A `RetryPromptPart` — see [below](#output-retries) for where it lands |
@@ -18,7 +18,7 @@ Only the last three are "agent retries" — they cost a model round trip each, b
 
 Transport retries live below the model client: a failed HTTP request is re-sent without the agent ever knowing. Nothing retries at this layer unless you install a retrying transport on the HTTP client you pass to the provider, and you decide which errors qualify.
 
-This is the right layer for rate limits, connection resets, and 5xx responses. See [HTTP Request Retries](models/http-request-retries.md) for the transports, the `Retry-After`-aware wait strategy, and per-provider notes — including AWS Bedrock, which retries through boto3 rather than httpx.
+This is the right layer for rate limits, connection resets, and 5xx responses. See [HTTP Request Retries](models/http-request-retries.md) for the transports, the `Retry-After`-aware wait strategy, and per-provider notes — including AWS Bedrock, which retries through boto3 rather than `httpx2`.
 
 When you build your own backoff outside a transport, [`ModelHTTPError.retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] gives you the provider's `Retry-After` header already parsed into seconds.
 
