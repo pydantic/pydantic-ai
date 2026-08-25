@@ -1836,6 +1836,15 @@ class TestLoadMCPToolsets:
             with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
                 load_mcp_toolsets(config_path)
 
+    async def test_load_mcp_toolsets_rejects_non_object_server_entry(self):
+        """A server entry that isn't an object raises `ValueError`, not an undocumented `TypeError`."""
+        config = {'mcpServers': {'alpha': None}}
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            with pytest.raises(ValueError, match=r"Expected MCP server config 'alpha' in .* to be an object"):
+                load_mcp_toolsets(config_path)
+
     async def test_load_mcp_toolsets_passes_primitive_values_through_env_expansion(self):
         """Non-string/dict/list values (ints, bools, null) in the config flow through
         `_expand_env_vars` unchanged."""

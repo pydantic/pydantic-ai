@@ -204,6 +204,11 @@ def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path):
             'must have either `command` or `url`',
             id='missing-command-or-url',
         ),
+        pytest.param(
+            json.dumps({'mcpServers': {'x': None}}),
+            'to be an object',
+            id='non-object-server-entry',
+        ),
     ],
 )
 def test_mcp_config_errors(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, config: str | None, expected: str):

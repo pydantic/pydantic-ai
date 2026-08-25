@@ -1957,6 +1957,9 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
 
     toolsets: list[AbstractToolset[Any]] = []
     for name, server in cast(dict[str, Any], servers).items():
+        if not isinstance(server, dict):
+            raise ValueError(f'Expected MCP server config {name!r} in {config_path} to be an object')
+        server = cast(dict[str, Any], server)
         if 'command' in server:
             transport = StdioTransport(
                 command=server['command'],
