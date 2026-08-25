@@ -34,6 +34,7 @@ def item(
     labels: list[str] | None = None,
     assignees: list[str] | None = None,
     pull_request: bool = False,
+    author: str = 'contributor',
     state: str = 'open',
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
@@ -47,6 +48,7 @@ def item(
     }
     if pull_request:
         value['pull_request'] = {'url': f'https://api.github.com/pulls/{number}'}
+        value['author'] = {'login': author}
     return value
 
 
@@ -104,6 +106,7 @@ class FakeClient(router.attention.GitHubClient):
                     value.update(
                         {
                             'isDraft': number in self.drafts,
+                            'author': source['author'],
                             'changedFiles': self.changed_counts.get(number, len(filenames)),
                             'files': {
                                 'nodes': [{'path': filename} for filename in filenames],
@@ -147,12 +150,38 @@ def test_repository_allowlist_is_exact():
         router.select(client, 'attacker/repository', None, None)
 
 
-def test_graphql_projection_never_requests_title_body_or_author():
+def test_graphql_projection_never_requests_title_or_body():
     compact = ''.join(router._ITEM_QUERY.split()).casefold()
 
     assert 'title' not in compact
     assert 'body' not in compact
-    assert 'author' not in compact
+
+
+def test_maintainer_authored_pr_routes_to_its_author_before_path_rules():
+    client = FakeClient({7: item(7, pull_request=True, author='adtyavrdhn')})
+    client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision == {
+        'number': 7,
+        'owner': 'adtyavrdhn',
+        'evidence': 'author:adtyavrdhn',
+    }
+
+
+def test_offboarded_pr_author_uses_semantic_routing():
+    client = FakeClient({7: item(7, pull_request=True, author='adtyavrdhn')})
+    client.permissions['adtyavrdhn'] = 'read'
+    client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision == {
+        'number': 7,
+        'owner': 'dsfaccini',
+        'evidence': 'path:pydantic_ai_slim/pydantic_ai/models/',
+    }
 
 
 @pytest.mark.parametrize(

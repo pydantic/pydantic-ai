@@ -37,6 +37,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
       }
       ... on PullRequest {
         number state isDraft changedFiles
+        author { login }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
         files(first: 100) { nodes { path } pageInfo { hasNextPage } }
@@ -304,6 +305,20 @@ def _participant_owner(login: str) -> str | None:
     return next((owner for owner in _PARTICIPATION_OWNERS if owner.casefold() == key), None)
 
 
+def _pull_request_author_owner(
+    client: attention.GitHubClient,
+    repo: str,
+    item: Mapping[str, Any],
+) -> str | None:
+    author = item.get('author')
+    login = cast(Mapping[str, object], author).get('login') if isinstance(author, Mapping) else None
+    if not isinstance(login, str):
+        return None
+    key = login.casefold()
+    owner = next((candidate for candidate in _OWNERS if candidate.casefold() == key), None)
+    return owner if owner is not None and client.maintainer_login(repo, owner, refresh=True) is not None else None
+
+
 def _latest_participant(
     client: attention.GitHubClient,
     repo: str,
@@ -371,6 +386,23 @@ def _pull_request_draft_status(item: Mapping[str, Any]) -> str | None:
     return 'draft' if value else None
 
 
+def _pull_request_precedence(
+    client: attention.GitHubClient,
+    repo: str,
+    number: int,
+    item: Mapping[str, Any],
+) -> Selection | None:
+    if draft_status := _pull_request_draft_status(item):
+        return Selection(number=number, decision=None, status=draft_status)
+    if author := _pull_request_author_owner(client, repo, item):
+        return Selection(
+            number=number,
+            decision=Decision(number=number, owner=author, evidence=f'author:{author}'),
+            status='route',
+        )
+    return None
+
+
 def decision_for(
     client: attention.GitHubClient,
     repo: str,
@@ -399,8 +431,8 @@ def decision_for(
     if len(normalized['assignees']) >= _ASSIGNEE_LIMIT:
         return Selection(number=number, decision=None, status='assignee-capacity')
     is_pull_request = item.get('__typename') == 'PullRequest'
-    if is_pull_request and (draft_status := _pull_request_draft_status(item)) is not None:
-        return Selection(number=number, decision=None, status=draft_status)
+    if is_pull_request and (precedence := _pull_request_precedence(client, repo, number, item)) is not None:
+        return precedence
     participant = _participant_decision(client, repo, number, participant_login)
     if participant is not None:
         return Selection(number=number, decision=participant, status='route')
