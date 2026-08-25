@@ -17,6 +17,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     Capability,
     ProcessHistory,
+    ToolSearch,
 )
 from pydantic_ai.exceptions import (
     ModelRetry,
@@ -241,6 +242,13 @@ def _call_secret_op(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
     )
 
 
+def _call_bogus_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call a tool that does not exist, then echo the retry that refuses it."""
+    for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+        return make_text_response(str(part.content))
+    return ModelResponse(parts=[ToolCallPart(tool_name='bogus_op', args={}, tool_call_id='b1')])
+
+
 def _load_compact_then_call_secret_op(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Load `guarded`, emit a `CompactionPart` to reset that state, then direct-call its tool."""
     if (report := _report_secret_op_outcome(messages)) is not None:
@@ -431,6 +439,48 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         await agent.run('hello')
 
         assert advertised == snapshot([['load_capability', 'untouched']])
+
+    async def test_unknown_tool_retry_lists_only_available_tools(self):
+        """The unknown-tool retry names the callable tools only — a withheld one stays undisclosed."""
+        agent = Agent(FunctionModel(_call_bogus_tool), capabilities=[self._guarded_capability()])
+
+        @agent.tool_plain
+        def untouched() -> str:
+            return 'safe'  # pragma: no cover
+
+        result = await agent.run('hello')
+
+        assert result.output == snapshot(
+            "Unknown tool name: 'bogus_op'. Available tools: 'load_capability', 'untouched'"
+        )
+
+
+async def test_unknown_tool_retry_omits_undiscovered_search_gated_tools():
+    """A deferred tool no search has revealed yet is not disclosed by the unknown-tool retry."""
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
+    agent = Agent(FunctionModel(_call_bogus_tool), toolsets=[toolset])
+
+    result = await agent.run('hello')
+
+    assert result.output == snapshot("Unknown tool name: 'bogus_op'. Available tools: 'search_tools'")
+
+
+async def test_unknown_tool_retry_steers_to_search_when_nothing_is_callable_yet():
+    """A native-only strategy emits no `search_tools`, so an undiscovered corpus leaves nothing callable.
+
+    A bare 'No tools available.' would be false here — the corpus exists, it just has not been
+    searched — so the retry names the step that makes a tool callable instead.
+    """
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
+    agent = Agent(FunctionModel(_call_bogus_tool), toolsets=[toolset], capabilities=[ToolSearch(strategy='bm25')])
+
+    result = await agent.run('hello')
+
+    assert result.output == snapshot(
+        "Unknown tool name: 'bogus_op'. No tools are available yet: search for the tools you need."
+    )
 
 
 async def test_reveal_of_another_capabilitys_tool_is_rejected_even_while_loaded():

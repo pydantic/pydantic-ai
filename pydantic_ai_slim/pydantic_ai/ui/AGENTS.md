@@ -21,6 +21,26 @@ One without the other is the trap: a protocol-specific property with a generic n
 
 The agent run is not a sink for the leftovers, either: `RunContext.metadata` is attached to the run span, so routing client-submitted text there by default would put unbounded untrusted content into every user's traces.
 
+## AG-UI response identities follow real `Agent` turn transitions
+
+Each model response gets a fresh AG-UI parent message ID. A regular
+`FunctionToolCallEvent` moves `UIEventStream` from the response turn to the
+request turn; its result is emitted in that request turn, and the next
+response's `PartStartEvent` invokes `before_response()` to replace the parent
+ID. This is the lifecycle established by [#3325](https://github.com/pydantic/pydantic-ai/pull/3325).
+
+Native tool returns differ because another native call can follow inside the
+same model response. That path uses a one-off result ID without replacing the
+response parent; regular tool results intentionally retain the request-turn ID
+mutation. The distinction was retained explicitly in
+[#6659](https://github.com/pydantic/pydantic-ai/pull/6659#discussion_r3632483479).
+
+Regression tests for cross-response identity must run through the supported
+`Agent` and `AGUIAdapter` boundary. A synthetic stream that includes a regular
+tool result must include its preceding `FunctionToolCallEvent`; otherwise it
+does not exercise a production-reachable turn sequence. Assert relationships
+between emitted string IDs, not between matcher objects.
+
 ## The event stream is an encoder, so it owns what it emits
 
 `UIEventStream.run_input` is optional because a stream is constructible with no request behind it: transports that carry native events out of band — a durable execution workflow, a queue, a websocket fan-out — encode at an API edge the adapter never reaches ([6970](https://github.com/pydantic/pydantic-ai/issues/6970)).

@@ -292,6 +292,21 @@ class OpenAIModelProfile(ModelProfile, total=False):
     colon-containing tool call IDs in follow-up requests.
     """
 
+    openai_responses_supports_interleaved_function_calls: bool
+    """Whether the Responses API accepts function calls interleaved with other assistant items in one
+    assistant turn. Default: `True`.
+
+    [DeepSeek's Responses endpoint](https://api-docs.deepseek.com/guides/responses_api) merges each
+    function call into the assistant message next to it, so an assistant item between two calls
+    splits them into separate messages that each carry an unanswered call
+    ([#7430](https://github.com/pydantic/pydantic-ai/issues/7430)). When this is `False`, such a turn
+    has its calls moved to the end before the request goes out; the message history you hold is
+    unchanged.
+
+    Reordering is best-effort: a turn carrying a native or compaction item, or a call still waiting
+    on its result, is sent in its original order.
+    """
+
     openai_supports_phase: bool
     """Whether the Responses API supports the `phase` field on assistant messages. Default: `False`.
 

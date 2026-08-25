@@ -8,7 +8,6 @@ from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Literal, cast
 
-import httpx
 import pydantic_core
 from typing_extensions import assert_never
 
@@ -345,6 +344,10 @@ class TestModel(Model):
                 )
 
 
+class _StreamCancelled(Exception):
+    pass
+
+
 @dataclass
 class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
@@ -377,7 +380,7 @@ class TestStreamedResponse(StreamedResponse):
                     # Simulate the transport error that real providers raise
                     # when the HTTP connection is closed mid-stream by cancel().
                     if self._cancelled:
-                        raise httpx.StreamClosed()
+                        raise _StreamCancelled()
                     self._usage += _get_string_usage(word)
                     for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
                         yield event
@@ -428,6 +431,9 @@ class TestStreamedResponse(StreamedResponse):
         # TestModel has no underlying connection to close.
         pass
 
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (_StreamCancelled,)
+
     @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
@@ -454,8 +460,8 @@ class _JsonSchemaTestData:
 
     def _gen_any(self, schema: dict[str, Any]) -> Any:
         """Generate data for any JSON Schema."""
-        if const := schema.get('const'):
-            return const
+        if 'const' in schema:
+            return schema['const']
         elif enum := schema.get('enum'):
             return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
@@ -527,12 +533,15 @@ class _JsonSchemaTestData:
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
         maximum = schema.get('maximum')
+        minimum = schema.get('minimum')
+        if minimum is not None and maximum == minimum:
+            return minimum
+
         if maximum is None:
             exc_max = schema.get('exclusiveMaximum')
             if exc_max is not None:
                 maximum = exc_max - 1
 
-        minimum = schema.get('minimum')
         if minimum is None:
             exc_min = schema.get('exclusiveMinimum')
             if exc_min is not None:

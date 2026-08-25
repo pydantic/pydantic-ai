@@ -57,6 +57,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -81,13 +82,22 @@ except ImportError as _import_error:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
+def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
+            body: object | None = e.body
+            suggested_model_id = None
+            if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
+                if error.get('code') == 'model_not_found':
+                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.response.headers)
+                status_code=status_code,
+                model_name=model_name,
+                body=body,
+                headers=dict(e.response.headers),
+                suggested_model_id=suggested_model_id,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
@@ -378,7 +388,7 @@ class GroqModel(Model[AsyncGroq]):
             merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
@@ -450,7 +460,7 @@ class GroqModel(Model[AsyncGroq]):
         peekable_response: _utils.PeekableAsyncStream[
             chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -463,6 +473,7 @@ class GroqModel(Model[AsyncGroq]):
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created),
         )
@@ -692,6 +703,7 @@ class GroqStreamedResponse(StreamedResponse):
     _model_profile: ModelProfile
     _response: _utils.PeekableAsyncStream[chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
@@ -700,7 +712,7 @@ class GroqStreamedResponse(StreamedResponse):
         await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             try:
                 executed_tool_call_id: str | None = None
                 reasoning_index = 0
@@ -768,8 +780,8 @@ class GroqStreamedResponse(StreamedResponse):
                     for dtc in choice.delta.tool_calls or []:
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=dtc.index,
-                            tool_name=dtc.function and dtc.function.name,
-                            args=dtc.function and dtc.function.arguments,
+                            tool_name=dtc.function.name if dtc.function is not None else None,
+                            args=dtc.function.arguments if dtc.function is not None else None,
                             tool_call_id=dtc.id,
                         )
                         if maybe_event is not None:

@@ -297,6 +297,7 @@ async def _drive_stream(
         _model_name='gemini-3.5-flash',
         _response=_utils.PeekableAsyncStream(stream()),
         _provider_name='google-gla',
+        _model_id_namespace='google',
         _provider_url='https://generativelanguage.googleapis.com/',
     )
     events = [event async for event in streamed]

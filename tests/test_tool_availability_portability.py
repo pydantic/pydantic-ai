@@ -1668,6 +1668,71 @@ def test_announcement_part_respects_inline_system_prompt_support(supports_inline
         assert part.content == f'<system>{expected}</system>'
 
 
+def test_announcements_render_after_sibling_tool_returns() -> None:
+    """Announcements for a turn that reveals several tools land after the request's tool returns."""
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart(content='unused')]),
+        profile=ModelProfile(supports_inline_system_prompts=True),
+    )
+    tools = [
+        ToolDefinition(name='first_tool', defer_loading=True),
+        ToolDefinition(name='second_tool', defer_loading=True),
+    ]
+    prepared = model.prepare_messages(
+        [
+            ModelRequest(parts=[UserPromptPart(content='start')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='call_1'),
+                    ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                    ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='call_2'),
+                    ToolAvailabilityDeltaPart(tools_added=['second_tool']),
+                ]
+            ),
+        ],
+        ModelRequestParameters(function_tools=tools, revealed_tool_names={tool.name for tool in tools}),
+    )
+
+    parts = prepared[1].parts
+    assert [type(part) for part in parts] == [ToolReturnPart, ToolReturnPart, SystemPromptPart, SystemPromptPart]
+    assert [part.tool_call_id for part in parts if isinstance(part, ToolReturnPart)] == ['call_1', 'call_2']
+    assert [part.content for part in parts if isinstance(part, SystemPromptPart)] == [
+        TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`first_tool`'),
+        TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`second_tool`'),
+    ]
+
+
+def test_standing_system_prompt_stays_ahead_of_sorted_tool_returns() -> None:
+    """The first request's opening system prompt keeps its place when tool returns sort forward."""
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart(content='unused')]),
+        profile=ModelProfile(supports_inline_system_prompts=True),
+    )
+    tool = ToolDefinition(name='first_tool', defer_loading=True)
+    prepared = model.prepare_messages(
+        [
+            # Drops out entirely (its only delta names a tool that is no longer served), passing
+            # the leading role to the next request.
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['withdrawn_tool'])]),
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='standing'),
+                    ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='call_1'),
+                    ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                ]
+            ),
+        ],
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
+
+    parts = prepared[0].parts
+    assert [type(part) for part in parts] == [SystemPromptPart, ToolReturnPart, SystemPromptPart]
+    assert [part.content for part in parts if isinstance(part, SystemPromptPart)] == [
+        'standing',
+        TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`first_tool`'),
+    ]
+
+
 async def test_responses_output_tool_stays_forceable_alongside_reveal(allow_model_requests: None) -> None:
     """Output-tool forcing remains independent from a revealed function in `additional_tools`."""
     client = MockOpenAIResponses.create_mock(_empty_responses_message())

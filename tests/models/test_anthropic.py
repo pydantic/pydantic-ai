@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
-import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel, Field
 
@@ -211,7 +211,7 @@ class _BrokenClosableStream:
         return self
 
     async def __anext__(self) -> BetaRawMessageStreamEvent:
-        raise httpx.ReadError('stream closed')
+        raise httpx2.ReadError('stream closed')
 
     async def close(self) -> None:
         self.closed = True
@@ -233,6 +233,7 @@ async def test_anthropic_cancelled_read_error_is_suppressed():
         _model_name='claude-haiku-4-5',
         _response=_peekable_broken_stream(stream),
         _provider_name='anthropic',
+        _model_id_namespace='anthropic',
         _provider_url='https://api.anthropic.com',
         _enabled_server_tool_names=frozenset(),
     )
@@ -251,11 +252,12 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _model_name='claude-haiku-4-5',
         _response=_peekable_broken_stream(_BrokenClosableStream()),
         _provider_name='anthropic',
+        _model_id_namespace='anthropic',
         _provider_url='https://api.anthropic.com',
         _enabled_server_tool_names=frozenset(),
     )
 
-    with pytest.raises(httpx.ReadError):
+    with pytest.raises(httpx2.ReadError):
         async for _event in response:
             pass
 
@@ -1542,20 +1544,28 @@ async def test_model_settings_reusable_with_beta_headers(allow_model_requests: N
         assert 'custom-feature-2' in betas
 
 
-async def test_anthropic_top_k(allow_model_requests: None):
-    """Verify that top_k from ModelSettings is forwarded to the Anthropic API."""
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
+@pytest.mark.vcr()
+async def test_anthropic_sampling_settings_reach_the_wire(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Sampling settings still reach the API on models that honor them.
+
+    `anthropic>=1` dropped `temperature`/`top_p`/`top_k` from `messages.create()`'s signature, so
+    Pydantic AI sends them through `extra_body` instead. Asserted on the wire rather than on the SDK
+    call: `extra_body` arriving at the client says nothing about the request body it then builds.
+
+    `top_p` is left out because the model rejects it alongside `temperature` with "`temperature` and
+    `top_p` cannot both be specified for this model" — all three settings travel the same path, so
+    one of the pair is enough to pin it.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    await agent.run('hello', model_settings=ModelSettings(temperature=0.2, top_k=40))
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == snapshot(
+        {'temperature': 0.2, 'top_k': 40}
     )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    await agent.run('hello', model_settings=ModelSettings(top_k=40))
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['top_k'] == 40
 
 
 async def test_anthropic_betas_setting(allow_model_requests: None):
@@ -2992,7 +3002,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockAnthropic.create_mock(
         APIStatusError(
             'test error',
-            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': 'test error'},
         )
     )
@@ -3009,7 +3019,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockAnthropic.create_mock(
         APIConnectionError(
             message='Connection to https://api.anthropic.com timed out',
-            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+            request=httpx2.Request('POST', 'https://api.anthropic.com/v1/messages'),
         )
     )
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -3024,7 +3034,7 @@ async def test_count_tokens_connection_error(allow_model_requests: None) -> None
     mock_client = MockAnthropic.create_mock(
         APIConnectionError(
             message='Connection to https://api.anthropic.com timed out',
-            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+            request=httpx2.Request('POST', 'https://api.anthropic.com/v1/messages'),
         )
     )
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -3564,6 +3574,48 @@ I should provide practical advice for different methods of crossing a river.\
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model_requests: None):
+    """A thinking part with an empty signature (e.g. left behind by an interrupted stream)
+    must not be replayed as a `thinking` block: the API rejects empty signatures with a 400.
+    It falls back to tagged text instead, like thinking parts from other providers.
+    """
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about crossing the street.')]),
+        ModelResponse(
+            parts=[ThinkingPart(content='I was interrupted mid-thought', signature='', provider_name='anthropic')],
+            provider_name='anthropic',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=message_history)
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Think about crossing the street.', 'type': 'text'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'text': """\
+<thinking>
+I was interrupted mid-thought
+</thinking>\
+""",
+                        'type': 'text',
+                    }
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'Continue.', 'type': 'text'}]},
         ]
     )
 
@@ -4709,8 +4761,9 @@ async def test_anthropic_opus_47_drops_sampling_settings(
     assert settings == snapshot(
         {'temperature': 0.2, 'top_p': 0.3, 'extra_body': {'top_k': 5, 'metadata': {'keep': True}}}
     )
+    # The sampling settings ride in `extra_body`, so dropping them means they never appear there.
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert (kwargs['temperature'], kwargs['top_p'], kwargs['extra_body']) == (OMIT, OMIT, {'metadata': {'keep': True}})
+    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
@@ -4757,8 +4810,30 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
         await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['temperature'] is OMIT
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+
+
+async def test_anthropic_explicit_extra_body_overrides_the_sampling_setting(allow_model_requests: None):
+    """A user's own `extra_body` entry wins over the `ModelSettings` field of the same name.
+
+    Both now land in the same dict, where before the SDK merged `extra_body` over the named argument.
+    Kept as a unit test because the precedence is only visible when the two disagree, which the API
+    itself has no opinion about.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    settings = AnthropicModelSettings(
+        temperature=0.2, top_k=40, extra_body={'temperature': 0.9, 'metadata': {'keep': True}}
+    )
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == snapshot({'temperature': 0.9, 'top_k': 40, 'metadata': {'keep': True}})
 
 
 @pytest.mark.vcr()
@@ -14232,18 +14307,6 @@ async def test_pause_turn_streaming_continuation_stream_error(allow_model_reques
                             pass
                 break
             node = await agent_run.next(node)
-
-
-async def test_anthropic_top_k_propagation(allow_model_requests: None):
-    c = completion_message([BetaTextBlock(text='Paris', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
-    mock_client = MockAnthropic.create_mock(c)
-    model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    agent = Agent(model=model, model_settings={'top_k': 40})
-    await agent.run('test')
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['top_k'] == 40
 
 
 async def test_anthropic_model_retrying_after_empty_response(allow_model_requests: None, anthropic_api_key: str):

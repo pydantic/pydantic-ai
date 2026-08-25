@@ -162,7 +162,7 @@ Function tools and event stream handlers registered on the agent directly or thr
 * Skip the decorator if durability isn't needed, so you avoid the extra DB checkpoint write.
 * If the function needs to enqueue tasks or invoke other DBOS workflows, run it inside the agent's main workflow (not as a step).
 
-Other than that, any agent and toolset will just work!
+All other agents and toolsets are supported.
 
 ### Agent Run Context and Dependencies
 
