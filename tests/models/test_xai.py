@@ -3907,7 +3907,11 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     mock_usage = create_usage(
         prompt_tokens=50,
         completion_tokens=30,
-        server_side_tools_used=[usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH, usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH],
+        server_side_tools_used=[
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH,
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH,
+            usage_pb2.SERVER_SIDE_TOOL_ATTACHMENT_SEARCH,
+        ],
     )
     response = create_response(
         content='The answer based on web search',
@@ -3925,7 +3929,7 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
         RunUsage(
             input_tokens=50,
             output_tokens=30,
-            details={'server_side_tools_web_search': 2},
+            details={'server_side_tools_web_search': 2, 'server_side_tools_attachment_search': 1},
             requests=1,
             cost=Decimal('0.000025'),
         )
@@ -4857,6 +4861,7 @@ async def test_xai_include_settings(allow_model_requests: None):
         'xai_include_inline_citations': True,
         'xai_include_x_search_output': True,
         'xai_include_collections_search_output': True,
+        'xai_include_attachment_search_output': True,
         'xai_include_mcp_output': True,
     }
     result = await agent.run('Hello', model_settings=settings)
@@ -4878,6 +4883,7 @@ async def test_xai_include_settings(allow_model_requests: None):
                     chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
                 ],
             }
@@ -6045,28 +6051,27 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
 
 
 async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: None):
-    """Test handling of unknown tool types uses the function name."""
-    attachment_search_tool_call = chat_pb2.ToolCall(
-        id='attachment_001',
-        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
+    """Unknown server-side tool types should fall back to their function name."""
+    unknown_tool_call = chat_pb2.ToolCall(
+        id='unknown_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_INVALID,
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
         function=chat_pb2.FunctionCall(
-            name='attachment_search',
-            arguments='{"query": "my attachments"}',
+            name='custom_server_tool',
+            arguments='{"query": "test"}',
         ),
     )
 
-    response = create_mixed_tools_response([attachment_search_tool_call], text_content='Found your attachments.')
+    response = create_mixed_tools_response([unknown_tool_call], text_content='Completed the custom tool call.')
     mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
-    result = await agent.run('Search my attachments')
+    result = await Agent(model).run('Use the custom server tool')
 
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search my attachments', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Use the custom server tool', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6074,13 +6079,13 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
             ModelResponse(
                 parts=[
                     NativeToolCallPart(
-                        tool_name='attachment_search',
-                        args={'query': 'my attachments'},
-                        tool_call_id=IsStr(),
+                        tool_name='custom_server_tool',
+                        args={'query': 'test'},
+                        tool_call_id='unknown_001',
                         provider_name='xai',
-                        provider_details={'function_name': 'attachment_search'},
+                        provider_details={'function_name': 'custom_server_tool'},
                     ),
-                    TextPart(content='Found your attachments.'),
+                    TextPart(content='Completed the custom tool call.'),
                 ],
                 usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,

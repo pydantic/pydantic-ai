@@ -171,7 +171,7 @@ Plain text output (`output_type=str` / `TextOutput`, incl. a `str` fallback) is 
 
 To run a whole run's tools serially, use `with agent.parallel_tool_call_execution_mode('sequential'):` or set `parallel_tool_calls=False` on model settings.
 
-See [Parallel Output Tool Calls](https://ai.pydantic.dev/output/#parallel-output-tool-calls) and [tools-advanced docs](https://ai.pydantic.dev/tools-advanced/#parallel-tool-calls-concurrency).
+See [Parallel Output Tool Calls](https://pydantic.dev/docs/ai/core-concepts/output/#parallel-output-tool-calls) and [tools-advanced docs](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#parallel-tool-calls-concurrency).
 
 ## Handle Network Errors and Rate Limiting Automatically
 

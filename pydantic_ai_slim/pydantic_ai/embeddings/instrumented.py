@@ -42,7 +42,7 @@ def instrument_embedding_model(model: EmbeddingModel, instrument: Instrumentatio
 class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
     """Embedding model which wraps another model so that requests are instrumented with OpenTelemetry.
 
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     instrumentation_settings: InstrumentationSettings

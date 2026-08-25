@@ -150,6 +150,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_server_side_tool_invocations': False,
     'google_supported_mime_types_in_tool_returns': (),
     'google_supports_thinking_level': False,
+    'google_supports_minimal_thinking_level': True,
     'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
@@ -558,6 +559,7 @@ def test_deepseek_provider_deepseek_chat():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_responses_supports_interleaved_function_calls': False,
         }
     )
 
@@ -576,6 +578,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_responses_supports_interleaved_function_calls': False,
             'openai_supports_tool_choice_required': False,
         }
     )
@@ -754,7 +757,7 @@ def test_bedrock_meta_llama3():
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_deepseek_r1():
     """`bedrock_send_back_thinking_parts=True` applied for `r1` models via separate function."""
-    profile = BedrockProvider.model_profile('deepseek.deepseek-r1-v1:0')
+    profile = BedrockProvider.model_profile('us.deepseek.r1-v1:0')
     assert _normalize(profile) == snapshot(
         {
             'supports_thinking': True,
@@ -1404,14 +1407,7 @@ def test_cerebras_qwen_reasoning():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
-            'openai_unsupported_model_settings': (
-                'frequency_penalty',
-                'logit_bias',
-                'presence_penalty',
-                'parallel_tool_calls',
-                'service_tier',
-                'openai_service_tier',
-            ),
+            'openai_unsupported_model_settings': ('logit_bias',),
         }
     )
 
@@ -1423,14 +1419,7 @@ def test_cerebras_llama_non_reasoning():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'openai_unsupported_model_settings': (
-                'frequency_penalty',
-                'logit_bias',
-                'presence_penalty',
-                'parallel_tool_calls',
-                'service_tier',
-                'openai_service_tier',
-            ),
+            'openai_unsupported_model_settings': ('logit_bias',),
         }
     )
 
@@ -1761,6 +1750,26 @@ def test_vercel_xai_grok():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+        }
+    )
+
+
+def test_vercel_groq_gpt_oss():
+    """Vercel routes `groq/...` through `groq_model_profile` (#7550).
+
+    The suffix after the first `/` keeps its own `openai/gpt-oss` prefix, which is what
+    `groq_model_profile` gates on.
+    """
+    from pydantic_ai.providers.vercel import VercelProvider
+
+    profile = VercelProvider.model_profile('groq/openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': True,
         }
     )
 

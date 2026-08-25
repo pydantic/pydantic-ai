@@ -589,6 +589,11 @@ def _map_openrouter_provider_details(
     return provider_details
 
 
+def _dump_openrouter_annotations(annotations: list[_OpenRouterAnnotation]) -> list[dict[str, Any]]:
+    """Dump the `url_citation` search sources and file citations OpenRouter attaches to a message."""
+    return [annotation.model_dump(mode='json') for annotation in annotations]
+
+
 def _map_openrouter_usage(
     response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
     provider: str,
@@ -1074,6 +1079,8 @@ class OpenRouterModel(OpenAIChatModel):
 
         provider_details = super()._process_provider_details(response) or {}
         provider_details.update(_map_openrouter_provider_details(response))
+        if annotations := response.choices[0].message.annotations:
+            provider_details['annotations'] = _dump_openrouter_annotations(annotations)
         return provider_details or None
 
     @override
@@ -1212,6 +1219,8 @@ class _OpenRouterChatCompletionChunk(_ChatCompletionChunk):
 class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     """Implementation of `StreamedResponse` for OpenRouter models."""
 
+    _annotations: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
+
     @override
     async def _validate_response(self):
         try:
@@ -1270,6 +1279,10 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
         provider_details = super()._map_provider_details(chunk) or {}
         provider_details.update(_map_openrouter_provider_details(chunk))
+        if annotations := chunk.choices[0].delta.annotations:
+            self._annotations.extend(_dump_openrouter_annotations(annotations))
+            # Provider details are shallow-merged across chunks, so publish the running list.
+            provider_details['annotations'] = list(self._annotations)
         return provider_details or None
 
     @override

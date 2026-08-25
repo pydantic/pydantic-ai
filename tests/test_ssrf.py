@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import gzip
+import subprocess
+import sys
+import textwrap
 import zlib
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
+import httpx2
 import pytest
+
+try:
+    import httpx
+except ImportError:  # pragma: no cover
+    httpx = None
 
 from pydantic_ai import _ssrf
 from pydantic_ai._ssrf import (
@@ -43,7 +51,7 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Patch HTTP client creation in _ssrf to prevent real network calls.
 
     The wrapper configures the returned mock as an async context manager that yields
-    itself (matching `httpx.AsyncClient` behavior), so tests work regardless of
+    itself (matching `httpx2.AsyncClient` behavior), so tests work regardless of
     whether `safe_download` uses the client directly or via `async with`.
     """
     mock = MagicMock()
@@ -58,19 +66,19 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
             assert method == 'GET'
             return url, request_kwargs
 
-        async def send(request: tuple[str, dict[str, Any]], *, follow_redirects: bool, stream: bool) -> httpx.Response:
+        async def send(request: tuple[str, dict[str, Any]], *, follow_redirects: bool, stream: bool) -> httpx2.Response:
             assert stream is True
             url, request_kwargs = request
             response = await client.get(url, follow_redirects=follow_redirects, **request_kwargs)
-            if not isinstance(response.headers, (dict, httpx.Headers)):
-                response.headers = httpx.Headers()
+            if not isinstance(response.headers, (dict, httpx2.Headers)):
+                response.headers = httpx2.Headers()
             return response
 
         client.build_request = build_request
         client.send = send
         return client
 
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory_wrapper)
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', factory_wrapper)
     return mock
 
 
@@ -610,7 +618,7 @@ class TestValidateAndResolveUrl:
             await validate_and_resolve_url('http://cgnat-host.internal/path', allow_local=False)
 
 
-RequestHandler = Callable[[httpx.Request], httpx.Response]
+RequestHandler = Callable[[httpx2.Request], httpx2.Response]
 
 
 def stream_response(body: bytes, *, content_encoding: str | None = None) -> RequestHandler:
@@ -622,12 +630,12 @@ def chunked_stream_response(chunks: list[bytes], *, content_encoding: str | None
     """Builds a handler serving raw response-body chunks through `aiter_raw`."""
     headers = {'content-encoding': content_encoding} if content_encoding else {}
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
         async def stream() -> AsyncIterator[bytes]:
             for chunk in chunks:
                 yield chunk
 
-        return httpx.Response(200, content=stream(), headers=headers, request=request)
+        return httpx2.Response(200, content=stream(), headers=headers, request=request)
 
     return handle_request
 
@@ -659,6 +667,161 @@ class TestSafeDownload:
         assert '93.184.215.14' in call_args[0][0]
         assert call_args[1]['headers']['Host'] == 'example.com'
         assert call_args[1]['extensions'] == {'sni_hostname': 'example.com'}
+
+    @pytest.mark.skipif(httpx is None, reason='legacy httpx is not installed')
+    async def test_request_errors_remain_compatible_with_legacy_httpx(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """Public download errors keep matching legacy httpx request handlers when available."""
+        assert httpx is not None
+        request = httpx2.Request('GET', 'https://93.184.215.14/file.txt')
+        client = AsyncMock()
+        client.get.side_effect = httpx2.ConnectError('Connection failed', request=request)
+        mock_ssrf_client.return_value = client
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        with pytest.raises(httpx.RequestError) as exc_info:
+            await safe_download('https://example.com/file.txt')
+
+        assert isinstance(exc_info.value, httpx2.RequestError)
+        assert exc_info.value.request is request
+
+    @pytest.mark.skipif(httpx is None, reason='legacy httpx is not installed')
+    async def test_status_errors_remain_compatible_with_legacy_httpx(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """Public download errors keep matching legacy httpx status handlers when available."""
+        assert httpx is not None
+        request = httpx2.Request('GET', 'https://93.184.215.14/file.txt')
+        response = httpx2.Response(404, request=request)
+        client = AsyncMock()
+        client.get.return_value = response
+        mock_ssrf_client.return_value = client
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await safe_download('https://example.com/file.txt')
+
+        assert isinstance(exc_info.value, httpx2.HTTPStatusError)
+        assert exc_info.value.request is request
+        assert exc_info.value.response is response
+
+    @pytest.mark.skipif(httpx is None, reason='legacy httpx is not installed')
+    @pytest.mark.parametrize('max_bytes', [None, 64])
+    async def test_body_read_errors_remain_compatible_with_legacy_httpx(
+        self, serve_requests: Callable[[RequestHandler], None], max_bytes: int | None
+    ) -> None:
+        """A transport failure that only surfaces while the body streams stays legacy-catchable.
+
+        The unbounded path reads through `aread` and the bounded one through `aiter_raw`, so both
+        boundaries are exercised.
+        """
+        assert httpx is not None
+
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
+            async def stream() -> AsyncIterator[bytes]:
+                yield b'partial'
+                raise httpx2.ReadError('connection lost mid-body', request=request)
+
+            return httpx2.Response(200, content=stream(), request=request)
+
+        serve_requests(handle_request)
+
+        with pytest.raises(httpx.RequestError) as exc_info:
+            await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
+        assert isinstance(exc_info.value, httpx2.RequestError)
+
+    @pytest.mark.skipif(httpx is None, reason='legacy httpx is not installed')
+    @pytest.mark.parametrize('max_bytes', [None, 512])
+    async def test_gzip_decoding_errors_remain_compatible_with_legacy_httpx(
+        self, serve_requests: Callable[[RequestHandler], None], max_bytes: int | None
+    ) -> None:
+        """A malformed gzip body raises an error both families' decoding handlers match."""
+        assert httpx is not None
+        encoded = bytearray(gzip.compress(b'corrupt gzip body'))
+        encoded[-8] ^= 0xFF
+        serve_requests(stream_response(bytes(encoded), content_encoding='gzip'))
+
+        with pytest.raises(httpx.DecodingError) as exc_info:
+            await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
+        assert isinstance(exc_info.value, httpx2.DecodingError)
+        assert isinstance(exc_info.value, httpx.RequestError)
+        assert exc_info.value.request.url.path == '/file.txt'
+
+    def test_safe_download_works_without_legacy_httpx(self) -> None:
+        """The public download boundary remains usable when only httpx2 is installed."""
+        script = """
+            import asyncio
+            import sys
+
+            import httpx2
+
+
+            class BlockHttpx:
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname == 'httpx' or fullname.startswith('httpx.'):
+                        raise ImportError('httpx is not installed')
+
+
+            sys.meta_path.insert(0, BlockHttpx())
+
+            from pydantic_ai import _ssrf
+
+
+            class FailingClient:
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *args):
+                    return False
+
+                def build_request(self, method, url, **kwargs):
+                    return httpx2.Request(method, url, **kwargs)
+
+                async def send(self, request, **kwargs):
+                    raise httpx2.ConnectError('Connection failed', request=request)
+
+
+            async def validate_and_resolve_url(url, allow_local):
+                return _ssrf.ResolvedUrl(
+                    resolved_ip='93.184.216.34',
+                    hostname='example.com',
+                    port=80,
+                    is_https=False,
+                    path='/',
+                )
+
+
+            def create_async_httpx2_client(*, timeout):
+                return FailingClient()
+
+
+            _ssrf.validate_and_resolve_url = validate_and_resolve_url
+            _ssrf.create_async_httpx2_client = create_async_httpx2_client
+
+
+            async def main():
+                try:
+                    await _ssrf.safe_download('http://example.com')
+                except httpx2.RequestError as error:
+                    assert type(error) is httpx2.RequestError
+                else:
+                    raise AssertionError('safe_download did not raise the failed request')
+
+
+            asyncio.run(main())
+            assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules)
+        """
+        result = subprocess.run(
+            [sys.executable, '-W', 'error', '-c', textwrap.dedent(script)],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ''
 
     @pytest.mark.parametrize(
         ('url', 'expected_host'),
@@ -692,25 +855,25 @@ class TestSafeDownload:
 
     @pytest.fixture
     def serve_requests(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> Callable[[RequestHandler], None]:
-        """Serves canned responses to `safe_download` through an `httpx.MockTransport`.
+        """Serves canned responses to `safe_download` through an `httpx2.MockTransport`.
 
         Also resolves every hostname to a public IP, so the download reaches the handler.
         """
 
         def serve(handler: RequestHandler) -> None:
             mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
 
-            def create_http_client(*, timeout: int) -> httpx.AsyncClient:
+            def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
                 return client
 
-            monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+            monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
 
         return serve
 
     async def test_max_bytes_reads_streamed_body(self, serve_requests: Callable[[RequestHandler], None]) -> None:
         """A bounded download buffers a streamed response only after enforcing its limit."""
-        serve_requests(lambda request: httpx.Response(200, content=b'streamed content', request=request))
+        serve_requests(lambda request: httpx2.Response(200, content=b'streamed content', request=request))
 
         response = await safe_download('https://example.com/file.txt', max_bytes=16)
 
@@ -720,7 +883,7 @@ class TestSafeDownload:
         self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """A missing or false content-length header cannot bypass the streamed-body limit."""
-        serve_requests(lambda request: httpx.Response(200, content=b'content longer than the limit', request=request))
+        serve_requests(lambda request: httpx2.Response(200, content=b'content longer than the limit', request=request))
 
         with pytest.raises(ValueError, match='maximum size of 16 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=16)
@@ -774,7 +937,7 @@ class TestSafeDownload:
         bytes; carrying `content-encoding` into the reconstructed response would decode them again.
         """
         serve_requests(
-            lambda request: httpx.Response(
+            lambda request: httpx2.Response(
                 200,
                 content=gzip.compress(b'streamed content'),
                 headers={'content-encoding': 'gzip'},
@@ -790,9 +953,9 @@ class TestSafeDownload:
     async def test_max_bytes_follows_redirect(self, serve_requests: Callable[[RequestHandler], None]) -> None:
         """A bounded download closes each streamed redirect hop before re-requesting."""
 
-        def handle_request(request: httpx.Request) -> httpx.Response:
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
             if request.url.path == '/file.txt':
-                return httpx.Response(302, headers={'location': 'https://example.com/final.txt'}, request=request)
+                return httpx2.Response(302, headers={'location': 'https://example.com/final.txt'}, request=request)
             return stream_response(b'redirected content')(request)
 
         serve_requests(handle_request)
@@ -865,8 +1028,10 @@ class TestSafeDownload:
             encoded = gzip.compress(b'complete member') + encoded
         serve_requests(stream_response(encoded, content_encoding='gzip'))
 
-        with pytest.raises(httpx.DecodingError, match='incomplete gzip'):
+        with pytest.raises(httpx2.DecodingError, match='incomplete gzip') as exc_info:
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
+        assert exc_info.value.request.url.path == '/file.txt'
 
     @pytest.mark.parametrize('max_bytes', [None, 512])
     async def test_rejects_corrupt_gzip_member(
@@ -877,8 +1042,10 @@ class TestSafeDownload:
         encoded[-8] ^= 0xFF
         serve_requests(stream_response(bytes(encoded), content_encoding='gzip'))
 
-        with pytest.raises(httpx.DecodingError):
+        with pytest.raises(httpx2.DecodingError) as exc_info:
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
+        assert exc_info.value.request.url.path == '/file.txt'
 
     @pytest.mark.parametrize('max_bytes', [None, 512])
     async def test_accepts_empty_gzip_body(
@@ -929,12 +1096,12 @@ class TestSafeDownload:
     ) -> None:
         """Brotli/zstd/deflate/stacked/unknown codings are rejected rather than decoded unsafely."""
 
-        def handle_request(request: httpx.Request) -> httpx.Response:
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
             # Body is never read: unsupported content-coding is rejected before streaming.
             async def stream() -> AsyncIterator[bytes]:  # pragma: no cover
                 yield b'x'
 
-            return httpx.Response(200, content=stream(), headers={'content-encoding': coding}, request=request)
+            return httpx2.Response(200, content=stream(), headers={'content-encoding': coding}, request=request)
 
         serve_requests(handle_request)
 
@@ -947,7 +1114,7 @@ class TestSafeDownload:
         """Bounded downloads negotiate only encodings that can be size-limited while streaming."""
         seen: dict[str, str] = {}
 
-        def handle_request(request: httpx.Request) -> httpx.Response:
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
             seen['accept-encoding'] = request.headers.get('accept-encoding', '')
             return stream_response(b'ok')(request)
 
@@ -961,7 +1128,7 @@ class TestSafeDownload:
         self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
         """Transports that preload `content=` still enforce the decoded size cap."""
-        serve_requests(lambda request: httpx.Response(200, content=b'x' * 2000, request=request))
+        serve_requests(lambda request: httpx2.Response(200, content=b'x' * 2000, request=request))
 
         with pytest.raises(ValueError, match='maximum size of 1024 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=1024)
@@ -985,12 +1152,12 @@ class TestSafeDownload:
         payload = b'x' * 100
         encoded = gzip.compress(payload)
 
-        def handle_request(request: httpx.Request) -> httpx.Response:
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
             async def stream() -> AsyncIterator[bytes]:
                 yield encoded[:-8]
                 yield encoded[-8:]
 
-            return httpx.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
+            return httpx2.Response(200, content=stream(), headers={'content-encoding': 'gzip'}, request=request)
 
         serve_requests(handle_request)
 
@@ -1047,8 +1214,10 @@ class TestSafeDownload:
         monkeypatch.setattr(_ssrf.zlib, 'decompressobj', make_bad_flush)
         serve_requests(stream_response(b'raw', content_encoding='gzip'))
 
-        with pytest.raises(httpx.DecodingError, match='Invalid gzip response body'):
+        with pytest.raises(httpx2.DecodingError, match='Invalid gzip response body') as exc_info:
             await safe_download('https://example.com/file.txt')
+
+        assert exc_info.value.request.url.path == '/file.txt'
 
     async def test_redirect_followed(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
@@ -1242,8 +1411,8 @@ class TestSafeDownload:
         """`safe_download` closes the HTTP client it creates, even on success.
 
         Without proper cleanup, each call to `safe_download` leaks an unclosed
-        `httpx.AsyncClient`. After switching from cached_async_http_client (which
-        reused a global) to `create_async_http_client` (new client per call),
+        `httpx2.AsyncClient`. After switching from cached_async_http_client (which
+        reused a global) to `create_async_httpx2_client` (new client per call),
         the client must be explicitly closed.
 
         Regression test for PR #4421 auto-review feedback.
@@ -1251,18 +1420,18 @@ class TestSafeDownload:
         """
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-        created_clients: list[httpx.AsyncClient] = []
+        created_clients: list[httpx2.AsyncClient] = []
 
-        def tracking_create(**kwargs: Any) -> httpx.AsyncClient:
-            client = httpx.AsyncClient(
-                transport=httpx.MockTransport(
-                    lambda request: httpx.Response(200, content=b'test content', request=request)
+        def tracking_create(**kwargs: Any) -> httpx2.AsyncClient:
+            client = httpx2.AsyncClient(
+                transport=httpx2.MockTransport(
+                    lambda request: httpx2.Response(200, content=b'test content', request=request)
                 )
             )
             created_clients.append(client)
             return client
 
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', tracking_create)
+        monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', tracking_create)
 
         response = await safe_download('https://example.com/file.txt')
         assert response.content == b'test content'
