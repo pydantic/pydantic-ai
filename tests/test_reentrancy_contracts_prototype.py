@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import multiprocessing
 from collections.abc import Callable
-from multiprocessing.synchronize import Event as ProcessEvent
+from multiprocessing.connection import Connection
 
 import anyio
 import pytest
@@ -28,8 +28,9 @@ _COMPLETION_TIMEOUT = 0.5
 pytestmark = pytest.mark.xdist_group('reentrancy_contracts')
 
 
-def _run_and_signal(operation: Callable[[], None], started: ProcessEvent) -> None:
-    started.set()
+def _run_and_signal(operation: Callable[[], None], started: Connection) -> None:
+    started.send_bytes(b'1')
+    started.close()
     operation()
 
 
@@ -38,15 +39,17 @@ def _assert_completes_in_subprocess(operation: Callable[[], None]) -> None:
         context = multiprocessing.get_context('forkserver')
     else:
         context = multiprocessing.get_context('spawn')
-    started = context.Event()
+    ready, started = context.Pipe(duplex=False)
     process = context.Process(target=_run_and_signal, args=(operation, started))
     try:
         process.start()
-        if not started.wait(_STARTUP_TIMEOUT):
+        started.close()
+        if not ready.poll(_STARTUP_TIMEOUT):
             if process.is_alive():
                 process.kill()
             process.join()
             pytest.fail(f'{operation.__name__} did not start within {_STARTUP_TIMEOUT} seconds')
+        ready.recv_bytes()
 
         process.join(_COMPLETION_TIMEOUT)
 
@@ -57,6 +60,8 @@ def _assert_completes_in_subprocess(operation: Callable[[], None]) -> None:
 
         assert process.exitcode == 0
     finally:
+        ready.close()
+        started.close()
         process.close()
 
 
