@@ -1431,7 +1431,7 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
                     chunk_id='chunk-1',
                     chunk_content='provider-selected supporting excerpt',
                     collection_ids=['collection-1'],
-                    score=0.0,
+                    score=0.8,
                 ),
             ),
             chat_pb2.InlineCitation(
@@ -1439,6 +1439,7 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
                 end_index=26,
                 collections_citation=chat_pb2.CollectionsCitation(
                     chunk_content='collection chunk with no IDs',
+                    score=0.4,
                 ),
             ),
             chat_pb2.InlineCitation(collections_citation=chat_pb2.CollectionsCitation()),
@@ -1470,7 +1471,6 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
                     provider_details={
                         'chunk_id': 'chunk-1',
                         'collection_ids': ['collection-1'],
-                        'score': 0.0,
                     },
                 )
             ],
@@ -1480,7 +1480,6 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
             sources=[
                 DocumentCitationSource(
                     excerpts=['collection chunk with no IDs'],
-                    provider_details={'score': 0.0},
                 )
             ],
             anchor=MarkerCitationAnchor(start=23, end=26),

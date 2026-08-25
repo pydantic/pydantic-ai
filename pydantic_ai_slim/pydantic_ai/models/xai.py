@@ -1484,11 +1484,10 @@ def _map_inline_citations(inline_citations: Sequence[chat_pb2.InlineCitation], t
                     provider_details['chunk_id'] = collection.chunk_id
                 if collection_ids:
                     provider_details['collection_ids'] = collection_ids
-                provider_details['score'] = collection.score
                 source = DocumentCitationSource(
                     document_id=collection.file_id or None,
                     excerpts=[collection.chunk_content] if collection.chunk_content else [],
-                    provider_details=provider_details,
+                    provider_details=provider_details or None,
                 )
             case _:
                 continue
