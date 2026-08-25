@@ -1769,6 +1769,30 @@ async def test_deprecated_agent_wraps_identified_dynamic_toolset():
     assert '42' in str(result.output)
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_deprecated_agent_executes_identified_dynamic_toolset_task(blockbuster_enabled: bool) -> None:
+    """The deprecated wrapper's identified dynamic-tool path still executes its Prefect task."""
+    assert blockbuster_enabled is False
+    calls: list[TaskRunContext[Any] | None] = []
+
+    async def get_price() -> str:
+        calls.append(TaskRunContext.get())
+        return '42'
+
+    agent = Agent(
+        TestModel(),
+        name='deprecated_identified_dynamic_task',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([get_price]), id='deprecated_dyn_task')],
+    )
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = await prefect_agent.run('Get the price')
+
+    assert '42' in str(result.output)
+    assert len(calls) == 1
+    assert calls[0] is not None
+
+
 # Test cache policies
 async def test_cache_policy_default():
     """Test that the default cache policy is set correctly."""

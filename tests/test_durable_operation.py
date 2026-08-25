@@ -8,7 +8,17 @@ from typing import Any, ClassVar, Literal, cast
 import pytest
 from typing_extensions import assert_never
 
-from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart, Tool
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    AgentStreamEvent,
+    FunctionToolset,
+    ModelResponse,
+    RunContext,
+    TextPart,
+    Tool,
+    ToolsetTool,
+)
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
@@ -39,6 +49,7 @@ from pydantic_ai.durable_exec._operation_names import (
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableDynamicToolset,
+    DurableFunctionToolset,
     DynamicToolInfo,
     DynamicToolsResult,
     Lifecycle,
@@ -47,13 +58,17 @@ from pydantic_ai.durable_exec._toolset import (
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
     _ToolFailed,  # pyright: ignore[reportPrivateUsage]
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    get_dynamic_tools,
+    run_args_validator,
 )
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import RetryPromptPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RunUsage
 
 JOURNAL_OPERATION_NAMES = {
@@ -145,6 +160,23 @@ class JournalDurability(BaseDurabilityCapability[Any]):
 class _OverrideNameDurability(JournalDurability):
     def _unit_name(self, kind: str, **parts: Any) -> str:
         return f'override:{kind}:{parts["label"]}'
+
+
+async def test_durability_forces_sequential_tools_inside_durable_context() -> None:
+    class SequentialJournalDurability(JournalDurability):
+        _force_sequential_tools_in_durable_context = True
+
+    durability = SequentialJournalDurability()
+    agent = Agent(TestModel(), name='sequential', capabilities=[durability])
+    bound = JournalDurability.from_agent(agent)
+    assert bound is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def handler() -> AgentRunResult[Any]:
+        assert ToolManager(FunctionToolset()).get_parallel_execution_mode() == 'sequential'
+        return cast(AgentRunResult[Any], object())
+
+    await bound.wrap_run(ctx, handler=handler)
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
@@ -431,6 +463,42 @@ async def test_temporal_backend_dispatches_cancel_with_legacy_contextless_payloa
         await JournalDurability()._cancel_suspended_response_operation(  # pyright: ignore[reportPrivateUsage]
             CancelSuspendedResponseOperationParams(None, response, None)
         )
+
+
+async def test_temporal_backend_labels_validation_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal._operation_backend import TemporalBoundOperation
+
+    async def handler(params: _ToolParams) -> None:
+        raise AssertionError('activity handler is not called by the workflow-side dispatcher')
+
+    async def registration(params: _ToolParams) -> None:
+        raise AssertionError('registration is passed to `execute_activity`, not called directly')
+
+    operation = DurableOperation(
+        operation_id=ValidateToolArgumentsId('dynamic', 'tools'),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[_ToolParams](),
+        cache_identity=NoCacheIdentity(),
+        result_codec=TypedResultCodec[None](type(None), mode='identity'),
+        config_role=OperationConfigRole.TOOL_VALIDATION,
+    )
+    dispatched: list[tuple[Callable[..., object], Sequence[object], object]] = []
+
+    async def execute_activity(activity: Callable[..., object], *, args: Sequence[object], **config: object) -> None:
+        dispatched.append((activity, args, config['summary']))
+
+    monkeypatch.setattr(
+        'pydantic_ai.durable_exec.temporal._operation_backend.execute_activity',
+        execute_activity,
+    )
+    bound = TemporalBoundOperation(operation, registration, {})
+    params = _ToolParams('guarded')
+    await bound(params)
+
+    assert dispatched == [(registration, params, 'validate tool args: tools:guarded')]
 
 
 def _exhaustive_identity(operation_id: DurableOperationId) -> str:
@@ -996,3 +1064,67 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match=r"Tool 'guarded'.*has an `args_validator`"):
         await durable.get_tools(ctx)
+
+
+async def test_legacy_validation_fallbacks_remain_inline() -> None:
+    calls: list[str] = []
+
+    def validate_value(ctx: RunContext[None], value: str) -> None:
+        calls.append(value)
+
+    async def tool(value: str) -> str:
+        return value
+
+    async def unused_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+        config: Mapping[str, Any],
+    ) -> Any:
+        raise AssertionError('not called')
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    function_toolset = FunctionToolset([Tool(tool, args_validator=validate_value)], id='function')
+    durable_function = DurableFunctionToolset(
+        function_toolset,
+        in_durable_context=lambda: True,
+        call_tool_operation=unused_operation,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-never',
+    )
+    function_tools = await durable_function.get_tools(ctx)
+    function_validator = function_tools['tool'].args_validator_func
+    assert function_validator is not None
+    result = function_validator(ctx, value='function')
+    if inspect.isawaitable(result):
+        await result
+
+    dynamic_toolset = DynamicToolset(lambda _: function_toolset, id='dynamic')
+    dynamic = DurableDynamicToolset(
+        dynamic_toolset,
+        in_durable_context=lambda: True,
+        get_tools_operation=lambda ctx: get_dynamic_tools(dynamic_toolset, ctx),
+        call_tool_operation=unused_operation,
+        resolve_tool_config=lambda tool, name: False,
+        lifecycle='enter-never',
+    )
+    dynamic_tools = await dynamic.get_tools(ctx)
+    dynamic_validator = dynamic_tools['tool'].args_validator_func
+    assert dynamic_validator is not None
+    await dynamic_validator(ctx, value='dynamic')
+
+    assert calls == ['function', 'dynamic']
+
+
+async def test_args_validator_disappearing_after_discovery_is_rejected() -> None:
+    tool = ToolsetTool(
+        toolset=FunctionToolset(),
+        tool_def=ToolDefinition(name='changed'),
+        max_retries=0,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(UserError, match="Tool 'changed' has no `args_validator`"):
+        await run_args_validator(tool, {}, ctx)
