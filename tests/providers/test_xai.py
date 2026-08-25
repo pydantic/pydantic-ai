@@ -35,10 +35,14 @@ def test_xai_provider_need_api_key(env: TestEnv) -> None:
         XaiProvider()
 
 
-def test_xai_pass_xai_client() -> None:
+@pytest.mark.anyio
+async def test_xai_pass_xai_client() -> None:
     xai_client = AsyncClient(api_key='api-key')
-    provider = XaiProvider(xai_client=xai_client)
-    assert provider.client == xai_client
+    try:
+        provider = XaiProvider(xai_client=xai_client)
+        assert provider.client is xai_client
+    finally:
+        await xai_client.close()
 
 
 @pytest.fixture
@@ -59,6 +63,13 @@ def test_xai_provider_forwards_api_host_and_timeout(captured_client_kwargs: list
 
     assert provider.client is not None  # triggers lazy client creation
     assert captured_client_kwargs == [{'api_key': 'api-key', 'api_host': 'gateway.x.ai', 'timeout': 30}]
+
+
+def test_xai_provider_forwards_metadata(captured_client_kwargs: list[dict[str, object]]) -> None:
+    provider = XaiProvider(api_key='api-key', metadata=(('x-grok-conv-id', 'test-conv-id'),))
+
+    assert provider.client is not None  # triggers lazy client creation
+    assert captured_client_kwargs == [{'api_key': 'api-key', 'metadata': (('x-grok-conv-id', 'test-conv-id'),)}]
 
 
 def test_xai_provider_omits_unset_client_kwargs(captured_client_kwargs: list[dict[str, object]]) -> None:

@@ -105,7 +105,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             lambda: UsageLimitExceeded('limit hit'),
             {
                 'message': 'limit hit. Consider raising the limit, or see the docs on usage limits '
-                'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+                'for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
             },
         ),
         (lambda: ConcurrencyLimitExceeded('too many'), {'message': 'too many'}),
@@ -133,6 +133,16 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'headers': {'retry-after': '60', 'x-request-id': 'abc'},
             },
         ),
+        (
+            lambda: ModelHTTPError(404, 'gpt-5x', suggested_model_id='openai:gpt-5'),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'body': None,
+                'headers': None,
+                'suggested_model_id': 'openai:gpt-5',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
     ids=[
@@ -153,6 +163,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-no-body',
         'ModelHTTPError-with-body',
         'ModelHTTPError-with-headers',
+        'ModelHTTPError-with-model-suggestion',
         'IncompleteToolCall',
     ],
 )
@@ -392,15 +403,43 @@ def test_model_http_error_headers_provider_openai():
     assert exc.retry_after == 30.0
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-5', 'claude-sonet-4-5'],
+    ids=['requested-known-model', 'different-provider-model'],
+)
+def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):
+    """Provider access errors and custom-endpoint IDs cannot produce a useful close match."""
+    openai = pytest.importorskip('openai', reason='openai extra not installed')
+    import httpx
+
+    from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+
+    req = httpx.Request('POST', 'https://example.com/v1/responses')
+    resp = httpx.Response(404, request=req)
+    sdk_exc = openai.NotFoundError(
+        'Model unavailable',
+        response=resp,
+        body={'code': 'model_not_found', 'message': 'Model unavailable'},
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        with _map_api_errors(model_name):
+            raise sdk_exc
+
+    assert exc_info.value.suggested_model_id is None
+    assert 'Did you mean' not in str(exc_info.value)
+
+
 def test_model_http_error_headers_provider_anthropic():
     """Headers from an anthropic.APIStatusError land on ModelHTTPError."""
     anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
-    import httpx
+    import httpx2
 
     from pydantic_ai.models.anthropic import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
-    req = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
-    resp = httpx.Response(
+    req = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
+    resp = httpx2.Response(
         429,
         headers={'retry-after': '10', 'anthropic-ratelimit-tokens-remaining': '0'},
         request=req,

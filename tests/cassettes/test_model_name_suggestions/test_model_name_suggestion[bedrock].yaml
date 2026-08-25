@@ -1,0 +1,31 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "hello"}]}], "system": [], "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZGQ0ODZmZGQtMDQ2OS00ZTBlLTg2NWItYmUwZTI4ZjFjNmEw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '101'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3AO/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '56'
+      content-type:
+      - application/json
+    parsed_body:
+      message: The provided model identifier is invalid.
+    status:
+      code: 400
+      message: Bad Request
+version: 1

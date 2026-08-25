@@ -650,6 +650,9 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
+!!! note "On a deferred capability"
+    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-available capability. Before that there is nothing for it to govern: an unloaded capability's tools are neither advertised to the model nor callable.
+
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
 from typing import Any
@@ -1025,7 +1028,7 @@ assert combined.capabilities[1] is rate_limit_hooks
 
 ### Sharing state between capabilities
 
-Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar]: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first.
+Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar] set from an async function: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first. A sync [`Hooks`](../hooks.md) function can't be the writer: it runs on a separate thread, so values it sets are not visible to the rest of the run.
 
 ### Testing custom capabilities
 

@@ -22,11 +22,12 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
@@ -35,6 +36,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -503,6 +505,68 @@ async def test_on_run_error_recovers_session_error() -> None:
     assert session.result.output == 'error hook recovered'
 
 
+async def test_on_run_error_recovers_connect_failure() -> None:
+    """A recovered *pre-session* failure (connecting) yields a closed session carrying the result.
+
+    The lifecycle hooks suppress the connect error before any session was yielded; without the
+    recovery yield in `_open_realtime_session`, `asynccontextmanager` would turn that clean exit
+    into `RuntimeError: generator didn't yield` and defeat the documented run-error recovery.
+    """
+
+    class _FailingConnectModel(_RecordingModel):
+        @asynccontextmanager
+        async def connect(
+            self,
+            *,
+            messages: Sequence[ModelMessage],
+            model_settings: RealtimeModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> AsyncGenerator[RealtimeConnection]:
+            raise RuntimeError('connect failed')
+            yield  # pragma: no cover
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'connect failed'
+            return AgentRunResult(output='recovered before connecting')
+
+    agent = Agent(capabilities=[RecoveryCapability()], deps_type=type(None))
+
+    async with agent.realtime(_FailingConnectModel()).session() as session:
+        # No connection was ever opened, so the recovered session is yielded closed.
+        with pytest.raises(UserError, match='session is closed'):
+            await session.send('hello')
+
+    assert session.result is not None
+    assert session.result.output == 'recovered before connecting'
+
+
+async def test_on_run_error_recovers_toolset_enter_failure() -> None:
+    """A recovered failure *during resolution* (entering the toolset) also yields a closed session.
+
+    This error fires inside `_resolve_realtime_session` after the lifecycle hooks are entered but
+    before the resolution is yielded, exercising the resolver's own recovery yield.
+    """
+
+    class _FailingToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> _FailingToolset:
+            raise RuntimeError('toolset failed')
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'toolset failed'
+            return AgentRunResult(output='recovered before resolving')
+
+    agent = Agent(capabilities=[RecoveryCapability()], toolsets=[_FailingToolset()], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        with pytest.raises(UserError, match='session is closed'):
+            await session.send('hello')
+
+    assert session.result is not None
+    assert session.result.output == 'recovered before resolving'
+
+
 async def test_unrecovered_session_error_propagates() -> None:
     """A session error still propagates unchanged when no run hook recovers it."""
     agent = Agent(deps_type=type(None))
@@ -546,6 +610,33 @@ async def test_wrap_run_short_circuits_before_session_connects() -> None:
         assert session.result.output == 'short-circuited'
 
     assert model.instructions is None
+
+
+async def test_short_circuit_then_recovered_caller_error_exits_cleanly() -> None:
+    """A caller-body error after a `wrap_run` short-circuit, recovered by `on_run_error`, exits cleanly.
+
+    The short-circuit path yields a closed session without connecting; if the caller then raises and
+    `on_run_error` recovers, the lifecycle hooks suppress the error. Without the `yielded` guard on the
+    short-circuit yields, `_resolve_realtime_session`/`_open_realtime_session` would resume past their
+    exit stacks and yield a second time, which `asynccontextmanager` reports as
+    `RuntimeError: generator didn't stop after athrow()`.
+    """
+
+    class ShortCircuitThenRecoverCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            return AgentRunResult(output='short-circuited')
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'caller failed'
+            return AgentRunResult(output='recovered after short-circuit')
+
+    agent = Agent(capabilities=[ShortCircuitThenRecoverCapability()], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        assert session.closed
+        raise RuntimeError('caller failed')
+
+    assert session.result is not None
 
 
 async def test_wrap_run_context_is_ambient_throughout_session() -> None:
@@ -773,11 +864,93 @@ async def test_run_context_exposes_realtime_session_and_merged_settings() -> Non
     assert observed == [{'output_modality': 'audio'}, session, session]
 
 
+async def test_before_run_can_cancel_realtime_session() -> None:
+    """A unit test because cancellation before connection setup has no provider exchange to record."""
+
+    class CancelBeforeRun(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            ctx.cancel()
+
+    model = _RecordingModel()
+    agent = Agent(capabilities=[CancelBeforeRun()], deps_type=type(None))
+
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.realtime(model).session():
+            pass
+
+    assert exc_info.value.all_messages() == []
+    assert model.instructions is None
+
+
+async def test_cancel_on_finished_realtime_context_is_noop() -> None:
+    """A retained context cannot cancel the task that happened to own an already-finished session."""
+    contexts: list[RunContext[None]] = []
+
+    class RetainContext(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            contexts.append(ctx)
+
+    agent = Agent(capabilities=[RetainContext()], deps_type=type(None))
+    async with agent.realtime(_RecordingModel(connection_events=[ResponseDone()])).session() as session:
+        _ = [event async for event in session]
+
+    (ctx,) = contexts
+    ctx.cancel()
+    assert await asyncio.sleep(0, result='unrelated work') == 'unrelated work'
+
+
+async def test_nested_run_cancellation_in_before_run_uses_realtime_history() -> None:
+    """A unit test because the behavior is lifecycle exception translation before any provider exchange."""
+    inner_agent = Agent[None, str](TestModel(call_tools=['cancel_inner']), deps_type=type(None))
+
+    @inner_agent.tool
+    def cancel_inner(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        return 'discarded'
+
+    class RunNested(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await inner_agent.run('inner')
+
+    outer_history = [ModelRequest(parts=[UserPromptPart('outer')])]
+    outer_agent = Agent(capabilities=[RunNested()], deps_type=type(None))
+
+    with pytest.raises(RunCancelled) as exc_info:
+        async with outer_agent.realtime(_RecordingModel(), message_history=outer_history).session():
+            pass
+
+    assert exc_info.value.all_messages() == outer_history
+    assert isinstance(exc_info.value.__cause__, RunCancelled)
+
+
+async def test_run_error_hook_cannot_recover_realtime_cancellation() -> None:
+    """A unit test because cancellation recovery is in-process lifecycle control flow, not provider behavior."""
+
+    class RecoverCancellation(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            return AgentRunResult(output='recovered')
+
+    agent = Agent[None, str](capabilities=[RecoverCancellation()], deps_type=type(None))
+
+    @agent.tool
+    async def cancel(ctx: RunContext[None]) -> None:
+        ctx.cancel()
+        await asyncio.Event().wait()
+
+    model = _RecordingModel(
+        connection_events=[ToolCall(tool_call_id='tc', tool_name='cancel', args='{}'), ResponseDone()]
+    )
+    with pytest.raises(RunCancelled):
+        async with agent.realtime(model).session() as session:
+            async for _ in session:
+                pass
+
+
 async def test_external_cancellation_keeps_its_type_and_settles_history() -> None:
     """`task.cancel()` during a session propagates an untranslated `CancelledError` with history settled.
 
     A unit test because no recorded provider exchange can be interrupted mid-reply on replay. Pins
-    the substrate whole-run cancellation (#6497) will attach run state to: external cancellation
+    the whole-run cancellation substrate attaches run state to: external cancellation
     must keep its exception type — `asyncio.timeout()`, TaskGroup teardown, and Temporal all depend
     on that — while session teardown still records the cut-off reply as interrupted, so the
     conversation history survives the cancellation.
@@ -813,7 +986,7 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     task = asyncio.create_task(talk())
     await mid_reply.wait()
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as exc_info:
         await task
 
     (session,) = sessions
@@ -822,6 +995,9 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     response = next(message for message in session.all_messages() if isinstance(message, ModelResponse))
     assert response.state == 'interrupted'
     assert any(isinstance(part, SpeechPart) and part.transcript == 'cut off mid-' for part in response.parts)
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert cancelled.all_messages() == session.all_messages()
 
 
 async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:

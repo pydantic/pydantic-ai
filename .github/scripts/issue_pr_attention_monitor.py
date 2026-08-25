@@ -10,6 +10,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +25,7 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
+_RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
 _RECENT_CANDIDATE_LIMIT = _CANDIDATE_LIMIT // 2
@@ -44,7 +46,19 @@ _ITEM_PROBE_LIMIT = 40
 _RUN_PROBE_LIMIT = 400
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
-_FALLBACK_OWNER = 'adtyavrdhn'
+_WEEKLY_ITEM_LIMIT = 3
+_LEGACY_ITEM_LIMIT = 2
+_WEEKLY_TEXT_LIMIT = 30_000
+REPOSITORIES = frozenset({'pydantic/pydantic-ai', 'pydantic/pydantic-ai-harness'})
+MAINTAINER_OWNERS = ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')
+ROUTING_RECOVERY_EPOCH = '2026-08-18'
+_MAINTAINER_NAMES = {
+    'adtyavrdhn': 'Aditya',
+    'dsfaccini': 'David SF',
+    'DouweM': 'Douwe',
+    'mpfaffenberger': 'Mike',
+}
+_FALLBACK_OWNER = MAINTAINER_OWNERS[0]
 _ACTION_LABEL = 'needs-maintainer-action'
 _PINGED_LABEL = 'attention-pinged'
 _ESCALATED_LABEL = 'attention-escalated'
@@ -54,9 +68,36 @@ _LIFECYCLE_LABELS = (*_STAGE_LABELS, _DELIVERED_LABEL)
 _LABELS = {
     _ACTION_LABEL: ('d4c5f9', 'The next meaningful action must come from a maintainer'),
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
-    _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request has been escalated after one reminder'),
+    _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
 }
+_SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
+_SEARCH_SUMMARY_QUERY = """
+query AttentionSearch($query: String!, $first: Int!) {
+  search(query: $query, type: ISSUE, first: $first) {
+    issueCount
+    nodes {
+      ... on Issue { number createdAt }
+      ... on PullRequest { number createdAt }
+    }
+  }
+}
+"""
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward a GitHub bearer token through an HTTP redirect."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
 
 
 class Decision(TypedDict):
@@ -110,7 +151,7 @@ class GitHubClient:
                 'X-GitHub-Api-Version': '2022-11-28',
             },
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
             if response.status == 204:
                 return None, response.headers.get('Link')
             body = response.read(_RESPONSE_LIMIT + 1)
@@ -176,7 +217,7 @@ class GitHubClient:
         self._probes += 1
         return True
 
-    def maintainer_login(self, repo: str, login: str) -> str | None:
+    def maintainer_login(self, repo: str, login: str, *, refresh: bool = False) -> str | None:
         """Return `login` when it can push to `repo`, resolved one user at a time.
 
         The collaborator *list* endpoint looks cheaper but is wrong here: it only
@@ -192,7 +233,7 @@ class GitHubClient:
         rationed.
         """
         key = (repo, login.casefold())
-        if key not in self._maintainers:
+        if refresh or key not in self._maintainers:
             encoded = urllib.parse.quote(login, safe='')
             try:
                 permission = cast(
@@ -322,23 +363,26 @@ def _rotated_search(
 
 
 def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
-    before = (now - _SLA).date().isoformat()
-    # An escalated item stays dormant until the reconcile sweep sees real
-    # activity and removes the marker; only then may a fresh lifecycle start.
+    cutoff_date = (now - _SLA).date()
+    # An escalated item cools down outside classification. Reconciliation
+    # either wakes it after new activity or returns it to the active queue.
     excluded = f'-label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
-    base_query = f'repo:{repo} is:open updated:<{before} {excluded}'
+    base_query = f'repo:{repo} is:open {excluded}'
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
-    recent_after = (now - _RECENT_ACTIVITY_WINDOW).date().isoformat()
+    recent_after = (now - _RECENT_ACTIVITY_WINDOW).date()
+    stale_through = cutoff_date - dt.timedelta(days=1)
     recent = _rotated_search(
         client,
-        f'{base_query} updated:>={recent_after}',
+        # GitHub Search does not intersect repeated `updated:` qualifiers; a
+        # single range is required or the lower bound silently wins.
+        f'{base_query} updated:{recent_after.isoformat()}..{stale_through.isoformat()}',
         order='desc',
         limit=_RECENT_CANDIDATE_LIMIT,
         slot=slot,
     )
     backlog = _rotated_search(
         client,
-        base_query,
+        f'{base_query} updated:<{recent_after.isoformat()}',
         order='asc',
         limit=_BACKLOG_CANDIDATE_LIMIT,
         slot=slot,
@@ -660,7 +704,7 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
                 continue
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
-        except (urllib.error.HTTPError, RuntimeError) as exc:
+        except (urllib.error.URLError, RuntimeError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
@@ -716,8 +760,18 @@ def _actor(event: Mapping[str, Any]) -> str:
 
 # `mentioned` and `subscribed` can be generated as activity side effects, so
 # they must never count as acknowledgement.
+_REPLY_EVENTS = frozenset({'commented', 'reviewed', 'line-commented'})
 _NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
 _ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
+
+
+def structured_reply(event: Mapping[str, Any]) -> tuple[str, dt.datetime] | None:
+    """Return trusted actor/time metadata for a GitHub reply or review event."""
+    if event.get('event') not in _REPLY_EVENTS:
+        return None
+    actor = _actor(event)
+    when = _event_time(event)
+    return (actor, when) if actor and when is not None else None
 
 
 def _acknowledged(
@@ -734,7 +788,7 @@ def _acknowledged(
         actor = _actor(event)
         if actor.casefold() in recipient_logins:
             return True
-        if event.get('event') not in {'commented', 'reviewed'}:
+        if structured_reply(event) is None:
             return False
         # `author_association` is computed for the caller, so it reports a
         # maintainer whose organization membership is private as CONTRIBUTOR.
@@ -806,11 +860,7 @@ def _status(
     # as zero; the reply clause below is what shows that activity.
     if comments := int(item.get('comments') or 0):
         parts.append(f'{comments} comment{"" if comments == 1 else "s"}')
-    replies = [
-        event
-        for event in timeline
-        if event.get('event') in {'commented', 'reviewed'} and _actor(event) and _event_time(event) is not None
-    ]
+    replies = [event for event in timeline if structured_reply(event) is not None]
     if replies:
         last = replies[-1]
         when = cast(dt.datetime, _event_time(last))
@@ -890,7 +940,7 @@ def _notice_if_current(
 
 
 def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int, *, new_delivery: bool = False) -> None:
-    """Finish a terminal delivery while preserving its dormant marker."""
+    """Finish an escalation delivery while preserving its cooldown marker."""
     labels = [_ESCALATED_LABEL, _DELIVERED_LABEL] if new_delivery else [_ESCALATED_LABEL]
     _add_labels(client, repo, number, labels)
     _remove_label(client, repo, number, _ACTION_LABEL)
@@ -927,6 +977,26 @@ def _finish_delivery_receipt(
     return False
 
 
+def _effective_stage(
+    client: GitHubClient, repo: str, number: int, labels: set[str], events: Sequence[dict[str, Any]]
+) -> Literal[0, 1, 2]:
+    stage = _stage(labels)
+    if stage != 2:
+        return stage
+    resurfaced = _transition(events, 0)
+    escalated = _transition(events, 2)
+    if resurfaced is None or escalated is None or resurfaced[0] <= escalated[0]:
+        return stage
+    # A resurface that added the action label but failed to remove the
+    # escalation marker would re-enter stage 2 and queue a duplicate
+    # escalation from the old transition. The newer action label is
+    # authoritative: shed the stale marker so its label event starts the
+    # restarted SLA instead.
+    _remove_label(client, repo, number, _ESCALATED_LABEL)
+    labels.discard(_ESCALATED_LABEL)
+    return _stage(labels)
+
+
 def _reconcile_item(
     client: GitHubClient,
     repo: str,
@@ -945,9 +1015,9 @@ def _reconcile_item(
         return None
     if _ACTION_LABEL not in labels:
         return None
-    current_stage = _stage(labels)
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    current_stage = _effective_stage(client, repo, number, labels, events)
     transition = _transition(events, current_stage)
     if transition is None:
         raise RuntimeError('Could not find the current attention transition')
@@ -995,8 +1065,8 @@ def _reconcile_item(
     return (f'#{number}: queued channel {kind}', notice) if notice is not None else None
 
 
-def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str | None:
-    """Wake or retire one dormant escalated item."""
+def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> str | None:
+    """Wake, recycle, or retire one escalated item."""
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     labels = _labels(current)
     if _ACTION_LABEL in labels or _ESCALATED_LABEL not in labels:
@@ -1024,6 +1094,14 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str |
     ):
         _remove_label(client, repo, number, _ESCALATED_LABEL)
         return f'#{number}: restored attention eligibility after new activity'
+    if now - transition[0] >= _RESURFACE_AFTER:
+        # Add the active marker first so a partial GitHub failure cannot leave
+        # unresolved work in neither state. Its label event starts a fresh SLA.
+        _add_labels(client, repo, number, [_ACTION_LABEL])
+        _remove_label(client, repo, number, _ESCALATED_LABEL)
+        reactivated = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+        _ensure_recipients(client, repo, reactivated)
+        return f'#{number}: returned unresolved attention to the active queue'
     return None
 
 
@@ -1063,32 +1141,33 @@ def reconcile(
                 lines.append(line)
                 if notice is not None and notices is not None:
                     notices.append(notice)
-        except (urllib.error.HTTPError, RuntimeError, ValueError) as exc:
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
     if len(closed) == _CLOSED_CLEANUP_LIMIT or len(active) == _ACTIVE_OPEN_LIMIT:
         lines.append('additional attention items remain for a later rotated batch')
-    encoded_escalated = urllib.parse.quote(_ESCALATED_LABEL, safe='')
-    dormant = cast(
-        list[dict[str, Any]],
-        client.get(
-            # state=all so a dormant item closed while escalated still sheds
-            # its marker instead of carrying it forever.
-            f'/repos/{repo}/issues?state=all&labels={encoded_escalated}'
-            # Recent-first ensures that renewed activity on an old escalated
-            # issue cannot sit behind the oldest 25 dormant items.
-            f'&sort=updated&direction=desc&per_page={_RECONCILE_LIMIT}'
-        ),
+    dormant = _rotated_search(
+        client,
+        # No is:open qualifier so a dormant item closed while escalated still
+        # sheds its marker instead of carrying it forever.
+        f'repo:{repo} label:"{_ESCALATED_LABEL}"',
+        # Recent-first keeps renewed activity on an old escalated issue from
+        # sitting behind the oldest dormant items, while slot rotation still
+        # reaches every page so a full page of items inside the cooldown
+        # cannot strand older, already-eligible escalations indefinitely.
+        order='desc',
+        limit=_RECONCILE_LIMIT,
+        slot=slot,
     )
     for item in dormant:
         number = int(item['number'])
         if number in processed or _ACTION_LABEL in _labels(item):
             continue
         try:
-            if line := _sweep_escalated_item(client, repo, number):
+            if line := _sweep_escalated_item(client, repo, number, now=now):
                 lines.append(line)
-        except (urllib.error.HTTPError, RuntimeError, ValueError) as exc:
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
@@ -1097,6 +1176,7 @@ def reconcile(
 
 def _slack_escape(value: str) -> str:
     normalized = ' '.join(value.split())
+    normalized = ''.join(character for character in normalized if unicodedata.category(character) != 'Cf')
     for character in '*_~`|\\':
         normalized = normalized.replace(character, '')
     normalized = ' '.join(normalized.split())
@@ -1123,7 +1203,7 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
         payload = {
             'text': '\n'.join(
                 [
-                    '<!channel> *Maintainer attention requested*',
+                    f'<!channel> *Maintainer attention requested in {_slack_escape(repo)}*',
                     *details,
                     '',
                     '*Expected action:* Open each item and make its next maintainer decision there. Reply, review, '
@@ -1145,6 +1225,293 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
             output.write(f'has_notices={str(bool(notices)).lower()}\n')
             output.write(f'notice_items={json.dumps(refs, separators=(",", ":"))}\n')
             output.write(f'slack_payload={json.dumps(payload, separators=(",", ":"))}\n')
+
+
+def _search_summary(client: GitHubClient, query: str, *, first: int) -> tuple[int, list[dict[str, Any]]]:
+    """Return a bounded GraphQL search page without REST Search burst limits."""
+    result = client.post('/graphql', {'query': _SEARCH_SUMMARY_QUERY, 'variables': {'query': query, 'first': first}})
+    if not isinstance(result, Mapping):
+        raise RuntimeError('GitHub rejected the attention search')
+    response = cast(Mapping[str, object], result)
+    if response.get('errors'):
+        raise RuntimeError('GitHub rejected the attention search')
+    data = response.get('data')
+    search = cast(Mapping[str, object], data).get('search') if isinstance(data, Mapping) else None
+    if not isinstance(search, Mapping):
+        raise RuntimeError('GitHub returned a malformed attention search')
+    search_data = cast(Mapping[str, object], search)
+    count = search_data.get('issueCount')
+    nodes = search_data.get('nodes')
+    if not isinstance(count, int) or isinstance(count, bool) or not isinstance(nodes, list):
+        raise RuntimeError('GitHub returned a malformed attention search')
+    values: list[dict[str, Any]] = []
+    for node in cast(list[object], nodes):
+        if not isinstance(node, Mapping):
+            raise RuntimeError('GitHub returned a malformed attention search item')
+        item = cast(Mapping[str, object], node)
+        number = item.get('number')
+        if not isinstance(number, int) or isinstance(number, bool):
+            raise RuntimeError('GitHub returned a malformed attention search item')
+        values.append({'number': item['number'], 'created_at': item.get('createdAt')})
+    return count, values
+
+
+def _search_count(client: GitHubClient, query: str) -> int:
+    return _search_summary(client, query, first=1)[0]
+
+
+def slack_mentions(value: str, required_owner: str) -> dict[str, str]:
+    """Validate the fixed maintainer mention mapping owned by repository configuration."""
+    loaded: object = json.loads(value)
+    if not isinstance(loaded, Mapping):
+        raise ValueError('Slack mention mapping must be an object')
+    mentions = {str(key): str(mention) for key, mention in cast(Mapping[object, object], loaded).items()}
+    if (
+        required_owner not in mentions
+        or not set(mentions) <= set(MAINTAINER_OWNERS)
+        or any(_SLACK_MENTION.fullmatch(mention) is None for mention in mentions.values())
+    ):
+        raise ValueError('Slack mention mapping must contain the selected owner and no unknown owners')
+    return mentions
+
+
+def _qualified_routing_owners(client: GitHubClient, repo: str) -> tuple[str, ...]:
+    return tuple(owner for owner in MAINTAINER_OWNERS if client.maintainer_login(repo, owner, refresh=True) is not None)
+
+
+def _unowned_query(
+    repo: str,
+    owners: Sequence[str],
+    *,
+    lane: Literal['recent', 'legacy', 'draft'],
+) -> str:
+    exclusions = ' '.join(f'-assignee:{owner}' for owner in owners)
+    if lane == 'recent':
+        return f'repo:{repo} is:open created:>={ROUTING_RECOVERY_EPOCH} -draft:true {exclusions}'
+    if lane == 'legacy':
+        return f'repo:{repo} is:open created:<{ROUTING_RECOVERY_EPOCH} -draft:true {exclusions}'
+    return f'repo:{repo} is:pr is:open draft:true {exclusions}'
+
+
+def _unowned_snapshot(
+    client: GitHubClient, repo: str, owners: Sequence[str]
+) -> tuple[int, tuple[int, dt.datetime] | None]:
+    query = _unowned_query(repo, owners, lane='recent')
+    total, items = _search_summary(client, f'{query} sort:created-asc', first=1)
+    if not items:
+        return total, None
+    return total, (int(items[0]['number']), _parse_time(str(items[0]['created_at'])))
+
+
+def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention: str | None = None) -> str:
+    """Build one daily heartbeat for the queues that need prompt maintainer action."""
+    active = _search_count(client, f'repo:{repo} is:open label:"{_ACTION_LABEL}"')
+    cooling = _search_count(client, f'repo:{repo} is:open label:"{_ESCALATED_LABEL}"')
+    owners = _qualified_routing_owners(client, repo)
+    recent_unowned, oldest = _unowned_snapshot(client, repo, owners)
+    # Counts and item numbers only: the heartbeat must stay free of issue and PR
+    # prose, which is attacker-controlled text.
+    oldest_age = max(0, (now - oldest[1]).days) if oldest else 0
+    breach = recent_unowned > 100 or (oldest is not None and now - oldest[1] > dt.timedelta(days=1))
+    if breach and (urgent_mention is None or _SLACK_MENTION.fullmatch(urgent_mention) is None):
+        raise ValueError('A valid Aditya Slack mention is required for an intake breach')
+    prefix = f'{urgent_mention} :rotating_light:' if breach else ':telescope:'
+    recent = (
+        f'{recent_unowned} post-rollout without designated owner; oldest #{oldest[0]} opened {oldest_age}d ago'
+        if oldest
+        else '0 post-rollout without designated owner'
+    )
+    saturation = ' — recovery search saturated' if recent_unowned > 100 else ''
+    return (
+        f'{prefix} Attention coverage for {_slack_escape(repo)} — '
+        f'queue: {active} active, {cooling} cooling; intake: {recent}{saturation}. '
+        'The Monday digest covers assigned, legacy, and draft work.'
+    )
+
+
+def _weekly_status(
+    item: Mapping[str, Any], timeline: Sequence[dict[str, Any]], owner: str | None, *, now: dt.datetime
+) -> str:
+    """Describe recent interaction without scanning or interpreting discussion prose."""
+    parts = ['pull request' if 'pull_request' in item else 'issue']
+    if opened := item.get('created_at'):
+        parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
+    if comments := int(item.get('comments') or 0):
+        parts.append(f'{comments} issue comment{"" if comments == 1 else "s"}')
+    replies = [event for event in timeline if structured_reply(event) is not None]
+    if replies:
+        last = replies[-1]
+        parts.append(f'last reply/review @{_actor(last)} {_age(now, cast(dt.datetime, _event_time(last)))}')
+    if owner is not None:
+        owner_replies = [event for event in replies if _actor(event).casefold() == owner.casefold()]
+        if owner_replies:
+            last_owner = owner_replies[-1]
+            parts.append(f'owner replied/reviewed {_age(now, cast(dt.datetime, _event_time(last_owner)))}')
+        else:
+            parts.append('no owner reply/review in recent history')
+    return ' · '.join(parts)
+
+
+def _weekly_items(
+    client: GitHubClient,
+    repo: str,
+    owner: str,
+    matches: Sequence[dict[str, Any]],
+    seen: set[int],
+    *,
+    attention_only: bool,
+    limit: int,
+    now: dt.datetime,
+) -> list[str]:
+    if not limit:
+        return []
+    lines: list[str] = []
+    for match in matches:
+        number = int(match['number'])
+        if number in seen:
+            continue
+        current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+        assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
+        labels = _labels(current)
+        if (
+            str(current.get('state') or '').casefold() != 'open'
+            or owner.casefold() not in assignees
+            or (attention_only and _ACTION_LABEL not in labels)
+        ):
+            continue
+        timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100')
+        updated = _age(now, _parse_time(str(current['updated_at'])))
+        title = _slack_escape(str(current.get('title') or ''))[:120]
+        status = _slack_escape(_weekly_status(current, timeline, owner, now=now))
+        label = f'#{number} {title}'.rstrip()
+        phrase = (
+            'channel escalation cooling'
+            if _ESCALATED_LABEL in labels
+            else ('awaiting maintainer action' if _ACTION_LABEL in labels else 'assigned')
+        )
+        lines.append(f'• <https://github.com/{repo}/issues/{number}|{label}> — {phrase} · updated {updated} · {status}')
+        seen.add(number)
+        if len(lines) == limit:
+            break
+    return lines
+
+
+def _legacy_items(
+    client: GitHubClient,
+    repo: str,
+    matches: Sequence[dict[str, Any]],
+    owners: Sequence[str],
+    *,
+    now: dt.datetime,
+) -> list[str]:
+    lines: list[str] = []
+    owner_keys = {owner.casefold() for owner in owners}
+    for match in matches:
+        number = int(match['number'])
+        current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+        assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
+        updated_at = _parse_time(str(current['updated_at']))
+        if (
+            str(current.get('state') or '').casefold() != 'open'
+            or assignees.intersection(owner_keys)
+            or current.get('draft') is True
+            or _parse_time(str(current['created_at'])).date() >= dt.date.fromisoformat(ROUTING_RECOVERY_EPOCH)
+        ):
+            continue
+        timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100')
+        title = _slack_escape(str(current.get('title') or ''))[:120]
+        status = _slack_escape(_weekly_status(current, timeline, None, now=now))
+        label = f'#{number} {title}'.rstrip()
+        lines.append(
+            f'• <https://github.com/{repo}/issues/{number}|{label}> — updated {_age(now, updated_at)} · {status}'
+        )
+    return lines
+
+
+def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
+    """Build a bounded Monday view of every ownership lane."""
+    if repo not in REPOSITORIES:
+        raise ValueError(f'Unsupported repository: {repo}')
+    lines = [f':spiral_calendar_pad: *Monday maintainer queues — {_slack_escape(repo)}* · {now.date().isoformat()}']
+    owners = _qualified_routing_owners(client, repo)
+    for owner in MAINTAINER_OWNERS:
+        name = _MAINTAINER_NAMES[owner]
+        if owner not in owners:
+            total = _search_count(client, f'repo:{repo} is:open assignee:{owner}')
+            noun = 'assignment' if total == 1 else 'assignments'
+            verb = 'needs' if total == 1 else 'need'
+            lines.extend(
+                ['', f'*{name}* (`{owner}`) — not a current designated owner · {total} {noun} {verb} rerouting']
+            )
+            query = urllib.parse.quote_plus(f'repo:{repo} is:open assignee:{owner}')
+            lines.append(f'<https://github.com/{repo}/issues?q={query}|View all {total}>')
+            continue
+        base = f'repo:{repo} is:open assignee:{owner}'
+        total, assigned = _search_summary(client, f'{base} sort:updated-asc', first=_WEEKLY_ITEM_LIMIT * 2)
+        if not total:
+            lines.extend(['', f'*{name}* (`{owner}`) — clear'])
+            continue
+        awaiting, attention = _search_summary(
+            client,
+            f'{base} label:"{_ACTION_LABEL}" sort:updated-asc',
+            first=_WEEKLY_ITEM_LIMIT,
+        )
+        lines.extend(['', f'*{name}* (`{owner}`) — {total} open assigned · {awaiting} awaiting action'])
+        seen: set[int] = set()
+        details = _weekly_items(
+            client, repo, owner, attention, seen, attention_only=True, limit=_WEEKLY_ITEM_LIMIT, now=now
+        )
+        details.extend(
+            _weekly_items(
+                client,
+                repo,
+                owner,
+                assigned,
+                seen,
+                attention_only=False,
+                limit=_WEEKLY_ITEM_LIMIT - len(details),
+                now=now,
+            )
+        )
+        lines.extend(details)
+        query = urllib.parse.quote_plus(f'repo:{repo} is:open assignee:{owner}')
+        lines.append(f'<https://github.com/{repo}/issues?q={query}|View all {total}>')
+    recent_query = _unowned_query(repo, owners, lane='recent')
+    legacy_query = _unowned_query(repo, owners, lane='legacy')
+    draft_query = _unowned_query(repo, owners, lane='draft')
+    recent_total = _search_count(client, recent_query)
+    legacy_total, legacy_matches = _search_summary(
+        client, f'{legacy_query} sort:updated-desc', first=_LEGACY_ITEM_LIMIT
+    )
+    draft_total = _search_count(client, draft_query)
+    lines.extend(
+        [
+            '',
+            f'*Unassigned queues* — {recent_total} post-rollout · {legacy_total} legacy · {draft_total} drafts '
+            'without a designated owner',
+        ]
+    )
+    legacy_lines = _legacy_items(client, repo, legacy_matches, owners, now=now)
+    if legacy_lines:
+        lines.extend(['Recently updated legacy items:', *legacy_lines])
+    encoded_recent = urllib.parse.quote_plus(recent_query)
+    encoded_legacy = urllib.parse.quote_plus(legacy_query)
+    encoded_drafts = urllib.parse.quote_plus(draft_query)
+    lines.append(
+        f'<https://github.com/{repo}/issues?q={encoded_recent}|View post-rollout> · '
+        f'<https://github.com/{repo}/issues?q={encoded_legacy}|View legacy> · '
+        f'<https://github.com/{repo}/issues?q={encoded_drafts}|View drafts>'
+    )
+    text = '\n'.join(lines)
+    if len(text.encode()) > _WEEKLY_TEXT_LIMIT:
+        raise RuntimeError('Weekly digest exceeds the Slack payload limit')
+    return text
+
+
+def _write_slack_payload(text: str) -> None:
+    if output_path := os.environ.get('GITHUB_OUTPUT'):
+        with Path(output_path).open('a', encoding='utf-8') as output:
+            output.write(f'slack_payload={json.dumps({"text": text}, separators=(",", ":"))}\n')
 
 
 _LOGIN_PATTERN = re.compile(r'(?=.{1,39}\Z)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?')
@@ -1299,7 +1666,7 @@ def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRe
         try:
             if line := _finalize_notice(client, repo, notice, now=now):
                 lines.append(line)
-        except (urllib.error.HTTPError, RuntimeError) as exc:
+        except (urllib.error.URLError, RuntimeError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
@@ -1319,7 +1686,7 @@ def _write_summary(lines: Sequence[str]) -> None:
 def main() -> int:
     """Build a snapshot, apply decisions, or reconcile reminders."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'prepare', 'finalize'])
+    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'prepare', 'finalize', 'census', 'weekly'])
     parser.add_argument('--snapshot-path', default='attention-candidates.json')
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
@@ -1348,6 +1715,20 @@ def main() -> int:
         notices = prepare_notices(client, repo, _notice_refs(json.loads(source)), now=now)
         _write_notices(repo, notices)
         lines = [f'prepared {len(notices)} current attention notice(s)']
+    elif args.mode == 'census':
+        mention = None
+        if raw_mentions := os.environ.get('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'):
+            try:
+                mention = slack_mentions(raw_mentions, _FALLBACK_OWNER)[_FALLBACK_OWNER]
+            except ValueError:
+                pass
+        coverage = census(client, repo, now=now, urgent_mention=mention)
+        _write_slack_payload(coverage)
+        lines = [coverage]
+    elif args.mode == 'weekly':
+        report = weekly_digest(client, repo, now=now)
+        _write_slack_payload(report)
+        lines = [report]
     else:
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:

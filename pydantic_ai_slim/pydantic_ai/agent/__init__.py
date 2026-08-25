@@ -119,6 +119,8 @@ from .abstract import (
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
+    _RealtimeSessionLifecycle,  # pyright: ignore[reportPrivateUsage]
+    _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
@@ -134,6 +136,7 @@ if TYPE_CHECKING:
         RealtimeEvent as RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
+        RealtimeProviderSession,
         RealtimeSession,
     )
     from ..ui._web import ModelsParam
@@ -614,7 +617,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
-            capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/overview/) to configure the agent with,
+            capabilities: Optional list of [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) to configure the agent with,
                 including functions which take a run context and return a capability.
                 See [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] for more information.
                 Custom capabilities can be created by subclassing
@@ -1312,7 +1315,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1325,6 +1328,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
         # run would otherwise consume it and attach the outer handle to the wrong run.
         binding = take_run_binding()
+
+        # The controller likewise exists before any user-supplied setup code, so `RunContext.cancel()`
+        # from a capability/toolset `for_run()` hook records the request instead of raising. Delivery
+        # still waits for `bind()` below: setup hooks are never interrupted, and a request recorded
+        # here ends the run at the first await after binding, before any model request (#7386).
+        cancellation = binding.cancellation if binding is not None else RunCancellation()
 
         # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
         # dict overrides only the named budget for this run (riding `ToolManager.default_max_retries`).
@@ -1566,6 +1575,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
+            _cancellation=cancellation,
         )
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1746,7 +1756,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
-            cancellation=binding.cancellation if binding is not None else RunCancellation(),
+            cancellation=cancellation,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -3173,7 +3183,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return schema
 
     @asynccontextmanager
-    async def _open_realtime_session(  # noqa: C901
+    async def _resolve_realtime_session(  # noqa: C901
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
         *,
@@ -3188,18 +3198,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_id: str | None = None,
         run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
-        audio_retention: AudioRetention = 'transcript_only',
-        retain_images_every_n: int = 1,
-        retain_images_max: int | None = 100,
-    ) -> AsyncGenerator[RealtimeSession]:
-        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
+        run_lifecycle: bool = False,
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve the agent configuration shared by realtime sessions and WebRTC signaling.
 
-        Opens the realtime session and drives the agent's tools. Users go through
-        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
-        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
+        With `run_lifecycle`, the run-lifecycle hooks are dispatched around the resolved configuration
+        as well, so that they wrap the toolset — and the session the caller opens inside them — exactly
+        as `iter` does. Only [`_open_realtime_session`][pydantic_ai.agent.Agent._open_realtime_session]
+        asks for that: signaling only reads back the instructions and tools a session would advertise,
+        and is not itself a run.
         """
-        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
-        from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
+        from ..realtime import RealtimeModel, infer_realtime_model
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -3211,6 +3220,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
         run_id = _agent_graph.resolve_run_id(run_id, message_history)
         max_tool_retries = self._resolve_tool_retries()
+        cancellation = RunCancellation() if run_lifecycle else None
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
@@ -3363,60 +3373,100 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         toolset = await toolset.for_run(run_context)
 
-        session: RealtimeSession | None = None
-        short_result: AgentRunResult[Any] | None = None
+        # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
+        # will — so the session and the result standing in for it are handed back through this holder.
+        lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
 
         def _build_session_result() -> AgentRunResult[Any]:
-            assert session is not None
-            return session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
+            assert lifecycle_state is not None and lifecycle_state.session is not None
+            return lifecycle_state.session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
 
         async def _finalize_session_result(result: AgentRunResult[Any]) -> None:
-            nonlocal short_result
-            if session is None:
-                short_result = result
+            assert lifecycle_state is not None
+            if cancellation is not None and cancellation.cancel_requested:
+                raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
+            if lifecycle_state.session is None:
+                lifecycle_state.short_result = result
             else:
-                session._result = result  # pyright: ignore[reportPrivateUsage]
+                lifecycle_state.session._result = result  # pyright: ignore[reportPrivateUsage]
 
-        async with AsyncExitStack() as session_stack:
-            lifecycle = await session_stack.enter_async_context(
-                _run_lifecycle_hooks(
-                    run_capability,
-                    run_context,
-                    build_result=_build_session_result,
-                    finalize=_finalize_session_result,
-                )
-            )
-            if lifecycle.short_circuited:
-                # The session below is yielded closed, so `_ensure_not_closed` rejects every public
-                # entry point before the connection is touched; these raises are defense-in-depth
-                # for the abstract methods the base class requires.
-                class _SkippedRealtimeConnection(RealtimeConnection):
-                    async def send(self, content: RealtimeInput) -> None:
-                        raise exceptions.UserError(  # pragma: no cover
-                            'This realtime session was short-circuited before connecting.'
-                        )
+        @asynccontextmanager
+        async def _translate_cancellation() -> AsyncGenerator[None]:
+            assert cancellation is not None and lifecycle_state is not None
 
-                    def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-                        raise exceptions.UserError(  # pragma: no cover
-                            'This realtime session was short-circuited before connecting.'
-                        )
-
-                session = RealtimeSession(
-                    _SkippedRealtimeConnection(),
-                    model=model,
-                    tool_manager=ToolManager(FunctionToolset()),
+            def _run_cancelled(message: str) -> exceptions.RunCancelled:
+                assert lifecycle_state is not None
+                session = lifecycle_state.session
+                return exceptions.RunCancelled(
+                    message,
+                    messages=session.all_messages() if session is not None else message_history or (),
+                    new_message_index=len(message_history or ()),
                     usage=run_context.usage,
-                    usage_limits=usage_limits,
-                    message_history=message_history,
-                    conversation_id=conversation_id,
-                    run_id=run_id,
                     metadata=run_context.metadata,
+                    run_id=run_id,
+                    conversation_id=conversation_id,
                 )
-                assert short_result is not None
-                session._result = short_result  # pyright: ignore[reportPrivateUsage]
-                session._closed = True  # pyright: ignore[reportPrivateUsage]
-                yield session
-                return
+
+            try:
+                yield
+            except exceptions.RunCancelled as exc:
+                # Match classic runs: a nested run carries its own history, but this session's
+                # caller must receive the outer conversation it can actually resume.
+                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
+            except asyncio.CancelledError as exc:
+                cancelled = _run_cancelled('The agent run was cancelled.')
+                if cancellation.resolve():
+                    raise cancelled from exc
+                cancelled._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
+            finally:
+                cancellation.release_issued()
+
+        yielded = False
+        async with AsyncExitStack() as session_stack:
+            if lifecycle_state is not None:
+                assert cancellation is not None
+                # Setup-time `for_run` callbacks have the same context contract as a classic run:
+                # cancellation becomes available only once the run lifecycle has an owning task.
+                run_context._cancellation = cancellation  # pyright: ignore[reportPrivateUsage]
+                await session_stack.enter_async_context(_translate_cancellation())
+                cancellation.bind()
+                session_stack.callback(cancellation.finish)
+                lifecycle = await session_stack.enter_async_context(
+                    _run_lifecycle_hooks(
+                        run_capability,
+                        run_context,
+                        build_result=_build_session_result,
+                        finalize=_finalize_session_result,
+                    )
+                )
+                if lifecycle.short_circuited:
+                    # Nothing below this is resolved: the toolset is never entered and the caller
+                    # yields a closed session in place of connecting. The empty `ToolManager` is the
+                    # one that session is built on. The `yielded` guard mirrors the normal path: if the
+                    # caller's body raises and the lifecycle hooks recover it (`on_run_error` runs even
+                    # after a short-circuit), the error is suppressed at the exit stack and execution
+                    # resumes below — without this, that clean resume would yield a second time and
+                    # `asynccontextmanager` would raise `RuntimeError: generator didn't stop after athrow()`.
+                    try:
+                        yield _RealtimeSessionResolution(
+                            model=model,
+                            run_context=run_context,
+                            tool_manager=ToolManager(FunctionToolset()),
+                            model_request_parameters=models.ModelRequestParameters(),
+                            model_settings=effective_model_settings,
+                            instructions=None,
+                            request_messages=[],
+                            model_profile=model_profile,
+                            instrumentation_settings=session_instrumentation_settings,
+                            conversation_id=conversation_id,
+                            run_id=run_id,
+                            lifecycle=lifecycle_state,
+                            short_circuited=True,
+                        )
+                    finally:
+                        yielded = True
+                    return
             await session_stack.enter_async_context(toolset)
             tool_manager = await ToolManager[AgentDepsT](
                 toolset, root_capability=run_capability, default_max_retries=max_tool_retries
@@ -3496,60 +3546,237 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 else None
             )
 
-            if message_history and not model_profile.get('supports_session_seeding', False):
+            resolution = _RealtimeSessionResolution(
+                model=model,
+                run_context=run_context,
+                tool_manager=tool_manager,
+                model_request_parameters=model_request_parameters,
+                model_settings=effective_model_settings,
+                instructions=resolved_instructions or None,
+                request_messages=request_messages,
+                model_profile=model_profile,
+                instrumentation_settings=session_instrumentation_settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                wrap_event_stream=wrap_event_stream,
+                lifecycle=lifecycle_state,
+            )
+            try:
+                yield resolution
+            finally:
+                yielded = True
+
+        if yielded:
+            # Reached on the normal path, and when the run-lifecycle hooks suppressed a caller-side
+            # error that `wrap_run`/`on_run_error` recovered — the caller sees a clean exit either way.
+            return
+        # Entering the toolset or resolving the session configuration failed after the run-lifecycle
+        # hooks were entered, and `wrap_run`/`on_run_error` recovered with a result: the hooks
+        # suppressed the error above with nothing yielded yet, which `asynccontextmanager` would
+        # report as `RuntimeError: generator didn't yield`. Yield the short-circuit resolution shape
+        # instead, so `_open_realtime_session` yields its closed placeholder session carrying the
+        # recovery result.
+        assert lifecycle_state is not None and lifecycle_state.short_result is not None
+        yield _RealtimeSessionResolution(
+            model=model,
+            run_context=run_context,
+            tool_manager=ToolManager(FunctionToolset()),
+            model_request_parameters=models.ModelRequestParameters(),
+            model_settings=effective_model_settings,
+            instructions=None,
+            request_messages=[],
+            model_profile=model_profile,
+            instrumentation_settings=session_instrumentation_settings,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            lifecycle=lifecycle_state,
+            short_circuited=True,
+        )
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
+
+        Opens the realtime session and drives the agent's tools. Users go through
+        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
+        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
+        """
+        from ..realtime import RealtimeSession
+        from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
+
+        # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
+        # provider directly, so the session disables its audio methods and retains no audio bytes.
+        owns_media = provider_session is None
+        if not owns_media and audio_retention != 'transcript_only':
+            # Reject an audio-retention request that can never be satisfied (no audio bytes flow here).
+            raise exceptions.UserError(
+                "A WebRTC sideband session can't retain audio: the browser exchanges audio with the "
+                'provider directly, so no audio bytes reach this connection. Leave `audio_retention` at '
+                "'transcript_only' (transcripts still build the conversation history)."
+            )
+
+        yielded = False
+        async with self._resolve_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            run_lifecycle=True,
+        ) as resolved:
+            lifecycle = resolved.lifecycle
+            assert lifecycle is not None
+
+            def _closed_session(result: AgentRunResult[Any]) -> RealtimeSession:
+                # The session is yielded closed, so `_ensure_not_closed` rejects every public
+                # entry point before the connection is touched; these raises are defense-in-depth
+                # for the abstract methods the base class requires.
+                class _SkippedRealtimeConnection(RealtimeConnection):
+                    async def send(self, content: RealtimeInput) -> None:
+                        raise exceptions.UserError(  # pragma: no cover
+                            'This realtime session was short-circuited before connecting.'
+                        )
+
+                    def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+                        raise exceptions.UserError(  # pragma: no cover
+                            'This realtime session was short-circuited before connecting.'
+                        )
+
+                session = RealtimeSession(
+                    _SkippedRealtimeConnection(),
+                    model=resolved.model,
+                    tool_manager=resolved.tool_manager,
+                    usage=resolved.run_context.usage,
+                    usage_limits=usage_limits,
+                    message_history=message_history,
+                    conversation_id=resolved.conversation_id,
+                    run_id=resolved.run_id,
+                    metadata=resolved.run_context.metadata,
+                )
+                session._result = result  # pyright: ignore[reportPrivateUsage]
+                session._closed = True  # pyright: ignore[reportPrivateUsage]
+                return session
+
+            if resolved.short_circuited:
+                assert lifecycle.short_result is not None
+                # `yielded` guard as in the normal path below: if the caller's body raises and the
+                # resolver's lifecycle hooks recover it, the error is suppressed at the `async with`
+                # above and execution resumes below. Without this, that resume would yield a second
+                # closed session and `asynccontextmanager` would raise `generator didn't stop after athrow()`.
+                try:
+                    yield _closed_session(lifecycle.short_result)
+                finally:
+                    yielded = True
+                return
+
+            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
                 raise exceptions.UserError(
-                    f'The {model.model_name!r} realtime model does not support seeding a session with '
+                    f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
                 )
 
-            output_modality = (effective_model_settings or {}).get('output_modality', 'audio')
+            output_modality = (resolved.model_settings or {}).get('output_modality', 'audio')
             # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
             # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway
             # (xAI), so it is rejected here rather than after a connection is open.
-            if output_modality == 'text' and not model_profile.get('supports_text_output', True):
+            if output_modality == 'text' and not resolved.model_profile.get('supports_text_output', True):
                 raise exceptions.UserError(
-                    f"The {model.model_name!r} realtime model does not support `output_modality='text'`; "
+                    f"The {resolved.model.model_name!r} realtime model does not support `output_modality='text'`; "
                     'it only generates audio. Read the spoken answer from the transcript on the '
                     '`SpeechPart` instead.'
                 )
 
-            async with model.connect(
-                messages=request_messages,
-                model_settings=effective_model_settings,
-                model_request_parameters=model_request_parameters,
-            ) as connection:
+            connection_manager = (
+                resolved.model.connect(
+                    messages=resolved.request_messages,
+                    model_settings=resolved.model_settings,
+                    model_request_parameters=resolved.model_request_parameters,
+                )
+                if provider_session is None
+                else resolved.model.connect_webrtc(
+                    provider_session,
+                    messages=resolved.request_messages,
+                    model_settings=resolved.model_settings,
+                    model_request_parameters=resolved.model_request_parameters,
+                )
+            )
+            async with connection_manager as connection:
                 session = RealtimeSession(
                     connection,
-                    model=model,
-                    tool_manager=tool_manager,
-                    instrumentation=session_instrumentation_settings,
+                    model=resolved.model,
+                    tool_manager=resolved.tool_manager,
+                    owns_media=owns_media,
+                    instrumentation=resolved.instrumentation_settings,
                     # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
                     # so the session span always carries an `agent_name`; backends that group runs by it
                     # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
                     agent_name=self.name or 'agent',
-                    usage=run_context.usage,
+                    usage=resolved.run_context.usage,
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
                     message_history=message_history,
-                    conversation_id=conversation_id,
-                    run_id=run_id,
-                    instructions=resolved_instructions or None,
-                    metadata=run_context.metadata,
+                    conversation_id=resolved.conversation_id,
+                    run_id=resolved.run_id,
+                    instructions=resolved.instructions,
+                    metadata=resolved.run_context.metadata,
                     agent_description=(
-                        self.render_description(deps) if session_instrumentation_settings is not None else None
+                        self.render_description(resolved.run_context.deps)
+                        if resolved.instrumentation_settings is not None
+                        else None
                     ),
                     output_modality=output_modality,
                     # Surfaced on the session span so the session's configured native tools and realtime
                     # settings are inspectable, respecting `include_model_request_parameters`.
-                    model_request_parameters=model_request_parameters,
-                    model_settings=effective_model_settings,
-                    wrap_event_stream=wrap_event_stream,
+                    model_request_parameters=resolved.model_request_parameters,
+                    model_settings=resolved.model_settings,
+                    wrap_event_stream=resolved.wrap_event_stream,
                 )
-                run_context.realtime_session = session
+                lifecycle.session = session
+                resolved.run_context.realtime_session = session
                 async with session:
-                    yield session
+                    try:
+                        yield session
+                    finally:
+                        yielded = True
+
+        if yielded:
+            # Reached on the normal path, and when the run-lifecycle hooks suppressed a session error
+            # that `wrap_run`/`on_run_error` recovered — the caller sees a clean exit either way.
+            return
+        # Opening the connection or building the session failed and `wrap_run`/`on_run_error`
+        # recovered with a result: the resolver's lifecycle hooks suppressed the error with nothing
+        # yielded yet, which `asynccontextmanager` would report as `RuntimeError: generator didn't
+        # yield`. Yield the short-circuit path's closed placeholder carrying the recovery result.
+        assert lifecycle.short_result is not None
+        yield _closed_session(lifecycle.short_result)
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.
@@ -3635,6 +3862,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
+        allowed_hosts: Sequence[str] | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -3667,6 +3895,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 - A Path instance: Reads from the local file
                 - A URL string (http:// or https://): Fetches from the URL
                 - A file path string: Reads from the local file
+            allowed_hosts: Additional hostnames to answer to, e.g. `['ui.example.com']` or
+                `['*.example.com']` (subdomains only, so list the apex separately if you serve it).
+                IP addresses and `localhost` are always allowed; any other `Host` header is refused
+                with a `421`, so that a website cannot reach the UI on your machine by pointing a
+                hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host,
+                only if something in front of the app already authenticates requests.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -3697,6 +3931,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,
+            allowed_hosts=allowed_hosts,
         )
 
 

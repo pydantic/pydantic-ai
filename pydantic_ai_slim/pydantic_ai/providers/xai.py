@@ -99,7 +99,12 @@ class XaiProvider(Provider[AsyncClient]):
 
     @overload
     def __init__(
-        self, *, api_key: str | None = None, api_host: str | None = None, timeout: float | None = None
+        self,
+        *,
+        api_key: str | None = None,
+        api_host: str | None = None,
+        timeout: float | None = None,
+        metadata: tuple[tuple[str, str], ...] | None = None,
     ) -> None: ...
 
     @overload
@@ -111,6 +116,7 @@ class XaiProvider(Provider[AsyncClient]):
         api_key: str | None = None,
         api_host: str | None = None,
         timeout: float | None = None,
+        metadata: tuple[tuple[str, str], ...] | None = None,
         xai_client: AsyncClient | None = None,
     ) -> None:
         """Create a new xAI provider.
@@ -120,10 +126,18 @@ class XaiProvider(Provider[AsyncClient]):
                 will be used if available.
             api_host: The API host to use for the xAI SDK client.
             timeout: The client-level default timeout for the xAI SDK client, in seconds, applied to all requests
-                made through it. This is distinct from `ModelSettings.timeout`, which overrides the timeout for an
-                individual request.
+                made through it. The xAI SDK does not support per-request timeouts, so `ModelSettings.timeout` is
+                not supported and has no effect.
+            metadata: gRPC metadata to attach to every request the xAI SDK client makes, forwarded to
+                [`xai_sdk.AsyncClient`][xai_sdk.AsyncClient]. This is client-scoped, not per-request, so it applies
+                to every request made through the provider. The canonical use is xAI prompt-cache sticky routing via
+                `metadata=(('x-grok-conv-id', '<conversation-id>'),)`; see the
+                [xAI prompt-caching docs](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits).
+                Because it is client-scoped, a provider configured with conversation-specific metadata (e.g. a fixed
+                `x-grok-conv-id`) must not be shared between unrelated conversations. Ignored when `xai_client` is
+                passed.
             xai_client: An existing `xai_sdk.AsyncClient` to use. This takes precedence over `api_key`, `api_host`,
-                and `timeout`.
+                `timeout`, and `metadata`.
         """
         self._lazy_client: _LazyAsyncClient | None = None
         # Retained so transports authenticating outside the gRPC SDK (e.g. the realtime WebSocket) can
@@ -145,10 +159,12 @@ class XaiProvider(Provider[AsyncClient]):
                 )
             self._api_key = api_key
             self._api_host = api_host
-            client_kwargs: dict[str, str | float] = {'api_key': api_key}
+            client_kwargs: dict[str, str | float | tuple[tuple[str, str], ...]] = {'api_key': api_key}
             if api_host is not None:
                 client_kwargs['api_host'] = api_host
             if timeout is not None:
                 client_kwargs['timeout'] = timeout
+            if metadata is not None:
+                client_kwargs['metadata'] = metadata
             self._lazy_client = _LazyAsyncClient(**client_kwargs)
             self._client = None  # type: ignore[assignment]

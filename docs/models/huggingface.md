@@ -99,50 +99,5 @@ agent = Agent(model)
 
 ## Streaming cancellation
 
-!!! warning "Cancellation limitations"
-    The `huggingface_hub.AsyncInferenceClient` exposes streaming responses only as an async iterator, with no separate handle for closing the underlying HTTP transport. Because of a [Python language rule on async generators](https://peps.python.org/pep-0525/), [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] cannot interrupt an in-flight chunk read while another coroutine is iterating the stream. Pydantic AI marks the response with `state='interrupted'`, but upstream generation may continue until the surrounding `async with agent.run_stream(...)` block exits.
-
-    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_response()`][pydantic_ai.result.StreamedRunResult.stream_response] and call `cancel()` from the same task that's iterating:
-
-    ```python {title="cancel_huggingface.py" test="skip"}
-    from pydantic_ai import Agent
-
-    agent = Agent('huggingface:Qwen/Qwen3-235B-A22B')
-
-
-    def should_stop(chunk: str) -> bool:
-        return len(chunk) > 100
-
-
-    async def main():
-        async with agent.run_stream('Write a long essay about Python') as result:
-            async for chunk in result.stream_text(debounce_by=None):
-                if should_stop(chunk):
-                    await result.cancel()
-                    break
-    ```
-
-    Or, if you need to keep debouncing, wrap the stream with [`contextlib.aclosing`](https://docs.python.org/3/library/contextlib.html#contextlib.aclosing) so the iterator is closed before `cancel()` runs:
-
-    ```python {title="cancel_huggingface_aclosing.py" test="skip"}
-    from contextlib import aclosing
-
-    from pydantic_ai import Agent
-
-    agent = Agent('huggingface:Qwen/Qwen3-235B-A22B')
-
-
-    def should_stop(chunk: str) -> bool:
-        return len(chunk) > 100
-
-
-    async def main():
-        async with agent.run_stream('Write a long essay about Python') as result:
-            async with aclosing(result.stream_text()) as stream:
-                async for chunk in stream:
-                    if should_stop(chunk):
-                        break
-            await result.cancel()
-    ```
-
-    Calling `cancel()` from a different task while iteration is in progress is not currently reliable on this provider.
+!!! note "Transport cancellation"
+    [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] safely interrupts an active local stream pull, including one running in another task. `huggingface_hub.AsyncInferenceClient` keeps the HTTP response in a client-owned exit stack and exposes no documented per-stream transport handle, so closing the returned iterator does not guarantee immediate HTTP teardown or when remote generation and billing stop. See [huggingface/huggingface_hub#4224](https://github.com/huggingface/huggingface_hub/issues/4224).

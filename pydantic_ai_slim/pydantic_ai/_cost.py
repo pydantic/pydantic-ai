@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from genai_prices import calc_price
+from genai_prices.data_snapshot import get_snapshot
 
 from ._warnings import CostCalculationFailedWarning
 
@@ -15,6 +16,14 @@ if TYPE_CHECKING:
 
     from .messages import ModelResponse
     from .usage import RequestUsage, RunUsage
+
+
+def preload_pricing_data() -> None:
+    """Load genai-prices' deferred data snapshot at `Model` construction, keeping the one-time cost off the event loop.
+
+    See https://github.com/pydantic/pydantic-ai/issues/7405.
+    """
+    get_snapshot()
 
 
 def calculate_price_for_usage(
