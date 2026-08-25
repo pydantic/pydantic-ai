@@ -160,7 +160,6 @@ with try_import() as imports_successful:
         BetaRawMessageStreamEvent,
         BetaServerToolUseBlock,
         BetaTextBlock,
-        BetaTextCitation,
         BetaTextDelta,
         BetaToolUseBlock,
         BetaUsage,
@@ -207,18 +206,10 @@ def _citation_delta_event(index: int) -> PartDeltaEvent:
 
 
 @pytest.mark.parametrize(
-    ('citation', 'expected_source'),
+    ('citation_kind', 'expected_source'),
     [
         pytest.param(
-            BetaCitationCharLocation(
-                cited_text='document excerpt',
-                document_index=0,
-                document_title='Report',
-                file_id='file-1',
-                start_char_index=0,
-                end_char_index=16,
-                type='char_location',
-            ),
+            'character-range',
             DocumentCitationSource(
                 document_id='file-1',
                 title='Report',
@@ -234,14 +225,7 @@ def _citation_delta_event(index: int) -> PartDeltaEvent:
             id='document-character-range',
         ),
         pytest.param(
-            BetaCitationPageLocation(
-                cited_text='page excerpt',
-                document_index=0,
-                document_title='Report',
-                start_page_number=2,
-                end_page_number=3,
-                type='page_location',
-            ),
+            'page-range',
             DocumentCitationSource(
                 title='Report',
                 excerpts=['page excerpt'],
@@ -255,14 +239,7 @@ def _citation_delta_event(index: int) -> PartDeltaEvent:
             id='document-page-range',
         ),
         pytest.param(
-            BetaCitationContentBlockLocation(
-                cited_text='block excerpt',
-                document_index=0,
-                document_title='Report',
-                start_block_index=1,
-                end_block_index=2,
-                type='content_block_location',
-            ),
+            'content-block-range',
             DocumentCitationSource(
                 title='Report',
                 excerpts=['block excerpt'],
@@ -277,7 +254,38 @@ def _citation_delta_event(index: int) -> PartDeltaEvent:
         ),
     ],
 )
-def test_anthropic_maps_citation_source_variants(citation: BetaTextCitation, expected_source: CitationSource):
+def test_anthropic_maps_citation_source_variants(
+    citation_kind: Literal['character-range', 'page-range', 'content-block-range'], expected_source: CitationSource
+):
+    if citation_kind == 'character-range':
+        citation = BetaCitationCharLocation(
+            cited_text='document excerpt',
+            document_index=0,
+            document_title='Report',
+            file_id='file-1',
+            start_char_index=0,
+            end_char_index=16,
+            type='char_location',
+        )
+    elif citation_kind == 'page-range':
+        citation = BetaCitationPageLocation(
+            cited_text='page excerpt',
+            document_index=0,
+            document_title='Report',
+            start_page_number=2,
+            end_page_number=3,
+            type='page_location',
+        )
+    else:
+        citation = BetaCitationContentBlockLocation(
+            cited_text='block excerpt',
+            document_index=0,
+            document_title='Report',
+            start_block_index=1,
+            end_block_index=2,
+            type='content_block_location',
+        )
+
     assert _map_citations([citation]) == [Citation(sources=[expected_source])]
 
 
