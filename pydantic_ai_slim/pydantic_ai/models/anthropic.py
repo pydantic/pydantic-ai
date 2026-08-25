@@ -2,12 +2,12 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, TypeAlias, cast, overload
+from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 
 import pydantic_core
 from pydantic import TypeAdapter
@@ -151,6 +151,20 @@ def _map_citations(citations: Sequence[BetaTextCitation] | None) -> list[Citatio
     return result or None
 
 
+def _is_int_at_least(value: object, minimum: int) -> TypeGuard[int]:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
+
+
+def _citation_range(
+    details: Mapping[str, object], start_field: str, end_field: str, *, minimum: int
+) -> tuple[int, int] | None:
+    start = details.get(start_field)
+    end = details.get(end_field)
+    if not _is_int_at_least(start, minimum) or not _is_int_at_least(end, minimum) or end <= start:
+        return None
+    return start, end
+
+
 def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None:
     """Reconstruct one Anthropic citation only when the normalized shape is lossless enough."""
     if citation.anchor is not None or len(citation.sources) != 1:
@@ -175,7 +189,7 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
     details = source.provider_details or {}
     citation_type = details.get('type')
     document_index = details.get('document_index')
-    if not isinstance(document_index, int) or isinstance(document_index, bool):
+    if not _is_int_at_least(document_index, 0):
         return None
 
     cited_text = source.excerpts[0]
@@ -183,15 +197,10 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
         return None
 
     if citation_type == 'char_location':
-        start_char_index = details.get('start_char_index')
-        end_char_index = details.get('end_char_index')
-        if (
-            not isinstance(start_char_index, int)
-            or isinstance(start_char_index, bool)
-            or not isinstance(end_char_index, int)
-            or isinstance(end_char_index, bool)
-        ):
+        indices = _citation_range(details, 'start_char_index', 'end_char_index', minimum=0)
+        if indices is None:
             return None
+        start_char_index, end_char_index = indices
         return BetaCitationCharLocationParam(
             type='char_location',
             cited_text=cited_text,
@@ -201,15 +210,10 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
             end_char_index=end_char_index,
         )
     elif citation_type == 'page_location':
-        start_page_number = details.get('start_page_number')
-        end_page_number = details.get('end_page_number')
-        if (
-            not isinstance(start_page_number, int)
-            or isinstance(start_page_number, bool)
-            or not isinstance(end_page_number, int)
-            or isinstance(end_page_number, bool)
-        ):
+        indices = _citation_range(details, 'start_page_number', 'end_page_number', minimum=1)
+        if indices is None:
             return None
+        start_page_number, end_page_number = indices
         return BetaCitationPageLocationParam(
             type='page_location',
             cited_text=cited_text,
@@ -219,15 +223,10 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
             end_page_number=end_page_number,
         )
     elif citation_type == 'content_block_location':
-        start_block_index = details.get('start_block_index')
-        end_block_index = details.get('end_block_index')
-        if (
-            not isinstance(start_block_index, int)
-            or isinstance(start_block_index, bool)
-            or not isinstance(end_block_index, int)
-            or isinstance(end_block_index, bool)
-        ):
+        indices = _citation_range(details, 'start_block_index', 'end_block_index', minimum=0)
+        if indices is None:
             return None
+        start_block_index, end_block_index = indices
         return BetaCitationContentBlockLocationParam(
             type='content_block_location',
             cited_text=cited_text,

@@ -435,6 +435,8 @@ def _map_citation_source(
     web = location.get('web') if isinstance(location, Mapping) else None
     if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
         details.pop('location', None)
+        if isinstance(domain := web.get('domain'), str):
+            details['domain'] = domain
         return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
     return DocumentCitationSource(title=title, excerpts=excerpts, provider_details=details or None)
 
@@ -450,24 +452,18 @@ def _map_bedrock_citation_location_for_replay(
     source: WebCitationSource | DocumentCitationSource,
 ) -> CitationLocationTypeDef | None:
     location = (source.provider_details or {}).get('location')
-    if not _utils.is_str_dict(location):
-        return None
 
     if isinstance(source, WebCitationSource):
-        web = location.get('web')
-        if (
-            set(location) != {'web'}
-            or not _utils.is_str_dict(web)
-            or set(web) - {'url', 'domain'}
-            or web.get('url') != source.url
-        ):
-            return None
         web_location: WebLocationTypeDef = {'url': source.url}
-        if (domain := web.get('domain')) is not None:
+        domain = (source.provider_details or {}).get('domain')
+        if domain is not None:
             if not isinstance(domain, str):
                 return None
             web_location['domain'] = domain
         return {'web': web_location}
+
+    if not _utils.is_str_dict(location):
+        return None
 
     if len(location) != 1:
         return None
@@ -484,8 +480,14 @@ def _map_bedrock_citation_location_for_replay(
     if set(location_data) - allowed_keys:
         return None
     replay_location = {key: value for key in allowed_keys if (value := location_data.get(key)) is not None}
-    if not replay_location or any(
-        not isinstance(value, int) or isinstance(value, bool) for value in replay_location.values()
+    if (
+        not replay_location
+        or any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in replay_location.values())
+        or (
+            'start' in replay_location
+            and 'end' in replay_location
+            and replay_location['end'] <= replay_location['start']
+        )
     ):
         return None
     # The SDK models the four range locations as distinct TypedDicts despite their identical integer field grammar.

@@ -3528,11 +3528,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 responses.ResponseOutputTextParam(
                                     text=item.content,
                                     type='output_text',
-                                    annotations=(
-                                        _map_responses_citations_for_replay(item.citations, item.content)
-                                        if from_same_provider
-                                        else []
-                                    ),
+                                    annotations=_map_responses_citations_for_replay(item.citations, item.content),
                                 ),
                             ]
                             if send_phase:

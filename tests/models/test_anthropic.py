@@ -389,7 +389,67 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
     )
 
 
-async def test_anthropic_unreconstructable_citations_replay_as_text(allow_model_requests: None):
+@pytest.mark.parametrize(
+    'citation',
+    [
+        pytest.param(
+            Citation(sources=[WebCitationSource(url='https://example.com/source')]),
+            id='missing-native-details',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Report',
+                        excerpts=['source text'],
+                        provider_details={
+                            'type': 'char_location',
+                            'document_index': -1,
+                            'start_char_index': 0,
+                            'end_char_index': 11,
+                        },
+                    )
+                ]
+            ),
+            id='negative-document-index',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Report',
+                        excerpts=['source text'],
+                        provider_details={
+                            'type': 'char_location',
+                            'document_index': 0,
+                            'start_char_index': 11,
+                            'end_char_index': 0,
+                        },
+                    )
+                ]
+            ),
+            id='reversed-character-range',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Report',
+                        excerpts=['source text'],
+                        provider_details={
+                            'type': 'page_location',
+                            'document_index': 0,
+                            'start_page_number': 0,
+                            'end_page_number': 1,
+                        },
+                    )
+                ]
+            ),
+            id='zero-page-number',
+        ),
+    ],
+)
+async def test_anthropic_unreconstructable_citations_replay_as_text(allow_model_requests: None, citation: Citation):
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
     )
@@ -402,7 +462,7 @@ async def test_anthropic_unreconstructable_citations_replay_as_text(allow_model_
                     parts=[
                         TextPart(
                             'The source supports this claim.',
-                            citations=[Citation(sources=[WebCitationSource(url='https://example.com/source')])],
+                            citations=[citation],
                         )
                     ],
                     provider_name='anthropic',
