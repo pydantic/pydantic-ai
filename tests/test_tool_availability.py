@@ -743,9 +743,12 @@ async def test_available_capability_ids_is_a_deprecated_alias_for_active_capabil
         return make_text_response('done')
 
     seen: list[tuple[set[str], set[str]]] = []
+    deprecated_reads: list[set[str]] = []
 
     def record(ctx: RunContext[Any]) -> str:
         seen.append((set(ctx.active_capability_ids), set(ctx.loaded_capability_ids)))
+        with pytest.warns(PydanticAIDeprecationWarning, match='use `active_capability_ids` instead'):
+            deprecated_reads.append(set(ctx.available_capability_ids))  # pyright: ignore[reportDeprecated]
         return ''
 
     agent = Agent(FunctionModel(model_fn), capabilities=[always_on, deferred], instructions=record)
@@ -757,6 +760,7 @@ async def test_available_capability_ids_is_a_deprecated_alias_for_active_capabil
     assert 'deferred' not in active
     assert loaded == set()
 
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-    with pytest.warns(PydanticAIDeprecationWarning, match='use `active_capability_ids` instead'):
-        assert ctx.available_capability_ids == ctx.active_capability_ids  # pyright: ignore[reportDeprecated]
+    # Asserted against a NON-EMPTY set: comparing the alias to the real property on a bare context
+    # compares empty to empty, which a hardcoded `set()` would satisfy.
+    assert deprecated_reads[0] == active
+    assert 'always-on' in deprecated_reads[0]
