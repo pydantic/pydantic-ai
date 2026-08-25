@@ -95,7 +95,9 @@ if TYPE_CHECKING:
     )
     from mypy_boto3_bedrock_runtime.type_defs import (
         CachePointBlockTypeDef,
+        CitationLocationTypeDef,
         CitationOutputTypeDef,
+        CitationsContentBlockOutputTypeDef,
         CitationsDeltaTypeDef,
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -126,6 +128,7 @@ if TYPE_CHECKING:
         ToolSpecificationTypeDef,
         ToolTypeDef,
         ToolUseBlockOutputTypeDef,
+        WebLocationTypeDef,
     )
 
 
@@ -421,11 +424,13 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 def _map_citation_source(
     citation: CitationOutputTypeDef | CitationsDeltaTypeDef,
 ) -> WebCitationSource | DocumentCitationSource:
-    details = dict(citation)
+    details: dict[str, Any] = {}
+    if (source := citation.get('source')) is not None:
+        details['source'] = source
+    if (location := citation.get('location')) is not None:
+        details['location'] = location
     title = citation.get('title')
     excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
-    details.pop('title', None)
-    details.pop('sourceContent', None)
     location = citation.get('location')
     web = location.get('web') if isinstance(location, Mapping) else None
     if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
@@ -439,6 +444,95 @@ def _map_citations(
 ) -> list[Citation] | None:
     sources = [_map_citation_source(citation) for citation in citations]
     return [Citation(sources=sources, anchor=anchor)] if sources else None
+
+
+def _map_bedrock_citation_location_for_replay(
+    source: WebCitationSource | DocumentCitationSource,
+) -> CitationLocationTypeDef | None:
+    location = (source.provider_details or {}).get('location')
+    if not _utils.is_str_dict(location):
+        return None
+
+    if isinstance(source, WebCitationSource):
+        web = location.get('web')
+        if (
+            set(location) != {'web'}
+            or not _utils.is_str_dict(web)
+            or set(web) - {'url', 'domain'}
+            or web.get('url') != source.url
+        ):
+            return None
+        web_location: WebLocationTypeDef = {'url': source.url}
+        if (domain := web.get('domain')) is not None:
+            if not isinstance(domain, str):
+                return None
+            web_location['domain'] = domain
+        return {'web': web_location}
+
+    if len(location) != 1:
+        return None
+    location_kind, location_data = next(iter(location.items()))
+    index_name = {
+        'documentChar': 'documentIndex',
+        'documentPage': 'documentIndex',
+        'documentChunk': 'documentIndex',
+        'searchResultLocation': 'searchResultIndex',
+    }.get(location_kind)
+    if index_name is None or not _utils.is_str_dict(location_data):
+        return None
+    allowed_keys = {index_name, 'start', 'end'}
+    if set(location_data) - allowed_keys:
+        return None
+    replay_location = {key: value for key in allowed_keys if (value := location_data.get(key)) is not None}
+    if not replay_location or any(
+        not isinstance(value, int) or isinstance(value, bool) for value in replay_location.values()
+    ):
+        return None
+    # The SDK models the four range locations as distinct TypedDicts despite their identical integer field grammar.
+    return cast('CitationLocationTypeDef', {location_kind: replay_location})
+
+
+def _map_bedrock_citation_source_for_replay(
+    source: WebCitationSource | DocumentCitationSource,
+) -> CitationOutputTypeDef | None:
+    location = _map_bedrock_citation_location_for_replay(source)
+    if location is None:
+        return None
+
+    citation: CitationOutputTypeDef = {'location': location}
+    if source.title is not None:
+        citation['title'] = source.title
+    if source.excerpts:
+        citation['sourceContent'] = [{'text': excerpt} for excerpt in source.excerpts]
+    source_name = (source.provider_details or {}).get('source')
+    if source_name is not None:
+        if not isinstance(source_name, str):
+            return None
+        citation['source'] = source_name
+    return citation
+
+
+def _map_bedrock_citations_for_replay(
+    citations: list[Citation] | None, text: str
+) -> CitationsContentBlockOutputTypeDef | None:
+    if (
+        not citations
+        or len(citations) != 1
+        or not isinstance(citations[0].anchor, ContentCitationAnchor)
+        or citations[0].anchor.start != 0
+        or citations[0].anchor.end != len(text)
+    ):
+        return None
+
+    if not citations[0].sources:
+        return None
+    sources = [_map_bedrock_citation_source_for_replay(source) for source in citations[0].sources]
+    if any(source is None for source in sources):
+        return None
+    return {
+        'content': [{'text': text}],
+        'citations': [source for source in sources if source is not None],
+    }
 
 
 def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
@@ -1361,7 +1455,15 @@ class BedrockConverseModel(Model[BaseClient]):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        content.append({'text': item.content})
+                        citations_content = (
+                            _map_bedrock_citations_for_replay(item.citations, item.content)
+                            if item.provider_name == self.system
+                            or (item.provider_name is None and message.provider_name == self.system)
+                            else None
+                        )
+                        content.append(
+                            {'citationsContent': citations_content} if citations_content else {'text': item.content}
+                        )
                     elif isinstance(item, ThinkingPart):
                         if (
                             item.provider_name == self.system

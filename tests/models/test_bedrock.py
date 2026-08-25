@@ -31,6 +31,7 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -1710,6 +1711,150 @@ async def test_bedrock_citation_response_without_citations_preserves_text(
     )
 
     assert response.parts == [TextPart('No citation.')]
+
+
+async def test_bedrock_citations_replay_after_message_json_round_trip(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Same-provider citations are replayed as one typed Bedrock `citationsContent` block."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+    text = 'The policy allows thirty days for returns.'
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('What is the return window?')]),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            text,
+                            provider_name='bedrock',
+                            citations=[
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            title='Returns policy',
+                                            excerpts=['Returns are accepted within thirty days.'],
+                                            provider_details={
+                                                'source': 'Document 1',
+                                                'location': {
+                                                    'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}
+                                                },
+                                            },
+                                        ),
+                                        WebCitationSource(
+                                            url='https://ai.pydantic.dev',
+                                            title='Pydantic AI',
+                                            provider_details={
+                                                'source': 'Web Search',
+                                                'location': {'web': {'url': 'https://ai.pydantic.dev'}},
+                                            },
+                                        ),
+                                    ],
+                                    anchor=ContentCitationAnchor(start=0, end=len(text)),
+                                )
+                            ],
+                        )
+                    ],
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert mock_converse.call_args.kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'citationsContent': {
+                        'content': [{'text': 'The policy allows thirty days for returns.'}],
+                        'citations': [
+                            {
+                                'title': 'Returns policy',
+                                'sourceContent': [{'text': 'Returns are accepted within thirty days.'}],
+                                'source': 'Document 1',
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                            },
+                            {
+                                'title': 'Pydantic AI',
+                                'source': 'Web Search',
+                                'location': {'web': {'url': 'https://ai.pydantic.dev'}},
+                            },
+                        ],
+                    }
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ('provider_name', 'citation'),
+    [
+        pytest.param(
+            'bedrock',
+            Citation(
+                sources=[DocumentCitationSource(title='Returns policy')],
+                anchor=ContentCitationAnchor(start=0, end=7),
+            ),
+            id='incomplete',
+        ),
+        pytest.param(
+            'anthropic',
+            Citation(
+                sources=[
+                    WebCitationSource(
+                        url='https://ai.pydantic.dev',
+                        title='Pydantic AI',
+                        provider_details={'location': {'web': {'url': 'https://ai.pydantic.dev'}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=7),
+            ),
+            id='foreign',
+        ),
+    ],
+)
+async def test_bedrock_citations_replay_as_text_when_incomplete_or_foreign(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    provider_name: str,
+    citation: Citation,
+) -> None:
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('What is the return window?')]),
+                ModelResponse(parts=[TextPart('Returns.', citations=[citation])], provider_name=provider_name),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert mock_converse.call_args.kwargs['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'text': 'Returns.'}],
+    }
 
 
 async def test_bedrock_stream_citation_mapping(
