@@ -608,6 +608,21 @@ def test_maintainer_lookup_is_cached_across_items():
     assert client.permission_reads() == ['/repos/r/collaborators/alice/permission']
 
 
+def test_maintainer_lookup_can_refresh_a_cached_permission():
+    client = FakeClient()
+    client.permissions = {'alice': 'admin'}
+    assert client.maintainer_login('r', 'alice') == 'alice'
+
+    client.permissions['alice'] = 'read'
+
+    assert client.maintainer_login('r', 'alice') == 'alice'
+    assert client.maintainer_login('r', 'alice', refresh=True) is None
+    assert client.permission_reads() == [
+        '/repos/r/collaborators/alice/permission',
+        '/repos/r/collaborators/alice/permission',
+    ]
+
+
 def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path):
     snapshot = tmp_path / 'snapshot.json'
     output = tmp_path / 'output.json'

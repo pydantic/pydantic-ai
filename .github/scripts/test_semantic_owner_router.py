@@ -155,6 +155,27 @@ def test_exact_semantic_labels_route_to_fixed_owners(repo: str, labels: list[str
     assert (decision['owner'], decision['evidence']) == expected
 
 
+def test_unavailable_semantic_owner_routes_to_manual_review():
+    client = FakeClient({7: item(7, labels=['MCP'])})
+    client.permissions['dsfaccini'] = 'read'
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision == {
+        'number': 7,
+        'owner': 'adtyavrdhn',
+        'evidence': 'manual:unavailable-owner:dsfaccini',
+    }
+
+
+def test_unavailable_manual_owner_fails_loudly():
+    client = FakeClient({7: item(7, labels=['unknown'])})
+    client.permissions['adtyavrdhn'] = 'read'
+
+    with pytest.raises(RuntimeError, match='manual routing owner lacks maintainer permission'):
+        router.decision_for(client, CORE, 7)
+
+
 def test_unknown_and_owner_lookalike_labels_use_manual_route():
     client = FakeClient(
         {
@@ -394,12 +415,39 @@ def test_assign_rechecks_policy_and_refuses_stale_decision():
 
 
 def test_assign_rechecks_current_owner_permission():
-    client = FakeClient({7: item(7, labels=['MCP'])})
-    client.permissions['dsfaccini'] = 'read'
+    class PermissionChangesClient(FakeClient):
+        checks = 0
+
+        def maintainer_login(self, repo: str, login: str, *, refresh: bool = False) -> str | None:
+            if login == 'dsfaccini' and refresh:
+                self.checks += 1
+                return login if self.checks == 1 else None
+            return super().maintainer_login(repo, login, refresh=refresh)
+
+    client = PermissionChangesClient({7: item(7, labels=['MCP'])})
     expected = router.Decision(number=7, owner='dsfaccini', evidence='label:MCP')
 
     with pytest.raises(RuntimeError, match='no longer has maintainer permission'):
         router.assign(client, CORE, expected)
+
+
+def test_assign_detects_permission_loss_after_the_write():
+    class PermissionChangesClient(FakeClient):
+        checks = 0
+
+        def maintainer_login(self, repo: str, login: str, *, refresh: bool = False) -> str | None:
+            if login == 'dsfaccini' and refresh:
+                self.checks += 1
+                return login if self.checks <= 2 else None
+            return super().maintainer_login(repo, login, refresh=refresh)
+
+    client = PermissionChangesClient({7: item(7, labels=['MCP'])})
+    expected = router.Decision(number=7, owner='dsfaccini', evidence='label:MCP')
+
+    with pytest.raises(RuntimeError, match='GitHub did not apply the selected owner'):
+        router.assign(client, CORE, expected)
+
+    assert client.items[7]['assignees'] == [{'login': 'dsfaccini'}]
 
 
 def test_recovery_query_excludes_every_fixed_owner_and_selects_one():
@@ -425,6 +473,33 @@ def test_recovery_query_excludes_every_fixed_owner_and_selects_one():
         '-assignee:adtyavrdhn -assignee:DouweM -assignee:dsfaccini -assignee:mpfaffenberger '
         'sort:created-asc'
     )
+
+
+def test_recovery_does_not_exclude_an_offboarded_owner():
+    client = FakeClient({7: item(7, labels=['MCP'], assignees=['dsfaccini'])})
+    client.permissions['dsfaccini'] = 'read'
+
+    selected = router.select(client, CORE, None, None)
+
+    assert selected['decision'] == {
+        'number': 7,
+        'owner': 'adtyavrdhn',
+        'evidence': 'manual:unavailable-owner:dsfaccini',
+    }
+    search_payload = next(
+        payload
+        for method, path, payload in client.calls
+        if method == 'POST'
+        and path == '/graphql'
+        and isinstance(payload, Mapping)
+        and 'RoutingRecovery' in str(payload.get('query'))
+    )
+    assert isinstance(search_payload, Mapping)
+    variables = search_payload['variables']
+    assert isinstance(variables, Mapping)
+    query = str(variables['query'])
+    assert '-assignee:dsfaccini' not in query
+    assert '-assignee:adtyavrdhn' in query
 
 
 def test_recovery_skips_non_routable_item_without_starving_the_next():
@@ -457,8 +532,14 @@ def test_recovery_skips_non_routable_item_without_starving_the_next():
     ],
 )
 def test_slack_map_requires_exact_owner_set_and_mentions(value: str):
-    with pytest.raises(ValueError, match='every owner'):
-        router.parse_mentions(value)
+    with pytest.raises(ValueError, match='selected owner'):
+        router.parse_mentions(value, 'DouweM')
+
+
+def test_slack_map_only_requires_the_selected_owner():
+    value = json.dumps({'adtyavrdhn': '<@UADITYA>'})
+
+    assert router.parse_mentions(value, 'adtyavrdhn') == {'adtyavrdhn': '<@UADITYA>'}
 
 
 class FakeResponse:

@@ -133,6 +133,7 @@ _EVIDENCE = frozenset(
         'manual:incomplete-labels',
         'manual:invalid-file-list',
         'manual:unowned-production-path',
+        *(f'manual:unavailable-owner:{owner}' for owner in _ROUTE_OWNERS if owner != _MANUAL_OWNER),
         *(f'label:{label}' for rules in _RULES.values() for rule in rules for label in rule.labels),
         *(f'path:{path}' for rules in _RULES.values() for rule in rules for path in rule.paths),
     }
@@ -261,6 +262,15 @@ def _maintainer_assignees(client: attention.GitHubClient, repo: str, item: Mappi
     return sorted(set(maintainers), key=str.casefold)
 
 
+def _decision(client: attention.GitHubClient, repo: str, number: int, owner: str, evidence: str) -> Decision:
+    """Keep routing actionable when a configured semantic owner is unavailable."""
+    if client.maintainer_login(repo, owner, refresh=True) is not None:
+        return Decision(number=number, owner=owner, evidence=evidence)
+    if owner != _MANUAL_OWNER and client.maintainer_login(repo, _MANUAL_OWNER, refresh=True) is not None:
+        return Decision(number=number, owner=_MANUAL_OWNER, evidence=f'manual:unavailable-owner:{owner}')
+    raise RuntimeError('manual routing owner lacks maintainer permission')
+
+
 def _connection_nodes(value: object) -> list[object]:
     if not isinstance(value, Mapping):
         return []
@@ -344,25 +354,26 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
         if not complete:
             return Selection(
                 number=number,
-                decision=Decision(number=number, owner=_MANUAL_OWNER, evidence='manual:incomplete-file-list'),
+                decision=_decision(client, repo, number, _MANUAL_OWNER, 'manual:incomplete-file-list'),
                 status='route',
             )
     if not _connection_complete(labels):
         return Selection(
             number=number,
-            decision=Decision(number=number, owner=_MANUAL_OWNER, evidence='manual:incomplete-labels'),
+            decision=_decision(client, repo, number, _MANUAL_OWNER, 'manual:incomplete-labels'),
             status='route',
         )
     owner, evidence = _route(repo, _labels(normalized), filenames)
     return Selection(
         number=number,
-        decision=Decision(number=number, owner=owner, evidence=evidence),
+        decision=_decision(client, repo, number, owner, evidence),
         status='route',
     )
 
 
 def _recovery_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
-    negatives = ' '.join(f'-assignee:{owner}' for owner in sorted(_OWNERS, key=str.casefold))
+    qualified = (owner for owner in _OWNERS if client.maintainer_login(repo, owner, refresh=True) is not None)
+    negatives = ' '.join(f'-assignee:{owner}' for owner in sorted(qualified, key=str.casefold))
     query = f'repo:{repo} is:open created:>={_RECOVERY_EPOCH} -draft:true {negatives} sort:created-asc'
     result = client.post('/graphql', {'query': _SEARCH_QUERY, 'variables': {'query': query}})
     if not isinstance(result, Mapping):
@@ -412,7 +423,7 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
         return False
     if current['decision'] != expected:
         raise RuntimeError('routing evidence changed before assignment')
-    if client.maintainer_login(repo, expected['owner']) is None:
+    if client.maintainer_login(repo, expected['owner'], refresh=True) is None:
         raise RuntimeError('selected owner no longer has maintainer permission')
     client.post(
         f'/repos/{repo}/issues/{expected["number"]}/assignees',
@@ -421,24 +432,33 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     assigned = _fetch_item(client, repo, expected['number'])
     if assigned is None:
         raise RuntimeError('assigned item disappeared')
-    assigned_maintainers = _maintainer_assignees(
-        client, repo, {'assignees': _connection_nodes(assigned.get('assignees'))}
-    )
-    if expected['owner'].casefold() not in {login.casefold() for login in assigned_maintainers}:
+    assigned_logins: set[str] = set()
+    for entry in _connection_nodes(assigned.get('assignees')):
+        login = cast(Mapping[str, object], entry).get('login') if isinstance(entry, Mapping) else None
+        if isinstance(login, str):
+            assigned_logins.add(login.casefold())
+    if (
+        expected['owner'].casefold() not in assigned_logins
+        or client.maintainer_login(repo, expected['owner'], refresh=True) is None
+    ):
         raise RuntimeError('GitHub did not apply the selected owner')
     return True
 
 
-def parse_mentions(value: str) -> dict[str, str]:
-    """Validate the complete caller-owned GitHub-to-Slack identity map."""
+def parse_mentions(value: str, owner: str) -> dict[str, str]:
+    """Validate the caller-owned mention needed by this decision."""
+    if owner not in _ROUTE_OWNERS:
+        raise ValueError('notification owner is not routable')
     loaded: object = json.loads(value)
     if not isinstance(loaded, Mapping):
         raise ValueError('Slack mention mapping must be an object')
     mentions = {str(key): str(mention) for key, mention in cast(Mapping[object, object], loaded).items()}
-    if set(mentions) != set(_ROUTE_OWNERS) or any(
-        _SLACK_MENTION.fullmatch(mention) is None for mention in mentions.values()
+    if (
+        owner not in mentions
+        or not set(mentions) <= set(_ROUTE_OWNERS)
+        or any(_SLACK_MENTION.fullmatch(mention) is None for mention in mentions.values())
     ):
-        raise ValueError('Slack mention mapping must contain every owner exactly once')
+        raise ValueError('Slack mention mapping must contain the selected owner and no unknown owners')
     return mentions
 
 
@@ -447,7 +467,7 @@ def notify(repo: str, decision: Decision, mentions_value: str, webhook: str) -> 
     repo = _repository(repo)
     if decision['owner'] not in _OWNERS or decision['evidence'] not in _EVIDENCE:
         raise ValueError('notification decision is not canonical')
-    mentions = parse_mentions(mentions_value)
+    mentions = parse_mentions(mentions_value, decision['owner'])
     parsed = urllib.parse.urlparse(webhook)
     if (
         parsed.scheme != 'https'

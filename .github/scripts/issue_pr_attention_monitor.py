@@ -192,7 +192,7 @@ class GitHubClient:
         self._probes += 1
         return True
 
-    def maintainer_login(self, repo: str, login: str) -> str | None:
+    def maintainer_login(self, repo: str, login: str, *, refresh: bool = False) -> str | None:
         """Return `login` when it can push to `repo`, resolved one user at a time.
 
         The collaborator *list* endpoint looks cheaper but is wrong here: it only
@@ -208,7 +208,7 @@ class GitHubClient:
         rationed.
         """
         key = (repo, login.casefold())
-        if key not in self._maintainers:
+        if refresh or key not in self._maintainers:
             encoded = urllib.parse.quote(login, safe='')
             try:
                 permission = cast(
