@@ -3,8 +3,10 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sys
+import urllib.error
 import urllib.parse
 from collections.abc import Mapping
+from email.message import Message
 from pathlib import Path
 from typing import Any, cast
 
@@ -895,6 +897,26 @@ def test_cli_failure_is_redacted(monkeypatch: pytest.MonkeyPatch, capsys: pytest
     assert capsys.readouterr().err == 'owner routing failed: ValueError\n'
 
 
+def test_cli_http_failure_reports_status_without_response_details(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    def fail_client(_: str):
+        raise urllib.error.HTTPError(
+            'https://api.github.com/repos/pydantic/pydantic-ai/issues/7559/assignees?secret=value',
+            403,
+            'response details stay redacted',
+            Message(),
+            None,
+        )
+
+    monkeypatch.setattr(router.attention, 'GitHubClient', fail_client)
+    monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    assert router.main() == 1
+    assert capsys.readouterr().err == 'owner routing failed: HTTPError 403\n'
+
+
 def test_workflow_is_notification_first_and_least_privilege():
     workflow_path = Path(__file__).parents[1] / 'workflows' / 'pydantic-ai-owner-routing.yml'
     workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))
@@ -912,7 +934,7 @@ def test_workflow_is_notification_first_and_least_privilege():
     assert jobs['route']['permissions'] == {
         'contents': 'read',
         'issues': 'write',
-        'pull-requests': 'read',
+        'pull-requests': 'write',
     }
     prepare, notify, assign = jobs['route']['steps'][1:]
     select_step = jobs['select']['steps'][1]

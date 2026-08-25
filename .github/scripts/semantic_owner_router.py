@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -650,7 +651,10 @@ def main() -> int:
         _summary(f'#{expected["number"]}: ' + ('assigned' if did_assign else 'already owned'))
         return 0
     except (KeyError, OSError, ValueError, RuntimeError) as exc:
-        print(f'owner routing failed: {type(exc).__name__}', file=sys.stderr)
+        error = type(exc).__name__
+        if isinstance(exc, urllib.error.HTTPError):
+            error += f' {exc.code}'
+        print(f'owner routing failed: {error}', file=sys.stderr)
         return 1
 
 
