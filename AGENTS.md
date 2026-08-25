@@ -76,20 +76,14 @@ Never add yourself (Claude) as a co-author on commits. Commits should be authore
 
 ## Pushing changes
 
-Before every push, follow the `pushing-commits-to-the-repo` skill, including its independent
-pre-push review gate. That semantic review, CI's full test and coverage matrix, and hosted AI
-reviewers are complementary gates; none replaces another.
+Before every push, and until the PR lifecycle is complete, follow the
+`pushing-commits-to-the-repo` skill. Do not idle after pushing.
 
 **A restriction is a conclusion you earn from a real failure, not a field you read.** Never report an
 operation as blocked, unavailable, or not-permitted based on a metadata flag, a config field, or a
 docs claim — attempt it and quote the actual error. (`maintainerCanModify: false` on a PR does *not*
 mean you cannot push: it governs the upstream-maintainer auto-grant, not your own access to the
 fork.) If you genuinely cannot attempt it, say "not attempted", never "we can't".
-
-**Pushing is not the end of the task.** After you push, do not go idle. The work is done when CI is
-green, every applicable current-HEAD check has an accepted terminal result, the required hosted
-review covers the current HEAD, and there are no unresolved comments —
-see the `pushing-commits-to-the-repo` skill for the full loop.
 
 **Do not leave work uncommitted.** Don't end a turn with unstaged or uncommitted local changes
 unless the user's own instructions say otherwise.

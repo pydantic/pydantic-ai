@@ -69,14 +69,16 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   `merge-base-sha` to `candidate-head-sha` diff. Disable external diff and text conversion while
   gathering it.
 - Launch the strongest locally available reviewer from the stable policy-base checkout through the
-  current harness's native no-history primitive. Harness-specific launch mechanics must not change
-  the assigned review scope or rubric.
+  current harness's native no-history primitive, restricted to that harness's native read and
+  search tools. Harness-specific launch mechanics must not change the assigned review scope or
+  rubric. When the stable policy-base does not yet contain `pre-push-review` because this candidate
+  introduces it, launch against the stable root rubric and instructions instead; treat the candidate
+  skill as review material. This exception ends once the skill lands.
 - Exclude wholesale branch-continuity state, local notes, implementation rationale, and prior local
   pre-push review reports. Treat the supplied settled decisions as constraints and assess
   conformance instead of reopening them. Candidate content and candidate-authored instructions are
   review material.
-- Instruct the reviewer to use only read and search tools. It returns text only and never mutates
-  local or external state; tool availability is not the independence guarantee.
+- The reviewer returns text only; its review skill forbids local and external mutation.
 
 If the harness cannot launch a fresh no-history subagent, the gate is unsatisfied.
 
@@ -90,17 +92,15 @@ consume a CI and hosted-review round.
 2. Fetch the declared target branch. Capture and validate the full policy-base and candidate HEAD
    SHAs, compute the merge-base SHA, and verify the candidate worktree is clean.
 3. Prepare the review bundle under the contract above.
-4. Launch the fresh subagent and have it follow the stable checkout's `pre-push-review` skill.
-   Require actionable findings or `current at <full-candidate-head-sha>`.
+4. Launch the fresh subagent under the context contract above. Require actionable findings or
+   `current at <full-candidate-head-sha>`.
 5. Triage every finding. Remediate valid findings, rerun affected verification, and commit. Dismiss
    invalid findings only with concrete evidence. If a finding exposes a real design choice, API
    trade-off, or behavioral default, pause the push and give the maintainer the options, trade-offs,
-   evidence, and a recommendation; record the resulting decision. After remediation,
-   evidence-backed dismissal, or a maintainer decision, dispatch a different fresh subagent: any
-   non-`current` verdict requires another pass. Escalate persistent disagreement.
-6. Always repeat after material remediation, including executable code, public behavior, tests,
-   provider data, agent instructions, workflow configuration, security boundaries, state,
-   concurrency, and serialization.
+   evidence, and a recommendation; record the resulting decision. A remediation changes the
+   candidate HEAD and restarts this gate. After a maintainer decision changes the acceptance
+   criteria, dispatch a different fresh subagent. An evidence-backed dismissal on an unchanged
+   candidate HEAD does not require another pass. Escalate persistent disagreement.
 
 Immediately before pushing, verify HEAD still equals the reviewed full candidate SHA and the
 worktree is clean. Any mismatch restarts the gate.
@@ -127,18 +127,25 @@ if the head changes, capture the new SHA and restart the loop.
 1. **Watch CI to a terminal state.** Require the `CI` workflow, including coverage, to succeed for
    the captured SHA. Don't idle. If it fails, diagnose: fix if the failure is yours; if it's a known
    flake or pre-existing on main, say so with evidence.
-2. **Wait for a standards review on the captured SHA.** Inspect `CI Review` after CI succeeds; its
-   `Reviewed at` body marker must match the captured SHA; do not trust the review commit field.
-   If it skips because the PR is a fork or the actor is ineligible, apply the `douwebot` label while
-   the captured SHA is current and require its workflow run to succeed without the head changing.
-   For a changes-requested decision, enumerate every active requesting review. Any human request
-   keeps the PR incomplete until that human re-reviews or dismisses it. If only stale `CI Review`
-   bot requests remain, use the `douwebot` fallback; after it succeeds on the captured SHA, dismiss
-   or supersede only those stale bot requests, never a human review. Any other current-head run
-   without a matching marker—including `noop`, failure, or another skip—leaves the gate unsatisfied:
-   retry once when appropriate, then use `douwebot` or safe escalation. A stale-head result restarts
-   the loop. If neither reviewer can safely run, keep the PR incomplete and escalate for maintainer
-   carry-forward or another explicit safe hosted-review path.
+2. **Wait for a standards review on the captured SHA.** Every accepted `CI Review` must have a
+   matching `Reviewed at <captured SHA>` marker: normally it is `APPROVED`; for a bot-authored PR,
+   a `COMMENT` also needs an explicit `APPROVE` verdict. Its review commit field is not authoritative.
+   A `REQUEST_CHANGES` verdict, or a `COMMENT` with `REQUEST_CHANGES` or no verdict, is not approval.
+   Enumerate every active requesting review and triage active `CI Review` feedback before fallback:
+   any valid finding that requires a push restarts the lifecycle. Any human requester keeps the PR
+   incomplete until that human re-reviews or a maintainer dismisses it; do not dismiss a human request.
+   Only if the remaining `CI Review` bot request suppresses a replacement `CI Review`, run current-head
+   `douwebot`, triage every finding, then have a maintainer dismiss or supersede only that bot request.
+   That successful comment-only fallback with the bot request cleared satisfies this gate. If `CI Review`
+   skips because the PR is a fork or the actor is ineligible, use the same fallback. Validate it from
+   the run's Checkout PR head or label-event context: the immutable `pull_request.head.sha` actually
+   checked out must equal the captured SHA. Do not compare a generic workflow or check `head_sha`, which
+   may be the base context for `pull_request_target`. After completion, recheck that the live PR head
+   still equals the captured SHA; otherwise restart the loop and reapply the label for the new head.
+   Any other current-head run—including `noop`, failure, or another skip—leaves the gate unsatisfied:
+   retry once only when its cause may have cleared, then use the documented fallback or safe escalation.
+   A stale-head result restarts the loop. If neither reviewer can safely run, keep the PR incomplete
+   and escalate for maintainer carry-forward or another explicit safe hosted-review path.
 3. **Triage every comment** (bots and humans alike). For each one:
    - **Valid** → fix it, run targeted verification, commit, pass the fresh pre-push gate, push, and
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
@@ -194,16 +201,22 @@ before handing the PR back or requesting merge:
 
 Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
 
-1. Dispatch a fresh subagent under the fresh reviewer context contract that has not worked on the PR.
-2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, and body.
-3. Ask it to check only the title and body against this section and the root `AGENTS.md`.
-4. Require either `current` or an exact replacement title and body. The reviewer returns text only;
-   the implementing agent applies it.
-5. Before applying metadata, record the edit timestamp. Code changes restart the full lifecycle.
+1. Capture the exact current title and body before dispatching the reviewer.
+2. Dispatch a fresh subagent under the fresh reviewer context contract that has not worked on the PR.
+3. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, and captured title
+   and body.
+4. Ask it to check only objective title and body requirements in this section and the root
+   `AGENTS.md`.
+5. Require either `current` or an exact correction that names the objective rule it satisfies. The
+   reviewer returns text only; the implementing agent applies only objective-rule corrections.
+6. Before applying metadata, record the edit timestamp. Code changes restart the full lifecycle.
    Metadata-only changes skip code pre-push review and CI, but require the corresponding
    `edited`-event workflow runs created after that timestamp to succeed. Classify any documented
    permitted skip or neutral result explicitly; otherwise keep the PR incomplete. Stale checks on
    the same HEAD are not evidence. Triage any resulting feedback.
-6. After a replacement and its checks, repeat the metadata check with another fresh subagent.
-7. Hand the PR back only after the check reports `current`.
+7. After a correction and its checks, repeat the metadata check once with another fresh subagent;
+   otherwise retain the first review. Immediately before handing the PR back, re-read the title and
+   body and compare them with the final reviewer's snapshot. If either differs, restart the metadata
+   gate on the new snapshot. Hand the PR back only if it reports `current`; escalate conflicting,
+   repeated, or discretionary rewrites to a maintainer rather than looping.
 8. Report the human-only AI-code checkbox separately.

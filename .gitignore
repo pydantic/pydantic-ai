@@ -58,7 +58,9 @@ AGENTS.override.md
 !.claude/skills/i-have-adhd
 !.claude/skills/poweruser-feature-audit
 !.claude/skills/pushing-commits-to-the-repo
-!.claude/skills/pre-push-review
+!.claude/skills/pre-push-review/
+.claude/skills/pre-push-review/*
+!.claude/skills/pre-push-review/SKILL.md
 !.claude/skills/address-feedback/
 .claude/skills/address-feedback/*
 !.claude/skills/address-feedback/SKILL.md

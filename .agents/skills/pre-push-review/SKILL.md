@@ -2,18 +2,15 @@
 name: pre-push-review
 description: Run the repository's high-judgment standards review locally on the exact candidate commit
   before it is pushed
-allowed-tools: Read Glob Grep
 ---
 
 # Pre-push Review
 
 Use the strongest locally available reviewer to catch problems while they are still cheap
-to fix. Run this before the first push and again before every later push to an existing PR.
+to fix. Run this before every push of a candidate commit.
 
 This is the local counterpart to the repository's high-judgment hosted review, run through the
-developer's model subscription. It is independent of the hosted review that runs after push. The
-`pushing-commits-to-the-repo` skill prepares its context and launches it; the implementing agent
-does not perform this review.
+developer's model subscription. It is independent of the hosted review that runs after push.
 
 ## Read the review rubric
 
@@ -34,7 +31,7 @@ topic guides, plus every directory-specific `AGENTS.md` governing a changed file
 
 ## Review the supplied context
 
-The lifecycle supplies one review bundle containing:
+Review the supplied bundle, which contains:
 
 - the policy-base SHA and stable instructions from the current target-branch tip;
 - the merge-base and candidate HEAD SHAs, plus their exact endpoint diff;
