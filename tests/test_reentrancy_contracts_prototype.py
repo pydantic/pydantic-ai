@@ -122,7 +122,7 @@ async def _reenter_limited_model() -> None:
 
     model = ConcurrencyLimitedModel(FunctionModel(model_function), limiter=1)
     agent = Agent(model)
-    await agent.run('outer')  # pragma: no cover
+    await agent.run('outer')
 
 
 def _run_limited_model_reentry() -> None:
