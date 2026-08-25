@@ -1626,6 +1626,11 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
+    elif model_kind == 'openai-codex':
+        from .openai import OpenAIResponsesModel
+
+        # Codex subscription auth speaks the Responses API exclusively.
+        return OpenAIResponsesModel(model_name, provider=provider)
     elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 
