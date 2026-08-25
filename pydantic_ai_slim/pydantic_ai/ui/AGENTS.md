@@ -35,7 +35,8 @@ text before its first tool call, so a consumer never has to synthesize the
 assistant message that ID names — a synthesized one carries an ID the server
 never emitted, which is what breaks telling new messages apart from replayed
 history ([#7527](https://github.com/pydantic/pydantic-ai/issues/7527)). Close
-that pair on the spot: the AG-UI event verifier rejects `RUN_FINISHED` while a
+that pair on the spot: the AG-UI *client's* event verifier (`verifyEvents` in the
+TypeScript `@ag-ui/client`, not the Python package) rejects `RUN_FINISHED` while a
 text message is still open.
 
 That content-free pair is not the shape [#2754](https://github.com/pydantic/pydantic-ai/pull/2754)

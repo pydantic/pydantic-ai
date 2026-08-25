@@ -1229,6 +1229,10 @@ async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
     `ModelResponse`, so streamed and frontend-loaded histories split text and tool calls
     identically. That equivalence covers this split only: `dump_messages` also flushes on
     reasoning, file and compaction parts, which the stream does not split on.
+
+    Fed through `transform_stream` rather than an `Agent` because a `StreamFunctionDef` yields
+    all text or all `DeltaToolCalls`, never a mix, so a tool call either side of a text part
+    inside one response cannot be expressed as a `FunctionModel` stream function.
     """
 
     async def event_generator():
@@ -1365,6 +1369,7 @@ async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
         )
         for message_id in announced_ids
     ]
+    assert streamed_boundaries == snapshot([('', ['call_0']), ('Note this. ', ['call_1'])])
     equivalent_response = ModelResponse(
         parts=[
             ToolCallPart(tool_name='tool_a', args='{}', tool_call_id='call_0'),
@@ -1372,6 +1377,9 @@ async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
             ToolCallPart(tool_name='tool_b', args='{}', tool_call_id='call_1'),
         ]
     )
+    # `content or ''` normalizes one asymmetry the announcement creates: `dump_messages` gives the
+    # tool-only message `content=None`, while announcing it makes a client materialize `content=''`.
+    # Both carry no text, and `load_messages` skips either, so the boundaries are what's compared.
     assert streamed_boundaries == [
         (message.content or '', [tool_call.id for tool_call in message.tool_calls or []])
         for message in AGUIAdapter.dump_messages([equivalent_response])
