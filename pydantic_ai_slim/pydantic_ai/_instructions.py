@@ -166,6 +166,8 @@ def normalize_instructions(
 def normalize_toolset_instructions(
     result: str | InstructionPart | Sequence[str | InstructionPart] | None,
     toolset_id: str | None = None,
+    *,
+    already_keyed: bool = False,
 ) -> list[InstructionPart]:
     """Normalize a toolset `get_instructions` result into non-empty `InstructionPart`s.
 
@@ -180,10 +182,15 @@ def normalize_toolset_instructions(
     points pass the id of the toolset they're calling, and only the point that reaches the authoring
     toolset has one to pass — a wrapper reports no `id`, so nothing resolves an id twice.
 
-    Without one, an id the framework already issued passes straight through (that's an outer layer
-    seeing a part an inner one resolved), while anything else is dropped: an author writing on a
-    toolset with no `id` has no source key to hang a declared segment off, and letting the raw value
-    stand would let it claim a key belonging to somebody else — `'agent'`, say.
+    Without one, every declared id is dropped: an author writing on a toolset with no `id` has no
+    source key to hang a declared segment off, and letting the raw value stand would let it claim a
+    key belonging to somebody else — `'agent'`, or a `'toolset:<id>'` naming a toolset it isn't.
+
+    `already_keyed` marks the one caller whose input may legitimately carry keys the framework
+    issued: a `WrapperToolset` subclass overriding `get_instructions` typically returns what the
+    wrapped toolset produced, and the wrapper has no `id` of its own to resolve against. There the
+    framework's own namespaces pass through, so a capability-contributed toolset stays addressable
+    rather than arriving anonymous through `CapabilityOwnedToolset`.
     """
     if not result:
         return []
@@ -196,7 +203,7 @@ def normalize_toolset_instructions(
             continue
         if source_id is not None:
             resolved_id = resolve_declared_id(source_id, part.id)
-        elif part.id is not None and not part.id.startswith(f'{TOOLSET_INSTRUCTION_NAMESPACE}:'):
+        elif part.id is not None and not (already_keyed and part.id.startswith(f'{TOOLSET_INSTRUCTION_NAMESPACE}:')):
             resolved_id = None
         else:
             resolved_id = part.id

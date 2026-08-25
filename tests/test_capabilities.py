@@ -3338,6 +3338,35 @@ def test_duplicate_capability_ids_raise() -> None:
     )
 
 
+def test_overriding_container_id_must_not_collide_with_a_sibling() -> None:
+    """A retained container is an instruction source, so its `id` competes for the same key.
+
+    A `CombinedCapability` subclass that overrides `get_instructions` contributes as a source in its
+    own right and is kept out of the flattened capability list so its override survives. That put it
+    outside the uniqueness check that walks the flattened list: its leaves were distinct, so nothing
+    complained, and `capability:<id>` silently addressed the container's block and the sibling's at
+    once -- rewriting that key would have replaced text from two unrelated owners.
+    """
+
+    class Group(CombinedCapability[Any]):
+        def get_instructions(self) -> str:
+            return 'Group override.'
+
+    with pytest.raises(UserError) as exc_info:
+        Agent(
+            TestModel(),
+            capabilities=[
+                Group(capabilities=[Capability[Any](instructions='Leaf.', id='leaf')], id='dup'),
+                Capability[Any](instructions='Sibling.', id='dup'),
+            ],
+        )
+
+    assert str(exc_info.value) == snapshot(
+        "Capability id 'dup' is used by multiple capabilities that contribute instructions. "
+        'Capability ids must be unique within a run.'
+    )
+
+
 def test_deferred_capability_without_id_raises_at_construction() -> None:
     """A statically-provided deferred capability without an `id` fails fast at construction."""
     with pytest.raises(UserError, match='stable explicit `id` values'):

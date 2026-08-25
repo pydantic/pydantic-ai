@@ -633,6 +633,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
         _validate_capability_ids(self._root_capability.capabilities)
+        _validate_instruction_source_ids(self._root_capability)
 
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
         # model IDs itself, so eagerly inferring a string here could construct the wrong provider
@@ -773,6 +774,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         static_capabilities: list[AbstractCapability[AgentDepsT]] = []
         self._root_capability.apply(static_capabilities.append)
         _validate_capability_ids(static_capabilities)
+        _validate_instruction_source_ids(self._root_capability)
 
         # Extract capability-contributed configuration (after for_agent so caps can provide instructions etc.)
         self._cap_instructions = self._root_capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
@@ -4008,6 +4010,26 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
             )
         explicit_ids.add(cap.id)
     return explicit_ids
+
+
+def _validate_instruction_source_ids(root_capability: CombinedCapability[Any]) -> None:
+    """Reject two instruction sources that would contribute blocks under one `capability:<id>` key.
+
+    `_validate_capability_ids` walks the flattened capabilities, but a `CombinedCapability` subclass
+    that overrides `get_instructions` contributes as a source in its own right and is deliberately
+    retained rather than splatted, so it never appears in that list. Its `id` therefore went
+    unchecked, and a sibling could share it -- leaving an application unable to tell whose text
+    `capability:<id>` addresses, which is the one thing the key exists to make unambiguous.
+    """
+    sources_by_id: dict[str, AbstractCapability[Any]] = {}
+    for source in root_capability._instruction_sources:  # pyright: ignore[reportPrivateUsage]
+        if source.id is None:
+            continue
+        if (existing := sources_by_id.setdefault(source.id, source)) is not source:
+            raise exceptions.UserError(
+                f'Capability id {existing.id!r} is used by multiple capabilities that contribute '
+                'instructions. Capability ids must be unique within a run.'
+            )
 
 
 def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, source: str) -> None:

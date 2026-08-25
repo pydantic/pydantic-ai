@@ -166,6 +166,32 @@ async def test_toolset_can_declare_ids_for_its_own_blocks():
     ]
 
 
+async def test_an_unidentified_toolset_cannot_mint_a_toolset_key():
+    """A toolset with no `id` has no source key, so it cannot claim one by writing it itself.
+
+    `toolset:<id>` is the framework's promise that a toolset registered under `<id>` said this. A
+    source with no id of its own writing that shape would break the promise — nobody owns the key,
+    so the collision check has nothing to catch, and an application addressing it would be talking
+    to a source that isn't the toolset the key names. Claiming `'agent'` or another namespace was
+    already dropped; a `'toolset:'` prefix was passing through.
+    """
+    agent = Agent(
+        toolsets=[
+            InstructionsToolset(
+                [
+                    InstructionPart(content='Minted.', id='toolset:ghost'),
+                    InstructionPart(content='Borrowed.', id='agent'),
+                ]
+            )
+        ]
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Minted.'),
+        InstructionPart(content='Borrowed.'),
+    ]
+
+
 async def test_wrapped_toolset_instructions_keep_their_id():
     """Wrappers have no id of their own, so the wrapped toolset's identity must survive them."""
     agent = Agent(

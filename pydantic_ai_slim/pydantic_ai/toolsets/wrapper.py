@@ -63,7 +63,7 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
             source = self.wrapped
             while isinstance(source, WrapperToolset):
                 source = source.wrapped
-            return [(source, normalize_toolset_instructions(result, self.id))]
+            return [(source, normalize_toolset_instructions(result, self.id, already_keyed=True))]
         return await self.wrapped._collect_instruction_contributions(ctx)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
