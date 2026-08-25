@@ -578,6 +578,21 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
         model_settings.pop(setting, None)
 
 
+async def _aggregate_forced_stream(stream: AsyncStream[responses.ResponseStreamEvent]) -> responses.Response:
+    """Consume a forced stream and return the final response from its `response.completed` event.
+
+    Used when the endpoint serves streaming responses only (`openai_responses_requires_streaming`) so
+    that nominally non-streaming requests still return an ordinary `responses.Response`.
+    """
+    response: responses.Response | None = None
+    async for event in stream:
+        if event.type == 'response.completed':
+            response = event.response
+    if response is None:
+        raise UnexpectedModelBehavior('Forced stream ended without a `response.completed` event')
+    return response
+
+
 @dataclass
 class _ResponsesRequestParams:
     """Typed request parameters shared by Responses API calls."""
@@ -2196,6 +2211,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if info := self._get_continuation_info(messages, settings):
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
+        elif self.profile.get('openai_responses_requires_streaming', False):
+            # The endpoint serves streaming responses only (e.g. Codex subscription auth): send a
+            # forced stream and aggregate it so callers still get an ordinary `ModelResponse`.
+            stream = await self._responses_create(messages, True, settings, model_request_parameters)
+            response = await _aggregate_forced_stream(stream)
         else:
             response = await self._responses_create(messages, False, settings, model_request_parameters)
 
@@ -2211,6 +2231,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
         check_allow_model_requests()
+        if not self.profile.get('openai_supports_input_token_counting', True):
+            raise UserError(
+                f'Server-side token counting is not available for {self.system} models '
+                f'({self.model_name!r}); the provider does not expose the input-tokens endpoint.'
+            )
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -2742,6 +2767,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings = OpenAIResponsesModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
+        store: bool | Omit | None = model_settings.get('openai_store', OMIT)
+        if profile.get('openai_responses_requires_store_false', False):
+            if store:
+                warnings.warn(
+                    '`openai_store=True` is ignored: this endpoint requires `store=false`.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            store = False
         extra_headers, timeout = self._build_request_options(model_settings)
 
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
@@ -2768,7 +2802,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     service_tier=_resolve_openai_service_tier(model_settings),
                     conversation=request_params.conversation,
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                    store=model_settings.get('openai_store', OMIT),
+                    store=store,
                     user=model_settings.get('openai_user', OMIT),
                     include=include or OMIT,
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
