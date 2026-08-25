@@ -41,13 +41,7 @@ the shortest one.
 CacheSetting: TypeAlias = bool | CacheRetention
 """Type alias for prompt-cache configuration values.
 
-- `True`: Enable prompt caching with the provider's default retention. Uses the provider's
-  automatic caching mode where one exists; elsewhere the library places cache breakpoints
-  at the stable prompt boundaries (end of tool definitions, end of static instructions).
-- `False`: No library-managed caching (the default). Providers that cache implicitly
-  (e.g. OpenAI) still do.
-- `'5m'`/`'30m'`/`'1h'`: Enable prompt caching with a specific retention, snapped down to
-  the nearest tier the provider supports.
+See [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] for the value semantics.
 """
 
 ToolChoiceScalar = Literal['none', 'required', 'auto']
@@ -474,33 +468,29 @@ class ModelSettings(TypedDict, total=False):
     cache: CacheSetting
     """Enable or configure prompt caching for the model request.
 
-    - `True`: Enable prompt caching with the provider's default retention.
-    - `False`: No library-managed caching (overrides a `cache` value in the model's default settings).
-    - `'5m'`/`'30m'`/`'1h'`: Enable prompt caching with a specific retention, snapped down to
-      the nearest tier the provider supports.
+    - `True`: Enable prompt caching with the provider's default retention. Uses the provider's
+      automatic caching mode where one exists; elsewhere the library places cache breakpoints
+      at the stable prompt boundaries (end of tool definitions, end of static instructions).
+    - `False`: No library-managed caching (overrides a `cache` value in the model's default
+      settings). Providers that cache implicitly (e.g. OpenAI) still do.
+    - `'5m'`/`'30m'`/`'1h'`: Enable prompt caching with a specific retention, snapped to the
+      nearest tier the provider supports (down where a shorter tier exists).
 
-    On providers with an automatic caching mode, enabling this uses that mode; everywhere else
-    the library places cache breakpoints at the stable prompt boundaries (end of tool
-    definitions, end of static instructions). Explicit [`CachePoint`][pydantic_ai.messages.CachePoint]
-    markers in the message history are unaffected and can be combined with this setting.
-
-    Provider-specific cache settings (e.g. `anthropic_cache`, `bedrock_cache_instructions`)
-    take precedence: if any is set, this unified field is ignored entirely.
+    Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] markers in the message history are
+    unaffected and can be combined with this setting. Provider-specific cache settings
+    (e.g. `anthropic_cache`, `bedrock_cache_instructions`) take precedence: if any is set, this
+    unified field is ignored entirely.
 
     Silently ignored by model classes not listed below.
 
     Supported by:
 
-    * Anthropic (as `anthropic_cache` automatic caching; on Bedrock and Vertex clients, which don't
-      support automatic caching, as `anthropic_cache_instructions` + `anthropic_cache_tool_definitions`)
-    * Bedrock (as `bedrock_cache_instructions` + `bedrock_cache_tool_definitions`, on models that
-      support prompt caching)
-    * OpenRouter (as `openrouter_cache_instructions` + `openrouter_cache_tool_definitions`, on
-      Anthropic and Google downstream models)
-    * OpenAI (no request effect: OpenAI caches prompts implicitly; retentions beyond the default
-      remain provider-specific via `openai_prompt_cache_retention`)
-    * Google (no request effect: Gemini caches prompts implicitly; warns unless the pre-created
-      cache resource is passed via `google_cached_content`)
+    * Anthropic (as `anthropic_cache`; via breakpoint settings on Bedrock and Vertex clients)
+    * Bedrock (as `bedrock_cache_instructions` + `bedrock_cache_tool_definitions`)
+    * OpenRouter (as `openrouter_cache_instructions` + `openrouter_cache_tool_definitions`)
+    * OpenAI (no request effect: OpenAI caches prompts implicitly)
+    * Google (no request effect: Gemini caches prompts implicitly; warns unless
+      `google_cached_content` is set)
     """
 
     service_tier: ServiceTier

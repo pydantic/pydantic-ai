@@ -54,6 +54,19 @@ def test_openai_resolve_prompt_cache_retention(
     assert model.resolve_prompt_cache_retention(settings) == expected
 
 
+@pytest.mark.parametrize('api', ['chat', 'responses'])
+def test_openai_resolve_prompt_cache_retention_unified_cache(api: Literal['chat', 'responses']) -> None:
+    """The unified `cache` setting feeds the resolver snapped to OpenAI's supported tiers, and
+    combines with the explicit setting by taking the longest retention."""
+    model_type = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
+    model = model_type('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+
+    assert model.resolve_prompt_cache_retention(OpenAIChatModelSettings(cache='1h')) == timedelta(minutes=5)
+    assert model.resolve_prompt_cache_retention(
+        OpenAIChatModelSettings(cache='5m', openai_prompt_cache_retention='24h')
+    ) == timedelta(hours=24)
+
+
 @pytest.mark.parametrize(
     ('settings', 'expected'),
     [

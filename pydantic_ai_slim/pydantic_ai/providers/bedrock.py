@@ -274,7 +274,6 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             # setting conservatively snaps every retention to the default tier; the explicit
             # `bedrock_cache_*='1h'` settings remain available for models that support it.
             supported_cache_retentions=('5m',),
-            max_cache_points=4,
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
@@ -316,7 +315,6 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
                 bedrock_supports_prompt_caching=True,
                 supports_cache=True,
                 supported_cache_retentions=('5m',),
-                max_cache_points=4,
                 bedrock_top_k_variant='nova',
             ),
         )

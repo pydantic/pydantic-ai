@@ -717,21 +717,25 @@ class BedrockConverseModel(Model[BaseClient]):
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if model_request_parameters.cache:
-            prepared_settings = self._translate_cache(
-                cast(BedrockModelSettings, prepared_settings or {}), model_request_parameters.cache
-            )
+            if any(key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS):
+                # Explicit `bedrock_cache_*` settings take precedence; the unified value adds
+                # nothing to the request, so it must not be reported as resolved either.
+                model_request_parameters = replace(model_request_parameters, cache=None)
+            else:
+                prepared_settings = self._translate_cache(
+                    cast(BedrockModelSettings, prepared_settings or {}), model_request_parameters.cache
+                )
         return prepared_settings, model_request_parameters
 
     def _translate_cache(self, model_settings: BedrockModelSettings, cache: CacheSetting) -> BedrockModelSettings:
         """Map the unified `cache` setting onto Bedrock cache settings.
 
-        Explicit `bedrock_cache_*` settings take precedence: if any is set, the unified value
-        adds nothing. The Converse API has no automatic caching mode, so the library places
-        breakpoints at the stable prompt boundaries (end of tool definitions, end of static
-        instructions); the per-boundary profile gates still apply when the settings are consumed.
+        Only called when no explicit `bedrock_cache_*` setting is present (those take precedence
+        in `prepare_request`). The Converse API has no automatic caching mode, so the library
+        places breakpoints at the stable prompt boundaries (end of tool definitions, end of
+        static instructions); the per-boundary profile gates still apply when the settings are
+        consumed.
         """
-        if any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
-            return model_settings
         # `True` stays `True` so no explicit `ttl` reaches the wire, matching what
         # `bedrock_cache_instructions=True` sends; only a requested retention is forwarded.
         value: Literal[True, '5m', '1h'] = cache if cache in ('5m', '1h') else True
@@ -1692,7 +1696,8 @@ class BedrockConverseModel(Model[BaseClient]):
         ]
         excess = excess_cache_points(
             (block for content in message_contents for block in reversed(content)),
-            max_points=self.profile.get('max_cache_points') or 4,
+            # Bedrock enforces a maximum of 4 cache points per request.
+            max_points=4,
             reserved=reserved,
             is_cache_point=lambda block: isinstance(block, dict) and 'cachePoint' in block,
             description='Bedrock request',

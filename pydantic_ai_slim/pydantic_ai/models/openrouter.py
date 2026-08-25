@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -651,11 +651,12 @@ def _openrouter_settings_to_openai_settings(
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
-    # Fall back to unified cache when no explicit openrouter_cache_* setting is set. OpenRouter has
+    # Fall back to unified cache; explicit openrouter_cache_* settings take precedence, in which
+    # case `prepare_request` has already cleared `model_request_parameters.cache`. OpenRouter has
     # no automatic caching mode, so the library places breakpoints at the stable prompt boundaries
     # (end of tool definitions, end of static instructions); the downstream-provider profile gates
     # still apply when these settings are consumed.
-    if model_request_parameters.cache and not any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
+    if model_request_parameters.cache:
         cache = model_request_parameters.cache
         ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
         model_settings['openrouter_cache_instructions'] = ttl
@@ -886,6 +887,10 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if customized_parameters.cache and any(key in (merged_settings or {}) for key in _CACHE_SETTINGS_KEYS):
+            # Explicit `openrouter_cache_*` settings take precedence; the unified value adds
+            # nothing to the request, so it must not be reported as resolved either.
+            customized_parameters = replace(customized_parameters, cache=None)
         new_settings = _openrouter_settings_to_openai_settings(
             cast(OpenRouterModelSettings, merged_settings or {}), customized_parameters
         )

@@ -868,9 +868,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
         if model_request_parameters.cache:
-            prepared_settings = self._translate_cache(
-                cast(AnthropicModelSettings, prepared_settings or {}), model_request_parameters.cache
-            )
+            if any(key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS):
+                # Explicit `anthropic_cache*` settings take precedence; the unified value adds
+                # nothing to the request, so it must not be reported as resolved either.
+                model_request_parameters = replace(model_request_parameters, cache=None)
+            else:
+                prepared_settings = self._translate_cache(
+                    cast(AnthropicModelSettings, prepared_settings or {}), model_request_parameters.cache
+                )
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
@@ -2290,7 +2295,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        max_points = (self.profile.get('max_cache_points') or 4) - (1 if automatic_caching else 0)
+        # Anthropic enforces a maximum of 4 cache points per request.
+        max_points = 4 - (1 if automatic_caching else 0)
         reserved = (
             sum(1 for block in system_prompt if 'cache_control' in cast(dict[str, Any], block))
             if isinstance(system_prompt, list)
@@ -2328,12 +2334,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _translate_cache(self, model_settings: AnthropicModelSettings, cache: CacheSetting) -> AnthropicModelSettings:
         """Map the unified `cache` setting onto Anthropic cache settings.
 
-        Explicit `anthropic_cache*` settings take precedence: if any is set, the unified value
-        adds nothing. Uses automatic caching where the client supports it; on Bedrock and Vertex
-        the library places breakpoints at the stable prompt boundaries instead.
+        Only called when no explicit `anthropic_cache*` setting is present (those take
+        precedence in `prepare_request`). Uses automatic caching where the client supports it;
+        on Bedrock and Vertex the library places breakpoints at the stable prompt boundaries
+        instead.
         """
-        if any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
-            return model_settings
         ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
         translated = model_settings.copy()
         if self.profile.get('supports_auto_cache', False) and not isinstance(

@@ -912,10 +912,11 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
-def _resolve_prompt_cache_retention(settings: ModelSettings) -> timedelta | None:
-    if settings.get('openai_prompt_cache_retention') == '24h':
-        return timedelta(hours=24)
-    return None
+def _resolve_prompt_cache_retention(settings: ModelSettings, unified: timedelta | None = None) -> timedelta | None:
+    """The longest retention requested by `openai_prompt_cache_retention` or the unified `cache` setting."""
+    explicit = timedelta(hours=24) if settings.get('openai_prompt_cache_retention') == '24h' else None
+    retentions = [retention for retention in (explicit, unified) if retention is not None]
+    return max(retentions, default=None)
 
 
 @dataclass(init=False)
@@ -982,9 +983,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest retention requested by OpenAI settings or the unified `cache` setting."""
         merged = merge_model_settings(self.settings, model_settings) or {}
-        unified = self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
-        retentions = [r for r in (_resolve_prompt_cache_retention(merged), unified) if r is not None]
-        return max(retentions, default=None)
+        return _resolve_prompt_cache_retention(
+            merged, self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
+        )
 
     @property
     def system(self) -> str:
@@ -2010,9 +2011,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest retention requested by OpenAI settings or the unified `cache` setting."""
         merged = merge_model_settings(self.settings, model_settings) or {}
-        unified = self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
-        retentions = [r for r in (_resolve_prompt_cache_retention(merged), unified) if r is not None]
-        return max(retentions, default=None)
+        return _resolve_prompt_cache_retention(
+            merged, self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
+        )
 
     @property
     def system(self) -> str:

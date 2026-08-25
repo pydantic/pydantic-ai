@@ -24,6 +24,11 @@ def snap_cache_retention(value: CacheSetting, supported: Sequence[CacheRetention
     """
     if isinstance(value, bool):
         return value
+    if value not in CACHE_RETENTION_ORDER:
+        raise UserError(
+            f'Unknown `cache` retention {value!r}. '
+            f'Use `True`, `False`, or one of {", ".join(repr(tier) for tier in CACHE_RETENTION_ORDER)}.'
+        )
     if not supported or value in supported:
         return value
     rank = CACHE_RETENTION_ORDER.index(value)

@@ -208,7 +208,6 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'supports_auto_cache': True,
-            'max_cache_points': 4,
         }
     )
 
@@ -241,7 +240,6 @@ def test_anthropic_claude_opus_4_7():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'supports_auto_cache': True,
-            'max_cache_points': 4,
         }
     )
 
@@ -264,7 +262,6 @@ def test_anthropic_claude_haiku_4_5():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'supports_auto_cache': True,
-            'max_cache_points': 4,
         }
     )
 
@@ -286,7 +283,6 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'supports_auto_cache': True,
-            'max_cache_points': 4,
         }
     )
 
@@ -314,7 +310,6 @@ def test_openai_gpt_5_4():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': True,
-            'supports_auto_cache': True,
         }
     )
 
@@ -354,7 +349,6 @@ def test_openai_gpt_5_6():
             'tool_deferral_mode': 'with_tool_search',
             'openai_supports_minimal_reasoning_effort': False,
             'supports_cache': True,
-            'supports_auto_cache': True,
         }
     )
 
@@ -434,7 +428,6 @@ def test_openai_gpt_4o():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': True,
-            'supports_auto_cache': True,
         }
     )
 
@@ -461,7 +454,6 @@ def test_openai_o3_mini():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': True,
-            'supports_auto_cache': True,
         }
     )
 
@@ -625,7 +617,6 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'supports_cache': True,
             'supported_cache_retentions': ('5m',),
-            'max_cache_points': 4,
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
@@ -659,7 +650,6 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_tool_choice': True,
             'supports_cache': True,
             'supported_cache_retentions': ('5m',),
-            'max_cache_points': 4,
             'bedrock_send_back_thinking_parts': True,
             'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
@@ -692,7 +682,6 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_tool_choice': True,
             'supports_cache': True,
             'supported_cache_retentions': ('5m',),
-            'max_cache_points': 4,
             'bedrock_send_back_thinking_parts': True,
             'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
@@ -737,7 +726,6 @@ def test_bedrock_amazon_nova_pro():
             'bedrock_supports_prompt_caching': True,
             'supports_cache': True,
             'supported_cache_retentions': ('5m',),
-            'max_cache_points': 4,
             'bedrock_top_k_variant': 'nova',
         }
     )
@@ -755,7 +743,6 @@ def test_bedrock_amazon_nova_2_lite():
             'bedrock_supports_prompt_caching': True,
             'supports_cache': True,
             'supported_cache_retentions': ('5m',),
-            'max_cache_points': 4,
             'bedrock_top_k_variant': 'nova',
         }
     )
@@ -1620,7 +1607,6 @@ def test_anthropic_unknown_model_returns_some_profile():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'supports_auto_cache': True,
-            'max_cache_points': 4,
         }
     )
 

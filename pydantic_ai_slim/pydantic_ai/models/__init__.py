@@ -239,11 +239,13 @@ class ModelRequestParameters:
     """
 
     cache: CacheSetting | None = None
-    """Resolved prompt-cache configuration for this request.
+    """The resolved unified `cache` setting for this request.
 
-    `None` means no library-managed caching. Set by the base `Model.prepare_request()`
-    from the unified `cache` field in `ModelSettings`, after checking that the model's
-    profile supports caching and snapping the retention to a supported tier.
+    Set by the base `Model.prepare_request()` from the unified `cache` field in `ModelSettings`,
+    after checking that the model's profile supports caching and snapping the retention to a
+    supported tier. `None` means the unified setting is unset, unsupported by the model, or
+    overridden by explicit provider-specific cache settings, which take precedence and are not
+    reflected here.
     """
 
     def visibility_of(self, tool_name: str) -> ToolVisibility:
@@ -472,10 +474,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         retention snapped to a supported tier.
         """
         if model_settings and 'cache' in model_settings:
-            cache_value = model_settings['cache']
-            if cache_value and self.profile.get('supports_cache', False):
-                supported = self.profile.get('supported_cache_retentions', ('5m',))
-                params = replace(params, cache=snap_cache_retention(cache_value, supported))
+            if resolved := self._resolved_cache_setting(model_settings):
+                params = replace(params, cache=resolved)
             stripped = {k: v for k, v in model_settings.items() if k != 'cache'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
         return model_settings, params

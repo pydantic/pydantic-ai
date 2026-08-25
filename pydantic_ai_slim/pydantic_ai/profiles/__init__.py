@@ -147,12 +147,6 @@ class ModelProfile(TypedDict, total=False):
     When True, `cache=True` uses that mode instead of library-placed cache breakpoints.
     """
 
-    max_cache_points: int | None
-    """Maximum number of cache breakpoints per request, or `None` for no limit. Default: `None`.
-
-    Excess breakpoints are trimmed oldest-first to stay within the limit.
-    """
-
     supports_thinking: bool
     """Whether the model supports thinking/reasoning configuration. Default: `False`.
 
@@ -255,7 +249,6 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_cache': False,
     'supported_cache_retentions': ('5m',),
     'supports_auto_cache': False,
-    'max_cache_points': None,
     'supports_thinking': False,
     'thinking_always_enabled': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,

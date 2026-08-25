@@ -59,7 +59,7 @@ class OpenAIProvider(_OpenAICompatibleProvider):
             # OpenAI caches prompts implicitly, so the unified `cache` setting is satisfied without
             # adding anything to the request. Set here rather than in `openai_model_profile`, which
             # is shared with OpenAI-compatible endpoints that don't necessarily cache implicitly.
-            OpenAIModelProfile(supports_cache=True, supports_auto_cache=True),
+            OpenAIModelProfile(supports_cache=True),
         )
 
     @staticmethod
