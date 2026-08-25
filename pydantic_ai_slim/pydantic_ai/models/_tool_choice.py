@@ -57,17 +57,19 @@ def resolve_tool_choice(  # noqa: C901
     # not-yet-revealed tool as a typo.
     known_tool_names = set(model_request_parameters.tool_defs.keys())
 
-    def _filter_hidden_tools(chosen_tool_names: set[str], *, has_output_fallback: bool = False) -> set[str]:
-        # Only `'withheld'` names are absent from the wire. A `'deferred'` declaration sits in the
+    def _filter_withheld_tools(chosen_tool_names: set[str], *, has_output_fallback: bool = False) -> set[str]:
+        # Named for the `ToolVisibility` literal it filters on rather than the looser "hidden":
+        # only `'withheld'` names are absent from the wire. A `'deferred'` declaration sits in the
         # `tools` collection and a `'via_history'` definition travels on the tool-addition channel,
-        # and OpenAI honors `tool_choice` forcing for both, so neither counts as hidden here.
-        hidden_tool_names = {
+        # and OpenAI honors `tool_choice` forcing for both, so neither is withheld here — though
+        # prose elsewhere would call all three "hidden from the model".
+        withheld_tool_names = {
             tool.name
             for tool in model_request_parameters.function_tools
             if model_request_parameters.visibility_of(tool.name) == 'withheld'
         }
-        filtered = chosen_tool_names - hidden_tool_names
-        # At least one name that will actually reach the wire must survive: hidden names are
+        filtered = chosen_tool_names - withheld_tool_names
+        # At least one name that will actually reach the wire must survive: withheld names are
         # filtered here, and unknown names pass through by design (dynamic tool availability, see
         # `_check_invalid_tools`) — but a choice left with only unknown names would force the
         # provider toward tools it was never sent. A `ToolOrOutput` choice whose output tools
@@ -147,7 +149,7 @@ def resolve_tool_choice(  # noqa: C901
         _check_invalid_tools(chosen_set, known_tool_names, known_label='Known tools')
         # A deferred declaration or a tool-addition definition is already on the wire and remains
         # callable; only tools absent from the wire cannot be forced by name.
-        chosen_set = _filter_hidden_tools(chosen_set)
+        chosen_set = _filter_withheld_tools(chosen_set)
 
         if chosen_set == known_tool_names:
             return 'required'
@@ -171,7 +173,7 @@ def resolve_tool_choice(  # noqa: C901
             known_function_tool_names,
             known_label='Known function tools',
         )
-        chosen_function_set = _filter_hidden_tools(chosen_function_set, has_output_fallback=bool(output_tool_names))
+        chosen_function_set = _filter_withheld_tools(chosen_function_set, has_output_fallback=bool(output_tool_names))
 
         allowed_tools = chosen_function_set | output_tool_names
         mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'
