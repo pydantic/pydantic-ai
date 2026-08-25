@@ -24,11 +24,10 @@ _MANUAL_OWNER = 'adtyavrdhn'
 # Everything before this rollout watermark was handled by the one-time manual
 # audit. Keeping it fixed makes later outages recoverable without draining years
 # of historical backlog into the triage channel.
-_RECOVERY_EPOCH = '2026-08-18'
+_RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
 _FILE_LIMIT = 100
 _ASSIGNEE_LIMIT = 10
 _MAX_ITEM_NUMBER = 2_147_483_647
-_SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _ITEM_QUERY = """
 query RoutingItem($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -460,17 +459,7 @@ def parse_mentions(value: str, owner: str) -> dict[str, str]:
     """Validate the caller-owned mention needed by this decision."""
     if owner not in _ROUTE_OWNERS:
         raise ValueError('notification owner is not routable')
-    loaded: object = json.loads(value)
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Slack mention mapping must be an object')
-    mentions = {str(key): str(mention) for key, mention in cast(Mapping[object, object], loaded).items()}
-    if (
-        owner not in mentions
-        or not set(mentions) <= set(_OWNERS)
-        or any(_SLACK_MENTION.fullmatch(mention) is None for mention in mentions.values())
-    ):
-        raise ValueError('Slack mention mapping must contain the selected owner and no unknown owners')
-    return mentions
+    return attention.slack_mentions(value, owner)
 
 
 def notify(repo: str, decision: Decision, mentions_value: str, webhook: str) -> None:

@@ -777,12 +777,17 @@ def test_workflow_is_notification_first_and_least_privilege():
     assert jobs['route']['permissions'] == {
         'contents': 'read',
         'issues': 'write',
-        'pull-requests': 'write',
+        'pull-requests': 'read',
     }
     notify, assign = jobs['route']['steps'][1:]
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' in notify['env']
     assert assign['if'] == "steps.notify.outputs.did_notify == 'true'"
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in assign['env']
+    assert jobs['alert']['needs'] == ['select', 'route']
+    assert jobs['alert']['permissions'] == {}
+    assert "contains(needs.*.result, 'failure')" in jobs['alert']['if']
+    assert jobs['alert']['steps'][0]['with']['errors'] is True
+    assert '<!channel>' not in jobs['alert']['steps'][0]['with']['payload']
 
 
 def test_every_workflow_checkout_uses_the_defining_workflow_identity():

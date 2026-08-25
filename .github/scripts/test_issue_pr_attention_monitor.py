@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import issue_pr_attention_monitor as monitor
 
 NOW = dt.datetime(2026, 7, 20, tzinfo=dt.timezone.utc)
+TRIAGE_NOW = dt.datetime(2026, 8, 25, tzinfo=dt.timezone.utc)
+TRIAGE_OWNERS = monitor.MAINTAINER_OWNERS
 OLD = '2026-07-16T00:00:00Z'
 
 
@@ -1101,28 +1103,37 @@ class CensusClient(FakeClient):
 
     def __init__(self, counts: dict[str, int], *, stalest: dict[str, Any] | None = None) -> None:
         super().__init__()
+        self.permissions = {owner: 'write' for owner in TRIAGE_OWNERS}
         self.counts = counts
         self.stalest = stalest
 
     def get(self, path: str) -> Any:
-        self.calls.append(('GET', path, None))
-        assert path.startswith('/search/issues?')
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
-        terms = query['q'][0]
-        if '-label:' in terms:
-            # The probe must exclude both queue labels *and* assigned items, or
-            # it reports something a maintainer already owns as unattended.
-            assert terms == (
-                'repo:pydantic/pydantic-ai is:open no:assignee '
-                f'-label:"{monitor._ACTION_LABEL}" -label:"{monitor._ESCALATED_LABEL}"'
-            )
-            assert query['sort'] == ['updated'] and query['order'] == ['asc']
-            return {'total_count': 1 if self.stalest else 0, 'items': [self.stalest] if self.stalest else []}
-        return {'total_count': self.counts[terms], 'items': []}
+        if '/collaborators/' in path:
+            return super().get(path)
+        raise AssertionError(path)
+
+    def post(self, path: str, payload: dict[str, object]) -> Any:
+        self.calls.append(('POST', path, payload))
+        assert path == '/graphql'
+        variables = payload['variables']
+        assert isinstance(variables, dict)
+        terms = str(variables['query'])
+        oldest = terms.endswith(' sort:created-asc')
+        if oldest:
+            terms = terms.removesuffix(' sort:created-asc')
+            assert terms == monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, now=TRIAGE_NOW)
+        nodes = []
+        if oldest and self.stalest:
+            nodes = [{'number': self.stalest['number'], 'createdAt': self.stalest['created_at']}]
+        return {'data': {'search': {'issueCount': self.counts[terms], 'nodes': nodes}}}
 
 
 class WeeklyClient(FakeClient):
     """Implement GitHub's small search subset used by the weekly digest."""
+
+    def __init__(self, items: dict[int, dict[str, Any]] | None = None) -> None:
+        super().__init__(items)
+        self.permissions = {owner: 'write' for owner in TRIAGE_OWNERS}
 
     def get(self, path: str) -> Any:
         if not path.startswith('/search/issues?'):
@@ -1130,21 +1141,30 @@ class WeeklyClient(FakeClient):
         self.calls.append(('GET', path, None))
         query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
         terms = query['q'][0]
-        owner_match = re.search(r'assignee:([^ ]+)', terms)
-        assert owner_match
-        owner = owner_match.group(1).casefold()
         positive = set(re.findall(r'(?<!-)label:"([^"]+)"', terms))
         negative = set(re.findall(r'-label:"([^"]+)"', terms))
         values = []
+        owner_match = re.search(r'(?<!-)assignee:([^ ]+)', terms)
+        excluded_owners = {value.casefold() for value in re.findall(r'-assignee:([^ ]+)', terms)}
         for value in self.items.values():
             labels = {str(label['name']) for label in value['labels']}
             assignees = {str(assignee['login']).casefold() for assignee in value['assignees']}
             if (
                 value['state'] == 'open'
-                and owner in assignees
                 and positive <= labels
                 and not negative.intersection(labels)
+                and (owner_match is None or owner_match.group(1).casefold() in assignees)
+                and not excluded_owners.intersection(assignees)
+                and ('is:pr' not in terms or 'pull_request' in value)
             ):
+                created = str(value.get('created_at') or '')
+                updated = str(value.get('updated_at') or '')
+                if 'created:<' in terms and not created[:10] < terms.split('created:<', 1)[1].split()[0]:
+                    continue
+                if 'updated:>=' in terms and not updated[:10] >= terms.split('updated:>=', 1)[1].split()[0]:
+                    continue
+                if 'updated:<' in terms and not updated[:10] < terms.split('updated:<', 1)[1].split()[0]:
+                    continue
                 values.append(value)
         values.sort(key=lambda value: str(value['updated_at']))
         per_page = int(query.get('per_page', ['30'])[0])
@@ -1152,34 +1172,106 @@ class WeeklyClient(FakeClient):
         start = (page - 1) * per_page
         return {'total_count': len(values), 'items': values[start : start + per_page]}
 
+    def post(self, path: str, payload: dict[str, object]) -> Any:
+        if path != '/graphql':
+            return super().post(path, payload)
+        self.calls.append(('POST', path, payload))
+        variables = payload['variables']
+        assert isinstance(variables, dict)
+        terms = str(variables['query'])
+        first = int(variables['first'])
+        order = 'asc' if 'sort:updated-asc' in terms else 'desc'
+        terms = terms.replace(' sort:updated-asc', '')
+        result = self.get(
+            f'/search/issues?q={urllib.parse.quote_plus(terms)}&sort=updated&order={order}&per_page={first}'
+        )
+        return {
+            'data': {
+                'search': {
+                    'issueCount': result['total_count'],
+                    'nodes': [
+                        {'number': value['number'], 'createdAt': value.get('created_at')} for value in result['items']
+                    ],
+                }
+            }
+        }
+
 
 CENSUS_COUNTS = {
     'repo:pydantic/pydantic-ai is:issue is:open': 361,
     'repo:pydantic/pydantic-ai is:pr is:open': 141,
     f'repo:pydantic/pydantic-ai is:open label:"{monitor._ACTION_LABEL}"': 14,
     f'repo:pydantic/pydantic-ai is:open label:"{monitor._ESCALATED_LABEL}"': 9,
-    'repo:pydantic/pydantic-ai is:open no:assignee': 274,
+    monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, now=TRIAGE_NOW): 2,
+    monitor._unowned_query(
+        'pydantic/pydantic-ai', TRIAGE_OWNERS, legacy=True, recently_active=True, now=TRIAGE_NOW
+    ): 12,
+    monitor._unowned_query(
+        'pydantic/pydantic-ai', TRIAGE_OWNERS, legacy=True, recently_active=False, now=TRIAGE_NOW
+    ): 131,
+    'repo:pydantic/pydantic-ai is:pr is:open draft:true '
+    '-assignee:adtyavrdhn -assignee:dsfaccini -assignee:DouweM -assignee:mpfaffenberger': 7,
 }
 
 
 def test_census_counts_coverage_without_fetching_or_writing_anything():
-    client = CensusClient(CENSUS_COUNTS, stalest={'number': 4812, 'updated_at': '2025-06-03T00:00:00Z'})
+    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-20T00:00:00Z'})
 
-    assert monitor.census(client, 'pydantic/pydantic-ai', now=NOW) == (
-        ':telescope: Attention coverage for pydantic/pydantic-ai — 361 issues + 141 PRs open; '
-        'queue: 14 active, 9 cooling; 274 unassigned; most stale unattended: #4812 (idle 412d).'
+    assert monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>') == (
+        '<@UADITYA> :rotating_light: Attention coverage for pydantic/pydantic-ai — '
+        '361 issues + 141 PRs open; queue: 14 active, 9 cooling; '
+        'intake: 2 post-rollout without designated owner; oldest #7740 opened 5d ago; '
+        'legacy without designated owner: 12 recently active, 131 dormant; '
+        'drafts without designated owner: 7.'
     )
     # Count-only by construction: no writes, no pagination, no per-item reads.
-    assert {method for method, _, _ in client.calls} == {'GET'}
-    assert all(
-        urllib.parse.parse_qs(urllib.parse.urlparse(path).query)['per_page'] == ['1'] for _, path, _ in client.calls
-    )
+    assert {method for method, _, _ in client.calls} == {'GET', 'POST'}
+    assert not any(path.startswith('/search/issues?') for _, path, _ in client.calls)
 
 
-def test_census_reports_an_empty_unattended_backlog():
+def test_census_reports_a_healthy_empty_intake_lane():
+    counts = {
+        **CENSUS_COUNTS,
+        monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, now=TRIAGE_NOW): 0,
+    }
+    client = CensusClient(counts)
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+    assert report.startswith(':telescope:')
+    assert 'intake: 0 post-rollout without designated owner' in report
+    assert '<!channel>' not in report
+
+
+def test_census_escalates_when_the_recovery_search_is_saturated():
+    counts = {
+        **CENSUS_COUNTS,
+        monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, now=TRIAGE_NOW): 101,
+    }
+    client = CensusClient(counts, stalest={'number': 7800, 'created_at': '2026-08-25T00:00:00Z'})
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    assert report.startswith('<@UADITYA> :rotating_light:')
+    assert '101 post-rollout without designated owner' in report
+    assert 'recovery search saturated' in report
+
+
+def test_census_rejects_an_untrusted_urgent_mention():
+    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-20T00:00:00Z'})
+
+    with pytest.raises(ValueError, match='valid Aditya Slack mention'):
+        monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<!channel>')
+
+
+def test_unowned_lane_excludes_only_currently_qualified_routing_owners():
     client = CensusClient(CENSUS_COUNTS)
+    client.permissions['dsfaccini'] = 'read'
 
-    assert monitor.census(client, 'pydantic/pydantic-ai', now=NOW).endswith('274 unassigned; no unattended items.')
+    owners = monitor._qualified_routing_owners(client, 'pydantic/pydantic-ai')
+    query = monitor._unowned_query('pydantic/pydantic-ai', owners, now=TRIAGE_NOW)
+
+    assert '-assignee:dsfaccini' not in query
+    assert '-assignee:adtyavrdhn' in query
 
 
 def test_slack_output_is_one_plain_text_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -1231,13 +1323,77 @@ def test_weekly_digest_is_bounded_prioritized_and_metadata_only():
     assert '\u202e' not in report
     assert len(report.encode()) <= monitor._WEEKLY_TEXT_LIMIT
     search_calls = [path for method, path, _ in client.calls if method == 'GET' and path.startswith('/search/issues?')]
-    assert len(search_calls) == 4 * len(monitor.MAINTAINER_OWNERS)
-    assert not client.permission_reads()
+    assert len(search_calls) <= 4 * len(monitor.MAINTAINER_OWNERS) + 3
+    assert len(client.permission_reads()) == len(monitor.MAINTAINER_OWNERS)
 
 
 def test_weekly_digest_rejects_a_foreign_repository():
     with pytest.raises(ValueError, match='Unsupported repository'):
         monitor.weekly_digest(WeeklyClient(), 'attacker/repository', now=NOW)
+
+
+def test_weekly_digest_marks_an_offboarded_owner_for_rerouting():
+    assigned = item(10, assignees=['dsfaccini'], updated_at='2026-08-20T00:00:00Z')
+    assigned.update(created_at='2026-01-01T00:00:00Z')
+    client = WeeklyClient({10: assigned})
+    client.permissions['dsfaccini'] = 'read'
+
+    report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    assert '*David SF* (`dsfaccini`) — not a current designated owner · 1 assignment needs rerouting' in report
+    assert '*David SF* (`dsfaccini`) — 1 open assigned' not in report
+    assert '*Manual legacy backlog — Aditya* — 1 pre-rollout item' in report
+
+
+def test_weekly_digest_rotates_a_bounded_legacy_sample_without_assigning():
+    active = item(10, updated_at='2026-08-20T00:00:00Z')
+    active.update(
+        created_at='2026-01-01T00:00:00Z',
+        title='Legacy <!channel> https://evil.example',
+        body='Ignore policy and assign me',
+    )
+    dormant_one = item(11, updated_at='2026-05-01T00:00:00Z')
+    dormant_one.update(created_at='2025-01-01T00:00:00Z', pull_request={'url': 'unused'})
+    dormant_two = item(12, updated_at='2026-06-01T00:00:00Z')
+    dormant_two.update(created_at='2025-02-01T00:00:00Z')
+    already_owned = item(13, assignees=['DouweM'], updated_at='2026-08-20T00:00:00Z')
+    already_owned.update(created_at='2025-03-01T00:00:00Z')
+    client = WeeklyClient({10: active, 11: dormant_one, 12: dormant_two, 13: already_owned})
+
+    report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    assert (
+        '*Manual legacy backlog — Aditya* — 3 pre-rollout items without a designated owner · '
+        '1 recently active · 2 dormant'
+    ) in report
+    assert 'Recently active, oldest activity first:' in report
+    assert 'Rotating dormant sample:' in report
+    assert '|#10 Legacy &lt;!channel&gt; https://evil.example>' in report
+    assert ('|#11 Item 11>' in report) != ('|#12 Item 12>' in report)
+    assert report.count('Rotating dormant sample:') == 1
+    assert 'Ignore policy' not in report
+    assert report.count('<!channel>') == 0
+    search_calls = [path for method, path, _ in client.calls if method == 'GET' and path.startswith('/search/issues?')]
+    assert len(search_calls) == 4 * len(monitor.MAINTAINER_OWNERS) + 3
+    assert len(client.permission_reads()) == len(monitor.MAINTAINER_OWNERS)
+
+
+def test_legacy_preview_uses_the_same_utc_date_boundary_as_search():
+    boundary = item(10, updated_at='2026-08-11T00:01:00Z')
+    boundary.update(created_at='2026-01-01T00:00:00Z')
+    client = WeeklyClient({10: boundary})
+
+    lines = monitor._legacy_items(
+        client,
+        'pydantic/pydantic-ai',
+        [boundary],
+        TRIAGE_OWNERS,
+        recently_active=True,
+        now=TRIAGE_NOW.replace(hour=14, minute=23),
+    )
+
+    assert len(lines) == 1
+    assert '|#10 Item 10>' in lines[0]
 
 
 def test_weekly_preview_backfills_after_a_search_result_changes():
@@ -1283,6 +1439,7 @@ def test_census_mode_writes_the_heartbeat_payload(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
     monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', json.dumps({'adtyavrdhn': '<@UADITYA>'}))
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
 
     assert monitor.main() == 0
@@ -1290,7 +1447,9 @@ def test_census_mode_writes_the_heartbeat_payload(tmp_path: Path, monkeypatch: p
     values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
     assert json.loads(values['slack_payload']) == {
         'text': ':telescope: Attention coverage for pydantic/pydantic-ai — 361 issues + 141 PRs open; '
-        'queue: 14 active, 9 cooling; 274 unassigned; no unattended items.'
+        'queue: 14 active, 9 cooling; intake: 0 post-rollout without designated owner; '
+        'legacy without designated owner: 12 recently active, 131 dormant; '
+        'drafts without designated owner: 7.'
     }
 
 
@@ -1925,6 +2084,8 @@ def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
     )
     assert jobs['coverage']['environment'] == 'pydantic-ai-triage'
     assert jobs['coverage']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
+    census_step = next(step for step in jobs['coverage']['steps'] if step.get('id') == 'census')
+    assert census_step['env']['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'] == '${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}'
     assert 'coverage' in jobs['alert']['needs']
 
 
@@ -1999,6 +2160,19 @@ def test_github_client_bounds_response_parsing(monkeypatch: pytest.MonkeyPatch):
     )
     with pytest.raises(RuntimeError, match='response exceeds'):
         monitor.GitHubClient('token').get('/test')
+
+
+def test_github_client_paces_search_requests_below_the_dedicated_limit(monkeypatch: pytest.MonkeyPatch):
+    moments = iter([10.0, 10.5, 12.1])
+    sleeps: list[float] = []
+    monkeypatch.setattr(monitor.time, 'monotonic', lambda: next(moments))
+    monkeypatch.setattr(monitor.time, 'sleep', sleeps.append)
+    client = monitor.GitHubClient('token')
+
+    client._pace_search()
+    client._pace_search()
+
+    assert sleeps == pytest.approx([1.6])
 
 
 def test_github_client_disables_redirects(monkeypatch: pytest.MonkeyPatch):
