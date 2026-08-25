@@ -912,8 +912,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
                     anchor = ContentCitationAnchor(start=0, end=len(text)) if text else None
                     citations = _map_citations(citations_content.get('citations', []), anchor)
-                    if citations:
-                        items.append(TextPart(content=text, citations=citations))
+                    items.append(TextPart(content=text, citations=citations))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch

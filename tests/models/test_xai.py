@@ -1441,6 +1441,7 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
                     chunk_content='collection chunk with no IDs',
                 ),
             ),
+            chat_pb2.InlineCitation(collections_citation=chat_pb2.CollectionsCitation()),
             chat_pb2.InlineCitation(start_index=2, end_index=1),
         ]
     )
@@ -2430,8 +2431,8 @@ async def test_xai_stream_empty_response_raises(allow_model_requests: None):
     agent = Agent(m)
 
     with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without content or tool calls'):
-        async with agent.run_stream(''):
-            pass
+        async with agent.run_stream('') as result:
+            await result.get_output()
 
 
 async def test_xai_response_with_logprobs(allow_model_requests: None):

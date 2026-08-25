@@ -1657,6 +1657,31 @@ async def test_bedrock_empty_citation_response_mapping(bedrock_provider: Bedrock
     ]
 
 
+async def test_bedrock_citation_response_without_citations_preserves_text(
+    bedrock_provider: BedrockProvider,
+) -> None:
+    """Bedrock preserves text from a citations content block without citations."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    response = await model._process_response(  # pyright: ignore[reportPrivateUsage]
+        cast(
+            Any,
+            {
+                'output': {
+                    'message': {
+                        'role': 'assistant',
+                        'content': [{'citationsContent': {'content': [{'text': 'No citation.'}], 'citations': []}}],
+                    }
+                },
+                'stopReason': 'end_turn',
+                'usage': {'inputTokens': 10, 'outputTokens': 9, 'totalTokens': 19},
+                'ResponseMetadata': {'HTTPStatusCode': 200},
+            },
+        )
+    )
+
+    assert response.parts == [TextPart('No citation.')]
+
+
 async def test_bedrock_stream_citation_mapping(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:

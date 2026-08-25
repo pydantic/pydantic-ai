@@ -549,6 +549,25 @@ DOCUMENT_CASES = [
             ]
         ),
     ),
+    DocumentCitationCase(
+        id='bedrock-pdf',
+        provider='bedrock',
+        pdf=True,
+        expected=snapshot(
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Document 1',
+                            excerpts=['Dummy PDF file'],
+                            provider_details={'location': {'documentPage': {'documentIndex': 0, 'start': 1, 'end': 2}}},
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=42),
+                )
+            ]
+        ),
+    ),
 ]
 
 
