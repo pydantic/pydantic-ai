@@ -335,7 +335,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     (there is no process-global cache); construct one per user/credential set. The instance binds
     its refresh lock to the first event loop that awaits a request — do not reuse across loops.
 
-    ```python
+    ```python {test="skip" lint="skip"}
     provider = OpenAICodexProvider(
         credentials=credentials_from_your_db,
         on_credentials_refresh=save_to_your_db,  # rotated tokens come back here

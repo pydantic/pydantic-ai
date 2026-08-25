@@ -317,6 +317,15 @@ def test_docs_examples(
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
     env.set('SNOWFLAKE_TOKEN', 'testing')
 
+    # The Codex provider reads the Codex CLI's `auth.json` (honoring `CODEX_HOME`) instead of an
+    # env var, so fake the file the same way the API keys above are faked.
+    codex_home = tmp_path_cwd / 'codex-home'
+    codex_home.mkdir(exist_ok=True)
+    (codex_home / 'auth.json').write_text(
+        json.dumps({'tokens': {'access_token': 'testing', 'refresh_token': 'testing', 'account_id': 'testing'}})
+    )
+    env.set('CODEX_HOME', str(codex_home))
+
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
     opt_lint = prefix_settings.get('lint', '')

@@ -136,6 +136,9 @@ navigation:
         slug: "models/openai"
         aliases:
           - "providers/openai"
+      - page: "OpenAI Codex"
+        path: "models/openai-codex.md"
+        slug: "models/openai-codex"
       - page: "Anthropic"
         path: "models/anthropic.md"
         slug: "models/anthropic"
