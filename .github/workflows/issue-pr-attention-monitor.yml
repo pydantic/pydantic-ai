@@ -47,7 +47,6 @@ jobs:
     if: ${{ !cancelled() && needs.reconcile.outputs.has_notices == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: pydantic-ai-triage
     permissions:
       contents: read
       issues: read
@@ -110,7 +109,6 @@ jobs:
     if: ${{ !cancelled() && (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') && (github.event.schedule == '47 6 * * *' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: pydantic-ai-triage
     permissions:
       contents: read
       issues: read
@@ -142,7 +140,6 @@ jobs:
     if: ${{ !cancelled() && contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: pydantic-ai-triage
     permissions: {}
     steps:
       - name: Report attention operations failure privately

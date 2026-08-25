@@ -2082,7 +2082,10 @@ def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
         "(github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') && "
         "(github.event.schedule == '47 6 * * *' || github.event_name == 'workflow_dispatch') }}"
     )
-    assert jobs['coverage']['environment'] == 'pydantic-ai-triage'
+    # Reusable jobs must consume the explicitly passed workflow_call secret.
+    # A job environment can shadow it with a caller-repository environment secret.
+    for job_name in ('notify', 'coverage', 'alert'):
+        assert 'environment' not in jobs[job_name]
     assert jobs['coverage']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
     census_step = next(step for step in jobs['coverage']['steps'] if step.get('id') == 'census')
     assert census_step['env']['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'] == '${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}'
@@ -2109,6 +2112,7 @@ def test_weekly_digest_workflow_is_monday_only_read_only_and_secret_isolated():
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in build_text
     assert 'issue_pr_attention_monitor.py weekly' in build_text
     for job_name in ('notify', 'alert'):
+        assert 'environment' not in jobs[job_name]
         action = jobs[job_name]['steps'][0]
         assert action['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
         assert action['with']['webhook'] == '${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}'

@@ -788,6 +788,10 @@ def test_workflow_is_notification_first_and_least_privilege():
     assert "contains(needs.*.result, 'failure')" in jobs['alert']['if']
     assert jobs['alert']['steps'][0]['with']['errors'] is True
     assert '<!channel>' not in jobs['alert']['steps'][0]['with']['payload']
+    # Reusable jobs must consume the explicitly passed workflow_call secret.
+    # A job environment can shadow it with a caller-repository environment secret.
+    assert 'environment' not in jobs['route']
+    assert 'environment' not in jobs['alert']
 
 
 def test_every_workflow_checkout_uses_the_defining_workflow_identity():

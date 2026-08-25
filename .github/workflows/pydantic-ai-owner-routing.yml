@@ -56,7 +56,6 @@ jobs:
     if: needs.select.outputs.should_route == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: pydantic-ai-triage
     concurrency:
       group: semantic-owner-${{ github.repository }}-${{ needs.select.outputs.number }}
       cancel-in-progress: false
@@ -108,7 +107,6 @@ jobs:
     if: ${{ always() && !cancelled() && contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    environment: pydantic-ai-triage
     permissions: {}
     steps:
       - name: Alert triage channel

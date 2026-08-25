@@ -44,7 +44,6 @@ jobs:
     if: ${{ needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: pydantic-ai-triage
     permissions: {}
     steps:
       - name: Post the weekly maintainer digest to the triage channel
@@ -60,7 +59,6 @@ jobs:
     if: ${{ !cancelled() && contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: pydantic-ai-triage
     permissions: {}
     steps:
       - name: Report weekly digest failure privately
