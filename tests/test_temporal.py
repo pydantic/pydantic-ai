@@ -3381,13 +3381,26 @@ async def test_logfire_plugin(client: Client):
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
 
-    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
-    # We can't check if the metrics URL was actually set correctly because it's on a `temporalio.bridge.runtime.Runtime` that we can't read from.
+    with patch.object(
+        temporal_logfire, 'OpenTelemetryConfig', wraps=temporal_logfire.OpenTelemetryConfig
+    ) as open_telemetry_config:
+        new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is not None
+    assert open_telemetry_config.call_args.kwargs['metric_periodicity'] == timedelta(seconds=60)
+
+    plugin = LogfirePlugin(setup_logfire, metric_periodicity=timedelta(minutes=5))
+    with patch.object(
+        temporal_logfire, 'OpenTelemetryConfig', wraps=temporal_logfire.OpenTelemetryConfig
+    ) as open_telemetry_config:
+        await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    assert open_telemetry_config.call_args.kwargs['metric_periodicity'] == timedelta(minutes=5)
 
     plugin = LogfirePlugin(setup_logfire, metrics=False)
-    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
-    assert new_client.service_client.config.runtime is None
+    custom_runtime = temporal_logfire.Runtime(telemetry=temporal_logfire.TelemetryConfig())
+    new_client = await Client.connect(
+        client.service_client.config.target_host, plugins=[plugin], runtime=custom_runtime
+    )
+    assert new_client.service_client.config.runtime is custom_runtime
 
     plugin = LogfirePlugin(lambda: setup_logfire(send_to_logfire=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
