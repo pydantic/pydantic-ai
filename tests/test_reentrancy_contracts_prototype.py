@@ -8,6 +8,7 @@ surface-specific test harness.
 from __future__ import annotations
 
 import multiprocessing
+import signal
 from collections.abc import Callable
 from multiprocessing.connection import Connection
 
@@ -29,32 +30,37 @@ pytestmark = pytest.mark.xdist_group('reentrancy_contracts')
 
 
 def _run_and_signal(operation: Callable[[], None], started: Connection) -> None:
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: _raise_system_exit())
     started.send_bytes(b'1')
     started.close()
     operation()
 
 
+def _raise_system_exit() -> None:
+    raise SystemExit(124)
+
+
 def _assert_completes_in_subprocess(operation: Callable[[], None]) -> None:
     if 'forkserver' in multiprocessing.get_all_start_methods():
         context = multiprocessing.get_context('forkserver')
-    else:
+    else:  # pragma: no cover
         context = multiprocessing.get_context('spawn')
     ready, started = context.Pipe(duplex=False)
     process = context.Process(target=_run_and_signal, args=(operation, started))
     try:
         process.start()
         started.close()
-        if not ready.poll(_STARTUP_TIMEOUT):
-            if process.is_alive():
-                process.kill()
-            process.join()
-            pytest.fail(f'{operation.__name__} did not start within {_STARTUP_TIMEOUT} seconds')
+        if not ready.poll(_STARTUP_TIMEOUT):  # pragma: no cover
+            if process.is_alive():  # pragma: no cover
+                process.terminate()  # pragma: no cover
+            process.join()  # pragma: no cover
+            pytest.fail(f'{operation.__name__} did not start within {_STARTUP_TIMEOUT} seconds')  # pragma: no cover
         ready.recv_bytes()
 
         process.join(_COMPLETION_TIMEOUT)
 
         if process.is_alive():
-            process.kill()
+            process.terminate()
             process.join()
             pytest.fail(f'{operation.__name__} did not complete within {_COMPLETION_TIMEOUT} seconds')
 
@@ -81,7 +87,7 @@ class _ReenteringToolset(FunctionToolset[None]):
     async def __aenter__(self) -> Self:
         assert self.agent is not None
         await self.agent.__aenter__()
-        return self
+        return self  # pragma: no cover
 
 
 async def _reenter_agent_lifecycle() -> None:
@@ -112,11 +118,11 @@ async def _reenter_limited_model() -> None:
             reentered = True
             assert agent is not None
             await agent.run('inner')
-        return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[TextPart(content='done')])  # pragma: no cover
 
     model = ConcurrencyLimitedModel(FunctionModel(model_function), limiter=1)
     agent = Agent(model)
-    await agent.run('outer')
+    await agent.run('outer')  # pragma: no cover
 
 
 def _run_limited_model_reentry() -> None:
@@ -129,11 +135,11 @@ def test_limited_model_callback_reentry_completes() -> None:
 
 
 def _first_tool() -> str:
-    return 'first'
+    return 'first'  # pragma: no cover
 
 
 def _second_tool() -> str:
-    return 'second'
+    return 'second'  # pragma: no cover
 
 
 async def _mutate_toolset_during_prepare() -> None:
