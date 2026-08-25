@@ -342,7 +342,7 @@ async def test_web_citations(
     openai_api_key: str,
     vertex_provider: GoogleCloudProvider | None,
 ) -> None:
-    if not WEB_PROVIDER_AVAILABLE[case.provider]():  # pragma: no cover
+    if not WEB_PROVIDER_AVAILABLE[case.provider]():
         pytest.skip(f'{case.provider} dependencies not installed')
 
     agent, prompt = _web_citation_agent(
@@ -446,7 +446,7 @@ async def test_document_citations(
     anthropic_api_key: str,
     document_content: BinaryContent,
 ) -> None:
-    if not anthropic_available():  # pragma: no cover
+    if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
