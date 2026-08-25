@@ -85,6 +85,17 @@ _SIGNED_FOREIGN_HISTORY: list[ModelMessage] = [
         provider_name='openai',
     ),
 ]
+# The model's *own* reasoning, left without a usable signature by an interrupted stream
+# (https://github.com/pydantic/pydantic-ai/pull/7601). An empty signature is rejected as a native block,
+# so this takes the same path as reasoning from anywhere else — and `by` names the serving provider,
+# which is who produced it.
+_OWN_EMPTY_SIGNATURE_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+    ModelResponse(
+        parts=[ThinkingPart(content=_REASONING, signature='', provider_name='anthropic'), TextPart(content=_ANSWER)],
+        provider_name='anthropic',
+    ),
+]
 # A history opening with a `ModelResponse` has no user turn to carry the reasoning, so one is created.
 _LEADING_RESPONSE_HISTORY: list[ModelMessage] = [
     ModelResponse(parts=[ThinkingPart(content=_REASONING), TextPart(content=_ANSWER)]),
@@ -271,6 +282,43 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {
                             'text': """\
 <assistant_thinking by="openai">
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'}],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'anthropic-own-empty-signature',
+        _anthropic_outbound,
+        _OWN_EMPTY_SIGNATURE_HISTORY,
+        carrying_roles={'user'},
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': """\
+<assistant_thinking by="anthropic">
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
