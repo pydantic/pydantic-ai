@@ -7580,7 +7580,7 @@ class _HookObservingCapability(Capability[None]):
     async def before_tool_execute(
         self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
-        self.hook_log.append(f'before:{call.tool_name}:available={ctx.capability_available}')  # pragma: no cover
+        self.hook_log.append(f'before:{call.tool_name}:available={ctx.capability_active}')  # pragma: no cover
         return args  # pragma: no cover
 
     async def wrap_tool_execute(

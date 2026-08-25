@@ -874,19 +874,19 @@ def bind_capabilities_tier(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return replace(ctx, capability_available=_capability_available(capability, ctx))
+    return replace(ctx, capability_active=_capability_active(capability, ctx))
 
 
 def _ctx_for_available_cap(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> RunContext[AgentDepsT] | None:
-    capability_available = _capability_available(capability, ctx)
-    if capability.defer_loading is True and not capability_available:
+    capability_active = _capability_active(capability, ctx)
+    if capability.defer_loading is True and not capability_active:
         return None
-    return replace(ctx, capability_available=capability_available)
+    return replace(ctx, capability_active=capability_active)
 
 
-def _capability_available(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
+def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
     """Whether this capability may act on the current step.
 
     Availability, not loading: an always-on capability is available for the whole run without ever
@@ -898,4 +898,4 @@ def _capability_available(capability: AbstractCapability[AgentDepsT], ctx: RunCo
     # Deferred capabilities are required to have an explicit `id` (enforced in
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
-    return capability.id is not None and capability.id in ctx.available_capability_ids
+    return capability.id is not None and capability.id in ctx.active_capability_ids

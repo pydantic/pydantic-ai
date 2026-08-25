@@ -161,7 +161,7 @@ def registered_loaded_capability_ids(messages: Sequence[ModelMessage], capabilit
 
     History outlives configuration: a conversation resumed against a smaller capability set still
     carries the load records of capabilities that are no longer configured, and without this
-    `RunContext.loaded_capability_ids` — and the `available_capability_ids` that unions it — would
+    `RunContext.loaded_capability_ids` — and the `active_capability_ids` that unions it — would
     name a capability the run has no way to act on. Every consumer today starts from a real
     capability or a real `ToolDefinition`, so nothing observes the difference yet; the sets are
     public, though, and should not promise something that isn't there.

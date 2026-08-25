@@ -232,18 +232,21 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Derived from message history (`parse_loaded_capabilities`) before each request, so a capability
     loaded during a step appears from the *next* one — the same step that first carries its
     instructions to the model, and therefore the first on which its tools can be called. Use
-    `available_capability_ids` for the full set of currently-active capabilities (auto/always-on
+    `active_capability_ids` for the full set of currently-active capabilities (auto/always-on
     plus these). Managed by the framework: safe to read, but don't mutate it directly.
     """
 
-    capability_available: bool | None = None
+    capability_active: bool | None = None
     """Whether the capability whose hook or callback is currently running is active right now.
 
-    Available, not loaded: an always-on capability is available for the whole run, so this reads
-    `True` inside its hooks although nothing ever loaded it. Only a deferred capability has to be
-    loaded before it becomes available, and its hooks are skipped until then — so it reads `True`
-    there too. What it answers is "may this capability act now?", not "was it selected?"; for the
-    latter, look an id up in
+    *Active*, not *available* and not *loaded*: see
+    [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids] for why
+    capabilities use "active" while tools use "available".
+
+    An always-on capability is active for the whole run, so this reads `True` inside its hooks
+    although nothing ever loaded it. A deferred capability has to be loaded before it becomes
+    active, and its hooks are skipped until then — so it reads `True` there too. What it answers is
+    "may this capability act now?", not "was it selected?"; for the latter, look an id up in
     [`loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
 
     This is `None` outside capability dispatch, where there is no current capability.
@@ -271,28 +274,28 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     @property
     @deprecated(
-        '`capability_loaded` is deprecated, use `capability_available` instead: the value is `True` for an '
+        '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
         'always-on capability that was never loaded.',
         category=PydanticAIDeprecationWarning,
     )
     def capability_loaded(self) -> bool | None:
         """Whether the capability whose hook or callback is currently running is active right now.
 
-        Deprecated: use [`capability_available`][pydantic_ai.tools.RunContext.capability_available]. This
+        Deprecated: use [`capability_active`][pydantic_ai.tools.RunContext.capability_active]. This
         never meant "loaded" — it is `True` for an always-on capability nothing ever loaded.
         """
-        return self.capability_available
+        return self.capability_active
 
     @capability_loaded.setter
     @deprecated(
-        '`capability_loaded` is deprecated, use `capability_available` instead: the value is `True` for an '
+        '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
         'always-on capability that was never loaded.',
         category=PydanticAIDeprecationWarning,
     )
     def capability_loaded(self, value: bool | None) -> None:
         # A plain dataclass field until this rename, so assignment used to work; a read-only property
         # would turn that into an `AttributeError` at runtime rather than a deprecation.
-        self.capability_available = value
+        self.capability_active = value
 
     @property
     def realtime(self) -> bool:
@@ -322,16 +325,22 @@ class RunContext(Generic[RunContextAgentDepsT]):
         self._event_stream_buffer.append(event)
 
     @property
-    def available_capability_ids(self) -> set[str]:
+    def active_capability_ids(self) -> set[str]:
         """IDs of the capabilities whose contributions are live to the model right now.
 
-        The capability-side mirror of `available_tool_names`: `available = auto/always ∪
-        runtime-revealed`. Here that's the non-deferred capabilities (`defer_loading` not
-        `True`) plus the deferred ones the model has loaded (`loaded_capability_ids`), so
-        `available_capability_ids - loaded_capability_ids` is the auto/always-on subset.
+        *Active*, deliberately not *available*: a capability is not something the model calls, so
+        "available" would read as "offered in the catalog, there for the loading" — which is the
+        opposite set, the deferred ones that are **not** yet contributing. Active means the
+        capability's instructions, tools, settings and hooks are in force on this step:
+        non-deferred capabilities (`defer_loading` not `True`) plus the deferred ones the model has
+        loaded, so `active_capability_ids - loaded_capability_ids` is the auto/always-on subset.
+
+        Tools keep the word *available* because for them there is only one question — may the model
+        call this now? — and no catalog sense to collide with. So `is_tool_available` reads "revealed,
+        and its owning capability is active".
 
         Distinct from `capabilities`, the full registry (including deferred ones not yet
-        loaded). See `loaded_capability_ids` for the runtime-revealed subset.
+        loaded). See `loaded_capability_ids` for the subset the model explicitly loaded.
 
         Reliable from `before_run` onwards: the `capabilities` registry is seeded once at
         run start, and `loaded_capability_ids` is refreshed from history before each model
@@ -343,6 +352,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return {
             id for id, cap in self.capabilities.items() if cap.defer_loading is not True
         } | self.loaded_capability_ids
+
+    @property
+    @deprecated(
+        '`available_capability_ids` is deprecated, use `active_capability_ids` instead: for a '
+        'capability, "available" reads as "there for the loading", which is the opposite set.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def available_capability_ids(self) -> set[str]:
+        """IDs of the capabilities whose contributions are live to the model right now.
+
+        Deprecated: use [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids].
+        """
+        return self.active_capability_ids
 
     @property
     def _deferred_capability_ids(self) -> set[str]:
@@ -426,7 +448,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             and capability_id in self._deferred_capability_ids
             and capability_id in self.loaded_capability_ids | evidence.loaded_capability_ids
         ):
-            return capability_id in self.available_capability_ids | evidence.loaded_capability_ids
+            return capability_id in self.active_capability_ids | evidence.loaded_capability_ids
         if tool_def.name not in self.discovered_tool_names | evidence.discovered_tool_names:
             return False
         # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
@@ -434,9 +456,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # never loaded — a history no real run produces, and one that would skip the instructions
         # written to be read first. Checking the owner here keeps this predicate in step with what
         # `ToolManager` will run, so "available" means one thing everywhere it is asked.
-        return capability_id is None or capability_id in (
-            self.available_capability_ids | evidence.loaded_capability_ids
-        )
+        return capability_id is None or capability_id in (self.active_capability_ids | evidence.loaded_capability_ids)
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:
@@ -544,12 +564,12 @@ def _run_context_init_with_capability_loaded(
 ) -> None:
     if capability_loaded is not None:
         warnings.warn(
-            '`capability_loaded` is deprecated, use `capability_available` instead: the value is `True` for an '
+            '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
             'always-on capability that was never loaded.',
             PydanticAIDeprecationWarning,
             stacklevel=2,
         )
-        kwargs.setdefault('capability_available', capability_loaded)
+        kwargs.setdefault('capability_active', capability_loaded)
     _run_context_init(self, **kwargs)
 
 

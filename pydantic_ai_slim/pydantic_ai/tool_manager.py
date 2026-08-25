@@ -537,7 +537,7 @@ class ToolManager(Generic[AgentDepsT]):
         # the rest only picks which way to point the model. An unavailable capability is named
         # because loading it is the action to take — searching would not help until it is active.
         if (capability_id := tool_def.capability_id) is not None and (
-            capability_id not in self.ctx.available_capability_ids
+            capability_id not in self.ctx.active_capability_ids
         ):
             return (
                 f'Tool {tool_def.name!r} is not available yet: it belongs to capability '

@@ -116,7 +116,7 @@ When `load_capability` succeeds:
 
 - the call is typed as a capability-load message part
 - the return may include resolved capability instructions and owned toolset instructions
-- the capability id appears in `ctx.available_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
+- the capability id appears in `ctx.active_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
 - tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
 

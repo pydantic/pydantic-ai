@@ -75,7 +75,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         capability = ctx.capabilities.get(capability_id)
         if capability is None:
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
-        if capability_id in ctx.available_capability_ids:
+        if capability_id in ctx.active_capability_ids:
             raise ModelRetry(LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
         parts = [

@@ -2452,14 +2452,12 @@ def _revealed_tool_names(
     the capability instances rather than a guess from the tool definitions.
     """
     owner_by_name = {tool_def.name: tool_def.capability_id for tool_def in function_tools}
-    # The complement of `RunContext.available_capability_ids` over the run's capabilities: available
-    # is "not deferred, or loaded", so unavailable is "deferred and not loaded". Spelled from the
+    # The complement of `RunContext.active_capability_ids` over the run's capabilities: active
+    # is "not deferred, or loaded", so inactive is "deferred and not loaded". Spelled from the
     # two history-derived sets because this also runs against a bare message list, with no
     # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
-    unavailable_capability_ids = deferred_capability_ids - loaded_capability_ids
-    return {
-        name for name in discovered if name in owner_by_name and owner_by_name[name] not in unavailable_capability_ids
-    }
+    inactive_capability_ids = deferred_capability_ids - loaded_capability_ids
+    return {name for name in discovered if name in owner_by_name and owner_by_name[name] not in inactive_capability_ids}
 
 
 def _with_outgoing_reveal_state(

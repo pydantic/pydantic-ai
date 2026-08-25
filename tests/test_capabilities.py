@@ -2869,7 +2869,7 @@ def test_combined_capability_get_model_settings_deferred():
     class DynamicSettingsCap(AbstractCapability):
         def get_model_settings(self) -> Callable[[RunContext], _ModelSettings]:
             def settings(ctx: RunContext) -> _ModelSettings:
-                seen_dynamic_loaded.append(ctx.capability_available)
+                seen_dynamic_loaded.append(ctx.capability_active)
                 return _ModelSettings(temperature=0.2)
 
             return settings
@@ -2914,7 +2914,7 @@ async def test_deferred_hooks_do_not_fire_until_capability_is_loaded() -> None:
 
     @hooks.on.before_model_request
     async def record(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
-        seen_loaded.append(ctx.capability_available)
+        seen_loaded.append(ctx.capability_active)
         return request_context
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -11233,7 +11233,7 @@ async def _registered_capability_context(
             self, ctx: RunContext, request_context: ModelRequestContext
         ) -> ModelRequestContext:
             captured_capabilities.update(ctx.capabilities)
-            captured_available_ids.update(ctx.available_capability_ids)
+            captured_available_ids.update(ctx.active_capability_ids)
             return request_context
 
     agent = Agent(

@@ -622,7 +622,7 @@ async def test_loaded_capability_ids_drops_ids_the_run_no_longer_registers() -> 
     """History outlives configuration, so a load record can name a capability that is gone.
 
     The public sets should not promise something the run has no way to act on: nothing can look
-    such an id up in `capabilities`, and `available_capability_ids` would report a capability that
+    such an id up in `capabilities`, and `active_capability_ids` would report a capability that
     contributes nothing. Inert for the framework's own consumers, which all start from a real
     capability or a real `ToolDefinition` — which is why it needs asserting directly.
     """
@@ -632,7 +632,7 @@ async def test_loaded_capability_ids_drops_ids_the_run_no_longer_registers() -> 
         return make_text_response('DONE')
 
     def record(ctx: RunContext[Any]) -> str:
-        seen.append((set(ctx.loaded_capability_ids), set(ctx.available_capability_ids)))
+        seen.append((set(ctx.loaded_capability_ids), set(ctx.active_capability_ids)))
         return ''
 
     still_here = Capability[Any](id='still-here', description='Still configured.', defer_loading=True)
@@ -696,34 +696,67 @@ async def test_revealed_tool_names_drops_names_the_run_no_longer_defines() -> No
     assert seen[0] == snapshot({'secret_op'})
 
 
-def test_capability_loaded_is_a_deprecated_alias_for_capability_available() -> None:
+def test_capability_loaded_is_a_deprecated_alias_for_capability_active() -> None:
     """The old name never meant "loaded" — it is `True` for an always-on capability nothing loaded.
 
     Both directions are shimmed: reading it, and passing it to the constructor, which stays accepted
     because it shipped as a real dataclass field.
     """
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), capability_available=True)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), capability_active=True)
 
-    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_active` instead'):
         assert ctx.capability_loaded is True  # pyright: ignore[reportDeprecated]
 
-    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_active` instead'):
         constructed = RunContext[None](
             deps=None,
             model=TestModel(),
             usage=RunUsage(),
             capability_loaded=True,  # pyright: ignore[reportCallIssue]
         )
-    assert constructed.capability_available is True
+    assert constructed.capability_active is True
 
     # Assignment worked while this was a plain dataclass field, so a read-only property would turn
     # it into an `AttributeError` rather than a deprecation.
-    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_active` instead'):
         ctx.capability_loaded = False  # pyright: ignore[reportDeprecated]
-    assert ctx.capability_available is False
+    assert ctx.capability_active is False
 
     # `replace()` is on the run's hot path and must not warn: the shim is a non-field keyword, so
     # `replace()` never round-trips it the way an `InitVar` would.
     with warnings.catch_warnings():
         warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        assert replace(ctx, capability_available=True).capability_available is True
+        assert replace(ctx, capability_active=True).capability_active is True
+
+
+async def test_available_capability_ids_is_a_deprecated_alias_for_active_capability_ids() -> None:
+    """`available` reads as "there for the loading", which is the opposite of what this set holds.
+
+    A deferred capability the model has *not* loaded is the one genuinely available to load; the set
+    holds the ones already contributing. Tools keep `available` because they have no catalog sense to
+    collide with — `is_tool_available` asks "may the model call this now?".
+    """
+    always_on = Capability[Any](id='always-on', description='Always on.')
+    deferred = Capability[Any](id='deferred', description='Deferred.', defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response('done')
+
+    seen: list[tuple[set[str], set[str]]] = []
+
+    def record(ctx: RunContext[Any]) -> str:
+        seen.append((set(ctx.active_capability_ids), set(ctx.loaded_capability_ids)))
+        return ''
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[always_on, deferred], instructions=record)
+    await agent.run('go')
+
+    active, loaded = seen[0]
+    # The deferred capability is the one "available to load", and it is deliberately absent here.
+    assert 'always-on' in active
+    assert 'deferred' not in active
+    assert loaded == set()
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `active_capability_ids` instead'):
+        assert ctx.available_capability_ids == ctx.active_capability_ids  # pyright: ignore[reportDeprecated]

@@ -1650,7 +1650,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The deferred capabilities the model has already loaded in prior steps; the graph
         # refreshes this from history before each model request, so the seed only matters
         # for pre-first-step access. Non-deferred capabilities are folded in by the
-        # `RunContext.available_capability_ids` property.
+        # `RunContext.active_capability_ids` property.
         loaded_capability_ids = (
             registered_loaded_capability_ids(message_history, capabilities_dict.keys())
             if message_history
