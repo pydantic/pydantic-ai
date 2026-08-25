@@ -16,15 +16,18 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from functools import cache, cached_property, wraps
+from difflib import get_close_matches
+from functools import cache, cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
-import httpx
+import httpx2
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._cost import preload_pricing_data
+from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -65,6 +68,8 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -81,24 +86,21 @@ from ..profiles import (
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
-
-if TYPE_CHECKING:
-    from ..agent.abstract import AbstractAgent
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 
 if TYPE_CHECKING:
+    from httpx import AsyncClient
+
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
-
-DEFAULT_HTTP_TIMEOUT: int = 600
-"""Default HTTP timeout in seconds for API requests.
-
-This matches the default timeout used by OpenAI's Python client.
-See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
-"""
+else:
+    # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
+    # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
+    # its caller owns and closes. Calling it without legacy HTTPX still raises (see its body).
+    AsyncClient = legacy_httpx.AsyncClient if legacy_httpx is not None else object
 
 _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
@@ -196,6 +198,19 @@ class ModelRequestParameters:
     this is not necessarily a subset of `function_tools`' names; resolution ignores unknown names.
     """
 
+    deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
+    """IDs of the run's capabilities that defer their loading.
+
+    Read from the capability instances themselves, so it means what it says. It cannot be derived
+    from the function tools: `ToolDefinition.capability_id` records which capability *contributed* a
+    tool, and `defer_loading` is set both by a deferred capability and by a search-gated tool inside
+    an always-on one — so the two cases are indistinguishable from the definitions alone.
+
+    Used to answer "may this tool be revealed yet?": a tool whose `capability_id` is in this set is
+    gated on that capability being loaded, while one whose owner is absent here is gated only on its
+    own discovery.
+    """
+
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
@@ -256,24 +271,6 @@ class ModelRequestParameters:
             tool for tool in self.function_tools if self.visibility_of(tool.name) not in ('withheld', 'via_history')
         ]
 
-    @property
-    def deferred_capability_ids(self) -> set[str]:
-        """Deprecated: derive capability ownership from the authored definitions instead.
-
-        Returns the IDs of deferred capabilities that gate at least one of this request's function
-        tools — the membership test adapters used this field for. Read
-        [`ToolDefinition.capability_id`][pydantic_ai.tools.ToolDefinition.capability_id] together
-        with `defer_loading`, or [`tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility],
-        instead.
-        """
-        warnings.warn(
-            '`ModelRequestParameters.deferred_capability_ids` is deprecated: read '
-            '`ToolDefinition.capability_id` on the function tools, or `tool_visibility`, instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return {t.capability_id for t in self.function_tools if t.capability_id is not None and t.defer_loading}
-
     @cached_property
     def prompted_output_instructions(self) -> str | None:
         if self.prompted_output_template and self.output_object:
@@ -292,32 +289,6 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-_generated_model_request_parameters_init = ModelRequestParameters.__init__
-
-
-@wraps(_generated_model_request_parameters_init)
-def _init_accepting_deferred_capability_ids(
-    self: ModelRequestParameters, *, deferred_capability_ids: set[str] | None = None, **kwargs: Any
-) -> None:
-    # `deferred_capability_ids` shipped as a regular field, so its removal must keep the
-    # constructor argument working through the deprecation period, next to the derived read
-    # property above. An `InitVar` would be the natural spelling, but `dataclasses.replace()` on
-    # Python 3.13+ round-trips init-only variables through `getattr`, which would fire both
-    # deprecation warnings on every internal `replace()` call — so the generated `__init__` is
-    # wrapped instead, and `replace()` never sees the non-field name.
-    if deferred_capability_ids is not None:
-        warnings.warn(
-            '`ModelRequestParameters.deferred_capability_ids` is deprecated: set '
-            '`ToolDefinition.capability_id` and `defer_loading` on the function tools instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-    _generated_model_request_parameters_init(self, **kwargs)
-
-
-ModelRequestParameters.__init__ = _init_accepting_deferred_capability_ids
 
 
 @dataclass(kw_only=True)
@@ -405,6 +376,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """
     supported_tool_addition_modes: ClassVar[frozenset[ToolAdditionMode]] = frozenset()
     """`tool_addition_mode` values this adapter's renderer implements. See `supported_tool_deferral_modes`."""
+    compaction_requires_encrypted_content: ClassVar[bool] = False
+    """Whether this adapter's API only honors a [`CompactionPart`][pydantic_ai.messages.CompactionPart]
+    that carries encrypted content.
+
+    When set, a part without it isn't a wire boundary: the adapter would omit it, so letting it hide
+    the earlier history would send nothing in its place.
+
+    Declared by the adapter rather than the model profile: how an API carries compaction state is a
+    property of the API, not of the model behind it — the same model reached through OpenAI's Chat
+    Completions and Responses APIs answers differently, and eight providers route a profile of their
+    own through `OpenAIResponsesModel`. Independent of `compaction_retains_standing_prompt`, which
+    today's two adapters happen to answer the same way."""
+    compaction_retains_standing_prompt: ClassVar[bool] = False
+    """Whether this adapter's compaction item keeps serving the leading system items of the window
+    it replaced.
+
+    When set, re-sending the standing prompt after the boundary would duplicate it. When not (the
+    default), the standing prompt travels in a per-request channel rebuilt from those items, so the
+    trim has to re-insert them or it is silently dropped from every subsequent request. See
+    `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
 
     _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
@@ -424,6 +415,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         self._settings = settings
         self._profile = profile
+        preload_pricing_data()
 
     @property
     def provider(self) -> Provider[InterfaceClient] | None:
@@ -483,6 +475,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The effective tool-addition mode: the profile's claim, if this adapter renders it."""
         mode = self.profile.get('tool_addition_mode')
         return mode if mode in self.supported_tool_addition_modes else None
+
+    def _trim_before_compaction(
+        self,
+        messages: list[ModelMessage],
+        *,
+        standing_prompt_retained: bool | None = None,
+    ) -> list[ModelMessage]:
+        """Drop history before the latest compaction boundary this adapter's API honors.
+
+        Called only by adapters that render `CompactionPart`s on the wire, and the one place their
+        declared `compaction_*` facts are turned into trim behavior — so an adapter states what its
+        API does rather than what to do about it. See `_trim_messages_before_compaction` for what
+        the trim preserves.
+
+        `standing_prompt_retained` defaults to `compaction_retains_standing_prompt`. A caller passes
+        an explicit value where its window is not an ordinary one: re-compaction plants the standing
+        prompt afresh, since retention decays across a second compaction.
+        """
+        return _trim_messages_before_compaction(
+            messages,
+            self.system,
+            requires_encrypted_content=self.compaction_requires_encrypted_content,
+            standing_prompt_retained=self.compaction_retains_standing_prompt
+            if standing_prompt_retained is None
+            else standing_prompt_retained,
+        )
 
     @abstractmethod
     async def request(
@@ -1081,13 +1099,18 @@ class StreamedResponse(ABC):
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Return transport errors caused by `cancel()` tearing down the stream.
 
-        The default covers model classes whose SDKs iterate `httpx` responses
-        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
-        and the custom Gemini client), since they let bare `httpx` errors
-        propagate from chunk reads. Model classes that use other transports
-        (for example gRPC or botocore) should override this method.
+        The default covers model classes whose SDKs iterate HTTP responses
+        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, and HuggingFace),
+        since they let bare `httpx2` (or legacy `httpx`) errors propagate from
+        chunk reads. Model classes that use other transports (for example gRPC or
+        botocore) should override this method.
         """
-        return (httpx.StreamError, httpx.TransportError)
+        try:
+            import httpx
+        except ImportError:
+            return (httpx2.StreamError, httpx2.TransportError)
+
+        return (httpx2.StreamError, httpx2.TransportError, httpx.StreamError, httpx.TransportError)
 
     async def close_stream(self) -> None:
         """Close the provider stream and any exposed HTTP or gRPC transport.
@@ -1434,6 +1457,42 @@ def parse_model_id(model: str) -> tuple[str | None, str]:
     return None, model
 
 
+def _suggest_known_model_name(model: str, model_name: str, known_model_ids: Sequence[str] | None = None) -> str | None:
+    if known_model_ids is None:
+        known_model_ids = known_model_names()
+    known_ids = sorted(known_model_ids, key=lambda name: (name.startswith('gateway/'), name))
+    normalized_ids: list[str] = [known_id.replace(':', '-', 1) for known_id in known_ids if ':' in known_id]
+    normalized_model = model.replace(':', '-', 1)
+    if matches := get_close_matches(normalized_model, normalized_ids, n=1, cutoff=0.9):
+        return next(known_id for known_id in known_ids if known_id.replace(':', '-', 1) == matches[0])
+
+    known_names: list[str] = [known_id.split(':', maxsplit=1)[1] for known_id in known_ids if ':' in known_id]
+    matches = get_close_matches(model_name, known_names, n=1, cutoff=0.8)
+    if not matches:
+        matches = get_close_matches(normalized_model, known_names, n=1, cutoff=0.7)
+    if matches:
+        return next(known_id for known_id in known_ids if known_id.endswith(f':{matches[0]}'))
+    return None
+
+
+def _suggest_known_model_id_from_provider_error(  # pyright: ignore[reportUnusedFunction]
+    model_id_namespace: str, model_name: str
+) -> str | None:
+    """The closest known model ID for a name the provider itself rejected, or `None`.
+
+    The result rides on `ModelHTTPError.suggested_model_id` rather than a dedicated exception type.
+    Only some model classes carry a not-found signal at all — `MistralModel`, `CohereModel`,
+    `HuggingFaceModel` and `XaiModel` map their errors without one — so a distinct type would assert
+    a taxonomy that holds for part of the matrix only. A hint that is sometimes absent degrades
+    harmlessly; an exception type that is sometimes absent misclassifies.
+    """
+    model_id = f'{model_id_namespace}:{model_name}'
+    provider_prefix = f'{model_id_namespace}:'
+    known_model_ids = [name for name in known_model_names() if name.startswith(provider_prefix)]
+    suggestion = _suggest_known_model_name(model_id, model_name, known_model_ids)
+    return suggestion if suggestion != model_id else None
+
+
 def infer_model_profile(model: str) -> ModelProfile:
     """Infer the model profile from a model id string without constructing a provider.
 
@@ -1487,7 +1546,19 @@ def infer_model(  # noqa: C901
 
     provider_name, model_name = parse_model_id(model)
     if provider_name is None:
-        raise UserError(f'Unknown model: {model}')
+        message = f'Unknown model: {model}'
+        if suggested_name := _suggest_known_model_name(model, model_name):
+            message += f". Did you mean '{suggested_name}'?"
+        raise UserError(message)
+
+    if provider_factory is infer_provider:
+        try:
+            infer_provider_class(provider_name)
+        except ValueError:
+            message = f'Unknown model: {model}'
+            if suggested_name := _suggest_known_model_name(model, model_name):
+                message += f". Did you mean '{suggested_name}'?"
+            raise UserError(message) from None
 
     provider = provider_factory(provider_name)
 
@@ -1579,15 +1650,30 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
-    """Create an HTTPX async client.
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
+    """Create a legacy HTTPX async client.
+
+    This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
+    providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
     the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
+
+    Raises:
+        ImportError: If legacy `httpx` is not installed.
     """
+    try:
+        import httpx
+    except ImportError as _import_error:
+        raise ImportError(
+            'Please install `httpx` to create a legacy HTTPX client with this factory, '
+            'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`. '
+            'Providers otherwise build their own `httpx2.AsyncClient`, which you can also pass in yourself.'
+        ) from _import_error
+
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
@@ -1983,7 +2069,7 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     return count
 
 
-def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
+def _trim_messages_before_compaction(
     messages: list[ModelMessage],
     system: str,
     *,
@@ -1992,13 +2078,15 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
 ) -> list[ModelMessage]:
     """Drop history before the latest same-provider compaction part the request will send.
 
-    Shared by the adapters that honor [`CompactionPart`][pydantic_ai.messages.CompactionPart]s on
-    the wire — each calls it from its own `_map_messages`, since whether a compaction part is
-    honored at all is provider semantics. Anthropic ignores (and doesn't bill) pre-boundary blocks,
+    Reached through [`Model._trim_before_compaction`][pydantic_ai.models.Model._trim_before_compaction],
+    which derives both flags from the adapter's declarations; adapters call that from their own
+    message-prep step, since where in a request build the trim belongs is provider mechanics.
+    Anthropic ignores (and doesn't bill) pre-boundary blocks,
     so there the trim only saves request size; the OpenAI Responses API processes and bills
     replayed items that precede a compaction item (live-verified), so there it is what makes
-    compaction actually compact. `requires_encrypted_content` mirrors OpenAI's render condition: a
-    part it wouldn't send must not act as a boundary either.
+    compaction actually compact. `requires_encrypted_content` is this caller's own render condition,
+    passed to the shared wire-boundary predicate: a part the adapter would omit must not act as a
+    boundary either, or the history is dropped with nothing sent to stand in for it.
 
     The standing prompt survives via `_standing_prompt_request`; nothing else from the prefix does.
     `standing_prompt_retained` mirrors where the calling API carries the standing prompt: on
@@ -2028,10 +2116,8 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
             continue
         for part_index in range(len(message.parts) - 1, -1, -1):
             part = message.parts[part_index]
-            if not isinstance(part, CompactionPart) or part.provider_name != system:
-                continue
-            if requires_encrypted_content and not (
-                part.provider_details and 'encrypted_content' in part.provider_details
+            if not isinstance(part, CompactionPart) or not _compaction_part_is_wire_boundary(
+                part, system, requires_encrypted_content=requires_encrypted_content
             ):
                 continue
             tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
@@ -2299,10 +2385,10 @@ def _announce_tool_availability_delta_messages(
     * It had to fabricate a `tool_call_id`, and two deltas over the same tool names produced the same
       one — duplicate ids in a history that providers requiring uniqueness reject.
 
-    A `SystemPromptPart` also replaces the delta *in place*, where the pair had to be spliced across
-    two messages: the fabricated `ModelResponse` went in ahead of the rebuilt `ModelRequest`, so a
-    delta sharing a request with a user prompt put the assistant's turn before it and reordered the
-    conversation.
+    A `SystemPromptPart` also stays inside the delta's own message, where the pair had to be spliced
+    across two messages: the fabricated `ModelResponse` went in ahead of the rebuilt `ModelRequest`,
+    so a delta sharing a request with a user prompt put the assistant's turn before it and reordered
+    the conversation. Within that message the announcements render after the request's tool results.
 
     On a model that takes a mid-conversation system message this lands as a real one, carrying the
     operator authority the statement deserves; elsewhere `_wrap_non_leading_system_prompts` — which
@@ -2314,11 +2400,14 @@ def _announce_tool_availability_delta_messages(
     # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
+    is_first_kept_request = True
     for message in messages:
-        if not isinstance(message, ModelRequest) or not any(
-            isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
-        ):
+        if not isinstance(message, ModelRequest):
             transformed.append(message)
+            continue
+        if not any(isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts):
+            transformed.append(message)
+            is_first_kept_request = False
             continue
 
         changed = True
@@ -2338,7 +2427,17 @@ def _announce_tool_availability_delta_messages(
         # A request whose only part was an empty delta would otherwise reach the adapter with no
         # parts at all, which providers reject.
         if replacement_parts:
-            transformed.append(replace(message, parts=replacement_parts))
+            # Anthropic requires the tool results answering the previous turn to open the message,
+            # so the announcements sort to the back. One exception: system prompts opening the
+            # history's first request are the agent's standing prompt, which the adapters lift into
+            # the provider's dedicated system field based on exactly this position, so they stay at
+            # the front.
+            request = replace(message, parts=replacement_parts)
+            keep = _standing_system_prompt_count(request) if is_first_kept_request else 0
+            head, tail = replacement_parts[:keep], replacement_parts[keep:]
+            tail.sort(key=_tool_results_first_sort_key)
+            transformed.append(replace(request, parts=[*head, *tail]))
+            is_first_kept_request = False
 
     return transformed if changed else messages
 

@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import re
 
-import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -91,29 +90,6 @@ def test_snowflake_provider_base_url_override(env: TestEnv) -> None:
         base_url='https://myorg-myaccount.privatelink.snowflakecomputing.com/api/v2/cortex/v1', token='pat'
     )
     assert provider.base_url == 'https://myorg-myaccount.privatelink.snowflakecomputing.com/api/v2/cortex/v1'
-
-
-def test_snowflake_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = SnowflakeProvider(account='myorg-myaccount', token='pat', http_client=http_client)
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
-@pytest.mark.anyio
-async def test_snowflake_provider_reenter_recreates_http_client() -> None:
-    """Re-entering the provider after its own HTTP client is closed swaps in a fresh one."""
-    provider = SnowflakeProvider(account='myorg-myaccount', token='pat')
-
-    first_http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
-    async with provider:
-        assert not first_http_client.is_closed
-    assert first_http_client.is_closed
-
-    async with provider:
-        second_http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
-        assert second_http_client is not first_http_client
-        assert not second_http_client.is_closed
-    assert second_http_client.is_closed
 
 
 def test_snowflake_provider_pass_openai_client() -> None:

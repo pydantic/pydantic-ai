@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import PydanticSerializationError
@@ -69,7 +70,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._run_context import get_current_run_context
+from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
@@ -106,7 +107,6 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
-    create_async_http_client,
     infer_model,
     infer_model_profile,
 )
@@ -253,7 +253,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsInt, IsStr, message, try_import
+    from .conftest import IsDatetime, IsInt, IsList, IsStr, message, try_import
 
 with try_import() as anthropic_imports_successful:
     import anthropic
@@ -278,9 +278,21 @@ pytestmark = [
 ]
 
 
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """Disable detection for Temporal's synchronous worker and integration setup.
+
+    It performs module/config introspection above Pydantic AI plugin frames; BlockBuster changes
+    its error handling and makes these tests unusably slow. Rebenchmark after
+    https://github.com/cbornet/blockbuster/pull/61 is released, but retain this opt-out until the
+    synchronous-introspection false positives are isolated too.
+    """
+    return False
+
+
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = create_async_http_client()
+http_client = httpx2.AsyncClient()
 
 
 # Scoped to `session` rather than `module`: the `http_client` and the module-level agents that
@@ -2473,7 +2485,7 @@ async def test_model_construction_in_workflow_passes_sandbox(
     assert result == expected_model_class
 
 
-# Regression test for the `genai_prices`/`httpx2` passthrough entries in `_workflow_runner`.
+# Regression test for the `httpx2` stack passthrough entries in `_workflow_runner`.
 # `ModelResponse.cost()` lazily imports genai-prices on first call; inside a workflow that trips the
 # sandbox unless those modules are passed through (see #6215).
 @workflow.defn
@@ -3386,13 +3398,26 @@ async def test_logfire_plugin(client: Client):
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
 
-    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
-    # We can't check if the metrics URL was actually set correctly because it's on a `temporalio.bridge.runtime.Runtime` that we can't read from.
+    with patch.object(
+        temporal_logfire, 'OpenTelemetryConfig', wraps=temporal_logfire.OpenTelemetryConfig
+    ) as open_telemetry_config:
+        new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is not None
+    assert open_telemetry_config.call_args.kwargs['metric_periodicity'] == timedelta(seconds=60)
+
+    plugin = LogfirePlugin(setup_logfire, metric_periodicity=timedelta(minutes=5))
+    with patch.object(
+        temporal_logfire, 'OpenTelemetryConfig', wraps=temporal_logfire.OpenTelemetryConfig
+    ) as open_telemetry_config:
+        await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    assert open_telemetry_config.call_args.kwargs['metric_periodicity'] == timedelta(minutes=5)
 
     plugin = LogfirePlugin(setup_logfire, metrics=False)
-    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
-    assert new_client.service_client.config.runtime is None
+    custom_runtime = temporal_logfire.Runtime(telemetry=temporal_logfire.TelemetryConfig())
+    new_client = await Client.connect(
+        client.service_client.config.target_host, plugins=[plugin], runtime=custom_runtime
+    )
+    assert new_client.service_client.config.runtime is custom_runtime
 
     plugin = LogfirePlugin(lambda: setup_logfire(send_to_logfire=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
@@ -4115,7 +4140,7 @@ async def test_oversized_tool_return_payload(client: Client):
         with workflow_raises(
             UserError,
             snapshot(
-                "Tool 'get_oversized_image' returned a result too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2133494 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads"
+                "Tool 'get_oversized_image' returned a result too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2133494 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads"
             ),
         ):
             await client.execute_workflow(
@@ -4169,7 +4194,7 @@ async def test_oversized_model_response_payload(client: Client):
         with workflow_raises(
             UserError,
             snapshot(
-                "The response from model 'function:oversized-response-model' is too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2134150 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads"
+                "The response from model 'function:oversized-response-model' is too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2134150 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads"
             ),
         ):
             await client.execute_workflow(
@@ -4465,6 +4490,44 @@ def test_temporal_run_context_serializes_usage_limits():
     assert reconstructed.usage_limits == ctx.usage_limits
 
 
+async def test_temporal_run_context_preserves_anchored_evidence():
+    """Provider-exact evidence is computed workflow-side and survives the untyped activity payload."""
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        _anchored_evidence=AnchoredEvidence(
+            discovered_tool_names=frozenset({'deferred_tool'}),
+            loaded_capability_ids=frozenset({'deferred_capability'}),
+        ),
+    )
+
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence(  # pyright: ignore[reportPrivateUsage]
+        discovered_tool_names=frozenset({'deferred_tool'}),
+        loaded_capability_ids=frozenset({'deferred_capability'}),
+    )
+
+
+async def test_temporal_run_context_without_anchored_evidence_still_answers_availability():
+    """A payload that predates the field keeps answering, with the history-derived window.
+
+    `serialize_run_context` is a documented override point, so a subclass written against an
+    earlier version returns a dict without it. Guarding it like the other omitted fields would
+    turn that into a `UserError` from a tool that only asked whether it may run.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    older_payload = {name: value for name, value in wire.items() if name != '_anchored_evidence'}
+
+    reconstructed = TemporalRunContext.deserialize_run_context(older_payload, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence()  # pyright: ignore[reportPrivateUsage]
+    assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -4599,6 +4662,66 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
         getattr(reconstructed, 'not_a_field')
 
 
+async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_activity():
+    """The definition form must answer, not raise, for a tool a capability contributed.
+
+    `is_tool_available` consults `available_capability_ids` for any tool carrying a
+    `capability_id`, and the `capabilities` registry deliberately doesn't cross the boundary. The
+    docs send toolset authors to the definition form precisely because it works inside `get_tools`,
+    which under Temporal runs in an activity — so the ids travel as a snapshot.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        discovered_tool_names={'secret_op'},
+    )
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+
+    assert reconstructed.available_capability_ids == {'guarded'}
+    loaded = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert reconstructed.is_tool_available(loaded) is True
+
+    unloaded = ToolDefinition(name='other_op', defer_loading=True, capability_id='not_loaded')
+    assert reconstructed.is_tool_available(unloaded) is False
+
+
+async def test_loaded_capability_tool_without_a_reveal_marker_answers_inside_an_activity():
+    """The on-demand set travels too, so a stripped reveal marker doesn't flip the answer.
+
+    A deferred capability's load is itself the reveal for its own tools, and telling that apart
+    from a capability since reconfigured always-on needs the *configured* set, which lives in the
+    `capabilities` registry and cannot cross the boundary. Without the snapshot this degrades to
+    the discovery check and answers `False` inside an activity while the workflow says `True` --
+    for a tool no search can ever surface, so nothing could restore the marker.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        # No `discovered_tool_names`: the reveal marker is gone, as a history processor can leave it.
+    )
+    tool_def = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert ctx.is_tool_available(tool_def) is True
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+    assert reconstructed.is_tool_available(tool_def) is True
+
+    # The registry itself still doesn't cross — only the ids it resolves to.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.capabilities
+
+
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
     """A user subclass with its own field set."""
 
@@ -4643,6 +4766,16 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    # No capability snapshot in this subclass's field set, so the property falls back to the base
+    # one, which reads the registry — and that is guarded, so it raises rather than quietly
+    # reporting no capabilities are active.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.available_capability_ids
+    # Same for the on-demand set that `is_tool_available` consults: an older subclass doesn't carry
+    # it either, so the base property reads the guarded registry and raises rather than reporting an
+    # empty set, which would silently answer "no capability is deferred" for every tool.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed._deferred_capability_ids  # pyright: ignore[reportPrivateUsage]
     assert reconstructed.__dict__['custom'] == 'from-subclass'
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
@@ -7193,12 +7326,7 @@ def test_durability_activity_config_not_mutated():
 
 
 def test_temporal_agent_retry_policy_non_retryable_errors():
-    """The deprecated wrapper builds its own list, so its entries need their own assertion.
-
-    `TemporalAgent` doesn't go through `with_non_retryable_errors`, and every line of its
-    inline list runs on any construction — so without this, dropping `PayloadSizeError`
-    would leave coverage at 100% while restoring the infinite retry of #7110.
-    """
+    """The deprecated wrapper normalizes its base activity retry policy with `with_non_retryable_errors`."""
     temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='retry_policy_probe_agent'),
     )
@@ -7208,6 +7336,8 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
     assert retry_policy.non_retryable_error_types == [
         'UserError',
         'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
         'PayloadSizeError',
     ]
 
@@ -8994,7 +9124,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                 BasicSpan(content='RunWorkflow:ComplexDurableAgentLogfireWorkflow'),
                 BasicSpan(
                     content='durability_complex_agent_logfire run',
-                    children=[
+                    children=IsList(
                         BasicSpan(
                             content='StartActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__get_tools',
                             children=[
@@ -9375,7 +9505,8 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                    ],
+                        check_order=False,
+                    ),
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexDurableAgentLogfireWorkflow'),
             ],

@@ -74,7 +74,25 @@ agent = Agent(model)
 ...
 ```
 
-`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. The provider-level `timeout` is distinct from [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout], which overrides the timeout for an individual request. Both options are omitted when left unset, so the SDK's own defaults apply.
+`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. Unlike other providers, the xAI SDK does not support per-request timeouts, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported and has no effect. Both options are omitted when left unset, so the SDK's own defaults apply.
+
+You can also attach gRPC `metadata` to every request the client makes. The canonical use is xAI prompt-cache sticky routing, which pins a conversation to a cache node via an `x-grok-conv-id` so repeated prefixes are served from cache instead of reprocessed:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+provider = XaiProvider(
+    api_key='your-api-key',
+    metadata=(('x-grok-conv-id', 'my-conversation-id'),),
+)
+model = XaiModel('grok-4.3', provider=provider)
+agent = Agent(model)
+...
+```
+
+`metadata` is a sequence of `(key, value)` string tuples forwarded verbatim to the underlying `xai_sdk.AsyncClient`, so the xAI SDK's own documentation on [maximizing cache hits](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits) applies. Because it is client-scoped, it applies to *every* request made through the provider — a provider configured with a fixed `x-grok-conv-id` must not be shared between unrelated conversations, or those conversations will collide on the same cache node. Use a separate provider per conversation when the metadata is conversation-specific. Like `api_host` and `timeout`, it is omitted when left unset and ignored when a custom `xai_sdk.AsyncClient` is passed.
 
 Or with a custom `xai_sdk.AsyncClient`:
 
@@ -134,6 +152,14 @@ The `XSearch` capability accepts:
 - **`include_output`** (default: `False`): include the raw X search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. Without this, the model uses the search results internally but only returns its text summary; enabling it gives programmatic access to the searched posts, sources, and metadata.
 
 As an alternative to the capability, you can pass the lower-level [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] directly via `capabilities=[NativeTool(XSearchTool(...))]` — see the [X Search Tool documentation](../native-tools.md#x-search-tool) — or enable raw output globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](../agent.md#model-run-settings).
+
+## File attachments
+
+When you include a document in a user prompt, xAI automatically makes its `attachment_search` tool available on [supported agentic models](https://docs.x.ai/developers/files). If the model uses the tool, Pydantic AI exposes its lifecycle alongside the model's response. xAI limits each file to [48 MB](https://docs.x.ai/developers/files#limitations). See [document input](../input.md#document-input) for supported input forms.
+
+The [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] have a `tool_name` of `'attachment_search'`, and the call's `provider_details['function_name']` holds xAI's own name for the operation it ran (for example `'pdf_browse'`). Set [`XaiModelSettings.xai_include_attachment_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_attachment_search_output] to `True` to ask xAI to include the browsed content on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. It defaults to `False`, so the option is not sent unless you enable it.
+
+Attachment search applies to files attached directly to a conversation. To search persistent xAI collections instead, use [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool].
 
 ## Reasoning effort
 
