@@ -5485,21 +5485,18 @@ def test_google_zero_width_grounding_is_unanchored():
 
 
 @pytest.mark.parametrize(
-    ('context', 'expected_excerpt'),
+    ('context_kind', 'expected_excerpt'),
     [
-        pytest.param(
-            GroundingChunkRetrievedContext(text='retrieved context excerpt'),
-            'retrieved context excerpt',
-            id='retrieved-context',
-        ),
-        pytest.param(
-            GroundingChunkRetrievedContext(rag_chunk=RagChunk(text='RAG chunk excerpt')),
-            'RAG chunk excerpt',
-            id='rag-chunk',
-        ),
+        pytest.param('retrieved-context', 'retrieved context excerpt', id='retrieved-context'),
+        pytest.param('rag-chunk', 'RAG chunk excerpt', id='rag-chunk'),
     ],
 )
-def test_google_retrieved_context_excerpt(context: GroundingChunkRetrievedContext, expected_excerpt: str) -> None:
+def test_google_retrieved_context_excerpt(context_kind: str, expected_excerpt: str) -> None:
+    context = (
+        GroundingChunkRetrievedContext(text=expected_excerpt)
+        if context_kind == 'retrieved-context'
+        else GroundingChunkRetrievedContext(rag_chunk=RagChunk(text=expected_excerpt))
+    )
     assert _map_grounding_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
         excerpts=[expected_excerpt]
     )
@@ -5562,20 +5559,20 @@ def test_google_grounding_filters_sources_and_corresponding_confidence_scores():
 
 
 @pytest.mark.parametrize(
-    'support',
+    'case',
     [
-        pytest.param(GroundingSupport(grounding_chunk_indices=[0]), id='missing-segment'),
-        pytest.param(
-            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=9, end_index=1)),
-            id='invalid-part-index',
-        ),
-        pytest.param(
-            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=9, text='i', end_index=1)),
-            id='ambiguous-segment-text',
-        ),
+        pytest.param('missing-segment', id='missing-segment'),
+        pytest.param('invalid-part-index', id='invalid-part-index'),
+        pytest.param('ambiguous-segment-text', id='ambiguous-segment-text'),
     ],
 )
-def test_google_grounding_skips_unlocatable_segment(support: GroundingSupport):
+def test_google_grounding_skips_unlocatable_segment(case: str) -> None:
+    if case == 'missing-segment':
+        support = GroundingSupport(grounding_chunk_indices=[0])
+    elif case == 'invalid-part-index':
+        support = GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=9, end_index=1))
+    else:
+        support = GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=9, text='i', end_index=1))
     metadata = GroundingMetadata(
         grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri='https://example.com'))],
         grounding_supports=[support],
@@ -5585,13 +5582,18 @@ def test_google_grounding_skips_unlocatable_segment(support: GroundingSupport):
 
 
 @pytest.mark.parametrize(
-    'chunk',
+    'case',
     [
-        pytest.param(GroundingChunk(), id='unsupported'),
-        pytest.param(GroundingChunk(retrieved_context=GroundingChunkRetrievedContext()), id='empty-retrieved-context'),
+        pytest.param('unsupported', id='unsupported'),
+        pytest.param('empty-retrieved-context', id='empty-retrieved-context'),
     ],
 )
-def test_google_grounding_skips_unrenderable_source(chunk: GroundingChunk):
+def test_google_grounding_skips_unrenderable_source(case: str) -> None:
+    chunk = (
+        GroundingChunk()
+        if case == 'unsupported'
+        else GroundingChunk(retrieved_context=GroundingChunkRetrievedContext())
+    )
     metadata = GroundingMetadata(
         grounding_chunks=[chunk],
         grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=0, end_index=1))],

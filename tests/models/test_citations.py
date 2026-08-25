@@ -50,6 +50,8 @@ async def vertex_provider(
     """Only construct the optional Vertex provider for Vertex matrix cases."""
     if 'google-vertex' not in request.node.name:  # pyright: ignore[reportUnknownMemberType]
         return None
+    if not google_available():
+        pytest.skip('google dependencies not installed')
 
     record_mode = cast(Any, request.config).getoption('record_mode')
     if not os.getenv('CI', False) and record_mode not in {'all', 'new_episodes', 'rewrite'}:

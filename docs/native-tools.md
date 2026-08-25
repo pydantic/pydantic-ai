@@ -1227,7 +1227,13 @@ citation's anchor.
 For example, the normalized provider results can have these shapes:
 
 ```python {test="skip"}
-from pydantic_ai import Citation, ContentCitationAnchor, MarkerCitationAnchor, TextPart, WebCitationSource
+from pydantic_ai import (
+    Citation,
+    ContentCitationAnchor,
+    MarkerCitationAnchor,
+    TextPart,
+    WebCitationSource,
+)
 
 # Google: both sources support the selected assertion.
 TextPart(
