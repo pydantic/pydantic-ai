@@ -2,17 +2,21 @@
 
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import websockets
     from openai.types.realtime.realtime_audio_config_output import VoiceID
 
     from pydantic_ai.providers.azure import AzureProvider
@@ -28,7 +32,7 @@ with try_import() as imports_successful:
         _default_azure_realtime_apis,  # pyright: ignore[reportPrivateUsage]
         _map_voice_live_event,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.realtime.codec import OutputTranscript
+    from pydantic_ai.realtime.codec import OutputTranscript, UpdateTools
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
@@ -133,6 +137,36 @@ def test_azure_realtime_api_routing(model_name: str, azure_voice_live: bool | No
     else:
         url = model._realtime_url(settings)  # pyright: ignore[reportPrivateUsage]
         assert ('/voice-live/realtime' in url) == (expected == 'voice_live')
+
+
+@pytest.mark.anyio
+async def test_voice_live_update_tools_omits_the_ga_type_discriminator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mid-session tool update matches the session config the connection was opened with.
+
+    Azure inherits `supports_tool_updates` from the OpenAI realtime profile, but Voice Live's beta
+    session object has no `type` discriminator — sending the GA one would make the update reject.
+    """
+    from .test_openai import FakeConnect, FakeWebSocket
+
+    ws = FakeWebSocket(
+        [json.dumps({'type': 'session.created', 'session': {}}), json.dumps({'type': 'session.updated'})]
+    )
+    monkeypatch.setattr(websockets, 'connect', FakeConnect(ws))
+    settings = AzureRealtimeModelSettings(azure_voice_live=True)
+    model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider(), settings=settings)
+    assert model.profile.get('supports_tool_updates') is True
+
+    async with model.connect(
+        messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as conn:
+        await conn.send(UpdateTools(tools=[ToolDefinition(name='forecast', parameters_json_schema={'type': 'object'})]))
+
+    assert json.loads(ws.sent[-1]) == snapshot(
+        {
+            'type': 'session.update',
+            'session': {'tools': [{'type': 'function', 'name': 'forecast', 'parameters': {'type': 'object'}}]},
+        }
+    )
 
 
 def test_azure_realtime_profile_override_routes_unconventional_deployment() -> None:

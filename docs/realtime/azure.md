@@ -244,6 +244,7 @@ model = AzureRealtimeModel(
 | Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Limited parameter support | Requires a [compatible transcription deployment](#input-transcription-deployment) in the Azure resource |
 | Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Mid-session tool updates | Full feature support | Inherited from OpenAI: a [deferred capability](capabilities.md#deferred-capability-loading) can contribute tools |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 

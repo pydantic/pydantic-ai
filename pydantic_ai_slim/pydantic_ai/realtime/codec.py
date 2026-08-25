@@ -37,6 +37,7 @@ from ..messages import (
     RealtimeSessionReconnectEvent,
     UserContent,
 )
+from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
@@ -107,6 +108,22 @@ class TruncateOutput:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class UpdateTools:
+    """Re-advertise the session's tool list mid-conversation.
+
+    Sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] when loading a deferred
+    capability reveals tools the connect-time advertisement withheld. Only providers whose profile
+    sets [`supports_tool_updates`][pydantic_ai.realtime.RealtimeModelProfile.supports_tool_updates]
+    accept it; the rest fix their tool list when the connection opens and reject the input.
+    """
+
+    tools: Sequence[ToolDefinition]
+    """The complete list of tools to advertise from now on, not a delta."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent')
 """The content types a caller feeds into [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send].
 
@@ -117,13 +134,14 @@ raw PCM before it is streamed, matching the history-seeding path), or a raw PCM 
 Turn-control verbs (`CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`,
 `TruncateOutput`) are connection-level vocabulary driven through the dedicated `RealtimeSession`
 methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself when a tool
-completes — neither is accepted by `send()`.
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] and
+[`UpdateTools`][pydantic_ai.realtime.codec.UpdateTools] are sent by the session itself when a tool
+completes — none is accepted by `send()`.
 """
 
 RealtimeInput = TypeAliasType(
     'RealtimeInput',
-    'str | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
+    'str | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | UpdateTools | ToolResult',
 )
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send].
 
@@ -132,8 +150,9 @@ already normalized: a `str` is a complete text turn, a
 [`BinaryAudio`][pydantic_ai.messages.BinaryAudio] carries a raw mono PCM16 chunk at the model's
 [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 (`media_type='audio/pcm'`), and a [`BinaryImage`][pydantic_ai.messages.BinaryImage] an image frame.
-The connection additionally accepts the turn-control verbs and
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], which
+The connection additionally accepts the turn-control verbs,
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], and
+[`UpdateTools`][pydantic_ai.realtime.codec.UpdateTools], which
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends on the caller's behalf.
 """
 
@@ -476,6 +495,7 @@ __all__ = (
     'CreateResponse',
     'CancelResponse',
     'TruncateOutput',
+    'UpdateTools',
     # Model-profile helpers for provider implementations.
     'merge_realtime_profile',
     'DEFAULT_AUDIO_SAMPLE_RATE',

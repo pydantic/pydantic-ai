@@ -107,6 +107,7 @@ secure offer-relay flow, and the sideband trust model, and the
 | Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Full feature support | [Dedicated model](audio.md#input-transcription); `'auto'` by default |
 | Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Mid-session tool updates | Full feature support | `session.update` re-advertises tools, so a [deferred capability](capabilities.md#deferred-capability-loading) can contribute tools |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 

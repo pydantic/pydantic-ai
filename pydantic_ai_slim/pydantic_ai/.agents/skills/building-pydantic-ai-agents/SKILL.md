@@ -292,7 +292,11 @@ Key facts for building realtime agents:
   (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
-  `google_async_tool_calls=True` on a native-audio model).
+  `google_async_tool_calls=True` on a native-audio model). A `defer_loading=True` capability that
+  contributes tools loads mid-session on providers whose profile sets `supports_tool_updates`
+  (OpenAI, Azure OpenAI — the session re-advertises its tool list when the capability loads); Gemini
+  and xAI reject it before connecting. A capability a seeded `message_history` already shows as
+  loaded advertises its tools at connect and is accepted on every provider.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a

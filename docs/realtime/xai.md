@@ -76,6 +76,7 @@ Other Grok Voice models ignore the setting.
 | Interruption | Limited parameter support | [`interrupt()`](turns.md#barge-in) works; output truncation with `played_ms` does not |
 | Input transcription | Full feature support | [Dedicated provider path](audio.md#input-transcription); `'auto'` by default |
 | Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Mid-session tool updates | Unsupported | A second tools-bearing `session.update` is unverified, so a tool-contributing [deferred capability](capabilities.md#deferred-capability-loading) is rejected before connecting |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
 | State-restoring reconnect | Full feature support | Native [resumption](#session-resumption) is automatic with a reconnect policy |
 

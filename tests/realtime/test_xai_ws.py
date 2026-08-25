@@ -510,6 +510,7 @@ def test_profile_allow_seeding() -> None:
         supports_thinking=True,
         supports_async_tool_calls=False,
         supports_tool_return_schema=False,
+        supports_tool_updates=False,  # a second tools-bearing `session.update` is unverified on xAI
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
         audio_input_sample_rate=24000,
