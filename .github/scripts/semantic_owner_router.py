@@ -627,7 +627,7 @@ def _routing_reason(decision: Decision, mention: str) -> str:
         return f'Matched ownership {source} `{detail}`.'
     if evidence.startswith('manual:'):
         return 'Automatic routing could not determine an available semantic owner, so this needs manual triage.'
-    raise ValueError('routing evidence cannot be explained')
+    return 'Matched the semantic ownership policy.'
 
 
 def _slack_payload(repo: str, item_type: str, decision: Decision, mentions_value: str) -> str:

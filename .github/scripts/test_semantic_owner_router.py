@@ -855,6 +855,12 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
             'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
             '→ <@UDAVID>\nWhy: Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
         ),
+        (
+            'Issue',
+            router.Decision(number=7, owner='dsfaccini', evidence='future-policy:evidence'),
+            'Routing intent: Issue <https://github.com/pydantic/pydantic-ai/issues/7|pydantic/pydantic-ai#7> '
+            '→ <@UDAVID>\nWhy: Matched the semantic ownership policy.',
+        ),
     ],
 )
 def test_notification_is_linked_typed_and_explained(item_type: str, decision: router.Decision, expected: str):
