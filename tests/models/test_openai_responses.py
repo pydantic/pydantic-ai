@@ -346,6 +346,17 @@ async def test_openai_responses_citations_replay_only_for_same_provider(allow_mo
         pytest.param(
             [
                 Citation(
+                    sources=[
+                        WebCitationSource(url='https://example.com/one', title='One'),
+                        WebCitationSource(url='https://example.com/two', title='Two'),
+                    ]
+                )
+            ],
+            id='multiple-sources',
+        ),
+        pytest.param(
+            [
+                Citation(
                     sources=[WebCitationSource(url='https://example.com/valid', title='Valid')],
                     anchor=MarkerCitationAnchor(start=0, end=10),
                 ),
@@ -364,6 +375,10 @@ async def test_openai_responses_citations_replay_only_for_same_provider(allow_mo
                 )
             ],
             id='negative-file-citation-index',
+        ),
+        pytest.param(
+            [Citation(sources=[DocumentCitationSource(document_id='file-123')])],
+            id='file-citation-without-filename',
         ),
     ],
 )

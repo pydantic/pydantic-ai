@@ -1658,7 +1658,9 @@ async def test_bedrock_empty_citation_response_mapping(bedrock_provider: Bedrock
                                         {
                                             'title': 'Returns policy',
                                             'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
-                                        }
+                                        },
+                                        {'location': {'web': {'url': 'https://ai.pydantic.dev'}}},
+                                        {'title': 'No metadata'},
                                     ],
                                 }
                             }
@@ -1683,7 +1685,9 @@ async def test_bedrock_empty_citation_response_mapping(bedrock_provider: Bedrock
                             provider_details={
                                 'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}}
                             },
-                        )
+                        ),
+                        WebCitationSource(url='https://ai.pydantic.dev'),
+                        DocumentCitationSource(title='No metadata'),
                     ]
                 )
             ],
@@ -1759,6 +1763,7 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
                                                 'domain': 'ai.pydantic.dev',
                                             },
                                         ),
+                                        WebCitationSource(url='https://example.com/no-optional-fields'),
                                     ],
                                     anchor=ContentCitationAnchor(start=0, end=len(text)),
                                 )
@@ -1792,6 +1797,7 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
                                 'source': 'Web Search',
                                 'location': {'web': {'url': 'https://ai.pydantic.dev', 'domain': 'ai.pydantic.dev'}},
                             },
+                            {'location': {'web': {'url': 'https://example.com/no-optional-fields'}}},
                         ],
                     }
                 }
@@ -1862,6 +1868,86 @@ def _bedrock_replayable_citation() -> Citation:
                 )
             ],
             id='reversed-range',
+        ),
+        pytest.param(
+            'bedrock',
+            [
+                Citation(
+                    sources=[WebCitationSource(url='https://ai.pydantic.dev', provider_details={'domain': 1})],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                )
+            ],
+            id='invalid-web-domain',
+        ),
+        pytest.param(
+            'bedrock',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={
+                                'location': {
+                                    'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8},
+                                    'documentPage': {'documentIndex': 0, 'start': 0, 'end': 1},
+                                }
+                            },
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                )
+            ],
+            id='multiple-location-kinds',
+        ),
+        pytest.param(
+            'bedrock',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={'location': {'unsupported': {'documentIndex': 0}}},
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                )
+            ],
+            id='unsupported-location-kind',
+        ),
+        pytest.param(
+            'bedrock',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8, 'extra': 1}}
+                            },
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                )
+            ],
+            id='unexpected-location-field',
+        ),
+        pytest.param(
+            'bedrock',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={
+                                'source': 1,
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8}},
+                            },
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=8),
+                )
+            ],
+            id='invalid-source-name',
         ),
         pytest.param(
             'bedrock',

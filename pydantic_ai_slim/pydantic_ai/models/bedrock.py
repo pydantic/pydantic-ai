@@ -526,8 +526,6 @@ def _map_bedrock_citations_for_replay(
     ):
         return None
 
-    if not citations[0].sources:
-        return None
     sources = [_map_bedrock_citation_source_for_replay(source) for source in citations[0].sources]
     if any(source is None for source in sources):
         return None

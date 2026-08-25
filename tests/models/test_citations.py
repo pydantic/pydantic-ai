@@ -632,7 +632,7 @@ async def test_native_citation_replay_after_persisted_history(
     agent: Agent[None, str]
     first_prompt: str | list[str | BinaryContent]
     if provider == 'anthropic-messages':
-        if not anthropic_available():  # pragma: no cover
+        if not anthropic_available():
             pytest.skip('anthropic dependencies not installed')
         agent = Agent(
             AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
@@ -640,7 +640,7 @@ async def test_native_citation_replay_after_persisted_history(
         )
         first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
     elif provider == 'bedrock-converse':
-        if not bedrock_available():  # pragma: no cover
+        if not bedrock_available():
             pytest.skip('bedrock dependencies not installed')
         agent = Agent(
             BedrockConverseModel(

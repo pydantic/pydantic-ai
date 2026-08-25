@@ -193,8 +193,6 @@ def _map_citation_for_replay(citation: Citation, document_count: int) -> BetaTex
         return None
 
     cited_text = source.excerpts[0]
-    if not isinstance(cited_text, str):
-        return None
 
     if citation_type == 'char_location':
         indices = _citation_range(details, 'start_char_index', 'end_char_index', minimum=0)

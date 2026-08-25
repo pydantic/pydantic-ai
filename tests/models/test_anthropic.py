@@ -24,6 +24,7 @@ from pydantic_ai import (
     CachePoint,
     Citation,
     CitationSource,
+    ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
@@ -367,6 +368,34 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
                                         )
                                     ]
                                 ),
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            title='',
+                                            excerpts=['page passage'],
+                                            provider_details={
+                                                'type': 'page_location',
+                                                'document_index': 1,
+                                                'start_page_number': 2,
+                                                'end_page_number': 3,
+                                            },
+                                        )
+                                    ]
+                                ),
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            title='',
+                                            excerpts=['block passage'],
+                                            provider_details={
+                                                'type': 'content_block_location',
+                                                'document_index': 1,
+                                                'start_block_index': 4,
+                                                'end_block_index': 5,
+                                            },
+                                        )
+                                    ]
+                                ),
                             ],
                         )
                     ],
@@ -402,6 +431,22 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
                             'start_char_index': 10,
                             'end_char_index': 26,
                         },
+                        {
+                            'type': 'page_location',
+                            'cited_text': 'page passage',
+                            'document_index': 1,
+                            'document_title': None,
+                            'start_page_number': 2,
+                            'end_page_number': 3,
+                        },
+                        {
+                            'type': 'content_block_location',
+                            'cited_text': 'block passage',
+                            'document_index': 1,
+                            'document_title': None,
+                            'start_block_index': 4,
+                            'end_block_index': 5,
+                        },
                     ],
                 }
             ],
@@ -429,6 +474,33 @@ def _anthropic_replayable_web_citation() -> Citation:
             'anthropic',
             [Citation(sources=[WebCitationSource(url='https://example.com/source')])],
             id='missing-native-details',
+        ),
+        pytest.param(
+            'anthropic',
+            [Citation(sources=[DocumentCitationSource(title='Report')])],
+            id='missing-document-excerpt',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com/source')],
+                    anchor=ContentCitationAnchor(start=0, end=11),
+                )
+            ],
+            id='anchored-citation',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        WebCitationSource(url='https://example.com/one'),
+                        WebCitationSource(url='https://example.com/two'),
+                    ]
+                )
+            ],
+            id='multiple-sources',
         ),
         pytest.param(
             'anthropic',
@@ -499,8 +571,43 @@ def _anthropic_replayable_web_citation() -> Citation:
                             title='Report',
                             excerpts=['source text'],
                             provider_details={
-                                'type': 'char_location',
+                                'type': 'content_block_location',
                                 'document_index': 0,
+                                'start_block_index': 2,
+                                'end_block_index': 1,
+                            },
+                        )
+                    ]
+                )
+            ],
+            id='reversed-content-block-range',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={'type': 'search_result_location', 'document_index': 0},
+                        )
+                    ]
+                )
+            ],
+            id='unsupported-citation-type',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'char_location',
+                                'document_index': 1,
                                 'start_char_index': 0,
                                 'end_char_index': 11,
                             },
@@ -535,7 +642,16 @@ async def test_anthropic_unreconstructable_citations_replay_as_text(
     history = ModelMessagesTypeAdapter.validate_json(
         ModelMessagesTypeAdapter.dump_json(
             [
-                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'Research the topic.',
+                                BinaryContent(data=b'Citation source.', media_type='text/plain'),
+                            ]
+                        )
+                    ]
+                ),
                 ModelResponse(
                     parts=[
                         TextPart(
