@@ -62,11 +62,19 @@ _CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
 _AUTHORIZE_URL = 'https://auth.openai.com/oauth/authorize'
 _TOKEN_URL = 'https://auth.openai.com/oauth/token'
 _DEVICE_URL = 'https://auth.openai.com/oauth/device/code'
+# The Codex CLI's public OAuth client. Its registration with OpenAI pins the allowed redirect
+# URI to exactly `http://localhost:1455/auth/callback` (the Codex CLI, ChatMock, Code Puppy, and
+# opencode all use this same client + URI) - so the "localhost" below is a constant of OpenAI's
+# client registration, like the client id itself, not an assumption about where your app runs.
+# Apps serve the callback themselves (run on port 1455, or a one-shot local server for CLI login);
+# pass `redirect_uri=` to `OpenAICodexOAuthFlow` only if OpenAI has issued you your own client.
 _PUBLIC_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 _REDIRECT_URI = 'http://localhost:1455/auth/callback'
 _DEFAULT_SCOPE = 'openid profile email offline_access'
 _DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
 _ORIGINATOR = 'pydantic-ai'
+# 30s pre-expiry refresh hint (unverified JWT `exp` is a hint, not an authority); the extra 5s
+# polling backoff on `slow_down` is the increment RFC 8628 section 3.5 specifies.
 _TOKEN_EXPIRY_BUFFER = timedelta(seconds=30)
 _SLOW_DOWN_EXTRA = 5.0
 
