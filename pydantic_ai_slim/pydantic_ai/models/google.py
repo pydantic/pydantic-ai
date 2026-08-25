@@ -5,11 +5,11 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
-from uuid import uuid4
+from typing import Any, Literal, TypeAlias, cast, get_args, overload
+from uuid import UUID, uuid4
 
 from typing_extensions import assert_never
 
@@ -19,7 +19,11 @@ from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     CachePoint,
+    Citation,
+    CitationSource,
     CompactionPart,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     FilePart,
     FileUrl,
     FinishReason,
@@ -42,6 +46,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from ..native_tools import (
     AbstractNativeTool,
@@ -96,6 +101,7 @@ try:
         GenerateContentResponse,
         GenerationConfigDict,
         GoogleSearchDict,
+        GroundingChunk,
         GroundingMetadata,
         HttpOptionsDict,
         ImageConfigDict,
@@ -106,6 +112,7 @@ try:
         Part,
         PartDict,
         SafetySettingDict,
+        Segment,
         ServiceTier as _GoogleSDKServiceTier,
         ThinkingConfigDict,
         ToolCall,
@@ -1339,6 +1346,45 @@ class GoogleModel(Model[Client]):
         return response_schema
 
 
+_GoogleStreamPartKind: TypeAlias = Literal[
+    'text',
+    'thinking',
+    'function_call',
+    'inline_data',
+    'tool_call',
+    'tool_response',
+    'executable_code',
+    'code_execution_result',
+    'function_response',
+]
+
+
+@dataclass
+class _GoogleStreamTextState:
+    part_id: UUID
+    public_start: int
+    content: str = ''
+
+
+def _stream_part_kind(part: Part) -> _GoogleStreamPartKind:
+    if part.text is not None:
+        return 'thinking' if part.thought else 'text'
+    if part.function_call:
+        return 'function_call'
+    if part.inline_data is not None:
+        return 'inline_data'
+    if part.tool_call:
+        return 'tool_call'
+    if part.tool_response:
+        return 'tool_response'
+    if part.executable_code is not None:
+        return 'executable_code'
+    if part.code_execution_result is not None:
+        return 'code_execution_result'
+    assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+    return 'function_response'  # pragma: no cover
+
+
 @dataclass
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
@@ -1354,6 +1400,15 @@ class GeminiStreamedResponse(StreamedResponse):
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
+    # Adjacent Google text parts are coalesced publicly. Keep their own text and public offset so
+    # citation metadata arriving later can still target Google's part index.
+    _provider_parts: list[_GoogleStreamTextState | None] = field(
+        default_factory=list[_GoogleStreamTextState | None], init=False
+    )
+    _active_parts: list[tuple[_GoogleStreamPartKind, int]] = field(
+        default_factory=list[tuple[_GoogleStreamPartKind, int]], init=False
+    )
+    _grounding_chunks: list[GroundingChunk] = field(default_factory=list[GroundingChunk], init=False)
     # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
     # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
     # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
@@ -1363,6 +1418,31 @@ class GeminiStreamedResponse(StreamedResponse):
 
     async def close_stream(self) -> None:
         await self._response.aclose()
+
+    def _track_stream_part(self, part_index: int, part_kind: _GoogleStreamPartKind) -> _GoogleStreamTextState | None:
+        if part_index < len(self._active_parts) and self._active_parts[part_index][0] == part_kind:
+            return self._provider_parts[self._active_parts[part_index][1]]
+
+        del self._active_parts[part_index:]
+        state: _GoogleStreamTextState | None = None
+        if part_kind == 'text':
+            previous_state = None
+            if part_index > 0 and self._active_parts[part_index - 1][0] == 'text':
+                previous_state = self._provider_parts[self._active_parts[part_index - 1][1]]
+            if previous_state is None:
+                state = _GoogleStreamTextState(part_id=uuid4(), public_start=0)
+            else:
+                public_part = self._parts_manager.get_part_by_vendor_id(previous_state.part_id)
+                assert public_part is None or isinstance(public_part, TextPart)
+                state = _GoogleStreamTextState(
+                    part_id=previous_state.part_id,
+                    public_start=len(public_part.content) if public_part is not None else 0,
+                )
+
+        logical_index = len(self._provider_parts)
+        self._provider_parts.append(state)
+        self._active_parts.append((part_kind, logical_index))
+        return state
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
@@ -1455,17 +1535,20 @@ class GeminiStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
-                if candidate.content is None or candidate.content.parts is None:
-                    continue
+                parts = (candidate.content and candidate.content.parts) or []
 
-                parts = candidate.content.parts
-                if not parts:
-                    continue  # pragma: no cover
+                # A shorter part list starts a new segment after a previously emitted trailing part
+                # (commonly text after a tool call), rather than continuing the old positional text part.
+                if parts and len(parts) < len(self._active_parts):
+                    self._active_parts.clear()
 
                 if not self._has_tool_invocations:
                     self._has_tool_invocations = _has_native_tool_invocations(parts)
 
-                for part in parts:
+                for part_index, part in enumerate(parts):
+                    part_kind = _stream_part_kind(part)
+                    text_state = self._track_stream_part(part_index, part_kind)
+
                     provider_details: dict[str, Any] | None = None
                     if part.thought_signature:
                         # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
@@ -1487,8 +1570,10 @@ class GeminiStreamedResponse(StreamedResponse):
                             ):
                                 yield event
                         else:
+                            assert text_state is not None
+                            text_state.content += part.text
                             for event in self._parts_manager.handle_text_delta(
-                                vendor_part_id=None,
+                                vendor_part_id=text_state.part_id,
                                 content=part.text,
                                 provider_name=self.provider_name if provider_details else None,
                                 provider_details=provider_details,
@@ -1551,6 +1636,36 @@ class GeminiStreamedResponse(StreamedResponse):
                     else:
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
+                if parts:
+                    del self._active_parts[len(parts) :]
+
+                if candidate.grounding_metadata:
+                    if candidate.grounding_metadata and candidate.grounding_metadata.grounding_chunks:
+                        self._grounding_chunks.extend(candidate.grounding_metadata.grounding_chunks)
+                    google_parts = [
+                        Part(text=state.content) if state is not None else Part() for state in self._provider_parts
+                    ]
+                    grounding_citations = _map_grounding_citations(
+                        google_parts,
+                        candidate.grounding_metadata,
+                        grounding_chunks=self._grounding_chunks,
+                    )
+                    for index, citations in grounding_citations.items():
+                        text_state = self._provider_parts[index]
+                        assert text_state is not None
+                        text_part = self._parts_manager.get_part_by_vendor_id(text_state.part_id)
+                        assert isinstance(text_part, TextPart)
+                        citations = [_offset_citation(citation, text_state.public_start) for citation in citations]
+                        new_citations = [
+                            citation for citation in citations if citation not in (text_part.citations or [])
+                        ]
+                        if new_citations:  # pragma: no branch
+                            for event in self._parts_manager.handle_text_delta(
+                                vendor_part_id=text_state.part_id,
+                                content='',
+                                citations=new_citations,
+                            ):
+                                yield event
                 # Grounding metadata is attached to the final text chunk, so
                 # we emit the `NativeToolReturnPart` after the text delta so
                 # that the delta is properly added to the same `TextPart` as earlier chunks
@@ -1893,6 +2008,119 @@ def _process_part(
     return item, code_execution_tool_call_id
 
 
+def _character_index(text: str, byte_index: int) -> int | None:
+    """Convert a Gemini UTF-8 byte offset to a Python string index."""
+    encoded = text.encode()
+    if not 0 <= byte_index <= len(encoded):
+        return None
+    try:
+        return len(encoded[:byte_index].decode())
+    except UnicodeDecodeError:
+        return None
+
+
+def _grounding_support_part_index(parts: Sequence[Part], segment: Segment) -> int | None:
+    if segment.part_index is not None and 0 <= segment.part_index < len(parts):
+        part = parts[segment.part_index]
+        if segment.text is None or (part.text and segment.text in part.text):
+            return segment.part_index
+    if segment.text is not None:
+        candidates = [index for index, part in enumerate(parts) if part.text and segment.text in part.text]
+        if len(candidates) == 1:
+            return candidates[0]
+    text_parts = [index for index, part in enumerate(parts) if part.text]
+    return text_parts[0] if len(text_parts) == 1 else None
+
+
+def _map_grounding_source(chunk: GroundingChunk) -> CitationSource | None:
+    if (web := chunk.web) and web.uri:
+        return WebCitationSource(
+            url=web.uri,
+            title=web.title,
+            provider_details={'domain': web.domain} if web.domain else None,
+        )
+    if context := chunk.retrieved_context:
+        details = context.model_dump(mode='json', exclude_none=True, by_alias=False)
+        excerpts = list(
+            dict.fromkeys(
+                text for text in (context.text, context.rag_chunk.text if context.rag_chunk else None) if text
+            )
+        )
+        details.pop('text', None)
+        if isinstance(rag_chunk := details.get('rag_chunk'), dict):
+            rag_chunk_details = cast(dict[str, Any], rag_chunk)
+            rag_chunk_details.pop('text', None)
+            if not rag_chunk_details:
+                details.pop('rag_chunk')
+        if any((context.document_name, context.title, excerpts, details)):
+            return DocumentCitationSource(
+                document_id=context.document_name,
+                title=context.title,
+                excerpts=excerpts,
+                provider_details={key: value for key, value in details.items() if key not in {'document_name', 'title'}}
+                or None,
+            )
+    return None
+
+
+def _map_grounding_citations(
+    parts: Sequence[Part],
+    grounding_metadata: GroundingMetadata | None,
+    *,
+    grounding_chunks: Sequence[GroundingChunk] | None = None,
+) -> dict[int, list[Citation]]:
+    if not grounding_metadata or not grounding_metadata.grounding_supports:
+        return {}
+
+    chunks = grounding_chunks if grounding_chunks is not None else grounding_metadata.grounding_chunks or []
+    citations_by_part: dict[int, list[Citation]] = {}
+    for support in grounding_metadata.grounding_supports:
+        segment = support.segment
+        if segment is None or segment.end_index is None:
+            continue
+        part_index = _grounding_support_part_index(parts, segment)
+        if part_index is None or part_index >= len(parts) or (text := parts[part_index].text) is None:
+            continue
+
+        chunk_indices = support.grounding_chunk_indices or []
+        scores = support.confidence_scores if len(support.confidence_scores or []) == len(chunk_indices) else None
+        sources: list[CitationSource] = []
+        mapped_scores: list[float] = []
+        for position, chunk_index in enumerate(chunk_indices):
+            if 0 <= chunk_index < len(chunks) and (source := _map_grounding_source(chunks[chunk_index])) is not None:
+                sources.append(source)
+                if scores is not None:
+                    mapped_scores.append(scores[position])
+
+        if sources:
+            start = _character_index(text, segment.start_index or 0)
+            end = _character_index(text, segment.end_index)
+            citations_by_part.setdefault(part_index, []).append(
+                Citation(
+                    sources=sources,
+                    anchor=ContentCitationAnchor(start=start, end=end)
+                    if start is not None and end is not None and start < end
+                    else None,
+                    provider_details={'confidence_scores': mapped_scores} if mapped_scores else None,
+                )
+            )
+    return citations_by_part
+
+
+def _offset_citation(citation: Citation, offset: int) -> Citation:
+    if offset == 0 or citation.anchor is None:
+        return citation
+    return Citation(
+        sources=citation.sources,
+        anchor=replace(
+            citation.anchor,
+            start=citation.anchor.start + offset,
+            end=citation.anchor.end + offset,
+        ),
+        provider_details=citation.provider_details,
+    )
+
+
 def _process_response_from_parts(
     parts: list[Part],
     grounding_metadata: GroundingMetadata | None,
@@ -1924,9 +2152,12 @@ def _process_response_from_parts(
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
-    for part in parts:
+    grounding_citations = _map_grounding_citations(parts, grounding_metadata)
+    for part_index, part in enumerate(parts):
         item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
         if item is not None:
+            if isinstance(item, TextPart):
+                item.citations = grounding_citations.get(part_index)
             if isinstance(item, NativeToolReturnPart):
                 _fill_empty_file_search_return_content(item, grounding_metadata)
             items.append(item)

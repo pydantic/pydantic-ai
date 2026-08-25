@@ -19,7 +19,10 @@ every probe aborts before a response. For the same reason it doesn't use the `re
 that records only path, body and headers on a live transport, while `timeout` is observable only in
 `Request.extensions` and the probe needs a `MockTransport` to fail the call without a network.
 
-`tool_choice` and `thinking` are excluded and stay hand-maintained, for different reasons:
+`include_citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
+
+- `include_citations` changes only requests that contain an inline document or Web Fetch tool, while this harness
+  deliberately uses one plain text request for every model. Its dedicated Anthropic tests assert both request shapes.
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
   express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload
@@ -129,7 +132,7 @@ with try_import() as mcp_available:
 pytestmark = pytest.mark.anyio
 
 
-HAND_MAINTAINED = frozenset({'tool_choice', 'thinking'})
+HAND_MAINTAINED = frozenset({'include_citations', 'tool_choice', 'thinking'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 PROBE_VALUES: dict[str, tuple[object, ...]] = {

@@ -25,8 +25,10 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    Citation,
     DocumentUrl,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelAPIError,
     ModelHTTPError,
     ModelProfile,
@@ -45,6 +47,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
@@ -105,6 +108,7 @@ with try_import() as imports_successful:
         OpenAIChatModelSettings,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
+        _map_chat_content,  # pyright: ignore[reportPrivateUsage]
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
@@ -3917,6 +3921,292 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         match=r"WebSearchTool is not supported with `OpenAIChatModel` and model 'gpt-4o'.*OpenAIResponsesModel",
     ):
         await agent.run('What day is today?')
+
+
+async def test_openai_chat_url_citation(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com',
+            title='Example',
+            start_index=7,
+            end_index=10,
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content='Answer [1]', annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run('Question')
+
+    assert result.all_messages()[1].parts == [
+        TextPart(
+            'Answer [1]',
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com', title='Example')],
+                    anchor=MarkerCitationAnchor(start=7, end=10),
+                )
+            ],
+        )
+    ]
+
+
+async def test_openai_chat_citation_without_content(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com',
+            title='Example',
+            start_index=0,
+            end_index=0,
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content=None, annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    response = await model.request([], {}, ModelRequestParameters())
+
+    assert response.parts == [
+        TextPart(
+            '',
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com', title='Example')],
+                )
+            ],
+        )
+    ]
+
+
+async def test_openai_chat_invalid_citation_range_is_unanchored(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=20, end_index=30
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content='Answer', annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run('Question')
+
+    assert result.all_messages()[1].parts == [
+        TextPart(
+            'Answer', citations=[Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])]
+        )
+    ]
+
+
+async def test_openai_chat_stream_citation_after_text_transformation_is_ignored(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=2, end_index=5
+        ),
+    )
+    stream = [
+        text_chunk('  '),
+        text_chunk('[1] extra'),
+        chunk(
+            [
+                ChoiceDelta.model_construct(
+                    role='assistant',
+                    annotations=[annotation.model_dump()],
+                )
+            ],
+            finish_reason='stop',
+        ),
+    ]
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)),
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
+    )
+
+    async with Agent(model).run_stream('Question') as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [TextPart('[1] extra')]
+
+
+async def test_openai_chat_stream_annotations_before_referenced_text(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        text_chunk('Answer '),
+        chunk([ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])]),
+        text_chunk('[1]'),
+        chunk([ChoiceDelta.model_construct(role='assistant')], finish_reason='stop'),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [
+        TextPart(
+            'Answer [1]',
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com', title='Example')],
+                    anchor=MarkerCitationAnchor(start=7, end=10),
+                )
+            ],
+            provider_name='openai',
+            provider_details={'annotations': [annotation.model_dump()]},
+        )
+    ]
+
+
+async def test_openai_chat_stream_accumulates_raw_annotation_batches(allow_model_requests: None):
+    annotations = [
+        chat.chat_completion_message.Annotation(
+            type='url_citation',
+            url_citation=chat.chat_completion_message.AnnotationURLCitation(
+                url=f'https://example.com/{index}',
+                title=f'Example {index}',
+                start_index=start,
+                end_index=end,
+            ),
+        )
+        for index, (start, end) in enumerate(((7, 10), (11, 14)), start=1)
+    ]
+    stream = [
+        text_chunk('Answer [1] [2]'),
+        *[
+            chunk([ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])])
+            for annotation in annotations
+        ],
+        chunk([ChoiceDelta.model_construct(role='assistant')], finish_reason='stop'),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    assert part.provider_details == {'annotations': [annotation.model_dump() for annotation in annotations]}
+    assert part.citations == [
+        Citation(
+            sources=[WebCitationSource(url=f'https://example.com/{index}', title=f'Example {index}')],
+            anchor=MarkerCitationAnchor(start=start, end=end),
+        )
+        for index, (start, end) in enumerate(((7, 10), (11, 14)), start=1)
+    ]
+
+
+async def test_openai_chat_stream_citation_without_text(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=0, end_index=0
+        ),
+    )
+    stream = [
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])],
+            finish_reason='stop',
+        )
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with model.request_stream([], {}, ModelRequestParameters()) as streamed:
+        _ = [event async for event in streamed]
+        response = streamed.get()
+
+    assert response.parts == [
+        TextPart(
+            '',
+            citations=[Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])],
+        )
+    ]
+
+
+async def test_openai_chat_raw_annotations_non_streaming(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content='Answer [1]', annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    )
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    assert part.provider_details == {'annotations': [annotation.model_dump()]}
+
+
+async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        text_chunk('Answer [1]'),
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])],
+            finish_reason='stop',
+        ),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    assert part.citations == [
+        Citation(
+            sources=[WebCitationSource(url='https://example.com', title='Example')],
+            anchor=MarkerCitationAnchor(start=7, end=10),
+        )
+    ]
+    assert part.provider_details == {'annotations': [annotation.model_dump()]}
+
+
+def test_openai_chat_citation_with_thinking_is_ignored():
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=31, end_index=34
+        ),
+    )
+    message = ChatCompletionMessage(
+        role='assistant', content='<think>reasoning</think>Answer [1]', annotations=[annotation]
+    )
+
+    parts = _map_chat_content(message, OpenAIModelProfile(thinking_tags=('<think>', '</think>')), 'openai')
+
+    assert parts == [
+        ThinkingPart('reasoning', id='content', provider_name='openai'),
+        TextPart('Answer [1]'),
+    ]
 
 
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):

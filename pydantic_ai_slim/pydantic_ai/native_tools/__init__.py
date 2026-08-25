@@ -410,7 +410,10 @@ class WebFetchTool(AbstractNativeTool):
     """
 
     enable_citations: bool = False
-    """If True, enables citations for fetched content.
+    """Whether to enable citations for fetched content.
+
+    [`ModelSettings.include_citations`][pydantic_ai.settings.ModelSettings.include_citations] also enables citations for
+    this tool, so applications can opt in across provider citation features with one setting.
 
     Supported by:
 

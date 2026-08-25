@@ -37,6 +37,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsStr, try_import
+from ..citation_utils import IsCitationList
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
@@ -346,6 +347,7 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
 """,
                         provider_name='google',
                         provider_details={'thought_signature': IsStr()},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -604,6 +606,7 @@ As for the weather in Tokyo, it is currently **cloudy** with a temperature of ap
                         provider_details={
                             'thought_signature': 'ErwDCrkDAQw51seeQfRmL5VQKB0za3r0rcYB5VnGk/wP9IY25C1mUSd3YKB8PH3IC/C3tdufhZycWv4aJudl2LSVy0ZQXC8T74IPMVk87/VxBr+Pm+BMCFvBRcJQGNvZMgrQIKGbylDY9ZAXkMdFwEXdtIesDpRRhjUx9SfHsdkALn6fvhZb5Ea9VUMnPGCW82QJgfWU7x1WItV9TROPug+XE7eSq4/sGgnf4Gqg+cUWWxspAChvBUi3+hu1rnPGW5+cr+kufGWuaQLI+WMneegbNFSaWoT9AdJluX4hwNMHaLAXj2kyOjNKlUlo6hvoT/0ck+/pHf8+pr/CNCj6m7EbHZ1aKfMS9TlXfOP30XkUDlQ9GSE/XfAiZkuMzHUC1v5gQ4Fkp2fZV1SsQarNXPwU+G5vUBw2wZ4lyGgUAe76IcQfEyaFjVsjA0oHvgzcXeSKSHephYSUzw44E/FoIq60Sr0oaOXRv5wIrBmiKcZyxSaVSd7B92nE6pZsnHw6FwqVS5dShZhaCNJeQbxzAVbFuLK7QbOFg0CcKn3Pi8PaZLHi4Ej23HMXlduStmtS9jXwltMhGg19xOnzHGmM'
                         },
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -720,6 +723,7 @@ async def test_native_output_with_function_and_builtin_tools(
 """,
                         provider_name='google',
                         provider_details={'thought_signature': IsStr()},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -788,6 +792,7 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
 """,
                         provider_name='google',
                         provider_details={'thought_signature': IsStr()},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(

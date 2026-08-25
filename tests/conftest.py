@@ -1214,9 +1214,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
-    # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):
+async def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None):  # pragma: lax no cover
+    record_mode = cast(Any, request.config).getoption('record_mode')
+    if not os.getenv('CI', False) and record_mode not in {'all', 'new_episodes', 'rewrite'}:
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
