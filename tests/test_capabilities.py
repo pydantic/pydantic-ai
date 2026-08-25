@@ -3367,6 +3367,31 @@ def test_overriding_container_id_must_not_collide_with_a_sibling() -> None:
     )
 
 
+async def test_run_level_capability_id_must_not_collide_with_an_overriding_container() -> None:
+    """The same collision is reachable from `run(capabilities=...)`, not just at construction.
+
+    A run's capabilities compose with the agent's retained container exactly as a sibling does, so
+    validating only at construction and after `for_agent` left the run-level path open.
+    """
+
+    class Group(CombinedCapability[Any]):
+        def get_instructions(self) -> str:
+            return 'Group override.'
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[Group(capabilities=[Capability[Any](instructions='Leaf.', id='leaf')], id='dup')],
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('Hello', capabilities=[Capability[Any](instructions='Run-level.', id='dup')])
+
+    assert str(exc_info.value) == snapshot(
+        "Capability id 'dup' is used by multiple capabilities that contribute instructions. "
+        'Capability ids must be unique within a run.'
+    )
+
+
 def test_deferred_capability_without_id_raises_at_construction() -> None:
     """A statically-provided deferred capability without an `id` fails fast at construction."""
     with pytest.raises(UserError, match='stable explicit `id` values'):

@@ -4012,7 +4012,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     return explicit_ids
 
 
-def _validate_instruction_source_ids(root_capability: CombinedCapability[Any]) -> None:
+def _validate_instruction_source_ids(root_capability: AbstractCapability[Any]) -> None:
     """Reject two instruction sources that would contribute blocks under one `capability:<id>` key.
 
     `_validate_capability_ids` walks the flattened capabilities, but a `CombinedCapability` subclass
@@ -4020,7 +4020,13 @@ def _validate_instruction_source_ids(root_capability: CombinedCapability[Any]) -
     retained rather than splatted, so it never appears in that list. Its `id` therefore went
     unchecked, and a sibling could share it -- leaving an application unable to tell whose text
     `capability:<id>` addresses, which is the one thing the key exists to make unambiguous.
+
+    Runs at construction, after `for_agent`, and again for a run's own capabilities: a capability
+    passed to `run()` composes with the retained container the same way a sibling does, so the
+    collision is reachable from there too.
     """
+    if not isinstance(root_capability, CombinedCapability):
+        return
     sources_by_id: dict[str, AbstractCapability[Any]] = {}
     for source in root_capability._instruction_sources:  # pyright: ignore[reportPrivateUsage]
         if source.id is None:
@@ -4107,6 +4113,7 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     capability.apply(capabilities.append)
 
     explicit_ids = _validate_capability_ids(capabilities)
+    _validate_instruction_source_ids(capability)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     for cap in capabilities:
