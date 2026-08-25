@@ -6,7 +6,6 @@ from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from math import ceil, floor
 from typing import Any, Literal, cast
 
 import pydantic_core
@@ -535,39 +534,24 @@ class _JsonSchemaTestData:
         """Generate an integer from a JSON Schema integer."""
         maximum = schema.get('maximum')
         minimum = schema.get('minimum')
-        is_integer = schema.get('type') == 'integer'
-        if not is_integer and minimum is not None and maximum == minimum:
+        if minimum is not None and maximum == minimum:
             return minimum
 
-        exc_max = schema.get('exclusiveMaximum')
-        exc_min = schema.get('exclusiveMinimum')
-        is_integer_range = (
-            is_integer and (minimum is not None or exc_min is not None) and (maximum is not None or exc_max is not None)
-        )
-        if is_integer_range:
-            lower_bounds = [ceil(minimum)] if minimum is not None else []
-            upper_bounds = [floor(maximum)] if maximum is not None else []
-            if exc_min is not None:
-                lower_bounds.append(floor(exc_min) + 1)
-            if exc_max is not None:
-                upper_bounds.append(ceil(exc_max) - 1)
-            minimum = max(lower_bounds)
-            maximum = min(upper_bounds)
-        elif maximum is None:
+        if maximum is None:
+            exc_max = schema.get('exclusiveMaximum')
             if exc_max is not None:
                 maximum = exc_max - 1
 
         if minimum is None:
+            exc_min = schema.get('exclusiveMinimum')
             if exc_min is not None:
                 minimum = exc_min + 1
 
-        if is_integer_range and minimum is not None and maximum is not None:
-            if maximum <= minimum:
-                return minimum
-            return minimum + self.seed % (maximum - minimum + 1)
-
         if minimum is not None and maximum is not None:
-            return minimum + self.seed % (maximum - minimum)
+            span = maximum - minimum
+            if schema.get('type') == 'integer' and span > 0:
+                span += 1
+            return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
         elif maximum is not None:

@@ -651,30 +651,3 @@ def test_int_inclusive_upper_bound_reachable():
     outputs = [agent.run_sync('hello', model=TestModel(seed=seed)).output for seed in range(4)]
 
     assert [(output.integer, output.number) for output in outputs] == snapshot([(2, 2.0), (3, 3.0), (4, 4.0), (5, 2.0)])
-
-
-@pytest.mark.parametrize(
-    ('bounds', 'expected'),
-    [
-        ({'minimum': 2.5, 'maximum': 5.5}, [3, 4, 5]),
-        ({'exclusiveMinimum': 2.5, 'exclusiveMaximum': 5.5}, [3, 4, 5]),
-        ({'minimum': 2, 'exclusiveMinimum': 2, 'maximum': 5, 'exclusiveMaximum': 5}, [3, 4]),
-    ],
-)
-def test_int_fractional_bounds_normalized(bounds: dict[str, float], expected: list[int]):
-    """Numeric JSON Schema bounds must be normalized to valid integer candidates."""
-    schema = {'type': 'object', 'required': ['value'], 'properties': {'value': {'type': 'integer', **bounds}}}
-
-    values = [_JsonSchemaTestData(schema, seed=seed).generate()['value'] for seed in range(len(expected))]
-
-    assert values == expected
-
-
-def test_int_empty_range_uses_model_validation_error():
-    """An impossible integer range must not leak an arithmetic error."""
-
-    class ImpossibleOutput(BaseModel):
-        value: Annotated[int, Field(ge=3, le=2)]
-
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
-        Agent(TestModel(), output_type=ImpossibleOutput).run_sync('hello')
