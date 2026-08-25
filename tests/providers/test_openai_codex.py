@@ -27,7 +27,6 @@ with try_import() as imports_successful:
         CredentialsRefreshError,
         OpenAICodexAuth,
         OpenAICodexCredentials,
-        OpenAICodexDeviceFlow,
         OpenAICodexOAuthFlow,
         OpenAICodexProvider,
         _jwt_expires_at,  # pyright: ignore[reportPrivateUsage]
@@ -389,75 +388,6 @@ async def test_exchange_code_posts_pkce_form(monkeypatch: pytest.MonkeyPatch):
     assert mock.forms[0]['code'] == 'the-code'
     assert mock.forms[0]['code_verifier'] == flow.code_verifier
     assert credentials.account_id == 'acc-9'  # extracted from the nested id_token claim
-
-
-async def start_device_flow(monkeypatch: pytest.MonkeyPatch) -> OpenAICodexDeviceFlow:
-    mock = TokenEndpointMock(
-        {
-            'device_code': 'dev-1',
-            'user_code': 'ABCD-EFGH',
-            'verification_uri': 'https://auth.openai.com/device',
-            'expires_in': 600,
-            'interval': 0.001,
-        }
-    )
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
-    flow = await OpenAICodexDeviceFlow.start()
-    assert flow.user_code == 'ABCD-EFGH'
-    assert flow.device_code == 'dev-1'
-    assert mock.forms[0] == {'client_id': PUBLIC_CLIENT_ID, 'scope': 'openid profile email offline_access'}
-    return flow
-
-
-async def test_device_flow_start_and_poll(monkeypatch: pytest.MonkeyPatch):
-    flow = await start_device_flow(monkeypatch)
-    poll_mock = TokenEndpointMock({'error': 'authorization_pending'}, {'error': 'slow_down'}, TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', poll_mock)
-    sleeps: list[float] = []
-
-    async def fake_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-
-    monkeypatch.setattr(asyncio, 'sleep', fake_sleep)
-    credentials = await flow.poll()
-
-    assert credentials.access_token.get_secret_value() == 'access-new'
-    assert max(sleeps) == pytest.approx(flow.interval + 5.0)  # slow_down backed the interval off
-    assert poll_mock.forms[0]['grant_type'] == 'urn:ietf:params:oauth:grant-type:device_code'
-
-
-async def test_device_flow_poll_surfaces_terminal_error(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        'pydantic_ai.providers.openai_codex._post_json',
-        TokenEndpointMock({'error': 'expired_token'}),
-    )
-
-    real_sleep = asyncio.sleep
-
-    async def fake_sleep(_: float) -> None:
-        await real_sleep(0)
-
-    monkeypatch.setattr(asyncio, 'sleep', fake_sleep)
-    flow = OpenAICodexDeviceFlow('dev-1', 'ABCD', 'url', expires_in=600, interval=0.001)
-    with pytest.raises(CredentialsRefreshError, match='expired_token'):
-        await flow.poll()
-
-
-async def test_device_flow_poll_times_out(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        'pydantic_ai.providers.openai_codex._post_json',
-        TokenEndpointMock({'error': 'authorization_pending'}),
-    )
-
-    real_sleep = asyncio.sleep
-
-    async def fake_sleep(_: float) -> None:
-        await real_sleep(0)
-
-    monkeypatch.setattr(asyncio, 'sleep', fake_sleep)
-    flow = OpenAICodexDeviceFlow('dev-1', 'ABCD', 'url', expires_in=0.01, interval=0.001)
-    with pytest.raises(CredentialsRefreshError, match='expired before'):
-        await flow.poll()
 
 
 # --- Prefix inference and profile dialect ---

@@ -1,21 +1,24 @@
 """OpenAI Codex subscription-auth provider: OAuth flow primitives, credential refresh, wire dialect.
 
 Core owns the *non-interactive* protocol primitives only (PKCE context, authorization URL, code
-exchange, device-flow start/poll, refresh); interactive UX (browser opening, localhost callback
-servers) and persistent credential storage belong to applications and harnesses.
+exchange, refresh); interactive UX (browser opening, localhost callback servers) and persistent
+credential storage belong to applications and harnesses.
+
+The authorization-code + PKCE redirect flow is the only login flow the public Codex client
+supports: its registration pins the redirect URI to `http://localhost:1455/auth/callback`
+(exact-match, probed live 2026-08-25), and the auth service serves no device-authorization
+endpoint. Hosted-web login is therefore not possible with this client - apps on the user's
+machine serve (or tunnel) `localhost:1455` themselves and hand the code to `exchange_code()`.
 """
 
 from __future__ import annotations as _annotations
 
-import asyncio
 import base64
 import hashlib
 import json
 import os
 import secrets
-import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from pathlib import Path
@@ -53,7 +56,6 @@ __all__ = (
     'CredentialsRefreshError',
     'OpenAICodexAuth',
     'OpenAICodexCredentials',
-    'OpenAICodexDeviceFlow',
     'OpenAICodexOAuthFlow',
     'OpenAICodexProvider',
 )
@@ -61,22 +63,19 @@ __all__ = (
 _CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
 _AUTHORIZE_URL = 'https://auth.openai.com/oauth/authorize'
 _TOKEN_URL = 'https://auth.openai.com/oauth/token'
-_DEVICE_URL = 'https://auth.openai.com/oauth/device/code'
 # The Codex CLI's public OAuth client. Its registration with OpenAI pins the allowed redirect
-# URI to exactly `http://localhost:1455/auth/callback` (the Codex CLI, ChatMock, Code Puppy, and
-# opencode all use this same client + URI) - so the "localhost" below is a constant of OpenAI's
-# client registration, like the client id itself, not an assumption about where your app runs.
-# Apps serve the callback themselves (run on port 1455, or a one-shot local server for CLI login);
-# pass `redirect_uri=` to `OpenAICodexOAuthFlow` only if OpenAI has issued you your own client.
+# URI to exactly `http://localhost:1455/auth/callback` (exact-match: an alternate localhost port
+# is rejected with `invalid_authorize_request` at the authorize step, probed live 2026-08-25) -
+# so the "localhost" below is a constant of OpenAI's client registration, like the client id
+# itself, not an assumption about where your app runs. Apps serve the callback themselves (run
+# on port 1455, or a one-shot local server for CLI login); pass `redirect_uri=` to
+# `OpenAICodexOAuthFlow` only if OpenAI has issued you your own client.
 _PUBLIC_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 _REDIRECT_URI = 'http://localhost:1455/auth/callback'
 _DEFAULT_SCOPE = 'openid profile email offline_access'
-_DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
 _ORIGINATOR = 'pydantic-ai'
-# 30s pre-expiry refresh hint (unverified JWT `exp` is a hint, not an authority); the extra 5s
-# polling backoff on `slow_down` is the increment RFC 8628 section 3.5 specifies.
+# 30s pre-expiry refresh hint (unverified JWT `exp` is a hint, not an authority).
 _TOKEN_EXPIRY_BUFFER = timedelta(seconds=30)
-_SLOW_DOWN_EXTRA = 5.0
 
 
 class CredentialsRefreshError(RuntimeError):
@@ -244,8 +243,11 @@ def _read_codex_cli_credentials() -> OpenAICodexCredentials:
 class OpenAICodexOAuthFlow:
     """Pure authorization-code + PKCE context for the OpenAI Codex public client.
 
-    Construction does no I/O: build the context anywhere, send the user to `authorization_url()`,
-    then call `exchange_code()` from your redirect handler. Core owns none of the interactive parts.
+    This is the only login flow the public client supports (no device flow; redirect URI pinned to
+    `localhost:1455`, probed exact-match). Construction does no I/O: build the context anywhere,
+    send the user to `authorization_url()`, then call `exchange_code()` from your redirect handler -
+    served from port 1455 on the user's machine, or tunneled there. Core owns none of the
+    interactive parts.
     """
 
     def __init__(self, *, redirect_uri: str = _REDIRECT_URI, state: str | None = None) -> None:
@@ -292,55 +294,6 @@ class OpenAICodexOAuthFlow:
             },
         )
         return _credentials_from_token_response(data)
-
-
-@dataclass
-class OpenAICodexDeviceFlow:
-    """A started device-code flow. Show `verification_url` / `user_code`, then await `poll()`."""
-
-    device_code: str
-    user_code: str
-    verification_url: str
-    expires_in: float
-    interval: float
-
-    @classmethod
-    async def start(cls, *, scope: str = _DEFAULT_SCOPE) -> OpenAICodexDeviceFlow:
-        """Start a device flow: one POST, no redirect URI — the path for hosted apps."""
-        data = await _post_json(_DEVICE_URL, {'client_id': _PUBLIC_CLIENT_ID, 'scope': scope})
-        return cls(
-            device_code=data['device_code'],
-            user_code=data['user_code'],
-            verification_url=data.get('verification_uri_complete') or data['verification_uri'],
-            expires_in=float(data.get('expires_in', 600)),
-            interval=float(data.get('interval', 5)),
-        )
-
-    async def poll(self) -> OpenAICodexCredentials:
-        """Await approval: resolves with credentials once the user completes verification."""
-        deadline = time.monotonic() + self.expires_in
-        interval = self.interval
-        while True:
-            if time.monotonic() >= deadline:
-                raise CredentialsRefreshError('The device code expired before the user approved it.')
-            await asyncio.sleep(interval)
-            data = await _post_json(
-                _TOKEN_URL,
-                {
-                    'grant_type': _DEVICE_CODE_GRANT,
-                    'device_code': self.device_code,
-                    'client_id': _PUBLIC_CLIENT_ID,
-                },
-            )
-            error = data.get('error')
-            if error == 'authorization_pending':
-                continue
-            elif error == 'slow_down':
-                interval += _SLOW_DOWN_EXTRA
-                continue
-            elif error:
-                raise CredentialsRefreshError(f'Device authorization failed: {error}')
-            return _credentials_from_token_response(data)
 
 
 class OpenAICodexAuth(httpx2.Auth):
