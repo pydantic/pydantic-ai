@@ -534,47 +534,6 @@ def _keeps_credentials(from_url: str, to_url: str) -> bool:
     )
 
 
-class _LogicalHostCookies:
-    """Manage response cookies against normalized logical hostnames, not resolved IPs."""
-
-    def __init__(self) -> None:
-        self._jars: dict[str, httpx2.Cookies] = {}
-
-    @staticmethod
-    def _url(resolved: ResolvedUrl) -> str:
-        scheme = 'https' if resolved.is_https else 'http'
-        host = resolved.hostname
-        try:
-            if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
-                host = f'[{host}]'
-        except ValueError:
-            pass
-        if resolved.port != (443 if resolved.is_https else 80):
-            host = f'{host}:{resolved.port}'
-        return urlunparse((scheme, host, resolved.path, '', '', ''))
-
-    def apply(self, headers: dict[str, str], resolved: ResolvedUrl) -> None:
-        """Add logical-host cookies unless the caller supplied a `Cookie` header."""
-        if any(key.lower() == 'cookie' for key in headers):
-            return
-        request = httpx2.Request('GET', self._url(resolved))
-        self._jars.setdefault(resolved.hostname, httpx2.Cookies()).set_cookie_header(request)
-        if cookie_header := request.headers.get('cookie'):
-            headers['Cookie'] = cookie_header
-
-    def extract(self, response: httpx2.Response, resolved: ResolvedUrl, client: httpx2.AsyncClient) -> None:
-        """Store response cookies for this logical host and discard IP-scoped copies."""
-        if not isinstance(response, httpx2.Response):  # Existing tests use response mocks.
-            return
-        logical_response = httpx2.Response(
-            response.status_code,
-            headers=response.headers,
-            request=httpx2.Request('GET', self._url(resolved)),
-        )
-        self._jars.setdefault(resolved.hostname, httpx2.Cookies()).extract_cookies(logical_response)
-        client.cookies.clear()
-
-
 async def safe_download(
     url: str,
     allow_local: bool = False,
@@ -595,8 +554,8 @@ async def safe_download(
     5. Validates the hostname against allowed/blocked domain lists
     6. Makes the request to the resolved IP with the Host header set
     7. Manually follows redirects, validating each hop
-    8. Scopes server-set cookies to the logical hostname, so a redirect to another
-       hostname sharing the same IP cannot replay them
+    8. Ignores server-set cookies: like `curl`, it has no cookie jar, so a cookie set
+       on one hop is never replayed on a later hop
 
     Args:
         url: The URL to download from.
@@ -640,7 +599,6 @@ async def safe_download(
     current_url = url
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
-    cookies = _LogicalHostCookies()
 
     async with create_async_httpx2_client(timeout=timeout) as client:
         while True:
@@ -678,18 +636,16 @@ async def safe_download(
 
             # Stream the raw response so gzip members can be decoded and validated before
             # httpx2's automatic content decoder discards member boundaries.
-            # Cookies follow the logical hostname: httpx keys its jar by the resolved-IP
-            # URL we actually request, so we manage them in exact-host logical jars instead.
-            # A caller-supplied `Cookie` header still takes precedence.
-            cookies.apply(request_headers, resolved)
-
-            # Make request with Host header set to original hostname
             request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
             response = await _send_request(client, request)
 
+            # Discard server-set cookies: httpx keys its jar by the resolved-IP URL we
+            # actually request, so a cookie set by one hostname would replay to any other
+            # hostname sharing that IP. Caller-supplied `Cookie` headers are unaffected.
+            client.cookies.clear()
+
             # Check if we need to follow a redirect
             if response.is_redirect:
-                cookies.extract(response, resolved, client)
                 await response.aclose()
                 redirects_followed += 1
                 if redirects_followed > max_redirects:

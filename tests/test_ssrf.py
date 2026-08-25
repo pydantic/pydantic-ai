@@ -59,6 +59,9 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     def factory_wrapper(**kwargs: Any) -> Any:
         client = mock(**kwargs)
         client.__aenter__.return_value = client
+        # `safe_download` clears the client's cookie jar after every hop, so the mock
+        # needs a real jar like `httpx2.AsyncClient` has.
+        client.cookies = httpx2.Cookies()
 
         # Most tests in this file predate raw streaming and configure `get` directly.
         # Adapt that response setup to the build/send boundary used by `safe_download`.
@@ -1370,35 +1373,16 @@ class TestSafeDownload:
         call_args = mock_client.get.call_args
         assert call_args[1]['extensions'] == {}
 
-    async def test_server_cookie_not_replayed_across_same_ip_redirect(
+    async def test_server_cookies_never_replayed_across_redirects(
         self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
-        """A server-set cookie is not replayed to another hostname on the same IP."""
+        """Server-set cookies are dropped entirely, so no hop ever receives one.
 
-        sent_cookies: list[str | None] = []
-
-        def handler(request: httpx2.Request) -> httpx2.Response:
-            host = request.headers.get('host', '')
-            if host == 'a.example':
-                return httpx2.Response(
-                    302,
-                    headers={'location': 'https://b.example/file', 'set-cookie': 'sid=secret; Path=/'},
-                    request=request,
-                )
-            assert host == 'b.example'
-            sent_cookies.append(request.headers.get('cookie'))
-            return httpx2.Response(200, content=b'final', request=request)
-
-        serve_requests(handler)
-
-        await safe_download('https://a.example/file')
-
-        assert sent_cookies == [None]
-
-    async def test_server_cookie_kept_for_same_logical_host_return_hop(
-        self, serve_requests: Callable[[RequestHandler], None]
-    ) -> None:
-        """A cookie survives a redirect detour back to the same logical hostname."""
+        Every hostname resolves to the same IP here, which is exactly the case where
+        httpx's IP-keyed jar used to replay `a.example`'s cookie to `b.example`. The
+        return hop to `a.example` also gets nothing: `safe_download` deliberately has
+        no cookie jar at all, like `curl`.
+        """
 
         sent_cookies: list[str | None] = []
         hop = 0
@@ -1417,38 +1401,40 @@ class TestSafeDownload:
             if hop == 2:
                 assert host == 'b.example'
                 sent_cookies.append(request.headers.get('cookie'))
-                return httpx2.Response(302, headers={'location': 'https://a.example/file'}, request=request)
+                return httpx2.Response(
+                    302,
+                    headers={'location': 'https://a.example/file', 'set-cookie': 'other=value; Path=/'},
+                    request=request,
+                )
             assert host == 'a.example'
             sent_cookies.append(request.headers.get('cookie'))
             return httpx2.Response(200, content=b'final', request=request)
 
         serve_requests(handler)
-        await safe_download('https://a.example./file')
+        await safe_download('https://a.example/file')
 
-        assert sent_cookies == [None, 'sid=secret']
+        assert sent_cookies == [None, None]
 
-    @pytest.mark.parametrize('cookie', ['sid=secret; Path=/', 'sid=secret; Domain=github.io; Path=/'])
-    async def test_server_cookie_not_replayed_to_related_hostname(
-        self, serve_requests: Callable[[RequestHandler], None], cookie: str
+    async def test_server_cookie_dropped_on_same_host_redirect(
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
-        """Host-only and public-suffix cookies remain isolated to their logical hostname."""
+        """Even a same-host redirect does not carry a server-set cookie forward."""
 
         sent_cookies: list[str | None] = []
 
         def handler(request: httpx2.Request) -> httpx2.Response:
-            host = request.headers.get('host', '')
-            if host == 'evil.github.io':
+            assert request.headers.get('host') == 'a.example'
+            if request.url.path == '/login':
                 return httpx2.Response(
                     302,
-                    headers={'location': 'https://victim.github.io/file', 'set-cookie': cookie},
+                    headers={'location': 'https://a.example/download', 'set-cookie': 'session=123; Path=/'},
                     request=request,
                 )
-            assert host == 'victim.github.io'
             sent_cookies.append(request.headers.get('cookie'))
-            return httpx2.Response(200, request=request)
+            return httpx2.Response(200, content=b'final', request=request)
 
         serve_requests(handler)
-        await safe_download('https://evil.github.io/file')
+        await safe_download('https://a.example/login')
 
         assert sent_cookies == [None]
 
