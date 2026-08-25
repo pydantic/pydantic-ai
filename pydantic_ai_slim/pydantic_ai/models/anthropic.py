@@ -123,7 +123,10 @@ def _map_citations(citations: Sequence[BetaTextCitation] | None) -> list[Citatio
                             title=citation.title,
                             excerpts=[citation.cited_text] if citation.cited_text else [],
                         )
-                    ]
+                    ],
+                    # Anthropic requires this opaque token to replay a web citation. It is deliberately
+                    # provider metadata, not part of the normalized citation source.
+                    provider_details={'encrypted_index': citation.encrypted_index},
                 )
             )
         elif isinstance(
@@ -146,6 +149,105 @@ def _map_citations(citations: Sequence[BetaTextCitation] | None) -> list[Citatio
                 )
             )
     return result or None
+
+
+def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None:
+    """Reconstruct one Anthropic citation only when the normalized shape is lossless enough."""
+    if citation.anchor is not None or len(citation.sources) != 1:
+        return None
+
+    source = citation.sources[0]
+    if isinstance(source, WebCitationSource):
+        encrypted_index = (citation.provider_details or {}).get('encrypted_index')
+        if not isinstance(encrypted_index, str) or len(source.excerpts) != 1 or not isinstance(source.excerpts[0], str):
+            return None
+        return BetaCitationWebSearchResultLocationParam(
+            type='web_search_result_location',
+            url=source.url,
+            title=source.title,
+            cited_text=source.excerpts[0],
+            encrypted_index=encrypted_index,
+        )
+
+    if not isinstance(source, DocumentCitationSource) or len(source.excerpts) != 1:
+        return None
+
+    details = source.provider_details or {}
+    citation_type = details.get('type')
+    document_index = details.get('document_index')
+    if not isinstance(document_index, int) or isinstance(document_index, bool):
+        return None
+
+    cited_text = source.excerpts[0]
+    if not isinstance(cited_text, str):
+        return None
+
+    if citation_type == 'char_location':
+        start_char_index = details.get('start_char_index')
+        end_char_index = details.get('end_char_index')
+        if (
+            not isinstance(start_char_index, int)
+            or isinstance(start_char_index, bool)
+            or not isinstance(end_char_index, int)
+            or isinstance(end_char_index, bool)
+        ):
+            return None
+        return BetaCitationCharLocationParam(
+            type='char_location',
+            cited_text=cited_text,
+            document_index=document_index,
+            document_title=source.title,
+            start_char_index=start_char_index,
+            end_char_index=end_char_index,
+        )
+    elif citation_type == 'page_location':
+        start_page_number = details.get('start_page_number')
+        end_page_number = details.get('end_page_number')
+        if (
+            not isinstance(start_page_number, int)
+            or isinstance(start_page_number, bool)
+            or not isinstance(end_page_number, int)
+            or isinstance(end_page_number, bool)
+        ):
+            return None
+        return BetaCitationPageLocationParam(
+            type='page_location',
+            cited_text=cited_text,
+            document_index=document_index,
+            document_title=source.title,
+            start_page_number=start_page_number,
+            end_page_number=end_page_number,
+        )
+    elif citation_type == 'content_block_location':
+        start_block_index = details.get('start_block_index')
+        end_block_index = details.get('end_block_index')
+        if (
+            not isinstance(start_block_index, int)
+            or isinstance(start_block_index, bool)
+            or not isinstance(end_block_index, int)
+            or isinstance(end_block_index, bool)
+        ):
+            return None
+        return BetaCitationContentBlockLocationParam(
+            type='content_block_location',
+            cited_text=cited_text,
+            document_index=document_index,
+            document_title=source.title,
+            start_block_index=start_block_index,
+            end_block_index=end_block_index,
+        )
+    else:
+        return None
+
+
+def _map_citations_for_replay(citations: list[Citation] | None) -> list[BetaTextCitationParam] | None:
+    if not citations:
+        return None
+
+    result = [_map_citation_for_replay(citation) for citation in citations]
+    if any(citation is None for citation in result):
+        return None
+    return [citation for citation in result if citation is not None]
 
 
 def _with_document_citations(
@@ -208,11 +310,15 @@ try:
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
         BetaCitationCharLocation,
+        BetaCitationCharLocationParam,
         BetaCitationContentBlockLocation,
+        BetaCitationContentBlockLocationParam,
         BetaCitationPageLocation,
+        BetaCitationPageLocationParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
         BetaCitationsWebSearchResultLocation,
+        BetaCitationWebSearchResultLocationParam,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
         BetaCodeExecutionToolResultBlock,
@@ -265,6 +371,7 @@ try:
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextCitation,
+        BetaTextCitationParam,
         BetaTextDelta,
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
@@ -1993,7 +2100,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
-                            assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+                            citations = (
+                                _map_citations_for_replay(response_part.citations)
+                                if response_part.provider_name == self.system
+                                or (response_part.provider_name is None and m.provider_name == self.system)
+                                else None
+                            )
+                            assistant_content_params.append(
+                                BetaTextBlockParam(text=response_part.content, type='text', citations=citations)
+                                if citations is not None
+                                else BetaTextBlockParam(text=response_part.content, type='text')
+                            )
                     elif isinstance(response_part, ToolCallPart):
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),

@@ -1977,6 +1977,55 @@ def _map_responses_citations(
     return citations or None
 
 
+def _map_responses_citation_for_replay(
+    citation: Citation, text: str
+) -> responses.response_output_text_param.Annotation | None:
+    if len(citation.sources) != 1:
+        return None
+
+    source = citation.sources[0]
+    if isinstance(source, WebCitationSource):
+        if (
+            not isinstance(citation.anchor, MarkerCitationAnchor)
+            or source.title is None
+            or not 0 <= citation.anchor.start < citation.anchor.end <= len(text)
+        ):
+            return None
+        return responses.response_output_text_param.AnnotationURLCitation(
+            type='url_citation',
+            url=source.url,
+            title=source.title,
+            start_index=citation.anchor.start,
+            end_index=citation.anchor.end,
+        )
+
+    if (
+        not isinstance(source, DocumentCitationSource)
+        or citation.anchor is not None
+        or source.document_id is None
+        or source.title is None
+    ):
+        return None
+    index = (citation.provider_details or {}).get('index')
+    if not isinstance(index, int) or isinstance(index, bool):
+        return None
+    return responses.response_output_text_param.AnnotationFileCitation(
+        type='file_citation', file_id=source.document_id, filename=source.title, index=index
+    )
+
+
+def _map_responses_citations_for_replay(
+    citations: list[Citation] | None, text: str
+) -> list[responses.response_output_text_param.Annotation]:
+    if not citations:
+        return []
+
+    result = [_map_responses_citation_for_replay(citation, text) for citation in citations]
+    if any(citation is None for citation in result):
+        return []
+    return [citation for citation in result if citation is not None]
+
+
 def _map_chat_citations(annotations: Sequence[BaseModel], text: str) -> list[Citation] | None:
     citations: list[Citation] = []
     for annotation in annotations:
@@ -3477,7 +3526,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             message_item['content'] = [
                                 *message_item['content'],
                                 responses.ResponseOutputTextParam(
-                                    text=item.content, type='output_text', annotations=[]
+                                    text=item.content,
+                                    type='output_text',
+                                    annotations=(
+                                        _map_responses_citations_for_replay(item.citations, item.content)
+                                        if from_same_provider
+                                        else []
+                                    ),
                                 ),
                             ]
                             if send_phase:

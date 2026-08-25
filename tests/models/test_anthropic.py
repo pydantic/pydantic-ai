@@ -31,6 +31,7 @@ from pydantic_ai import (
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -299,8 +300,124 @@ def test_anthropic_empty_cited_text_is_not_an_excerpt() -> None:
     )
 
     assert _map_citations([citation]) == [
-        Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])
+        Citation(
+            sources=[WebCitationSource(url='https://example.com', title='Example')],
+            provider_details={'encrypted_index': 'opaque-index'},
+        )
     ]
+
+
+async def test_anthropic_citations_replay_after_message_json_round_trip(allow_model_requests: None):
+    """Same-provider citations are replayed in Anthropic's typed historical message format."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'The source supports this claim.',
+                            citations=[
+                                Citation(
+                                    sources=[
+                                        WebCitationSource(
+                                            url='https://example.com/source',
+                                            title='Source',
+                                            excerpts=['supporting passage'],
+                                        )
+                                    ],
+                                    provider_details={'encrypted_index': 'opaque-web-index'},
+                                ),
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            document_id='file-not-allowed-on-this-input-type',
+                                            title='Report',
+                                            excerpts=['document passage'],
+                                            provider_details={
+                                                'type': 'char_location',
+                                                'document_index': 2,
+                                                'start_char_index': 10,
+                                                'end_char_index': 26,
+                                            },
+                                        )
+                                    ]
+                                ),
+                            ],
+                        )
+                    ],
+                    provider_name='anthropic',
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'type': 'text',
+                    'text': 'The source supports this claim.',
+                    'citations': [
+                        {
+                            'type': 'web_search_result_location',
+                            'url': 'https://example.com/source',
+                            'title': 'Source',
+                            'cited_text': 'supporting passage',
+                            'encrypted_index': 'opaque-web-index',
+                        },
+                        {
+                            'type': 'char_location',
+                            'cited_text': 'document passage',
+                            'document_index': 2,
+                            'document_title': 'Report',
+                            'start_char_index': 10,
+                            'end_char_index': 26,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+
+async def test_anthropic_unreconstructable_citations_replay_as_text(allow_model_requests: None):
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'The source supports this claim.',
+                            citations=[Citation(sources=[WebCitationSource(url='https://example.com/source')])],
+                        )
+                    ],
+                    provider_name='anthropic',
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'type': 'text', 'text': 'The source supports this claim.'}],
+    }
 
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
@@ -408,7 +525,8 @@ async def test_anthropic_stream_citations(allow_model_requests: None):
                             title='Example',
                             excerpts=['web excerpt'],
                         )
-                    ]
+                    ],
+                    provider_details={'encrypted_index': 'opaque-index'},
                 ),
                 Citation(
                     sources=[

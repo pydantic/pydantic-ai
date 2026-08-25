@@ -374,6 +374,10 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
+    When a provider supports native citation replay, citation annotations are replayed only to the
+    provider that produced them. Pydantic AI does not synthesize provider citation annotations when
+    a stored history is continued with a different provider.
+
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
     those fields are dropped entirely. That loss is by design, not a state-loss bug.

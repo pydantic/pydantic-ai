@@ -31,6 +31,7 @@ from pydantic_ai import (
     ImageUrl,
     MarkerCitationAnchor,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -226,6 +227,148 @@ def test_openai_file_citation_uses_document_identifier():
             sources=[DocumentCitationSource(document_id='file-1', title='report.pdf')],
             provider_details={'index': 12},
         )
+    ]
+
+
+async def test_openai_responses_citations_replay_only_for_same_provider(allow_model_requests: None):
+    """A persisted OpenAI response reconstructs annotations; a foreign response remains plain text."""
+    mock_client = MockOpenAIResponses.create_mock([response_message([]), response_message([])])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    same_provider_history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'The source supports this claim.',
+                            id='msg-historical',
+                            provider_name='openai',
+                            citations=[
+                                Citation(
+                                    sources=[WebCitationSource(url='https://example.com/source', title='Source')],
+                                    anchor=MarkerCitationAnchor(start=0, end=10),
+                                ),
+                                Citation(
+                                    sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')],
+                                    provider_details={'index': 3},
+                                ),
+                            ],
+                        )
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(
+        same_provider_history,
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'id': 'msg-historical',
+            'content': [
+                {
+                    'text': 'The source supports this claim.',
+                    'type': 'output_text',
+                    'annotations': [
+                        {
+                            'type': 'url_citation',
+                            'url': 'https://example.com/source',
+                            'title': 'Source',
+                            'start_index': 0,
+                            'end_index': 10,
+                        },
+                        {'type': 'file_citation', 'file_id': 'file-123', 'filename': 'report.pdf', 'index': 3},
+                    ],
+                }
+            ],
+            'type': 'message',
+            'status': 'completed',
+        }
+    )
+
+    foreign_provider_history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'The source supports this claim.',
+                            id='msg-foreign',
+                            provider_name='anthropic',
+                            citations=[
+                                Citation(
+                                    sources=[WebCitationSource(url='https://example.com/source', title='Source')],
+                                    anchor=MarkerCitationAnchor(start=0, end=10),
+                                )
+                            ],
+                        )
+                    ],
+                    provider_name='anthropic',
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(
+        foreign_provider_history,
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[1]['input'][1] == {
+        'role': 'assistant',
+        'content': 'The source supports this claim.',
+    }
+
+
+async def test_openai_responses_unreconstructable_citations_replay_with_empty_annotations(
+    allow_model_requests: None,
+):
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'The source supports this claim.',
+                            id='msg-historical',
+                            provider_name='openai',
+                            citations=[
+                                Citation(
+                                    sources=[WebCitationSource(url='https://example.com/source', title='Source')],
+                                    anchor=MarkerCitationAnchor(start=20, end=40),
+                                )
+                            ],
+                        )
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'][1]['content'] == [
+        {'text': 'The source supports this claim.', 'type': 'output_text', 'annotations': []}
     ]
 
 
