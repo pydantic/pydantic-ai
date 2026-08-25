@@ -159,6 +159,10 @@ class ModelProfile(TypedDict, total=False):
     This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
     OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
     https://github.com/pydantic/pydantic-ai/issues/7419.
+
+    Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
+    them: it has to land in front of whatever that provider renders next out of the same request — an
+    Anthropic `system` entry, for one — which has no message-level existence to insert before.
     """
 
     ignore_streamed_leading_whitespace: bool

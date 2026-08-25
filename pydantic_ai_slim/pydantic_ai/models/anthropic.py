@@ -2203,13 +2203,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     # That last line is why the placement stays here rather than moving to
                     # `Model.prepare_messages`, which is where a profile-flag-driven part-to-part
                     # rewrite would otherwise belong. `render_replayed_thinking` centralizes what can
-                    # be centralized — the tags and the flag's meaning — but `prepare_messages` can
-                    # only insert a whole `ModelRequest`, which renders *after* the `system` entry
-                    # this request emits. The entry then slides forward past it and
-                    # `_leave_cache_boundary_behind` drops its `cache_control` onto an earlier
-                    # message, shortening the cached prefix with nothing to notice at runtime. A
-                    # `system` entry is a rendering decision that doesn't exist at the message level,
-                    # so nothing upstream of here can aim a turn ahead of one.
+                    # be centralized — the tags and the flag's meaning — but a turn inserted there
+                    # isn't one by the time it arrives: `_make_request` re-runs
+                    # `_clean_message_history` over whatever `prepare_messages` returns, and its merge
+                    # pass folds the inserted request into the request ahead of it, behind that
+                    # request's own `CachePoint`. The boundary then lands on a user block instead of
+                    # the `system` entry it was authored on, shortening the cached prefix with nothing
+                    # to notice at runtime. Nor can a message be aimed ahead of that entry to begin
+                    # with: it's a rendering decision with no message-level existence. `FallbackModel`
+                    # skips the second cleanup and the direct-call path skips `prepare_messages`
+                    # entirely, so the same history would also render three different ways.
                     insert_at = len(anthropic_messages)
                     while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
                         insert_at -= 1

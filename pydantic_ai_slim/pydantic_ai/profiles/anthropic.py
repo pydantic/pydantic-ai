@@ -297,6 +297,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
     profile = AnthropicModelProfile(
+        # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
+        # openrouter serve Claude through that adapter and map it onto this profile, so these tags are
+        # how it splits thinking out of a Claude response and how it replays a `ThinkingPart` back.
+        # `AnthropicModel` parses no tags at all, and only renders them for the
+        # `mimics_assistant_message_formatting` opt-out.
         thinking_tags=('<thinking>', '</thinking>'),
         # Measured live on the six-turn history from https://github.com/pydantic/pydantic-ai/issues/5869:
         # `claude-opus-4-5` and `claude-opus-4-8` reproduce replayed `<thinking>` tags in their visible
