@@ -22,6 +22,7 @@ MENTIONS = json.dumps(
         'adtyavrdhn': '<@UADITYA>',
         'dsfaccini': '<@UDAVID>',
         'DouweM': '<@UDOUWE>',
+        'mpfaffenberger': '<@UMIKE>',
     }
 )
 
@@ -174,6 +175,16 @@ def test_unavailable_manual_owner_fails_loudly():
 
     with pytest.raises(RuntimeError, match='manual routing owner lacks maintainer permission'):
         router.decision_for(client, CORE, 7)
+
+
+def test_full_non_maintainer_assignee_list_fails_before_notification():
+    client = FakeClient({7: item(7, labels=['MCP'], assignees=[f'user-{index}' for index in range(10)])})
+
+    assert router.decision_for(client, CORE, 7) == {
+        'number': 7,
+        'decision': None,
+        'status': 'assignee-capacity',
+    }
 
 
 def test_unknown_and_owner_lookalike_labels_use_manual_route():
@@ -450,6 +461,22 @@ def test_assign_detects_permission_loss_after_the_write():
     assert client.items[7]['assignees'] == [{'login': 'dsfaccini'}]
 
 
+def test_assign_detects_a_concurrent_maintainer_without_removing_anyone():
+    class ConcurrentMaintainerClient(FakeClient):
+        def post(self, path: str, payload: Mapping[str, object]) -> Any:
+            if path.endswith('/assignees'):
+                self.items[7]['assignees'].append({'login': 'DouweM'})
+            return super().post(path, payload)
+
+    client = ConcurrentMaintainerClient({7: item(7, labels=['MCP'])})
+    expected = router.Decision(number=7, owner='dsfaccini', evidence='label:MCP')
+
+    with pytest.raises(RuntimeError, match='concurrent maintainer assignment'):
+        router.assign(client, CORE, expected)
+
+    assert client.items[7]['assignees'] == [{'login': 'DouweM'}, {'login': 'dsfaccini'}]
+
+
 def test_recovery_query_excludes_every_fixed_owner_and_selects_one():
     client = FakeClient({7: item(7, labels=['MCP']), 8: item(8, labels=['tools'])})
 
@@ -521,6 +548,19 @@ def test_recovery_skips_non_routable_item_without_starving_the_next():
     }
 
 
+def test_recovery_skips_full_assignee_list_without_starving_the_next():
+    client = FakeClient(
+        {
+            7: item(7, labels=['MCP'], assignees=[f'user-{index}' for index in range(10)]),
+            8: item(8, labels=['MCP']),
+        }
+    )
+
+    selected = router.select(client, CORE, None, None)
+
+    assert selected['number'] == 8
+
+
 @pytest.mark.parametrize(
     'value',
     [
@@ -531,7 +571,7 @@ def test_recovery_skips_non_routable_item_without_starving_the_next():
         json.dumps({**json.loads(MENTIONS), 'adtyavrdhn': '<@UADITYA> injected'}),
     ],
 )
-def test_slack_map_requires_exact_owner_set_and_mentions(value: str):
+def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_mentions(value: str):
     with pytest.raises(ValueError, match='selected owner'):
         router.parse_mentions(value, 'DouweM')
 
@@ -540,6 +580,12 @@ def test_slack_map_only_requires_the_selected_owner():
     value = json.dumps({'adtyavrdhn': '<@UADITYA>'})
 
     assert router.parse_mentions(value, 'adtyavrdhn') == {'adtyavrdhn': '<@UADITYA>'}
+
+
+def test_slack_map_allows_known_non_routable_owners_but_cannot_select_them():
+    assert router.parse_mentions(MENTIONS, 'DouweM') == json.loads(MENTIONS)
+    with pytest.raises(ValueError, match='not routable'):
+        router.parse_mentions(MENTIONS, 'mpfaffenberger')
 
 
 class FakeResponse:

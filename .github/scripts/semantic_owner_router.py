@@ -26,6 +26,7 @@ _MANUAL_OWNER = 'adtyavrdhn'
 # of historical backlog into the triage channel.
 _RECOVERY_EPOCH = '2026-08-18'
 _FILE_LIMIT = 100
+_ASSIGNEE_LIMIT = 10
 _MAX_ITEM_NUMBER = 2_147_483_647
 _SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _ITEM_QUERY = """
@@ -249,7 +250,13 @@ def _neutral_path(filename: str) -> bool:
     )
 
 
-def _maintainer_assignees(client: attention.GitHubClient, repo: str, item: Mapping[str, Any]) -> list[str]:
+def _maintainer_assignees(
+    client: attention.GitHubClient,
+    repo: str,
+    item: Mapping[str, Any],
+    *,
+    refresh: bool = False,
+) -> list[str]:
     maintainers: list[str] = []
     for entry in item.get('assignees', []):
         if not isinstance(entry, Mapping):
@@ -257,7 +264,7 @@ def _maintainer_assignees(client: attention.GitHubClient, repo: str, item: Mappi
         login = cast(Mapping[str, object], entry).get('login')
         if not isinstance(login, str) or not login:
             raise ValueError('GitHub returned a malformed assignee')
-        if maintainer := client.maintainer_login(repo, login):
+        if maintainer := client.maintainer_login(repo, login, refresh=refresh):
             maintainers.append(maintainer)
     return sorted(set(maintainers), key=str.casefold)
 
@@ -325,6 +332,8 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
     }
     if _maintainer_assignees(client, repo, normalized):
         return Selection(number=number, decision=None, status='maintainer-present')
+    if len(normalized['assignees']) >= _ASSIGNEE_LIMIT:
+        return Selection(number=number, decision=None, status='assignee-capacity')
     filenames: list[str] | None = None
     if item.get('__typename') == 'PullRequest':
         is_draft = item.get('isDraft')
@@ -383,11 +392,8 @@ def _recovery_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
         raise RuntimeError('GitHub rejected the recovery query')
     data = response.get('data')
     search = cast(Mapping[str, object], data).get('search') if isinstance(data, Mapping) else None
-    values = _connection_nodes(search)
-    if not values:
-        return []
     numbers: list[int] = []
-    for entry in values:
+    for entry in _connection_nodes(search):
         if isinstance(entry, Mapping):
             try:
                 numbers.append(_item_number(cast(Mapping[str, object], entry).get('number')))
@@ -432,15 +438,20 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     assigned = _fetch_item(client, repo, expected['number'])
     if assigned is None:
         raise RuntimeError('assigned item disappeared')
-    assigned_logins: set[str] = set()
-    for entry in _connection_nodes(assigned.get('assignees')):
-        login = cast(Mapping[str, object], entry).get('login') if isinstance(entry, Mapping) else None
-        if isinstance(login, str):
-            assigned_logins.add(login.casefold())
-    if (
-        expected['owner'].casefold() not in assigned_logins
-        or client.maintainer_login(repo, expected['owner'], refresh=True) is None
-    ):
+    assignees = assigned.get('assignees')
+    if not _connection_complete(assignees):
+        raise RuntimeError('GitHub returned incomplete assignees after assignment')
+    assigned_maintainers = _maintainer_assignees(
+        client,
+        repo,
+        {'assignees': _connection_nodes(assignees)},
+        refresh=True,
+    )
+    expected_key = expected['owner'].casefold()
+    other_maintainers = [login for login in assigned_maintainers if login.casefold() != expected_key]
+    if other_maintainers:
+        raise RuntimeError('a concurrent maintainer assignment was detected after routing')
+    if expected_key not in {login.casefold() for login in assigned_maintainers}:
         raise RuntimeError('GitHub did not apply the selected owner')
     return True
 
@@ -455,7 +466,7 @@ def parse_mentions(value: str, owner: str) -> dict[str, str]:
     mentions = {str(key): str(mention) for key, mention in cast(Mapping[object, object], loaded).items()}
     if (
         owner not in mentions
-        or not set(mentions) <= set(_ROUTE_OWNERS)
+        or not set(mentions) <= set(_OWNERS)
         or any(_SLACK_MENTION.fullmatch(mention) is None for mention in mentions.values())
     ):
         raise ValueError('Slack mention mapping must contain the selected owner and no unknown owners')
