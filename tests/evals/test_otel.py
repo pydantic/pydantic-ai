@@ -1170,9 +1170,6 @@ async def test_context_span_exporter_attaches_to_the_logfire_provider_it_caches(
             self._provider = self._next_provider
             return provider
 
-        def add_span_processor(self, span_processor: SpanProcessor) -> None:
-            self.provider.add_span_processor(span_processor)
-
     first, second = RecordingTracerProvider(), RecordingTracerProvider()
     tracer_provider = ProviderSwappingLogfireProxyTracerProvider(first, second)
     mocker.patch(
@@ -1236,25 +1233,22 @@ async def test_context_span_exporter_allows_same_thread_provider_reentry(mocker:
     if os.getenv('PYDANTIC_EVALS_REENTRY_CHILD') != '1':
         child_env = os.environ.copy()
         child_env['PYDANTIC_EVALS_REENTRY_CHILD'] = '1'
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    '-m',
-                    'pytest',
-                    f'{__file__}::test_context_span_exporter_allows_same_thread_provider_reentry',
-                    '-p',
-                    'no:randomly',
-                    '-q',
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                env=child_env,
-            )
-        except subprocess.TimeoutExpired:
-            pytest.fail('same-thread provider reentry deadlocked in the child pytest process')
-        assert result.returncode == 0, result.stdout + result.stderr
+        subprocess.run(
+            [
+                sys.executable,
+                '-m',
+                'pytest',
+                f'{__file__}::test_context_span_exporter_allows_same_thread_provider_reentry',
+                '-p',
+                'no:randomly',
+                '-q',
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+            env=child_env,
+        )
         return
 
     class ReentrantTracerProvider(RecordingTracerProvider):
