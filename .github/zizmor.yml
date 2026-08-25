@@ -1,4 +1,11 @@
 rules:
+  # This gh-aw-generated workflow handles pull request metadata from the base
+  # branch. It never checks out or executes contributor code; the sandboxed
+  # agent has no GitHub or shell tools, and all writes happen in a fixed host job.
+  dangerous-triggers:
+    ignore:
+      - pydantic-ai-owner-routing.lock.yml
+
   # setup-uv and setup-node use integrity-checked package registries (PyPI, npm) with
   # lockfile hash-based cache keys. The HuggingFace model cache lacks integrity checks but
   # is only used in test jobs that don't publish artifacts to external systems.
@@ -29,6 +36,7 @@ rules:
       - pydantic-ai-attention-triage.lock.yml
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-docs-drift.lock.yml
+      - pydantic-ai-owner-routing.lock.yml
       - pydantic-ai-pr-review.lock.yml
       - pydantic-ai-provider-mapping-sweep.lock.yml
       - pydantic-ai-provider-parity-explore.lock.yml
@@ -70,6 +78,7 @@ rules:
       - pydantic-ai-attention-triage.lock.yml
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-docs-drift.lock.yml
+      - pydantic-ai-owner-routing.lock.yml
       - pydantic-ai-pr-review.lock.yml
       - pydantic-ai-provider-mapping-sweep.lock.yml
       - pydantic-ai-provider-parity-explore.lock.yml
