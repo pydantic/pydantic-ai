@@ -262,6 +262,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-suffix: ${{ matrix.install.name }}
+          # Retain wheels only for all-extras; keep smaller matrix caches pruned.
+          prune-cache: ${{ matrix.install.name != 'all-extras' }}
 
       - run: mkdir .coverage
 
