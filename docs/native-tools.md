@@ -1160,7 +1160,6 @@ still return no citations. It is separate from provider-specific settings that r
 ```python {test="skip"}
 from pydantic_ai import (
     Agent,
-    Citation,
     ContentCitationAnchor,
     DocumentCitationSource,
     MarkerCitationAnchor,
@@ -1228,6 +1227,8 @@ citation's anchor.
 For example, the normalized provider results can have these shapes:
 
 ```python {test="skip"}
+from pydantic_ai import Citation, ContentCitationAnchor, MarkerCitationAnchor, TextPart, WebCitationSource
+
 # Google: both sources support the selected assertion.
 TextPart(
     'Pydantic validates data.',
