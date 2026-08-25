@@ -8,7 +8,7 @@ import urllib.parse
 from collections.abc import Mapping
 from email.message import Message
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 import yaml
@@ -863,7 +863,9 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
         ),
     ],
 )
-def test_notification_is_linked_typed_and_explained(item_type: str, decision: router.Decision, expected: str):
+def test_notification_is_linked_typed_and_explained(
+    item_type: Literal['Issue', 'PullRequest'], decision: router.Decision, expected: str
+):
     payload = router._slack_payload(  # pyright: ignore[reportPrivateUsage]
         CORE,
         item_type,
@@ -896,6 +898,20 @@ def test_stale_route_is_not_prepared():
     )
 
     assert payload is None
+
+
+def test_prepare_rejects_non_allowlisted_repository_before_fetching():
+    client = FakeClient({7: item(7, labels=['streaming'])})
+
+    with pytest.raises(ValueError, match='not allowlisted'):
+        router.prepare_current(
+            client,
+            'attacker/repository',
+            router.Decision(number=7, owner='adtyavrdhn', evidence='label:streaming'),
+            MENTIONS,
+        )
+
+    assert client.calls == []
 
 
 def test_serialized_rerun_prepares_and_assigns_once():

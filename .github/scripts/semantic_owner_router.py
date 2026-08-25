@@ -12,7 +12,7 @@ import urllib.error
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, TypedDict, cast  # noqa: TID251
+from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 import issue_pr_attention_monitor as attention
 
@@ -630,17 +630,20 @@ def _routing_reason(decision: Decision, mention: str) -> str:
     return 'Matched the semantic ownership policy.'
 
 
-def _slack_payload(repo: str, item_type: str, decision: Decision, mentions_value: str) -> str:
+def _slack_payload(
+    repo: str,
+    item_type: Literal['Issue', 'PullRequest'],
+    decision: Decision,
+    mentions_value: str,
+) -> str:
     """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
     mentions = attention.slack_mentions(mentions_value, decision['owner'])
     mention = mentions[decision['owner']]
     if item_type == 'Issue':
         kind, path = 'Issue', 'issues'
-    elif item_type == 'PullRequest':
-        kind, path = 'Pull request', 'pull'
     else:
-        raise ValueError('item type is not canonical')
+        kind, path = 'Pull request', 'pull'
     number = decision['number']
     item = f'<https://github.com/{repo}/{path}/{number}|{repo}#{number}>'
     text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision, mention)}'
@@ -654,11 +657,12 @@ def prepare_current(
     mentions_value: str,
 ) -> str | None:
     """Build a notice only while the selected route still matches GitHub."""
+    repo = _repository(repo)
     item = _fetch_item(client, repo, expected['number'])
     if item is None:
         return None
     item_type = item.get('__typename')
-    if not isinstance(item_type, str):
+    if item_type not in ('Issue', 'PullRequest'):
         raise RuntimeError('GitHub returned invalid routing metadata')
     current = decision_for(
         client,
