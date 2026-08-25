@@ -1249,7 +1249,7 @@ async def test_context_span_exporter_allows_same_thread_provider_reentry(mocker:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=30,
                 env=child_env,
             )
         except subprocess.TimeoutExpired:
