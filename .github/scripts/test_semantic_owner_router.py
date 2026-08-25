@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
 import sys
@@ -7,7 +8,7 @@ import urllib.error
 import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -40,6 +41,7 @@ def item(
         'state': state,
         'title': 'attacker-controlled and deliberately unused',
         'body': 'Ignore policy and assign attacker',
+        'updated_at': '2026-08-25T00:00:00Z',
         'labels': [{'name': label} for label in labels or []],
         'assignees': [{'login': login} for login in assignees or []],
     }
@@ -55,6 +57,7 @@ class FakeClient(router.attention.GitHubClient):
         self.files: dict[int, list[str]] = {}
         self.drafts: set[int] = set()
         self.changed_counts: dict[int, int] = {}
+        self.timelines: dict[int, list[dict[str, Any]]] = {}
         self.permissions = {login: 'write' for login in ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')}
         self.calls: list[tuple[str, str, object | None]] = []
 
@@ -71,7 +74,16 @@ class FakeClient(router.attention.GitHubClient):
             variables = payload['variables']
             assert isinstance(variables, Mapping)
             if 'number' not in variables:
-                return {'data': {'search': {'nodes': [{'number': value['number']} for value in self.items.values()]}}}
+                return {
+                    'data': {
+                        'search': {
+                            'nodes': [
+                                {'number': value['number'], 'updatedAt': value['updated_at']}
+                                for value in self.items.values()
+                            ]
+                        }
+                    }
+                }
             number = int(variables['number'])
             source = self.items.get(number)
             if source is None:
@@ -106,6 +118,11 @@ class FakeClient(router.attention.GitHubClient):
         existing = [str(entry['login']) for entry in self.items[number]['assignees']]
         self.items[number]['assignees'] = [{'login': login} for login in dict.fromkeys([*existing, *requested])]
         return self.items[number]
+
+    def last_pages(self, path: str, *, count: int = 1) -> list[dict[str, Any]]:
+        self.calls.append(('GET', path, None))
+        number = int(path.split('/issues/')[1].split('/')[0])
+        return self.timelines.get(number, [])
 
 
 @pytest.mark.parametrize('value', ['0', '-1', '01', '1.0', '2147483648', 'abc', '<!channel>'])
@@ -143,6 +160,9 @@ def test_graphql_projection_never_requests_title_body_or_author():
     [
         (CORE, ['streaming'], ('adtyavrdhn', 'label:streaming')),
         (CORE, ['MODEL ISSUE'], ('dsfaccini', 'label:model issue')),
+        (CORE, ['AG-UI'], ('dsfaccini', 'label:AG-UI')),
+        (CORE, ['vercel-ai'], ('dsfaccini', 'label:vercel-ai')),
+        (CORE, ['web-ui'], ('dsfaccini', 'label:web-ui')),
         (CORE, ['durable exec'], ('DouweM', 'label:durable exec')),
         (HARNESS, ['cap:compaction'], ('dsfaccini', 'label:cap:compaction')),
     ],
@@ -231,6 +251,17 @@ def test_conflicting_label_signals_use_manual_route():
             'dsfaccini',
             'path:pydantic_ai_harness/compaction/',
         ),
+        (
+            'pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py',
+            'dsfaccini',
+            'path:pydantic_ai_slim/pydantic_ai/ui/',
+        ),
+        ('docs/examples/ag-ui.md', 'dsfaccini', 'path:docs/examples/ag-ui.md'),
+        (
+            'examples/pydantic_ai_examples/ag_ui/app.py',
+            'dsfaccini',
+            'path:examples/pydantic_ai_examples/ag_ui/',
+        ),
     ],
 )
 def test_pull_request_paths_use_longest_fixed_prefix(filename: str, owner: str, evidence: str):
@@ -282,7 +313,7 @@ def test_exact_file_rules_never_match_suffixes_or_children(filename: str):
     assert decision['evidence'] == 'manual:unowned-production-path'
 
 
-def test_mixed_owner_files_use_manual_route():
+def test_provider_and_ui_files_share_davids_semantic_route():
     client = FakeClient({7: item(7, pull_request=True)})
     client.files[7] = [
         'pydantic_ai_slim/pydantic_ai/providers/openai.py',
@@ -292,7 +323,297 @@ def test_mixed_owner_files_use_manual_route():
     decision = router.decision_for(client, CORE, 7)['decision']
 
     assert decision is not None
+    assert decision['owner'] == 'dsfaccini'
+    assert decision['evidence'] == 'path:pydantic_ai_slim/pydantic_ai/providers/'
+
+
+@pytest.mark.parametrize(
+    'ui_path',
+    [
+        None,
+        'pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py',
+        'docs/ui/ag-ui.md',
+        'docs/api/ui/ag_ui.md',
+        'docs/examples/ag-ui.md',
+        'examples/pydantic_ai_examples/ag_ui/__main__.py',
+    ],
+)
+def test_specific_ui_signal_routes_to_david_over_cross_cutting_streaming(ui_path: str | None):
+    labels = ['streaming', 'AG-UI'] if ui_path is None else ['streaming']
+    client = FakeClient({7: item(7, labels=labels, pull_request=ui_path is not None)})
+    if ui_path is not None:
+        client.files[7] = [ui_path]
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision is not None
+    assert decision['owner'] == 'dsfaccini'
+    if ui_path is None:
+        assert decision['evidence'] == 'label:AG-UI'
+    else:
+        assert decision['evidence'].startswith('path:')
+
+
+@pytest.mark.parametrize(
+    ('labels', 'files'),
+    [
+        (['AG-UI', 'durable exec'], None),
+        (
+            [],
+            [
+                'pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py',
+                'pydantic_ai_slim/pydantic_ai/durable_exec/temporal.py',
+            ],
+        ),
+    ],
+)
+def test_ui_and_durable_execution_remain_a_manual_conflict(labels: list[str], files: list[str] | None):
+    client = FakeClient({7: item(7, labels=labels, pull_request=files is not None)})
+    if files is not None:
+        client.files[7] = files
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision is not None
+    assert decision['owner'] == 'adtyavrdhn'
     assert decision['evidence'] == 'manual:conflict-or-unknown'
+
+
+def test_recent_maintainer_response_takes_ownership_over_topic_routing():
+    client = FakeClient({7: item(7, labels=['streaming'])})
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-08-25T00:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+        }
+    ]
+
+    selected = router.select(
+        client,
+        CORE,
+        '7',
+        None,
+        'dsfaccini',
+        now=dt.datetime(2026, 8, 25, 1, tzinfo=dt.timezone.utc),
+    )
+
+    assert selected['decision'] == {
+        'number': 7,
+        'owner': 'dsfaccini',
+        'evidence': 'participant:dsfaccini',
+    }
+
+
+def test_only_the_latest_maintainer_response_can_take_ownership():
+    client = FakeClient({7: item(7, labels=['streaming'])})
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-08-25T00:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+        },
+        {
+            'event': 'commented',
+            'created_at': '2026-08-25T01:00:00Z',
+            'actor': {'login': 'DouweM'},
+        },
+    ]
+    now = dt.datetime(2026, 8, 25, 2, tzinfo=dt.timezone.utc)
+
+    stale = router.select(client, CORE, '7', None, 'dsfaccini', now=now)
+    latest = router.select(client, CORE, '7', None, 'DouweM', now=now)
+
+    assert stale == {'number': 7, 'decision': None, 'status': 'superseded-maintainer-response'}
+    assert latest['decision'] == {
+        'number': 7,
+        'owner': 'DouweM',
+        'evidence': 'participant:DouweM',
+    }
+
+
+def test_community_comment_event_does_not_route_historical_work():
+    client = FakeClient({7: item(7, labels=['MCP'])})
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-08-25T00:00:00Z',
+            'actor': {'login': 'contributor'},
+        }
+    ]
+
+    selected = router.select(client, CORE, '7', None, 'contributor')
+
+    assert selected == {'number': 7, 'decision': None, 'status': 'non-maintainer-response'}
+
+
+def test_mike_participation_is_harness_only():
+    core = FakeClient({7: item(7)})
+    harness = FakeClient({7: item(7)})
+    event = {
+        'event': 'reviewed',
+        'submitted_at': '2026-08-25T00:00:00Z',
+        'user': {'login': 'mpfaffenberger'},
+    }
+    core.timelines[7] = [event]
+    harness.timelines[7] = [event]
+    now = dt.datetime(2026, 8, 25, 1, tzinfo=dt.timezone.utc)
+
+    assert router.select(core, CORE, '7', None, 'mpfaffenberger', now=now)['decision'] is None
+    assert router.select(harness, HARNESS, '7', None, 'mpfaffenberger', now=now)['decision'] == {
+        'number': 7,
+        'owner': 'mpfaffenberger',
+        'evidence': 'participant:mpfaffenberger',
+    }
+
+
+def test_mike_comment_is_not_ownership_evidence():
+    client = FakeClient({7: item(7)})
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-08-25T00:00:00Z',
+            'actor': {'login': 'mpfaffenberger'},
+        }
+    ]
+
+    selected = router.select(
+        client,
+        HARNESS,
+        '7',
+        None,
+        'mpfaffenberger',
+        now=dt.datetime(2026, 8, 25, 1, tzinfo=dt.timezone.utc),
+    )
+
+    assert selected == {'number': 7, 'decision': None, 'status': 'superseded-maintainer-response'}
+
+
+def test_mike_inline_comment_is_not_formal_review_evidence():
+    client = FakeClient({7: item(7, pull_request=True)})
+    client.timelines[7] = [
+        {
+            'event': 'line-commented',
+            'created_at': '2026-08-25T00:00:00Z',
+            'actor': {'login': 'mpfaffenberger'},
+        }
+    ]
+
+    selected = router.select(
+        client,
+        HARNESS,
+        '7',
+        None,
+        'mpfaffenberger',
+        now=dt.datetime(2026, 8, 25, 1, tzinfo=dt.timezone.utc),
+    )
+
+    assert selected == {'number': 7, 'decision': None, 'status': 'superseded-maintainer-response'}
+
+
+def test_scheduled_recovery_can_assign_mike_after_a_formal_harness_review():
+    client = FakeClient({7: item(7, pull_request=True)})
+    client.timelines[7] = [
+        {
+            'event': 'reviewed',
+            'submitted_at': '2026-08-25T00:00:00Z',
+            'user': {'login': 'mpfaffenberger'},
+        }
+    ]
+
+    selected = router.select(
+        client,
+        HARNESS,
+        None,
+        None,
+        now=dt.datetime(2026, 8, 25, 1, tzinfo=dt.timezone.utc),
+    )
+
+    assert selected['decision'] == {
+        'number': 7,
+        'owner': 'mpfaffenberger',
+        'evidence': 'participant:mpfaffenberger',
+    }
+
+
+def test_existing_maintainer_assignment_wins_over_a_new_response():
+    client = FakeClient({7: item(7, assignees=['DouweM'])})
+    client.timelines[7] = [
+        {
+            'event': 'line-commented',
+            'created_at': '2026-08-25T00:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+        }
+    ]
+
+    selected = router.select(client, CORE, '7', None, 'dsfaccini')
+
+    assert selected == {'number': 7, 'decision': None, 'status': 'maintainer-present'}
+
+
+def test_scheduled_recovery_assigns_the_latest_recent_maintainer_reviewer():
+    client = FakeClient({7: item(7, labels=['streaming'])})
+    client.timelines[7] = [
+        {
+            'event': 'reviewed',
+            'submitted_at': '2026-08-25T00:00:00Z',
+            'user': {'login': 'DouweM'},
+        },
+        {
+            'event': 'line-commented',
+            'created_at': '2026-08-25T01:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+        },
+    ]
+
+    selected = router.select(
+        client,
+        CORE,
+        None,
+        None,
+        now=dt.datetime(2026, 8, 25, 2, tzinfo=dt.timezone.utc),
+    )
+
+    assert selected['decision'] == {
+        'number': 7,
+        'owner': 'dsfaccini',
+        'evidence': 'participant:dsfaccini',
+    }
+
+
+def test_participation_recovery_rotates_a_bounded_sample_of_large_searches():
+    client = FakeClient({number: item(number) for number in range(1, 13)})
+
+    candidates = router._participation_candidates(  # pyright: ignore[reportPrivateUsage]
+        client,
+        CORE,
+        ['adtyavrdhn', 'dsfaccini', 'DouweM'],
+        now=dt.datetime(1970, 1, 1, 6, tzinfo=dt.timezone.utc),
+    )
+
+    assert candidates == [10, 9, 8, 7, 6]
+    searches = [
+        cast(Mapping[str, object], payload)['variables']
+        for method, path, payload in client.calls
+        if method == 'POST' and path == '/graphql' and isinstance(payload, Mapping)
+    ]
+    assert len(searches) == 6
+    assert all(isinstance(variables, Mapping) and variables['first'] == 100 for variables in searches)
+
+
+def test_participant_assignment_revalidates_the_visible_response():
+    client = FakeClient({7: item(7)})
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': dt.datetime.now(dt.timezone.utc).isoformat(),
+            'actor': {'login': 'dsfaccini'},
+        }
+    ]
+    expected = router.Decision(number=7, owner='dsfaccini', evidence='participant:dsfaccini')
+
+    assert router.assign(client, CORE, expected) is True
+    assert client.items[7]['assignees'] == [{'login': 'dsfaccini'}]
 
 
 def test_known_and_unknown_production_paths_use_manual_route():
@@ -354,8 +675,15 @@ def test_incomplete_file_page_routes_to_manual_review():
 def test_draft_pull_request_waits_until_ready():
     client = FakeClient({7: item(7, pull_request=True)})
     client.drafts.add(7)
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'created_at': dt.datetime.now(dt.timezone.utc).isoformat(),
+            'actor': {'login': 'dsfaccini'},
+        }
+    ]
 
-    assert router.decision_for(client, CORE, 7) == {
+    assert router.decision_for(client, CORE, 7, participant_login='dsfaccini') == {
         'number': 7,
         'decision': None,
         'status': 'draft',
@@ -376,7 +704,7 @@ def test_malformed_draft_state_fails_closed(is_draft: object):
 
     client.post = post  # type: ignore[method-assign]
 
-    selected = router.decision_for(client, CORE, 7)
+    selected = router.decision_for(client, CORE, 7, participant_login='dsfaccini')
 
     assert selected['decision'] is None
     assert selected['status'] == 'invalid-draft-state'
@@ -490,6 +818,7 @@ def test_recovery_query_excludes_every_fixed_owner_and_selects_one():
         and path == '/graphql'
         and isinstance(payload, Mapping)
         and 'RoutingRecovery' in str(payload.get('query'))
+        and 'created:>=' in str(cast(Mapping[str, object], payload['variables'])['query'])
     )
     assert isinstance(search_payload, Mapping)
     variables = search_payload['variables']
@@ -520,6 +849,7 @@ def test_recovery_does_not_exclude_an_offboarded_owner():
         and path == '/graphql'
         and isinstance(payload, Mapping)
         and 'RoutingRecovery' in str(payload.get('query'))
+        and 'created:>=' in str(cast(Mapping[str, object], payload['variables'])['query'])
     )
     assert isinstance(search_payload, Mapping)
     variables = search_payload['variables']
@@ -582,10 +912,9 @@ def test_slack_map_only_requires_the_selected_owner():
     assert router.parse_mentions(value, 'adtyavrdhn') == {'adtyavrdhn': '<@UADITYA>'}
 
 
-def test_slack_map_allows_known_non_routable_owners_but_cannot_select_them():
+def test_slack_map_allows_harness_participation_only_owner():
     assert router.parse_mentions(MENTIONS, 'DouweM') == json.loads(MENTIONS)
-    with pytest.raises(ValueError, match='not routable'):
-        router.parse_mentions(MENTIONS, 'mpfaffenberger')
+    assert router.parse_mentions(MENTIONS, 'mpfaffenberger') == json.loads(MENTIONS)
 
 
 class FakeResponse:
@@ -768,6 +1097,9 @@ def test_workflow_is_notification_first_and_least_privilege():
     workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))
     jobs = workflow['jobs']
 
+    text = workflow_path.read_text(encoding='utf-8')
+    assert 'issue_comment:' in text
+    assert 'types: [created]' in text
     assert jobs['route']['needs'] == 'select'
     assert jobs['select']['permissions'] == {
         'contents': 'read',
@@ -780,6 +1112,8 @@ def test_workflow_is_notification_first_and_least_privilege():
         'pull-requests': 'read',
     }
     notify, assign = jobs['route']['steps'][1:]
+    select_step = jobs['select']['steps'][1]
+    assert select_step['env']['ROUTING_PARTICIPANT_LOGIN'] == '${{ github.event.comment.user.login }}'
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' in notify['env']
     assert assign['if'] == "steps.notify.outputs.did_notify == 'true'"
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in assign['env']

@@ -3,6 +3,8 @@ name: Semantic owner routing
 on:
   issues:
     types: [opened, reopened]
+  issue_comment:
+    types: [created]
   # zizmor: ignore[dangerous-triggers] -- executable checkouts use the reusable workflow's trusted SHA
   pull_request_target:
     types: [opened, reopened, ready_for_review]
@@ -19,7 +21,12 @@ permissions: {}
 jobs:
   select:
     name: Select one item
-    if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
+    if: >-
+      (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') &&
+      (github.event_name != 'issue_comment' ||
+      github.event.comment.user.login == 'adtyavrdhn' ||
+      github.event.comment.user.login == 'dsfaccini' ||
+      github.event.comment.user.login == 'DouweM')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -48,6 +55,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           ROUTING_ISSUE_NUMBER: ${{ github.event.issue.number }}
           ROUTING_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          ROUTING_PARTICIPANT_LOGIN: ${{ github.event.comment.user.login }}
         run: python .github/scripts/semantic_owner_router.py select
 
   route:

@@ -791,6 +791,15 @@ _NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
 _ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
 
 
+def structured_reply(event: Mapping[str, Any]) -> tuple[str, dt.datetime] | None:
+    """Return trusted actor/time metadata for a GitHub reply or review event."""
+    if event.get('event') not in _REPLY_EVENTS:
+        return None
+    actor = _actor(event)
+    when = _event_time(event)
+    return (actor, when) if actor and when is not None else None
+
+
 def _acknowledged(
     client: GitHubClient,
     repo: str,
@@ -805,7 +814,7 @@ def _acknowledged(
         actor = _actor(event)
         if actor.casefold() in recipient_logins:
             return True
-        if event.get('event') not in _REPLY_EVENTS:
+        if structured_reply(event) is None:
             return False
         # `author_association` is computed for the caller, so it reports a
         # maintainer whose organization membership is private as CONTRIBUTOR.
@@ -877,11 +886,7 @@ def _status(
     # as zero; the reply clause below is what shows that activity.
     if comments := int(item.get('comments') or 0):
         parts.append(f'{comments} comment{"" if comments == 1 else "s"}')
-    replies = [
-        event
-        for event in timeline
-        if event.get('event') in _REPLY_EVENTS and _actor(event) and _event_time(event) is not None
-    ]
+    replies = [event for event in timeline if structured_reply(event) is not None]
     if replies:
         last = replies[-1]
         when = cast(dt.datetime, _event_time(last))
@@ -1400,11 +1405,7 @@ def _weekly_status(
         parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
     if comments := int(item.get('comments') or 0):
         parts.append(f'{comments} issue comment{"" if comments == 1 else "s"}')
-    replies = [
-        event
-        for event in timeline
-        if event.get('event') in _REPLY_EVENTS and _actor(event) and _event_time(event) is not None
-    ]
+    replies = [event for event in timeline if structured_reply(event) is not None]
     if replies:
         last = replies[-1]
         parts.append(f'last reply/review @{_actor(last)} {_age(now, cast(dt.datetime, _event_time(last)))}')
