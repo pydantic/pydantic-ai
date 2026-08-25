@@ -786,6 +786,7 @@ def _actor(event: Mapping[str, Any]) -> str:
 
 # `mentioned` and `subscribed` can be generated as activity side effects, so
 # they must never count as acknowledgement.
+_REPLY_EVENTS = frozenset({'commented', 'reviewed', 'line-commented'})
 _NON_ACK_EVENTS = frozenset({'mentioned', 'subscribed'})
 _ACK_ASSOCIATIONS = frozenset({'MEMBER', 'OWNER', 'COLLABORATOR'})
 
@@ -804,7 +805,7 @@ def _acknowledged(
         actor = _actor(event)
         if actor.casefold() in recipient_logins:
             return True
-        if event.get('event') not in {'commented', 'reviewed'}:
+        if event.get('event') not in _REPLY_EVENTS:
             return False
         # `author_association` is computed for the caller, so it reports a
         # maintainer whose organization membership is private as CONTRIBUTOR.
@@ -879,7 +880,7 @@ def _status(
     replies = [
         event
         for event in timeline
-        if event.get('event') in {'commented', 'reviewed'} and _actor(event) and _event_time(event) is not None
+        if event.get('event') in _REPLY_EVENTS and _actor(event) and _event_time(event) is not None
     ]
     if replies:
         last = replies[-1]
@@ -1402,7 +1403,7 @@ def _weekly_status(
     replies = [
         event
         for event in timeline
-        if event.get('event') in {'commented', 'reviewed'} and _actor(event) and _event_time(event) is not None
+        if event.get('event') in _REPLY_EVENTS and _actor(event) and _event_time(event) is not None
     ]
     if replies:
         last = replies[-1]

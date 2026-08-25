@@ -1327,6 +1327,21 @@ def test_weekly_digest_is_bounded_prioritized_and_metadata_only():
     assert len(client.permission_reads()) == len(monitor.MAINTAINER_OWNERS)
 
 
+def test_weekly_status_counts_inline_review_comments_as_owner_interaction():
+    pull_request = {**item(1), 'pull_request': {}}
+    timeline = [
+        {
+            'event': 'line-commented',
+            'created_at': '2026-07-19T00:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+        }
+    ]
+
+    status = monitor._weekly_status(pull_request, timeline, 'dsfaccini', now=NOW)
+
+    assert status == 'pull request · last reply/review @dsfaccini 24h ago · owner replied/reviewed 24h ago'
+
+
 def test_weekly_digest_rejects_a_foreign_repository():
     with pytest.raises(ValueError, match='Unsupported repository'):
         monitor.weekly_digest(WeeklyClient(), 'attacker/repository', now=NOW)
@@ -1565,6 +1580,21 @@ def test_collaborator_comment_by_non_recipient_completes_the_request():
             'actor': {'login': 'outside-collaborator'},
             'author_association': 'COLLABORATOR',
             'body': 'I can take this.',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (['#7: maintainer acknowledged the request'], [])
+
+
+def test_inline_review_comment_by_non_recipient_maintainer_completes_the_request():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL),
+        {
+            'event': 'line-commented',
+            'created_at': '2026-07-17T00:00:00Z',
+            'actor': {'login': 'outside-collaborator'},
+            'author_association': 'COLLABORATOR',
         },
     ]
 
