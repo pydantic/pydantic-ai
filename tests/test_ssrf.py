@@ -1371,68 +1371,45 @@ class TestSafeDownload:
         assert call_args[1]['extensions'] == {}
 
     async def test_server_cookie_not_replayed_across_same_ip_redirect(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
-        """Server-set cookies are scoped to the logical hostname, not the resolved IP.
-
-        `safe_download` requests the resolved IP (keeping the logical hostname only in the
-        `Host` header and SNI), so httpx's default cookie jar keys cookies by the IP. A
-        redirect from `a.example` to `b.example` — both resolving to the same IP — must not
-        replay `a.example`'s cookie on `b.example`.
-
-        Regression test for https://github.com/pydantic/pydantic-ai/issues/6936.
-        """
-        mock_dns.side_effect = [
-            [(2, 1, 6, '', ('93.184.215.14', 0))],  # a.example
-            [(2, 1, 6, '', ('93.184.215.14', 0))],  # b.example (same IP)
-        ]
+        """A server-set cookie is not replayed to another hostname on the same IP."""
 
         sent_cookies: list[str | None] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             host = request.headers.get('host', '')
             if host == 'a.example':
-                return httpx.Response(
+                return httpx2.Response(
                     302,
                     headers={'location': 'https://b.example/file', 'set-cookie': 'sid=secret; Path=/'},
                     request=request,
                 )
             assert host == 'b.example'
             sent_cookies.append(request.headers.get('cookie'))
-            return httpx.Response(200, content=b'final', request=request)
+            return httpx2.Response(200, content=b'final', request=request)
 
-        def factory(**kwargs: Any) -> httpx.AsyncClient:
-            return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        serve_requests(handler)
 
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory)
+        await safe_download('https://a.example/file')
 
-        response = await safe_download('https://a.example/file')
-
-        assert response.content == b'final'
         assert sent_cookies == [None]
 
     async def test_server_cookie_kept_for_same_logical_host_return_hop(
-        self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
-        """A cookie set by `a.example` survives a redirect detour through `b.example`.
-
-        On an a.example → b.example → a.example chain (all on one IP), the cookie set on the
-        first hop must still be sent on the final hop, and must not leak to b.example in
-        between. Fixes that clear the whole jar on cross-host redirects would break this
-        flow, so it is pinned here. Issue #6936.
-        """
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        """A cookie survives a redirect detour back to the same logical hostname."""
 
         sent_cookies: list[str | None] = []
         hop = 0
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             nonlocal hop
             hop += 1
             host = request.headers.get('host', '')
             if hop == 1:
                 assert host == 'a.example'
-                return httpx.Response(
+                return httpx2.Response(
                     302,
                     headers={'location': 'https://b.example/file', 'set-cookie': 'sid=secret; Path=/'},
                     request=request,
@@ -1440,20 +1417,40 @@ class TestSafeDownload:
             if hop == 2:
                 assert host == 'b.example'
                 sent_cookies.append(request.headers.get('cookie'))
-                return httpx.Response(302, headers={'location': 'https://a.example/file'}, request=request)
+                return httpx2.Response(302, headers={'location': 'https://a.example/file'}, request=request)
             assert host == 'a.example'
             sent_cookies.append(request.headers.get('cookie'))
-            return httpx.Response(200, content=b'final', request=request)
+            return httpx2.Response(200, content=b'final', request=request)
 
-        def factory(**kwargs: Any) -> httpx.AsyncClient:
-            return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        serve_requests(handler)
+        await safe_download('https://a.example./file')
 
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory)
-
-        response = await safe_download('https://a.example/file')
-
-        assert response.content == b'final'
         assert sent_cookies == [None, 'sid=secret']
+
+    @pytest.mark.parametrize('cookie', ['sid=secret; Path=/', 'sid=secret; Domain=github.io; Path=/'])
+    async def test_server_cookie_not_replayed_to_related_hostname(
+        self, serve_requests: Callable[[RequestHandler], None], cookie: str
+    ) -> None:
+        """Host-only and public-suffix cookies remain isolated to their logical hostname."""
+
+        sent_cookies: list[str | None] = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            host = request.headers.get('host', '')
+            if host == 'evil.github.io':
+                return httpx2.Response(
+                    302,
+                    headers={'location': 'https://victim.github.io/file', 'set-cookie': cookie},
+                    request=request,
+                )
+            assert host == 'victim.github.io'
+            sent_cookies.append(request.headers.get('cookie'))
+            return httpx2.Response(200, request=request)
+
+        serve_requests(handler)
+        await safe_download('https://evil.github.io/file')
+
+        assert sent_cookies == [None]
 
     async def test_protocol_validation(self) -> None:
         with pytest.raises(ValueError, match='URL protocol "file" is not allowed'):
