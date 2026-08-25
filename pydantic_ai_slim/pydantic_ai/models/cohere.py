@@ -287,6 +287,7 @@ class CohereModel(Model[AsyncClientV2]):
             provider_url=provider_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
+            provider_response_id=response.id,
         )
 
     def _map_messages(  # noqa: C901
