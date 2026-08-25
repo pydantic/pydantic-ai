@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Literal, cast
 
 import pytest
+from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from pydantic_ai import (
@@ -1037,6 +1038,35 @@ async def test_dynamic_args_validator_runs_in_declarative_unit_and_preserves_sch
     static_names = [name for name, _, _ in static_durability.calls]
     assert 'static_validation__function_toolset__inner.validate_args' in static_names
     assert 'static_validation__function_toolset__inner.call_tool:read_file' in static_names
+
+
+async def test_tool_body_validation_error_is_not_sent_to_model() -> None:
+    secret = 'database-secret'
+    model_messages: list[list[Any]] = []
+
+    async def inspect_record() -> str:
+        TypeAdapter(int).validate_python(secret)
+        raise AssertionError('unreachable')
+
+    def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
+        model_messages.append(messages)
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('inspect_record', {})])
+
+    agent = Agent[None, str](
+        FunctionModel(model),
+        name='tool_body_validation',
+        deps_type=type(None),
+        tools=[inspect_record],
+        capabilities=[JournalDurability()],
+    )
+
+    result = await agent.run('inspect the record')
+
+    assert result.output == 'done'
+    assert len(model_messages) == 2
+    assert secret not in str(model_messages)
 
 
 async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:

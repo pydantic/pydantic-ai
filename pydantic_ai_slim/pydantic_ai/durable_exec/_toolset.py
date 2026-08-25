@@ -267,7 +267,7 @@ CallToolResult = Annotated[
 ]
 
 
-async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
+async def _wrap_tool_result(coro: Awaitable[Any]) -> CallToolResult:
     try:
         result = await coro
         if is_str_dict(result) and result.get('kind') == 'tool-return':
@@ -277,6 +277,24 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
         return _ApprovalRequired(metadata=exc.metadata)
     except CallDeferred as exc:
         return _CallDeferred(metadata=exc.metadata)
+    except ModelRetry as exc:
+        return _ModelRetry(message=exc.message)
+    except ToolFailed as exc:
+        return _ToolFailed(message=exc.message)
+
+
+async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
+    """Wrap tool execution results without exposing validation inputs from the tool body."""
+    try:
+        return await _wrap_tool_result(coro)
+    except ValidationError:
+        return _ToolFailed(message='Tool raised a validation error')
+
+
+async def wrap_tool_validation_result(coro: Awaitable[Any]) -> CallToolResult:
+    """Wrap argument-validation results, including model-visible validation details."""
+    try:
+        return await _wrap_tool_result(coro)
     except ValidationError as exc:
         return _ValidationError(
             title=exc.title,
@@ -290,10 +308,6 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
                 for error in exc.errors(include_url=False, include_context=False)
             ],
         )
-    except ModelRetry as exc:
-        return _ModelRetry(message=exc.message)
-    except ToolFailed as exc:
-        return _ToolFailed(message=exc.message)
 
 
 def unwrap_tool_call_result(result: CallToolResult) -> Any:

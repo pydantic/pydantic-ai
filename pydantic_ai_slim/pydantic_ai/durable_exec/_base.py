@@ -84,6 +84,7 @@ from ._toolset import (
     unwrap_tool_call_result,
     validate_dynamic_tool_args,
     wrap_tool_call_result,
+    wrap_tool_validation_result,
 )
 from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, unwrap_model
 
@@ -874,11 +875,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 )
                 assert function_params.tool is not None
                 with self._tool_run_context_scope(function_params.ctx) as durable_ctx:
-                    return await wrap_tool_call_result(
+                    return await wrap_tool_validation_result(
                         run_args_validator(function_params.tool, function_params.tool_args, durable_ctx)
                     )
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
-                return await wrap_tool_call_result(
+                return await wrap_tool_validation_result(
                     validate_dynamic_tool_args(
                         cast(DynamicToolset[AgentDepsT], toolset),
                         params.name,

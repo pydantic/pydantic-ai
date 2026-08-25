@@ -21,7 +21,7 @@ from pydantic_ai.durable_exec._toolset import (
     _ValidationErrorDetail,  # pyright: ignore[reportPrivateUsage]
     unwrap_recorded_tool_call_result,
     unwrap_tool_call_result,
-    wrap_tool_call_result,
+    wrap_tool_validation_result,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -422,6 +422,6 @@ async def test_validation_error_crosses_call_tool_result_boundary() -> None:
     async def invalid() -> None:
         TypeAdapter(int).validate_python('not-an-int')
 
-    payload = await wrap_tool_call_result(invalid())
+    payload = await wrap_tool_validation_result(invalid())
     with pytest.raises(ValidationError, match='valid integer'):
         unwrap_tool_call_result(payload)
