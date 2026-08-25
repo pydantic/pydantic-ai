@@ -32,6 +32,9 @@ with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
+with try_import() as bedrock_available:
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
@@ -40,6 +43,15 @@ with try_import() as google_available:
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as openrouter_available:
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+with try_import() as xai_available:
+    from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.native_tools import XSearchTool
+    from pydantic_ai.providers.xai import XaiProvider
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
@@ -74,7 +86,7 @@ class ExpectedWebCitation:
 @dataclass(frozen=True)
 class WebCitationCase:
     id: str
-    provider: Literal['anthropic', 'google-gemini', 'google-vertex', 'openai']
+    provider: Literal['anthropic', 'google-gemini', 'google-vertex', 'openai', 'openrouter', 'xai']
     stream: bool = False
     expected: list[ExpectedWebCitation] = field(default_factory=list[ExpectedWebCitation])
 
@@ -256,6 +268,47 @@ WEB_CASES = [
             ]
         ),
     ),
+    WebCitationCase(
+        'openrouter',
+        'openrouter',
+        expected=snapshot(
+            [
+                ExpectedWebCitation(['github.com'], [1], None),
+                ExpectedWebCitation(['pydantic.dev'], [1], None),
+                ExpectedWebCitation(['github.com'], [1], None),
+                ExpectedWebCitation(['pydantic.dev'], [1], None),
+                ExpectedWebCitation(['github.com'], [1], None),
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'openrouter-stream',
+        'openrouter',
+        stream=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(['github.com'], [1], None),
+                ExpectedWebCitation(['pydantic.dev'], [1], None),
+                ExpectedWebCitation(['github.com'], [1], None),
+                ExpectedWebCitation(['pydantic.dev'], [1], None),
+                ExpectedWebCitation(['github.com'], [1], None),
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'xai',
+        'xai',
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    ['x.com'],
+                    [0],
+                    MarkerCitationAnchor(start=227, end=283),
+                    '[[1]](https://x.com/pydantic/status/1863538947059544218)',
+                )
+            ]
+        ),
+    ),
 ]
 
 
@@ -264,6 +317,8 @@ WEB_PROVIDER_AVAILABLE = {
     'google-gemini': google_available,
     'google-vertex': google_available,
     'openai': openai_available,
+    'openrouter': openrouter_available,
+    'xai': xai_available,
 }
 
 
@@ -273,7 +328,9 @@ def _web_citation_agent(
     anthropic_api_key: str,
     gemini_api_key: str,
     openai_api_key: str,
+    openrouter_api_key: str,
     vertex_provider: GoogleCloudProvider | None,
+    xai_provider: XaiProvider | None,
 ) -> tuple[Agent[None, str], str]:
     prompt = "Use web search to find Pydantic AI's documentation and cite it."
     settings = None
@@ -291,6 +348,16 @@ def _web_citation_agent(
         model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
         tool = WebSearchTool(max_uses=1)
         prompt = "Use web search to find Pydantic AI's GitHub repository and cite it."
+    elif case.provider == 'openrouter':
+        model = OpenRouterModel('deepseek/deepseek-chat', provider=OpenRouterProvider(api_key=openrouter_api_key))
+        tool = WebSearchTool(max_uses=1)
+        prompt = "Use web search to find Pydantic AI's GitHub repository and answer with its URL only."
+    elif case.provider == 'xai':
+        assert xai_provider is not None
+        model = XaiModel('grok-4-fast-non-reasoning', provider=xai_provider)
+        tool = XSearchTool(allowed_x_handles=['pydantic'], include_output=True)
+        settings = ModelSettings(include_citations=True)
+        prompt = 'Use X search to find a post by @pydantic about Pydantic AI. Summarize it and cite the post URL.'
     else:  # pragma: no cover
         assert_never(case.provider)
 
@@ -340,7 +407,9 @@ async def test_web_citations(
     anthropic_api_key: str,
     gemini_api_key: str,
     openai_api_key: str,
+    openrouter_api_key: str,
     vertex_provider: GoogleCloudProvider | None,
+    xai_provider: XaiProvider | None,
 ) -> None:
     if not WEB_PROVIDER_AVAILABLE[case.provider]():
         pytest.skip(f'{case.provider} dependencies not installed')
@@ -350,7 +419,9 @@ async def test_web_citations(
         anthropic_api_key=anthropic_api_key,
         gemini_api_key=gemini_api_key,
         openai_api_key=openai_api_key,
+        openrouter_api_key=openrouter_api_key,
         vertex_provider=vertex_provider,
+        xai_provider=xai_provider,
     )
 
     if case.stream:
@@ -368,6 +439,7 @@ async def test_web_citations(
 @dataclass(frozen=True)
 class DocumentCitationCase:
     id: str
+    provider: Literal['anthropic', 'bedrock'] = 'anthropic'
     stream: bool = False
     pdf: bool = False
     expected: list[Citation] = field(default_factory=list[Citation])
@@ -436,20 +508,68 @@ DOCUMENT_CASES = [
             ]
         ),
     ),
+    DocumentCitationCase(
+        id='bedrock-document',
+        provider='bedrock',
+        expected=snapshot(
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Document 1',
+                            excerpts=['The return window is thirty days from purchase.'],
+                            provider_details={
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 47}}
+                            },
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=47),
+                )
+            ]
+        ),
+    ),
+    DocumentCitationCase(
+        id='bedrock-document-stream',
+        provider='bedrock',
+        stream=True,
+        expected=snapshot(
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Document 1',
+                            excerpts=['The return window is thirty days from purchase.'],
+                            provider_details={
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 47}}
+                            },
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=47),
+                )
+            ]
+        ),
+    ),
 ]
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in DOCUMENT_CASES])
 async def test_document_citations(
     case: DocumentCitationCase,
+    request: pytest.FixtureRequest,
     allow_model_requests: None,
     anthropic_api_key: str,
     document_content: BinaryContent,
 ) -> None:
-    if not anthropic_available():
-        pytest.skip('anthropic dependencies not installed')
+    available = anthropic_available if case.provider == 'anthropic' else bedrock_available
+    if not available():
+        pytest.skip(f'{case.provider} dependencies not installed')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    if case.provider == 'anthropic':
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    else:
+        model = BedrockConverseModel(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
+        )
     agent = Agent(model, model_settings=ModelSettings(include_citations=True))
     prompt: str | list[str | BinaryContent]
     if case.pdf:

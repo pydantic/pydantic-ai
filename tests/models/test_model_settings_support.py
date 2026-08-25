@@ -22,7 +22,8 @@ that records only path, body and headers on a live transport, while `timeout` is
 `include_citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
 
 - `include_citations` changes only requests that contain an inline document or Web Fetch tool, while this harness
-  deliberately uses one plain text request for every model. Its dedicated Anthropic tests assert both request shapes.
+  deliberately uses one plain text request for every model. The provider-specific tests assert the request shapes
+  for Anthropic, Bedrock, and xAI.
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
   express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload
@@ -608,6 +609,11 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
 def test_hand_maintained_fields_are_the_only_unprobed_ones():
     """Every field is either probed above or explicitly hand-maintained — none silently unchecked."""
     assert set(SUPPORTED_BY_LISTS) == set(PROBE_VALUES) | HAND_MAINTAINED
+
+
+def test_include_citations_documented_support():
+    """The request-shape-specific citation tests cover exactly the documented providers."""
+    assert SUPPORTED_BY_LISTS['include_citations'] == ['Anthropic', 'Bedrock', 'xAI']
 
 
 def test_every_documented_name_is_probed():

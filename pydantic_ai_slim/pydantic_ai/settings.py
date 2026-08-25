@@ -460,6 +460,8 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * Anthropic (inline documents and Web Fetch)
+    * Bedrock (inline documents)
+    * xAI (inline citations)
 
     Providers that return citations without an explicit request setting ignore this field; their citations are
     still normalized when present.
