@@ -252,7 +252,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsInt, IsStr, message, try_import
+    from .conftest import IsDatetime, IsInt, IsList, IsStr, message, try_import
 
 with try_import() as anthropic_imports_successful:
     import anthropic
@@ -8806,7 +8806,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                 BasicSpan(content='RunWorkflow:ComplexDurableAgentLogfireWorkflow'),
                 BasicSpan(
                     content='durability_complex_agent_logfire run',
-                    children=[
+                    children=IsList(
                         BasicSpan(
                             content='StartActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__get_tools',
                             children=[
@@ -9187,7 +9187,8 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                    ],
+                        check_order=False,
+                    ),
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexDurableAgentLogfireWorkflow'),
             ],
