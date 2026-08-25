@@ -2430,8 +2430,8 @@ async def test_xai_stream_empty_response_raises(allow_model_requests: None):
     agent = Agent(m)
 
     with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without content or tool calls'):
-        async with agent.run_stream('') as result:
-            await result.get_output()
+        async with agent.run_stream(''):
+            pass
 
 
 async def test_xai_response_with_logprobs(allow_model_requests: None):

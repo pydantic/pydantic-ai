@@ -1206,7 +1206,8 @@ class XaiStreamedResponse(StreamedResponse):
             # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
             _attach_x_search_citations(x_search_return_parts.values(), last_citations)
 
-            if last_response is not None:
+            # `_process_streamed_response` peeks the first item before creating this response.
+            if last_response is not None:  # pragma: no branch
                 for output in last_response.proto.outputs:
                     message = output.message
                     vendor_part_id = ('content', output.index)
