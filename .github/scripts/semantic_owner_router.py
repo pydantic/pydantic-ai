@@ -18,8 +18,8 @@ from typing import Any, TypedDict, cast  # noqa: TID251
 
 import issue_pr_attention_monitor as attention
 
-_REPOSITORIES = frozenset({'pydantic/pydantic-ai', 'pydantic/pydantic-ai-harness'})
-_OWNERS = frozenset({'adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger'})
+_REPOSITORIES = attention.REPOSITORIES
+_OWNERS = frozenset(attention.MAINTAINER_OWNERS)
 _MANUAL_OWNER = 'adtyavrdhn'
 # Everything before this rollout watermark was handled by the one-time manual
 # audit. Keeping it fixed makes later outages recoverable without draining years

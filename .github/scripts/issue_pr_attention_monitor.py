@@ -45,7 +45,17 @@ _ITEM_PROBE_LIMIT = 40
 _RUN_PROBE_LIMIT = 400
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
-_FALLBACK_OWNER = 'adtyavrdhn'
+_WEEKLY_ITEM_LIMIT = 3
+_WEEKLY_TEXT_LIMIT = 30_000
+REPOSITORIES = frozenset({'pydantic/pydantic-ai', 'pydantic/pydantic-ai-harness'})
+MAINTAINER_OWNERS = ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')
+_MAINTAINER_NAMES = {
+    'adtyavrdhn': 'Aditya',
+    'dsfaccini': 'David SF',
+    'DouweM': 'Douwe',
+    'mpfaffenberger': 'Mike',
+}
+_FALLBACK_OWNER = MAINTAINER_OWNERS[0]
 _ACTION_LABEL = 'needs-maintainer-action'
 _PINGED_LABEL = 'attention-pinged'
 _ESCALATED_LABEL = 'attention-escalated'
@@ -1234,7 +1244,90 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
     )
 
 
-def _write_coverage(text: str) -> None:
+def _weekly_query(repo: str, owner: str, state: Literal['active', 'cooling', 'other']) -> str:
+    base = f'repo:{repo} is:open assignee:{owner}'
+    if state == 'active':
+        return f'{base} label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
+    if state == 'cooling':
+        return f'{base} label:"{_ESCALATED_LABEL}"'
+    return f'{base} -label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
+
+
+def _weekly_state(labels: set[str]) -> Literal['active', 'cooling', 'other']:
+    if _ESCALATED_LABEL in labels:
+        return 'cooling'
+    return 'active' if _ACTION_LABEL in labels else 'other'
+
+
+def _weekly_items(
+    client: GitHubClient,
+    repo: str,
+    owner: str,
+    state: Literal['active', 'cooling', 'other'],
+    *,
+    limit: int,
+    now: dt.datetime,
+) -> list[str]:
+    if not limit:
+        return []
+    matches = _rotated_search(client, _weekly_query(repo, owner, state), order='asc', limit=limit, slot=0)
+    lines: list[str] = []
+    phrases = {'active': 'awaiting maintainer action', 'cooling': 'channel escalation cooling', 'other': 'assigned'}
+    for match in matches:
+        number = int(match['number'])
+        current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+        assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
+        if (
+            str(current.get('state') or '').casefold() != 'open'
+            or owner.casefold() not in assignees
+            or _weekly_state(_labels(current)) != state
+        ):
+            continue
+        timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100', count=3)
+        idle = _age(now, _parse_time(str(current['updated_at'])))
+        status = _slack_escape(_status(client, repo, current, timeline, now=now))
+        lines.append(
+            f'• <https://github.com/{repo}/issues/{number}|#{number}> — {phrases[state]} · idle {idle} · {status}'
+        )
+    return lines
+
+
+def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
+    """Build a bounded, metadata-only Monday view of each maintainer's assignments."""
+    if repo not in REPOSITORIES:
+        raise ValueError(f'Unsupported repository: {repo}')
+    lines = [f':spiral_calendar_pad: *Monday maintainer queues — {_slack_escape(repo)}* · {now.date().isoformat()}']
+    states: tuple[Literal['active', 'cooling', 'other'], ...] = ('active', 'cooling', 'other')
+    for owner in MAINTAINER_OWNERS:
+        counts = {state: _search_count(client, _weekly_query(repo, owner, state)) for state in states}
+        total = sum(counts.values())
+        name = _MAINTAINER_NAMES[owner]
+        if not total:
+            lines.extend(['', f'*{name}* (`{owner}`) — clear'])
+            continue
+        lines.extend(
+            [
+                '',
+                f'*{name}* (`{owner}`) — {total} open assigned · {counts["active"]} awaiting action · '
+                f'{counts["cooling"]} cooling',
+            ]
+        )
+        remaining = _WEEKLY_ITEM_LIMIT
+        for state in states:
+            details = _weekly_items(client, repo, owner, state, limit=remaining, now=now)
+            lines.extend(details)
+            remaining -= len(details)
+            if not remaining:
+                break
+        query = urllib.parse.quote_plus(f'repo:{repo} is:open assignee:{owner}')
+        lines.append(f'<https://github.com/{repo}/issues?q={query}|View all {total}>')
+    text = '\n'.join(lines)
+    if len(text.encode()) > _WEEKLY_TEXT_LIMIT:
+        raise RuntimeError('Weekly digest exceeds the Slack payload limit')
+    return text
+
+
+def _write_slack_payload(text: str) -> None:
     if output_path := os.environ.get('GITHUB_OUTPUT'):
         with Path(output_path).open('a', encoding='utf-8') as output:
             output.write(f'slack_payload={json.dumps({"text": text}, separators=(",", ":"))}\n')
@@ -1412,7 +1505,7 @@ def _write_summary(lines: Sequence[str]) -> None:
 def main() -> int:
     """Build a snapshot, apply decisions, or reconcile reminders."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'prepare', 'finalize', 'census'])
+    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'prepare', 'finalize', 'census', 'weekly'])
     parser.add_argument('--snapshot-path', default='attention-candidates.json')
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
@@ -1443,8 +1536,12 @@ def main() -> int:
         lines = [f'prepared {len(notices)} current attention notice(s)']
     elif args.mode == 'census':
         coverage = census(client, repo, now=now)
-        _write_coverage(coverage)
+        _write_slack_payload(coverage)
         lines = [coverage]
+    elif args.mode == 'weekly':
+        report = weekly_digest(client, repo, now=now)
+        _write_slack_payload(report)
+        lines = [report]
     else:
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:

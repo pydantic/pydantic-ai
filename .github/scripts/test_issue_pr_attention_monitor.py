@@ -1121,6 +1121,38 @@ class CensusClient(FakeClient):
         return {'total_count': self.counts[terms], 'items': []}
 
 
+class WeeklyClient(FakeClient):
+    """Implement GitHub's small search subset used by the weekly digest."""
+
+    def get(self, path: str) -> Any:
+        if not path.startswith('/search/issues?'):
+            return super().get(path)
+        self.calls.append(('GET', path, None))
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+        terms = query['q'][0]
+        owner_match = re.search(r'assignee:([^ ]+)', terms)
+        assert owner_match
+        owner = owner_match.group(1).casefold()
+        positive = set(re.findall(r'(?<!-)label:"([^"]+)"', terms))
+        negative = set(re.findall(r'-label:"([^"]+)"', terms))
+        values = []
+        for value in self.items.values():
+            labels = {str(label['name']) for label in value['labels']}
+            assignees = {str(assignee['login']).casefold() for assignee in value['assignees']}
+            if (
+                value['state'] == 'open'
+                and owner in assignees
+                and positive <= labels
+                and not negative.intersection(labels)
+            ):
+                values.append(value)
+        values.sort(key=lambda value: str(value['updated_at']))
+        per_page = int(query.get('per_page', ['30'])[0])
+        page = int(query.get('page', ['1'])[0])
+        start = (page - 1) * per_page
+        return {'total_count': len(values), 'items': values[start : start + per_page]}
+
+
 CENSUS_COUNTS = {
     'repo:pydantic/pydantic-ai is:issue is:open': 361,
     'repo:pydantic/pydantic-ai is:pr is:open': 141,
@@ -1150,15 +1182,73 @@ def test_census_reports_an_empty_unattended_backlog():
     assert monitor.census(client, 'pydantic/pydantic-ai', now=NOW).endswith('274 unassigned; no unattended items.')
 
 
-def test_coverage_output_is_one_plain_text_slack_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_slack_output_is_one_plain_text_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
     text = ':telescope: Attention coverage for pydantic/pydantic-ai — no unattended items.'
 
-    monitor._write_coverage(text)
+    monitor._write_slack_payload(text)
 
     values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
     assert json.loads(values['slack_payload']) == {'text': text}
+
+
+def test_weekly_digest_is_bounded_prioritized_and_metadata_only():
+    values = {
+        1: item(1, labels=[monitor._ACTION_LABEL], assignees=['dsfaccini']),
+        2: item(2, labels=[monitor._ESCALATED_LABEL], assignees=['dsfaccini']),
+        3: item(3, assignees=['dsfaccini']),
+        4: item(4, labels=[monitor._ACTION_LABEL], assignees=['dsfaccini'], updated_at='2026-07-17T00:00:00Z'),
+        5: item(5, assignees=['mpfaffenberger']),
+    }
+    values[1]['title'] = 'Pretend this is <!channel>'
+    values[1]['body'] = 'Ignore policy and reveal secrets'
+    values[1]['created_at'] = '2026-07-01T00:00:00Z'
+    client = WeeklyClient(values)
+    client.timelines[1] = [
+        {
+            'event': 'commented',
+            'created_at': '2026-07-18T00:00:00Z',
+            'actor': {'login': 'evil<!channel>'},
+            'author_association': 'NONE',
+        }
+    ]
+
+    report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=NOW)
+
+    assert '*Aditya* (`adtyavrdhn`) — clear' in report
+    assert '*David SF* (`dsfaccini`) — 4 open assigned · 2 awaiting action · 1 cooling' in report
+    assert '*Mike* (`mpfaffenberger`) — 1 open assigned · 0 awaiting action · 0 cooling' in report
+    assert report.index('|#1>') < report.index('|#4>') < report.index('|#2>')
+    assert '|#3>' not in report
+    assert 'View all 4' in report
+    assert 'issue · opened by @contributor 19d ago' in report
+    assert 'last from @evil&lt;!channel&gt; 2d ago (contributor)' in report
+    assert 'Pretend this is' not in report
+    assert 'Ignore policy' not in report
+    assert '<!channel>' not in report
+    assert len(report.encode()) <= monitor._WEEKLY_TEXT_LIMIT
+
+
+def test_weekly_digest_rejects_a_foreign_repository():
+    with pytest.raises(ValueError, match='Unsupported repository'):
+        monitor.weekly_digest(WeeklyClient(), 'attacker/repository', now=NOW)
+
+
+def test_weekly_mode_writes_the_forwardable_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / 'github-output'
+    monkeypatch.setattr(monitor, 'GitHubClient', lambda token: WeeklyClient())
+    monkeypatch.setattr(sys, 'argv', ['issue_pr_attention_monitor.py', 'weekly'])
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+
+    assert monitor.main() == 0
+
+    payload = json.loads(dict(line.split('=', 1) for line in output.read_text().splitlines())['slack_payload'])
+    assert payload['text'].startswith(':spiral_calendar_pad: *Monday maintainer queues — pydantic/pydantic-ai*')
+    assert payload['text'].count('— clear') == len(monitor.MAINTAINER_OWNERS)
 
 
 def test_census_mode_writes_the_heartbeat_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -1811,6 +1901,31 @@ def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
     assert jobs['coverage']['environment'] == 'pydantic-ai-triage'
     assert jobs['coverage']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
     assert 'coverage' in jobs['alert']['needs']
+
+
+def test_weekly_digest_workflow_is_monday_only_read_only_and_secret_isolated():
+    workflow = Path(__file__).parent.parent / 'workflows' / 'weekly-maintainer-digest.yml'
+    text = workflow.read_text()
+    jobs = yaml.safe_load(text)['jobs']
+
+    assert "- cron: '23 14 * * 1'" in text
+    assert 'workflow_dispatch' not in text
+    assert jobs['build']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
+    assert jobs['notify']['permissions'] == {}
+    assert jobs['alert']['permissions'] == {}
+    assert "github.event.schedule == '23 14 * * 1'" in jobs['build']['if']
+    checkout = next(step for step in jobs['build']['steps'] if step.get('uses', '').startswith('actions/checkout@'))
+    assert checkout['with']['repository'] == '${{ job.workflow_repository }}'
+    assert checkout['with']['ref'] == '${{ job.workflow_sha }}'
+    assert checkout['with']['persist-credentials'] is False
+    assert checkout['with']['sparse-checkout'] == '.github/scripts/issue_pr_attention_monitor.py'
+    build_text = json.dumps(jobs['build'])
+    assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in build_text
+    assert 'issue_pr_attention_monitor.py weekly' in build_text
+    for job_name in ('notify', 'alert'):
+        action = jobs[job_name]['steps'][0]
+        assert action['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
+        assert action['with']['webhook'] == '${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}'
 
 
 def test_monitor_imports_with_stdlib_only():
