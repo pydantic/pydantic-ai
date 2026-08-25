@@ -1716,7 +1716,12 @@ def main() -> int:
         _write_notices(repo, notices)
         lines = [f'prepared {len(notices)} current attention notice(s)']
     elif args.mode == 'census':
-        mention = slack_mentions(os.environ['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'], _FALLBACK_OWNER)[_FALLBACK_OWNER]
+        mention = None
+        if raw_mentions := os.environ.get('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'):
+            try:
+                mention = slack_mentions(raw_mentions, _FALLBACK_OWNER)[_FALLBACK_OWNER]
+            except ValueError:
+                pass
         coverage = census(client, repo, now=now, urgent_mention=mention)
         _write_slack_payload(coverage)
         lines = [coverage]

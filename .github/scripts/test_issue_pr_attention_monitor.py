@@ -1442,6 +1442,22 @@ def test_census_mode_writes_the_heartbeat_payload(tmp_path: Path, monkeypatch: p
     }
 
 
+@pytest.mark.parametrize('mentions', [None, '', '{', '{}'])
+def test_healthy_census_does_not_require_a_slack_mention(
+    mentions: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(monitor, 'GitHubClient', lambda token: CensusClient(CENSUS_COUNTS))
+    monkeypatch.setattr(sys, 'argv', ['issue_pr_attention_monitor.py', 'census'])
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'github-output'))
+    if mentions is None:
+        monkeypatch.delenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', raising=False)
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', mentions)
+
+    assert monitor.main() == 0
+
+
 def test_reconcile_rejects_a_foreign_stage_label():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
     client.timelines[7] = [
