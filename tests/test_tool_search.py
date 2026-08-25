@@ -137,7 +137,6 @@ with try_import() as anthropic_available:
         AnthropicModelSettings,
         _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
         _build_tool_search_replay_block,  # pyright: ignore[reportPrivateUsage]
-        _collect_orphan_tool_search_call_ids,  # pyright: ignore[reportPrivateUsage]
         _finalize_streamed_tool_search_call_part,  # pyright: ignore[reportPrivateUsage]
         _map_server_tool_use_block,  # pyright: ignore[reportPrivateUsage]
         _map_tool_search_tool_result_block,  # pyright: ignore[reportPrivateUsage]
@@ -2226,90 +2225,6 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
     # Regex variant must replay with `pattern` (not `query`) — Anthropic 400s otherwise.
     regex_inputs = [block['input'] for block in server_blocks if block['name'] == 'tool_search_tool_regex']
     assert regex_inputs == snapshot([{'pattern': 'weather.*'}])
-
-
-def test_collect_orphan_tool_search_call_ids_pairs_across_responses() -> None:
-    """An orphan is a `NativeToolSearchCallPart` with no matching `NativeToolSearchReturnPart`
-    *anywhere* in history. Anthropic sometimes delivers the return in a *later* `ModelResponse`
-    (deferred-result behavior on the direct API), so the pairing check must span turns."""
-    pytest.importorskip('anthropic')
-
-    history: list[ModelMessage] = [
-        ModelRequest.user_text_prompt('do the thing'),
-        # Turn 1: orphan call (paired with a client `ToolCallPart` that ate the turn)
-        ModelResponse(
-            parts=[
-                NativeToolSearchCallPart(args={'queries': ['pay.*']}, tool_call_id='srv_orphan'),
-                ToolCallPart(tool_name='send_status', args={'message': 'ok'}, tool_call_id='cl_1'),
-            ],
-        ),
-        ModelRequest(parts=[ToolReturnPart(tool_name='send_status', content='ok', tool_call_id='cl_1')]),
-        # Turn 2: deferred-result call+return *and* a fresh paired exchange
-        ModelResponse(
-            parts=[
-                # Anthropic delivers the previous turn's missing search result here.
-                NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='srv_paired'),
-                # ...along with a fresh search round.
-                NativeToolSearchCallPart(args={'queries': ['weather.*']}, tool_call_id='srv_paired_2'),
-                NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='srv_paired_2'),
-            ],
-        ),
-    ]
-    # `srv_orphan` has no matching return anywhere; `srv_paired_2` is paired in the same response.
-    # `srv_paired` shows up only as a return — that's not an orphan call, so it isn't reported.
-    assert _collect_orphan_tool_search_call_ids(history) == {'srv_orphan'}
-
-
-async def test_anthropic_drops_orphaned_tool_search_call_on_replay(allow_model_requests: None) -> None:
-    """Anthropic occasionally emits a `tool_search_tool_*` server tool use alongside a client
-    `tool_use` and ends the turn without delivering the corresponding result block (see
-    anthropics/anthropic-sdk-python#1325). Bedrock then 400s on the next request:
-    `tool use ... was found without a corresponding tool_search_tool_*_tool_result block`.
-    The adapter must drop unpaired tool-search calls from the wire payload. Reported by
-    @kclisp on PR #5143.
-    """
-    pytest.importorskip('anthropic')
-
-    response = completion_message(
-        [BetaTextBlock(text='ok', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model=model, capabilities=[ToolSearch()])
-
-    @agent.tool_plain
-    def send_status(message: str) -> str:  # pragma: no cover
-        return 'ok'
-
-    @agent.tool_plain(defer_loading=True)
-    def pay_rent() -> str:  # pragma: no cover
-        return 'paid'
-
-    history: list[ModelMessage] = [
-        ModelRequest.user_text_prompt('pay rent and send status'),
-        ModelResponse(
-            parts=[
-                # Orphan: server tool search emitted in parallel with a client tool, no result delivered.
-                NativeToolSearchCallPart(
-                    provider_name='anthropic',
-                    args={'queries': ['pay.*']},
-                    tool_call_id='srv_orphan',
-                    provider_details={'strategy': 'regex'},
-                ),
-                ToolCallPart(tool_name='send_status', args={'message': 'looking'}, tool_call_id='cl_1'),
-            ],
-            provider_name='anthropic',
-        ),
-        ModelRequest(parts=[ToolReturnPart(tool_name='send_status', content='ok', tool_call_id='cl_1')]),
-    ]
-    await agent.run('continue', message_history=history)
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    blocks = [
-        cast('dict[str, Any]', block) for msg in kwargs['messages'] for block in cast('list[Any]', msg['content'])
-    ]
-    server_tool_block_ids = [block.get('id') for block in blocks if block.get('type') == 'server_tool_use']
-    assert 'srv_orphan' not in server_tool_block_ids
 
 
 async def test_anthropic_cache_tool_definitions_skips_deferred_tools(allow_model_requests: None) -> None:

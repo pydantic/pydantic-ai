@@ -18,8 +18,15 @@ rules:
       - at-claude.yml
       - bots.yml
       - ci.yml
-      - docs-preview.yml
+      - docs-navigation.yml
       - manually-deploy-docs.yml
+      # These reusable triage workflows deliberately consume the named
+      # `workflow_call` webhook secret. A job-level environment can shadow that
+      # value with a caller-repository environment secret, breaking cross-repo
+      # callers; the webhook is passed only to trusted, SHA-pinned code/actions.
+      - issue-pr-attention-monitor.yml
+      - pydantic-ai-owner-routing.yml
+      - weekly-maintainer-digest.yml
       # gh-aw-generated agentic workflow lockfiles (see
       # .github/workflows/README-pydantic-ai-agents.md). gh-aw injects API /
       # GitHub secrets as job-level env by design; they are held by the AWF

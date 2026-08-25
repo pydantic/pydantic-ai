@@ -18,6 +18,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     Capability,
     ProcessHistory,
+    ToolSearch,
 )
 from pydantic_ai.exceptions import (
     ModelRetry,
@@ -42,7 +43,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
@@ -248,6 +248,13 @@ def _call_secret_op(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
     )
 
 
+def _call_bogus_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call a tool that does not exist, then echo the retry that refuses it."""
+    for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+        return make_text_response(str(part.content))
+    return ModelResponse(parts=[ToolCallPart(tool_name='bogus_op', args={}, tool_call_id='b1')])
+
+
 def _load_compact_then_call_secret_op(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Load `guarded`, emit a `CompactionPart` to reset that state, then direct-call its tool."""
     if (report := _report_secret_op_outcome(messages)) is not None:
@@ -438,6 +445,48 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         await agent.run('hello')
 
         assert advertised == snapshot([['load_capability', 'untouched']])
+
+    async def test_unknown_tool_retry_lists_only_available_tools(self):
+        """The unknown-tool retry names the callable tools only — a withheld one stays undisclosed."""
+        agent = Agent(FunctionModel(_call_bogus_tool), capabilities=[self._guarded_capability()])
+
+        @agent.tool_plain
+        def untouched() -> str:
+            return 'safe'  # pragma: no cover
+
+        result = await agent.run('hello')
+
+        assert result.output == snapshot(
+            "Unknown tool name: 'bogus_op'. Available tools: 'load_capability', 'untouched'"
+        )
+
+
+async def test_unknown_tool_retry_omits_undiscovered_search_gated_tools():
+    """A deferred tool no search has revealed yet is not disclosed by the unknown-tool retry."""
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
+    agent = Agent(FunctionModel(_call_bogus_tool), toolsets=[toolset])
+
+    result = await agent.run('hello')
+
+    assert result.output == snapshot("Unknown tool name: 'bogus_op'. Available tools: 'search_tools'")
+
+
+async def test_unknown_tool_retry_steers_to_search_when_nothing_is_callable_yet():
+    """A native-only strategy emits no `search_tools`, so an undiscovered corpus leaves nothing callable.
+
+    A bare 'No tools available.' would be false here — the corpus exists, it just has not been
+    searched — so the retry names the step that makes a tool callable instead.
+    """
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
+    agent = Agent(FunctionModel(_call_bogus_tool), toolsets=[toolset], capabilities=[ToolSearch(strategy='bm25')])
+
+    result = await agent.run('hello')
+
+    assert result.output == snapshot(
+        "Unknown tool name: 'bogus_op'. No tools are available yet: search for the tools you need."
+    )
 
 
 async def test_reveal_of_another_capabilitys_tool_is_rejected_even_while_loaded():
@@ -678,69 +727,3 @@ def test_capability_loaded_is_a_deprecated_alias_for_capability_available() -> N
     with warnings.catch_warnings():
         warnings.simplefilter('error', PydanticAIDeprecationWarning)
         assert replace(ctx, capability_available=True).capability_available is True
-
-
-async def test_unknown_tool_retry_lists_only_callable_tools_and_points_at_the_rest() -> None:
-    """A hallucinated name gets the tools the model can actually call, plus how to reach the others.
-
-    Offering a not-yet-revealed tool as the alternative sends the model straight back into the
-    availability refusal, so the list is narrowed to what would survive that gate. The hidden ones
-    are still disclosed as a count-free hint, because "here is all you have" would otherwise tell a
-    model whose tools are all deferred to give up rather than search.
-    """
-
-    def visible_op() -> str:
-        return 'visible'  # pragma: no cover
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if any(isinstance(part, RetryPromptPart) for msg in messages for part in msg.parts):
-            return make_text_response('done')
-        return ModelResponse(parts=[ToolCallPart(tool_name='nope', args={}, tool_call_id='n1')])
-
-    toolset = FunctionToolset[Any]([visible_op])
-    toolset.add_function(secret_op, defer_loading=True)
-    result = await Agent(FunctionModel(model_fn), toolsets=[toolset]).run('go')
-
-    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
-    assert refusals == snapshot(
-        [
-            "Unknown tool name: 'nope'. Available tools: 'search_tools', 'visible_op'. Other tools exist but have "
-            'not been shown to you yet; reveal them with tool search or `load_capability`.'
-        ]
-    )
-
-
-async def test_unknown_tool_hint_when_nothing_is_callable_yet_still_points_at_the_reveal() -> None:
-    """With every tool hidden, the answer has to be "search", not "you have no tools".
-
-    Asserted against the resolved manager rather than through a run: locally, anything that defers
-    a tool also puts `search_tools` or `load_capability` in the callable set, so this state is only
-    reachable with a provider-native tool search, where the local `search_tools` function is never
-    emitted. `prepare_tools` cannot produce it either — it shapes what the model is *sent*, not what
-    the manager will run (#7305).
-    """
-    managers: list[ToolManager[Any]] = []
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return make_text_response('done')
-
-    class GrabManager(Capability[Any]):
-        async def before_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            assert ctx.tool_manager is not None
-            managers.append(ctx.tool_manager)
-            return request_context
-
-    toolset = FunctionToolset[Any]()
-    toolset.add_function(secret_op, defer_loading=True)
-    await Agent(FunctionModel(model_fn), toolsets=[toolset], capabilities=[GrabManager()]).run('go')
-
-    manager = managers[0]
-    assert manager.tools is not None
-    hidden_only = replace(manager, tools={'secret_op': manager.tools['secret_op']})
-
-    assert hidden_only._callable_tools_hint() == snapshot(  # pyright: ignore[reportPrivateUsage]
-        'No tools are available yet. Other tools exist but have not been shown to you yet; reveal them with '
-        'tool search or `load_capability`.'
-    )
