@@ -429,6 +429,7 @@ def _map_citation_source(
     location = citation.get('location')
     web = location.get('web') if isinstance(location, Mapping) else None
     if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
+        details.pop('location', None)
         return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
     return DocumentCitationSource(title=title, excerpts=excerpts, provider_details=details or None)
 
@@ -1929,14 +1930,17 @@ class BedrockStreamedResponse(StreamedResponse):
                         index = content_block_stop['contentBlockIndex']
                         if block_citations := citations.pop(index, None):
                             part = self._parts_manager.get_part_by_vendor_id(index)
-                            if isinstance(part, TextPart) and part.content:  # pragma: no branch
-                                anchor = ContentCitationAnchor(start=0, end=len(part.content))
-                                for event in self._parts_manager.handle_text_delta(
-                                    vendor_part_id=index,
-                                    content='',
-                                    citations=_map_citations(block_citations, anchor),
-                                ):
-                                    yield event
+                            anchor = (
+                                ContentCitationAnchor(start=0, end=len(part.content))
+                                if isinstance(part, TextPart) and part.content
+                                else None
+                            )
+                            for event in self._parts_manager.handle_text_delta(
+                                vendor_part_id=index,
+                                content='',
+                                citations=_map_citations(block_citations, anchor),
+                            ):
+                                yield event
                         if return_part := builtin_tool_returns.get(index):
                             # Emit the complete built-in tool return only once when the block closes.
                             yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)

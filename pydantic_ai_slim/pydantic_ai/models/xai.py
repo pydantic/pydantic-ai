@@ -1477,7 +1477,7 @@ def _map_inline_citations(inline_citations: Sequence[chat_pb2.InlineCitation], t
             case 'collections_citation':
                 collection = inline_citation.collections_citation
                 collection_ids = list(collection.collection_ids)
-                if not any((collection.file_id, collection.chunk_id, collection_ids)):
+                if not any((collection.file_id, collection.chunk_id, collection_ids, collection.chunk_content)):
                     continue
                 provider_details: dict[str, Any] = {}
                 if collection.chunk_id:

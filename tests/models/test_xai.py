@@ -1409,7 +1409,7 @@ async def test_xai_web_search_user_location_recorded(allow_model_requests: None,
 
 async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
     """xAI maps web, X, and collection inline citations to the public response shape."""
-    text = 'See [1], [2], and [3].'
+    text = 'See [1], [2], [3], and [4].'
     response = create_response(content=text)
     response.proto.outputs[0].message.citations.extend(
         [
@@ -1424,14 +1424,21 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
                 x_citation=chat_pb2.XCitation(url='https://x.com/example/status/1'),
             ),
             chat_pb2.InlineCitation(
-                start_index=18,
-                end_index=21,
+                start_index=14,
+                end_index=17,
                 collections_citation=chat_pb2.CollectionsCitation(
                     file_id='file-1',
                     chunk_id='chunk-1',
                     chunk_content='provider-selected supporting excerpt',
                     collection_ids=['collection-1'],
                     score=0.0,
+                ),
+            ),
+            chat_pb2.InlineCitation(
+                start_index=23,
+                end_index=26,
+                collections_citation=chat_pb2.CollectionsCitation(
+                    chunk_content='collection chunk with no IDs',
                 ),
             ),
             chat_pb2.InlineCitation(start_index=2, end_index=1),
@@ -1466,7 +1473,16 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
                     },
                 )
             ],
-            anchor=MarkerCitationAnchor(start=18, end=21),
+            anchor=MarkerCitationAnchor(start=14, end=17),
+        ),
+        Citation(
+            sources=[
+                DocumentCitationSource(
+                    excerpts=['collection chunk with no IDs'],
+                    provider_details={'score': 0.0},
+                )
+            ],
+            anchor=MarkerCitationAnchor(start=23, end=26),
         ),
     ]
 

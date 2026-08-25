@@ -1597,7 +1597,6 @@ async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvid
                         WebCitationSource(
                             url='https://ai.pydantic.dev',
                             title='Pydantic AI',
-                            provider_details={'location': {'web': {'url': 'https://ai.pydantic.dev'}}},
                         ),
                     ],
                     anchor=ContentCitationAnchor(start=0, end=len(text)),
@@ -1704,6 +1703,53 @@ async def test_bedrock_stream_citation_mapping(
                         )
                     ],
                     anchor=ContentCitationAnchor(start=0, end=len(text)),
+                )
+            ],
+        )
+    ]
+
+
+async def test_bedrock_stream_empty_citation_mapping(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Bedrock streaming preserves citations when a citation block has no text delta."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {
+            'contentBlockDelta': {
+                'contentBlockIndex': 0,
+                'delta': {
+                    'citation': {
+                        'title': 'Returns policy',
+                        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                    }
+                },
+            }
+        }
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with Agent(model).run_stream('What is the return window?') as result:
+        await result.get_output()
+
+    assert result.response.parts == [
+        TextPart(
+            '',
+            citations=[
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}}
+                            },
+                        )
+                    ]
                 )
             ],
         )
