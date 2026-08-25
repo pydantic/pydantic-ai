@@ -2,6 +2,9 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import gc
+import os
+import subprocess
+import sys
 import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
@@ -1151,6 +1154,134 @@ async def test_context_span_exporter_reused_for_the_same_provider(mocker: Mocker
 
     assert len(tracer_provider.processors) == 1
     assert len(constructed) == 1
+
+
+async def test_context_span_exporter_attaches_to_the_logfire_provider_it_caches(mocker: MockerFixture):
+    """A Logfire proxy provider swap cannot separate the cache entry from its attachment."""
+
+    class ProviderSwappingLogfireProxyTracerProvider:
+        def __init__(self, first: RecordingTracerProvider, second: RecordingTracerProvider) -> None:
+            self._provider = first
+            self._next_provider = second
+
+        @property
+        def provider(self) -> RecordingTracerProvider:
+            provider = self._provider
+            self._provider = self._next_provider
+            return provider
+
+        def add_span_processor(self, span_processor: SpanProcessor) -> None:
+            self.provider.add_span_processor(span_processor)
+
+    first, second = RecordingTracerProvider(), RecordingTracerProvider()
+    tracer_provider = ProviderSwappingLogfireProxyTracerProvider(first, second)
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.LogfireProxyTracerProvider',
+        ProviderSwappingLogfireProxyTracerProvider,
+    )
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=tracer_provider
+    )
+
+    with context_subtree() as span_tree:
+        pass
+    assert isinstance(span_tree, SpanTree)
+
+    assert len(first.processors) == 1
+    assert not second.processors
+    processor = first.processors[0]
+    assert isinstance(processor, SimpleSpanProcessor)
+    stored_provider, cached_exporter = _context_in_memory_providers[id(first)]
+    assert isinstance(stored_provider, weakref.ref)
+    assert stored_provider() is first
+    assert processor.span_exporter is cached_exporter
+
+
+async def test_context_span_exporter_retries_after_an_attachment_failure(mocker: MockerFixture):
+    """A failed processor attachment cannot leave an unattached exporter in the cache."""
+
+    class AttachmentFailed(BaseException):
+        pass
+
+    class RaisingTracerProvider(RecordingTracerProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts = 0
+
+        def add_span_processor(self, span_processor: SpanProcessor) -> None:
+            self.attempts += 1
+            raise AttachmentFailed('cannot attach processor')
+
+    tracer_provider = RaisingTracerProvider()
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=tracer_provider
+    )
+
+    with pytest.raises(AttachmentFailed, match='cannot attach processor') as exc_info:
+        with context_subtree():
+            pass
+    assert type(exc_info.value) is AttachmentFailed
+    assert id(tracer_provider) not in _context_in_memory_providers
+
+    with pytest.raises(AttachmentFailed, match='cannot attach processor') as exc_info:
+        with context_subtree():
+            pass
+    assert type(exc_info.value) is AttachmentFailed
+    assert tracer_provider.attempts == 2
+
+
+async def test_context_span_exporter_allows_same_thread_provider_reentry(mocker: MockerFixture):
+    """A provider that re-enters while attaching must share the outer exporter's cache entry."""
+
+    if os.getenv('PYDANTIC_EVALS_REENTRY_CHILD') != '1':
+        child_env = os.environ.copy()
+        child_env['PYDANTIC_EVALS_REENTRY_CHILD'] = '1'
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    '-m',
+                    'pytest',
+                    f'{__file__}::test_context_span_exporter_allows_same_thread_provider_reentry',
+                    '-p',
+                    'no:randomly',
+                    '-q',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=child_env,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail('same-thread provider reentry deadlocked in the child pytest process')
+        assert result.returncode == 0, result.stdout + result.stderr
+        return
+
+    class ReentrantTracerProvider(RecordingTracerProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.nested_span_tree: SpanTree | None = None
+
+        def add_span_processor(self, span_processor: SpanProcessor) -> None:
+            with context_subtree() as nested_span_tree:
+                assert isinstance(nested_span_tree, SpanTree)
+                self.nested_span_tree = nested_span_tree
+            self.processors.append(span_processor)
+
+    tracer_provider = ReentrantTracerProvider()
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=tracer_provider
+    )
+
+    with context_subtree() as outer_span_tree:
+        pass
+
+    assert isinstance(outer_span_tree, SpanTree)
+    assert isinstance(tracer_provider.nested_span_tree, SpanTree)
+    assert len(tracer_provider.processors) == 1
+    processor = tracer_provider.processors[0]
+    assert isinstance(processor, SimpleSpanProcessor)
+    assert processor.span_exporter is _context_in_memory_providers[id(tracer_provider)][1]
 
 
 async def test_context_span_exporter_cache_entry_dies_with_its_provider(mocker: MockerFixture):
