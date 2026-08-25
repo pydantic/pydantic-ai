@@ -14,11 +14,11 @@ from pydantic_ai._instructions import (
     SourcedInstruction,
     capability_instruction_id,
     normalize_instructions,
-    source_instructions,
+    resolve_declared_id,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, InstructionPart, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -361,7 +361,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def _collect_own_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         """Collect this capability's public contribution without container recursion."""
         instruction_id = capability_instruction_id(self.id) if self.id is not None else None
-        return source_instructions(normalize_instructions(self.get_instructions()), instruction_id)
+        return [
+            SourcedInstruction(
+                instruction,
+                id=resolve_declared_id(
+                    instruction_id, instruction.id if isinstance(instruction, InstructionPart) else None
+                ),
+                dynamic=not isinstance(instruction, (str, InstructionPart)),
+            )
+            for instruction in normalize_instructions(self.get_instructions())
+        ]
 
     def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
         """Return a human-readable description of this capability, or None.

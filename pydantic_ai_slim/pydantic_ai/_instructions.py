@@ -22,9 +22,6 @@ against the key of whatever source contributes it) and whether it counts as
 AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
 
 
-PreparedInstruction = str | _system_prompt.SystemPromptRunner[AgentDepsT]
-
-
 AGENT_INSTRUCTION_ID = 'agent'
 """The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] source key for the agent itself.
 
@@ -95,108 +92,64 @@ def resolve_declared_id(source_id: str | None, declared_id: str | None) -> str |
 
 @dataclass(frozen=True, repr=False)
 class SourcedInstruction(Generic[AgentDepsT]):
-    """An agent-level instruction along with the `InstructionPart.id` its content should be addressed by."""
+    """A lazy instruction recipe with the `InstructionPart.id` its content should be addressed by."""
 
     instruction: AgentInstruction[AgentDepsT]
 
     _: KW_ONLY
 
     id: str | None = None
+    dynamic: bool = False
 
     __repr__ = dataclasses_no_defaults_repr
 
 
-@dataclass(frozen=True, repr=False)
-class DeclaredInstruction(Generic[AgentDepsT]):
-    """An instruction with the id its author declared for it, relative to the source that holds it.
+async def resolve_sourced_instructions(
+    instructions: Sequence[SourcedInstruction[AgentDepsT]], run_context: RunContext[AgentDepsT]
+) -> list[InstructionPart]:
+    """Resolve authored instructions into the parts sent to the model.
 
-    Sources whose own key isn't known until collection time (a capability's, which depends on its
-    `id`) store this and combine the two halves then.
+    Literal strings with the same source key form one addressable block. An
+    [`InstructionPart`][pydantic_ai.messages.InstructionPart] always remains independent so its
+    cache treatment applies only to its own text, while callable instructions are resolved lazily
+    against the current `RunContext`.
     """
+    parts: list[InstructionPart] = []
+    group: list[InstructionPart] = []
+    pending_parts: list[InstructionPart] = []
+    group_key: str | None = None
 
-    instruction: AgentInstruction[AgentDepsT]
+    def flush_group() -> None:
+        if content := InstructionPart.join(group):
+            parts.append(InstructionPart(content=content, id=group[0].id))
+        group.clear()
+        parts.extend(pending_parts)
+        pending_parts.clear()
 
-    _: KW_ONLY
-
-    declared_id: str | None = None
-
-    __repr__ = dataclasses_no_defaults_repr
-
-
-@dataclass(frozen=True, repr=False)
-class SourcedInstructionRunner(Generic[AgentDepsT]):
-    """A prepared instruction function along with the `InstructionPart.id` its output should be addressed by."""
-
-    runner: _system_prompt.SystemPromptRunner[AgentDepsT]
-
-    _: KW_ONLY
-
-    id: str | None = None
-
-    __repr__ = dataclasses_no_defaults_repr
-
-
-def declared_id_of(instruction: AgentInstruction[AgentDepsT]) -> str | None:
-    """The id an author declared on an instruction itself, if any.
-
-    Only an [`InstructionPart`][pydantic_ai.messages.InstructionPart] can carry one — it's the shape
-    an author reaches for when a block needs more than its text. Every other shape leaves the block
-    to be addressed by its source key alone.
-    """
-    return instruction.id if isinstance(instruction, InstructionPart) else None
-
-
-def source_instructions(
-    instructions: Sequence[AgentInstruction[AgentDepsT]], id: str | None
-) -> list[SourcedInstruction[AgentDepsT]]:
-    """Attribute every one of `instructions` to the source identified by `id`.
-
-    Literal and computed instructions alike: addressing a source's id means addressing everything
-    it tells the model, the same way a toolset's id covers every block it returns. A block that
-    declared an id of its own is addressed by that, qualified against the source key.
-    """
-    return [
-        SourcedInstruction(instruction, id=resolve_declared_id(id, declared_id_of(instruction)))
-        for instruction in instructions
-    ]
-
-
-def source_declared_instructions(
-    instructions: Sequence[DeclaredInstruction[AgentDepsT]], source_id: str | None
-) -> list[SourcedInstruction[AgentDepsT]]:
-    """Resolve each declared id against its source key, falling back to the source key itself.
-
-    A declared id can come from the registration (`@capability.instructions(id=...)`) or from an
-    `InstructionPart` the author wrote; the two never both apply, since only a function is
-    registered with an id and only a part carries one.
-    """
-    return [
-        SourcedInstruction(
-            declared.instruction,
-            id=resolve_declared_id(source_id, declared.declared_id or declared_id_of(declared.instruction)),
-        )
-        for declared in instructions
-    ]
-
-
-def source_agent_instructions(
-    instructions: Sequence[AgentInstruction[AgentDepsT]],
-) -> list[SourcedInstruction[AgentDepsT]]:
-    """Attribute the agent's own instructions to `AGENT_INSTRUCTION_ID`, literals only.
-
-    `'agent'` names the base prompt, and taking that over must not silently swallow an
-    `@agent.instructions` function that injects the date or the user's name — mixing the two is
-    routine on the agent itself. Such a function opts in separately via `@agent.instructions(id=...)`.
-    """
-    return [
-        SourcedInstruction(
-            instruction,
-            id=resolve_declared_id(AGENT_INSTRUCTION_ID, declared_id_of(instruction))
-            if isinstance(instruction, (str, InstructionPart))
-            else None,
-        )
-        for instruction in instructions
-    ]
+    for sourced in instructions:
+        instruction = sourced.instruction
+        if isinstance(instruction, InstructionPart):
+            if not (content := instruction.content.strip()):
+                continue
+            flush_group()
+            group_key = None
+            parts.append(replace(instruction, content=content, id=sourced.id))
+        elif isinstance(instruction, str):
+            if not (content := instruction.strip()):
+                continue
+            if group and (sourced.id is None or group_key != sourced.id):
+                flush_group()
+            group_key = sourced.id
+            group.append(InstructionPart(content=content, id=sourced.id))
+        else:
+            if content := await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context):
+                part = InstructionPart(content=content, id=sourced.id, dynamic=sourced.dynamic)
+                if group:
+                    pending_parts.append(part)
+                else:
+                    parts.append(part)
+    flush_group()
+    return parts
 
 
 def normalize_instructions(
@@ -208,34 +161,6 @@ def normalize_instructions(
     if isinstance(instructions, (str, InstructionPart)) or callable(instructions):
         return [instructions]
     return list(instructions)
-
-
-def prepare_instructions(
-    instructions: AgentInstructions[AgentDepsT],
-) -> list[PreparedInstruction[AgentDepsT]]:
-    """Resolve raw instructions into their prepared form (`PreparedInstruction`s).
-
-    Sits between `normalize_instructions` (which flattens the input into a list) and
-    `resolve_instructions` (which runs the prepared items against a `RunContext`): static
-    strings pass through unchanged, while functions and `TemplateStr`s are wrapped in a
-    `SystemPromptRunner` so they can be invoked later. `None` (and other empty inputs) are
-    valid and yield an empty list.
-    """
-    prepared: list[PreparedInstruction[AgentDepsT]] = []
-    for instruction in normalize_instructions(instructions):
-        if isinstance(instruction, InstructionPart):
-            # Callers of this path render instructions as plain text (a toolset's own literal
-            # instructions, a loaded capability's tool-return text), so a part contributes its
-            # content; its `id` and `dynamic` are carried by the part-producing paths instead.
-            prepared.append(instruction.content)
-        elif isinstance(instruction, str):
-            prepared.append(instruction)
-        else:
-            # TemplateStr instances land here too: they are callable with a
-            # RunContext parameter, so SystemPromptRunner handles them like
-            # any other system prompt function.
-            prepared.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
-    return prepared
 
 
 def normalize_toolset_instructions(
@@ -278,19 +203,4 @@ def normalize_toolset_instructions(
         if resolved_id != part.id:
             part = replace(part, id=resolved_id)
         parts.append(part)
-    return parts
-
-
-async def resolve_instructions(
-    instructions: AgentInstructions[AgentDepsT],
-    run_context: RunContext[AgentDepsT],
-) -> list[str]:
-    parts: list[str] = []
-    for instruction in prepare_instructions(instructions):
-        if isinstance(instruction, str):
-            parts.append(instruction)
-        else:
-            resolved = await instruction.run(run_context)
-            if resolved is not None:
-                parts.append(resolved)
     return parts

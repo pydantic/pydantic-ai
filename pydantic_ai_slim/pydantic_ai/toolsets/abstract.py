@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
@@ -172,6 +173,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             Plain `str` values are treated as dynamic instructions by default.
         """
         return None
+
+    async def _collect_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]]:
+        """Collect this authoring toolset's instruction contribution."""
+        result = await self.get_instructions(ctx)
+        return [(self, normalize_toolset_instructions(result, self.id))]
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
