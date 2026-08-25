@@ -253,21 +253,31 @@ class OpenAICodexOAuthFlow:
         self.state = state or secrets.token_urlsafe(16)
         self.code_verifier = secrets.token_urlsafe(32)
 
-    def authorization_url(self, *, scope: str = _DEFAULT_SCOPE) -> str:
-        """The URL to send the user to. Note the public client pins redirects to localhost."""
+    def authorization_url(self, *, scope: str = _DEFAULT_SCOPE, extra_params: Mapping[str, str] | None = None) -> str:
+        """The URL to send the user to. Note the public client pins redirects to localhost.
+
+        Args:
+            scope: The OAuth scopes to request.
+            extra_params: Additional query parameters, merged over the defaults (so they can also
+                override them). The production Codex login's `id_token_add_organizations=true` and
+                `codex_cli_simplified_flow=true` are sent by default: without the former, the
+                `id_token` can omit the account id for multi-org accounts (live-verified 2026-08-25).
+        """
         challenge = base64.urlsafe_b64encode(hashlib.sha256(self.code_verifier.encode()).digest()).rstrip(b'=')
-        query = urlencode(
-            {
-                'response_type': 'code',
-                'client_id': _PUBLIC_CLIENT_ID,
-                'redirect_uri': self.redirect_uri,
-                'scope': scope,
-                'state': self.state,
-                'code_challenge': challenge.decode(),
-                'code_challenge_method': 'S256',
-            }
-        )
-        return f'{_AUTHORIZE_URL}?{query}'
+        params: dict[str, str] = {
+            'response_type': 'code',
+            'client_id': _PUBLIC_CLIENT_ID,
+            'redirect_uri': self.redirect_uri,
+            'scope': scope,
+            'state': self.state,
+            'code_challenge': challenge.decode(),
+            'code_challenge_method': 'S256',
+            'id_token_add_organizations': 'true',
+            'codex_cli_simplified_flow': 'true',
+        }
+        if extra_params:
+            params.update(extra_params)
+        return f'{_AUTHORIZE_URL}?{urlencode(params)}'
 
     async def exchange_code(self, code: str) -> OpenAICodexCredentials:
         """Exchange an authorization code for credentials (call this in your callback handler)."""

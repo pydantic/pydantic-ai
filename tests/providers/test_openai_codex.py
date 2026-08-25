@@ -364,6 +364,19 @@ def test_authorization_url_shape():
     expected = base64.urlsafe_b64encode(hashlib.sha256(flow.code_verifier.encode()).digest()).rstrip(b'=').decode()
     assert challenge == expected
     assert 'redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback' in url
+    # Production-parity params (live-verified 2026-08-25): without `id_token_add_organizations`,
+    # the id_token can omit the account id for multi-org accounts.
+    assert 'id_token_add_organizations=true' in url
+    assert 'codex_cli_simplified_flow=true' in url
+
+
+def test_authorization_url_extra_params_add_and_override():
+    flow = OpenAICodexOAuthFlow(state='my-state')
+    url = flow.authorization_url(extra_params={'prompt': 'login', 'codex_cli_simplified_flow': 'false'})
+    assert 'prompt=login' in url  # added
+    assert 'codex_cli_simplified_flow=false' in url  # overridden
+    assert 'codex_cli_simplified_flow=true' not in url
+    assert 'id_token_add_organizations=true' in url  # untouched default survives
 
 
 async def test_exchange_code_posts_pkce_form(monkeypatch: pytest.MonkeyPatch):
