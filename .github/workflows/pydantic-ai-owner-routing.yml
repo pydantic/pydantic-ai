@@ -21,6 +21,7 @@ permissions: {}
 jobs:
   select:
     name: Select one item
+    # Keep this cheap runner gate aligned with `_PARTICIPATION_OWNERS` in the routing policy.
     if: >-
       (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') &&
       (github.event_name != 'issue_comment' ||
@@ -82,22 +83,29 @@ jobs:
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
           sparse-checkout-cone-mode: false
-      - name: Revalidate and send canonical routing intent
-        id: notify
+      - name: Revalidate and prepare canonical routing intent
+        id: prepare
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
-          PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
           ROUTE_NUMBER: ${{ needs.select.outputs.number }}
           ROUTE_OWNER: ${{ needs.select.outputs.owner }}
           ROUTE_EVIDENCE: ${{ needs.select.outputs.evidence }}
         run: >-
-          python .github/scripts/semantic_owner_router.py notify
+          python .github/scripts/semantic_owner_router.py prepare
           --number "$ROUTE_NUMBER"
           --owner "$ROUTE_OWNER"
           --evidence "$ROUTE_EVIDENCE"
+      - name: Send canonical routing intent
+        if: steps.prepare.outputs.should_notify == 'true'
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: ${{ steps.prepare.outputs.slack_payload }}
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
       - name: Revalidate and assign
-        if: steps.notify.outputs.did_notify == 'true'
+        if: steps.prepare.outputs.should_notify == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ROUTE_NUMBER: ${{ needs.select.outputs.number }}

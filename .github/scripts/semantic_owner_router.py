@@ -4,14 +4,10 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -28,11 +24,7 @@ _MANUAL_OWNER = 'adtyavrdhn'
 _RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
 _FILE_LIMIT = 100
 _ASSIGNEE_LIMIT = 10
-_PARTICIPATION_CANDIDATE_LIMIT = 40
-_PARTICIPATION_QUERY_LIMIT = 100
-_PARTICIPATION_QUERY_SAMPLE = 5
 _PARTICIPATION_TIMELINE_PAGES = 2
-_PARTICIPATION_WINDOW = dt.timedelta(days=7)
 _MAX_ITEM_NUMBER = 2_147_483_647
 _ITEM_QUERY = """
 query RoutingItem($owner: String!, $name: String!, $number: Int!) {
@@ -55,11 +47,11 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
 }
 """
 _SEARCH_QUERY = """
-query RoutingRecovery($query: String!, $first: Int!) {
-  search(query: $query, type: ISSUE, first: $first) {
+query RoutingRecovery($query: String!) {
+  search(query: $query, type: ISSUE, first: 100) {
     nodes {
-      ... on Issue { number updatedAt }
-      ... on PullRequest { number updatedAt }
+      ... on Issue { number }
+      ... on PullRequest { number }
     }
   }
 }
@@ -145,32 +137,7 @@ _RULES: dict[str, tuple[Rule, ...]] = {
         Rule('DouweM', ('durable-exec', 'cap:step-persistence'), ('pydantic_ai_harness/step_persistence/',)),
     ),
 }
-_PARTICIPATION_OWNERS: dict[str, frozenset[str]] = {
-    'pydantic/pydantic-ai': frozenset({'adtyavrdhn', 'dsfaccini', 'DouweM'}),
-    # Mike is never selected by topic or a casual comment. A Harness review is
-    # the explicit evidence that he is already working on that particular PR.
-    'pydantic/pydantic-ai-harness': frozenset({'adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger'}),
-}
-_ROUTE_OWNERS = frozenset(
-    {
-        _MANUAL_OWNER,
-        *(rule.owner for rules in _RULES.values() for rule in rules),
-        *(owner for owners in _PARTICIPATION_OWNERS.values() for owner in owners),
-    }
-)
-_EVIDENCE = frozenset(
-    {
-        'manual:conflict-or-unknown',
-        'manual:incomplete-file-list',
-        'manual:incomplete-labels',
-        'manual:invalid-file-list',
-        'manual:unowned-production-path',
-        *(f'manual:unavailable-owner:{owner}' for owner in _ROUTE_OWNERS if owner != _MANUAL_OWNER),
-        *(f'participant:{owner}' for owner in _ROUTE_OWNERS),
-        *(f'label:{label}' for rules in _RULES.values() for rule in rules for label in rule.labels),
-        *(f'path:{path}' for rules in _RULES.values() for rule in rules for path in rule.paths),
-    }
-)
+_PARTICIPATION_OWNERS = frozenset({'adtyavrdhn', 'dsfaccini', 'DouweM'})
 
 
 class Decision(TypedDict):
@@ -333,52 +300,25 @@ def _connection_complete(value: object) -> bool:
     return isinstance(page_info, Mapping) and cast(Mapping[str, object], page_info).get('hasNextPage') is False
 
 
-def _now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
-
-
-def _github_time(value: object) -> dt.datetime:
-    if not isinstance(value, str):
-        raise ValueError('GitHub returned an invalid timestamp')
-    parsed = dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
-    if parsed.tzinfo is None:
-        raise ValueError('GitHub returned an invalid timestamp')
-    return parsed.astimezone(dt.timezone.utc)
-
-
-def _participant_owner(repo: str, login: str) -> str | None:
+def _participant_owner(login: str) -> str | None:
     key = login.casefold()
-    return next((owner for owner in _PARTICIPATION_OWNERS[repo] if owner.casefold() == key), None)
+    return next((owner for owner in _PARTICIPATION_OWNERS if owner.casefold() == key), None)
 
 
-def _recent_participant(
+def _latest_participant(
     client: attention.GitHubClient,
     repo: str,
     number: int,
     owners: Sequence[str],
-    *,
-    now: dt.datetime,
 ) -> str | None:
-    """Return the latest configured owner who visibly replied in the recent timeline."""
+    """Return the latest configured owner visible in the bounded timeline."""
     allowed = {owner.casefold(): owner for owner in owners}
-    cutoff = now - _PARTICIPATION_WINDOW
-    responses: list[tuple[dt.datetime, int, str]] = []
-    timeline = client.last_pages(
-        f'/repos/{repo}/issues/{number}/timeline',
-        count=_PARTICIPATION_TIMELINE_PAGES,
-    )
-    for index, event in enumerate(timeline):
+    latest: str | None = None
+    for event in client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=_PARTICIPATION_TIMELINE_PAGES):
         reply = attention.structured_reply(event)
-        if reply is None:
-            continue
-        actor, when = reply
-        owner = allowed.get(actor.casefold())
-        if owner == 'mpfaffenberger' and event.get('event') != 'reviewed':
-            continue
-        if owner is not None and when >= cutoff:
-            responses.append((when, index, owner))
-    responses.sort()
-    return responses[-1][2] if responses else None
+        if reply is not None and (owner := allowed.get(reply[0].casefold())) is not None:
+            latest = owner
+    return latest
 
 
 def _participant_from_evidence(decision: Decision) -> str | None:
@@ -412,13 +352,15 @@ def _participant_decision(
     repo: str,
     number: int,
     login: str | None,
-    *,
-    now: dt.datetime,
 ) -> Decision | None:
-    if not login or (owner := _participant_owner(repo, login)) is None:
+    if not login or (owner := _participant_owner(login)) is None:
         return None
-    qualified = _qualified_participation_owners(client, repo)
-    if _recent_participant(client, repo, number, qualified, now=now) != owner:
+    qualified = tuple(
+        candidate
+        for candidate in _PARTICIPATION_OWNERS
+        if client.maintainer_login(repo, candidate, refresh=True) is not None
+    )
+    if _latest_participant(client, repo, number, qualified) != owner:
         return None
     return _decision(client, repo, number, owner, f'participant:{owner}')
 
@@ -436,7 +378,6 @@ def decision_for(
     number: int,
     *,
     participant_login: str | None = None,
-    now: dt.datetime | None = None,
 ) -> Selection:
     """Refetch one item and make a deterministic, fail-closed decision."""
     repo = _repository(repo)
@@ -461,7 +402,7 @@ def decision_for(
     is_pull_request = item.get('__typename') == 'PullRequest'
     if is_pull_request and (draft_status := _pull_request_draft_status(item)) is not None:
         return Selection(number=number, decision=None, status=draft_status)
-    participant = _participant_decision(client, repo, number, participant_login, now=now or _now())
+    participant = _participant_decision(client, repo, number, participant_login)
     if participant is not None:
         return Selection(number=number, decision=participant, status='route')
     if participant_login is not None:
@@ -507,8 +448,8 @@ def decision_for(
     )
 
 
-def _search_items(client: attention.GitHubClient, query: str, *, first: int) -> list[tuple[int, dt.datetime]]:
-    result = client.post('/graphql', {'query': _SEARCH_QUERY, 'variables': {'query': query, 'first': first}})
+def _search_numbers(client: attention.GitHubClient, query: str) -> list[int]:
+    result = client.post('/graphql', {'query': _SEARCH_QUERY, 'variables': {'query': query}})
     if not isinstance(result, Mapping):
         raise RuntimeError('GitHub rejected the recovery query')
     response = cast(Mapping[str, object], result)
@@ -521,14 +462,12 @@ def _search_items(client: attention.GitHubClient, query: str, *, first: int) -> 
     search_data = cast(Mapping[str, object], search)
     if not isinstance(search_data.get('nodes'), list):
         raise RuntimeError('GitHub returned invalid recovery metadata')
-    items: list[tuple[int, dt.datetime]] = []
+    numbers: list[int] = []
     for entry in _connection_nodes(search_data):
         if not isinstance(entry, Mapping):
             raise RuntimeError('GitHub returned invalid recovery metadata')
-        number = _item_number(cast(Mapping[str, object], entry).get('number'))
-        updated = _github_time(cast(Mapping[str, object], entry).get('updatedAt'))
-        items.append((number, updated))
-    return items
+        numbers.append(_item_number(cast(Mapping[str, object], entry).get('number')))
+    return numbers
 
 
 def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, ...]:
@@ -539,52 +478,10 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
     )
 
 
-def _qualified_participation_owners(client: attention.GitHubClient, repo: str) -> tuple[str, ...]:
-    return tuple(
-        owner
-        for owner in sorted(_PARTICIPATION_OWNERS[repo], key=str.casefold)
-        if client.maintainer_login(repo, owner, refresh=True) is not None
-    )
-
-
 def _recovery_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
     query = f'repo:{repo} is:open created:>={_RECOVERY_EPOCH} -draft:true {negatives} sort:created-asc'
-    return [number for number, _ in _search_items(client, query, first=100)]
-
-
-def _participation_candidates(
-    client: attention.GitHubClient,
-    repo: str,
-    qualified: Sequence[str],
-    *,
-    now: dt.datetime,
-) -> list[int]:
-    eligible = [owner for owner in qualified if owner in _PARTICIPATION_OWNERS[repo]]
-    negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
-    cutoff = (now - _PARTICIPATION_WINDOW).date().isoformat()
-    matches: dict[int, dt.datetime] = {}
-    slot = int(now.timestamp() // dt.timedelta(hours=6).total_seconds())
-    for owner in eligible:
-        for qualifier, kind in (('commenter', ''), ('reviewed-by', 'is:pr ')):
-            query = (
-                f'repo:{repo} is:open -draft:true {kind}{qualifier}:{owner} '
-                f'updated:>={cutoff} {negatives} sort:updated-desc'
-            )
-            results = _search_items(client, query, first=_PARTICIPATION_QUERY_LIMIT)
-            # Direct conversation comments are event-driven. This small rotating
-            # slice recovers formal reviews, inline review comments, and missed
-            # events without rereading a hundred discussion timelines per run.
-            pages = max(1, (len(results) + _PARTICIPATION_QUERY_SAMPLE - 1) // _PARTICIPATION_QUERY_SAMPLE)
-            start = slot % pages * _PARTICIPATION_QUERY_SAMPLE
-            for number, updated in results[start : start + _PARTICIPATION_QUERY_SAMPLE]:
-                matches[number] = max(updated, matches.get(number, updated))
-    return [
-        number
-        for number, _ in sorted(matches.items(), key=lambda value: (value[1], value[0]), reverse=True)[
-            :_PARTICIPATION_CANDIDATE_LIMIT
-        ]
-    ]
+    return _search_numbers(client, query)
 
 
 def select(
@@ -593,25 +490,16 @@ def select(
     issue_number: str | None,
     pull_request_number: str | None,
     participant_login: str | None = None,
-    *,
-    now: dt.datetime | None = None,
 ) -> Selection:
     """Select exactly the event item or one recovery candidate."""
     repo = _repository(repo)
     if number := event_number(issue_number, pull_request_number):
         if participant_login:
-            owner = _participant_owner(repo, participant_login)
+            owner = _participant_owner(participant_login)
             if owner is None or client.maintainer_login(repo, owner, refresh=True) is None:
                 return Selection(number=number, decision=None, status='non-maintainer-response')
-        return decision_for(client, repo, number, participant_login=participant_login, now=now)
-    current_time = now or _now()
+        return decision_for(client, repo, number, participant_login=participant_login)
     qualified = _qualified_owners(client, repo)
-    eligible = [owner for owner in qualified if owner in _PARTICIPATION_OWNERS[repo]]
-    for number in _participation_candidates(client, repo, qualified, now=current_time):
-        if owner := _recent_participant(client, repo, number, eligible, now=current_time):
-            selection = decision_for(client, repo, number, participant_login=owner, now=current_time)
-            if selection['decision'] is not None:
-                return selection
     for number in _recovery_numbers(client, repo, qualified):
         selection = decision_for(client, repo, number)
         if selection['decision'] is not None:
@@ -661,59 +549,21 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     return True
 
 
-def parse_mentions(value: str, owner: str) -> dict[str, str]:
-    """Validate the caller-owned mention needed by this decision."""
-    if owner not in _ROUTE_OWNERS:
-        raise ValueError('notification owner is not routable')
-    return attention.slack_mentions(value, owner)
-
-
-def notify(repo: str, decision: Decision, mentions_value: str, webhook: str) -> None:
-    """Send a constant-only Slack assignment notice without redirects."""
+def _slack_payload(repo: str, decision: Decision, mentions_value: str) -> str:
+    """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
-    if decision['owner'] not in _OWNERS or decision['evidence'] not in _EVIDENCE:
-        raise ValueError('notification decision is not canonical')
-    mentions = parse_mentions(mentions_value, decision['owner'])
-    parsed = urllib.parse.urlparse(webhook)
-    if (
-        parsed.scheme != 'https'
-        or parsed.hostname != 'hooks.slack.com'
-        or parsed.port is not None
-        or not parsed.path.startswith('/services/')
-        or parsed.query
-        or parsed.fragment
-        or parsed.username
-        or parsed.password
-    ):
-        raise ValueError('Slack webhook URL is invalid')
+    mentions = attention.slack_mentions(mentions_value, decision['owner'])
     text = f'Routing intent: {repo}#{decision["number"]} → {mentions[decision["owner"]]}\nWhy: {decision["evidence"]}'
-    request = urllib.request.Request(
-        webhook,
-        data=json.dumps({'text': text}).encode(),
-        method='POST',
-        headers={'Content-Type': 'application/json'},
-    )
-    try:
-        with urllib.request.build_opener(attention.NoRedirect).open(request, timeout=10) as response:
-            body = response.read(3)
-            if response.status != 200 or body != b'ok':
-                raise RuntimeError('Slack rejected the notification')
-    except urllib.error.HTTPError as exc:
-        code = exc.code
-        exc.close()
-        raise RuntimeError(f'Slack notification failed with HTTP {code}') from None
-    except urllib.error.URLError:
-        raise RuntimeError('Slack notification failed at the network boundary') from None
+    return json.dumps({'text': text}, separators=(',', ':'))
 
 
-def notify_current(
+def prepare_current(
     client: attention.GitHubClient,
     repo: str,
     expected: Decision,
     mentions_value: str,
-    webhook: str,
-) -> bool:
-    """Notify only while the selected route still matches current GitHub state."""
+) -> str | None:
+    """Build a notice only while the selected route still matches GitHub."""
     current = decision_for(
         client,
         repo,
@@ -721,9 +571,8 @@ def notify_current(
         participant_login=_participant_from_evidence(expected),
     )
     if current['decision'] != expected:
-        return False
-    notify(repo, expected, mentions_value, webhook)
-    return True
+        return None
+    return _slack_payload(repo, expected, mentions_value)
 
 
 def _output(values: Mapping[str, object]) -> None:
@@ -741,9 +590,9 @@ def _summary(line: str) -> None:
 
 
 def main() -> int:
-    """Run the select, assign, or notify workflow phase."""
+    """Run the select, prepare, or assign workflow phase."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['select', 'assign', 'notify'])
+    parser.add_argument('mode', choices=['select', 'assign', 'prepare'])
     parser.add_argument('--number', type=int)
     parser.add_argument('--owner')
     parser.add_argument('--evidence')
@@ -754,19 +603,18 @@ def main() -> int:
         if not token:
             raise ValueError('GITHUB_TOKEN is required')
         client = attention.GitHubClient(token)
-        if args.mode == 'notify':
+        if args.mode == 'prepare':
             if args.number is None or args.owner is None or args.evidence is None:
-                parser.error('notify requires --number, --owner, and --evidence')
+                parser.error('prepare requires --number, --owner, and --evidence')
             expected = Decision(number=_item_number(args.number), owner=args.owner, evidence=args.evidence)
-            did_notify = notify_current(
+            payload = prepare_current(
                 client,
                 repo,
                 expected,
                 os.environ['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'],
-                os.environ['PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL'],
             )
-            _output({'did_notify': str(did_notify).lower()})
-            _summary(f'#{args.number}: ' + ('notified routing intent' if did_notify else 'route changed'))
+            _output({'should_notify': str(payload is not None).lower(), 'slack_payload': payload or ''})
+            _summary(f'#{args.number}: ' + ('prepared routing intent' if payload else 'route changed'))
             return 0
         if args.mode == 'select':
             selected = select(
@@ -801,9 +649,7 @@ def main() -> int:
         )
         _summary(f'#{expected["number"]}: ' + ('assigned' if did_assign else 'already owned'))
         return 0
-    except (KeyError, OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
-        if isinstance(exc, urllib.error.HTTPError):
-            exc.close()
+    except (KeyError, OSError, ValueError, RuntimeError) as exc:
         print(f'owner routing failed: {type(exc).__name__}', file=sys.stderr)
         return 1
 

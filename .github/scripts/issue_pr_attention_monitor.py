@@ -10,7 +10,6 @@ import math
 import os
 import re
 import sys
-import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -46,11 +45,9 @@ _MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
 _ITEM_PROBE_LIMIT = 40
 _RUN_PROBE_LIMIT = 400
 _RESPONSE_LIMIT = 5_000_000
-_SEARCH_INTERVAL_SECONDS = 2.1
 _SNAPSHOT_LIMIT = 80_000
 _WEEKLY_ITEM_LIMIT = 3
-_LEGACY_ACTIVE_ITEM_LIMIT = 1
-_LEGACY_DORMANT_ITEM_LIMIT = 1
+_LEGACY_ITEM_LIMIT = 2
 _WEEKLY_TEXT_LIMIT = 30_000
 REPOSITORIES = frozenset({'pydantic/pydantic-ai', 'pydantic/pydantic-ai-harness'})
 MAINTAINER_OWNERS = ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')
@@ -139,19 +136,8 @@ class GitHubClient:
         self._token = token
         self._maintainers: dict[tuple[str, str], str | None] = {}
         self._probes = 0
-        self._next_search_at = 0.0
-
-    def _pace_search(self) -> None:
-        """Stay below Search's 30/minute quota and burst-sensitive secondary limit."""
-        now = time.monotonic()
-        if delay := max(0.0, self._next_search_at - now):
-            time.sleep(delay)
-            now = time.monotonic()
-        self._next_search_at = now + _SEARCH_INTERVAL_SECONDS
 
     def _request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> tuple[Any, str | None]:
-        if method == 'GET' and path.startswith('/search/issues?'):
-            self._pace_search()
         data = json.dumps(payload).encode() if payload is not None else None
         request = urllib.request.Request(
             f'{_API}{path}',
@@ -352,31 +338,6 @@ def _candidate_context(
     ], pr_context
 
 
-def _rotated_search_result(
-    client: GitHubClient,
-    query: str,
-    *,
-    order: Literal['asc', 'desc'],
-    limit: int,
-    slot: int,
-) -> tuple[int, list[dict[str, Any]]]:
-    encoded = urllib.parse.quote_plus(query)
-    first = cast(
-        dict[str, Any],
-        client.get(f'/search/issues?q={encoded}&sort=updated&order={order}&per_page=1'),
-    )
-    total = int(first.get('total_count') or 0)
-    if not total:
-        return 0, []
-    searchable = min(total, 1_000)
-    page = slot % math.ceil(searchable / limit) + 1
-    result = cast(
-        dict[str, Any],
-        client.get(f'/search/issues?q={encoded}&sort=updated&order={order}&per_page={limit}&page={page}'),
-    )
-    return total, cast(list[dict[str, Any]], result.get('items') or [])
-
-
 def _rotated_search(
     client: GitHubClient,
     query: str,
@@ -385,7 +346,20 @@ def _rotated_search(
     limit: int,
     slot: int,
 ) -> list[dict[str, Any]]:
-    return _rotated_search_result(client, query, order=order, limit=limit, slot=slot)[1]
+    encoded = urllib.parse.quote_plus(query)
+    first = cast(
+        dict[str, Any],
+        client.get(f'/search/issues?q={encoded}&sort=updated&order={order}&per_page=1'),
+    )
+    total = min(int(first.get('total_count') or 0), 1_000)
+    if not total:
+        return []
+    page = slot % math.ceil(total / limit) + 1
+    result = cast(
+        dict[str, Any],
+        client.get(f'/search/issues?q={encoded}&sort=updated&order={order}&per_page={limit}&page={page}'),
+    )
+    return cast(list[dict[str, Any]], result.get('items') or [])
 
 
 def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
@@ -1309,26 +1283,20 @@ def _unowned_query(
     repo: str,
     owners: Sequence[str],
     *,
-    legacy: bool = False,
-    recently_active: bool | None = None,
-    now: dt.datetime,
+    lane: Literal['recent', 'legacy', 'draft'],
 ) -> str:
     exclusions = ' '.join(f'-assignee:{owner}' for owner in owners)
-    if not legacy:
+    if lane == 'recent':
         return f'repo:{repo} is:open created:>={ROUTING_RECOVERY_EPOCH} -draft:true {exclusions}'
-    query = f'repo:{repo} is:open created:<{ROUTING_RECOVERY_EPOCH} -draft:true {exclusions}'
-    recent_since = (now - dt.timedelta(days=14)).date().isoformat()
-    if recently_active is True:
-        return f'{query} updated:>={recent_since}'
-    if recently_active is False:
-        return f'{query} updated:<{recent_since}'
-    return query
+    if lane == 'legacy':
+        return f'repo:{repo} is:open created:<{ROUTING_RECOVERY_EPOCH} -draft:true {exclusions}'
+    return f'repo:{repo} is:pr is:open draft:true {exclusions}'
 
 
 def _unowned_snapshot(
-    client: GitHubClient, repo: str, owners: Sequence[str], *, now: dt.datetime
+    client: GitHubClient, repo: str, owners: Sequence[str]
 ) -> tuple[int, tuple[int, dt.datetime] | None]:
-    query = _unowned_query(repo, owners, now=now)
+    query = _unowned_query(repo, owners, lane='recent')
     total, items = _search_summary(client, f'{query} sort:created-asc', first=1)
     if not items:
         return total, None
@@ -1336,17 +1304,11 @@ def _unowned_snapshot(
 
 
 def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention: str | None = None) -> str:
-    """Build one daily intake-health heartbeat with every unowned item in a named lane."""
-    issues = _search_count(client, f'repo:{repo} is:issue is:open')
-    pulls = _search_count(client, f'repo:{repo} is:pr is:open')
+    """Build one daily heartbeat for the queues that need prompt maintainer action."""
     active = _search_count(client, f'repo:{repo} is:open label:"{_ACTION_LABEL}"')
     cooling = _search_count(client, f'repo:{repo} is:open label:"{_ESCALATED_LABEL}"')
     owners = _qualified_routing_owners(client, repo)
-    exclusions = ' '.join(f'-assignee:{owner}' for owner in owners)
-    recent_unowned, oldest = _unowned_snapshot(client, repo, owners, now=now)
-    legacy_active = _search_count(client, _unowned_query(repo, owners, legacy=True, recently_active=True, now=now))
-    legacy_dormant = _search_count(client, _unowned_query(repo, owners, legacy=True, recently_active=False, now=now))
-    drafts = _search_count(client, f'repo:{repo} is:pr is:open draft:true {exclusions}')
+    recent_unowned, oldest = _unowned_snapshot(client, repo, owners)
     # Counts and item numbers only: the heartbeat must stay free of issue and PR
     # prose, which is attacker-controlled text.
     oldest_age = max(0, (now - oldest[1]).days) if oldest else 0
@@ -1362,37 +1324,8 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
     saturation = ' — recovery search saturated' if recent_unowned > 100 else ''
     return (
         f'{prefix} Attention coverage for {_slack_escape(repo)} — '
-        f'{issues} issues + {pulls} PRs open; queue: {active} active, {cooling} cooling; '
-        f'intake: {recent}{saturation}; legacy without designated owner: '
-        f'{legacy_active} recently active, {legacy_dormant} dormant; drafts without designated owner: {drafts}.'
-    )
-
-
-def _weekly_query(repo: str, owner: str, state: Literal['active', 'cooling', 'other']) -> str:
-    base = f'repo:{repo} is:open assignee:{owner}'
-    if state == 'active':
-        return f'{base} label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
-    if state == 'cooling':
-        return f'{base} label:"{_ESCALATED_LABEL}"'
-    return f'{base} -label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
-
-
-def _weekly_state(labels: set[str]) -> Literal['active', 'cooling', 'other']:
-    if _ESCALATED_LABEL in labels:
-        return 'cooling'
-    return 'active' if _ACTION_LABEL in labels else 'other'
-
-
-def _weekly_search(
-    client: GitHubClient,
-    repo: str,
-    owner: str,
-    state: Literal['active', 'cooling', 'other'],
-) -> tuple[int, list[dict[str, Any]]]:
-    return _search_summary(
-        client,
-        f'{_weekly_query(repo, owner, state)} sort:updated-asc',
-        first=_WEEKLY_ITEM_LIMIT,
+        f'queue: {active} active, {cooling} cooling; intake: {recent}{saturation}. '
+        'The Monday digest covers assigned, legacy, and draft work.'
     )
 
 
@@ -1423,24 +1356,27 @@ def _weekly_items(
     client: GitHubClient,
     repo: str,
     owner: str,
-    state: Literal['active', 'cooling', 'other'],
     matches: Sequence[dict[str, Any]],
+    seen: set[int],
     *,
+    attention_only: bool,
     limit: int,
     now: dt.datetime,
 ) -> list[str]:
     if not limit:
         return []
     lines: list[str] = []
-    phrases = {'active': 'awaiting maintainer action', 'cooling': 'channel escalation cooling', 'other': 'assigned'}
     for match in matches:
         number = int(match['number'])
+        if number in seen:
+            continue
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
         assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
+        labels = _labels(current)
         if (
             str(current.get('state') or '').casefold() != 'open'
             or owner.casefold() not in assignees
-            or _weekly_state(_labels(current)) != state
+            or (attention_only and _ACTION_LABEL not in labels)
         ):
             continue
         timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100')
@@ -1448,32 +1384,16 @@ def _weekly_items(
         title = _slack_escape(str(current.get('title') or ''))[:120]
         status = _slack_escape(_weekly_status(current, timeline, owner, now=now))
         label = f'#{number} {title}'.rstrip()
-        lines.append(
-            f'• <https://github.com/{repo}/issues/{number}|{label}> — {phrases[state]} · updated {updated} · {status}'
+        phrase = (
+            'channel escalation cooling'
+            if _ESCALATED_LABEL in labels
+            else ('awaiting maintainer action' if _ACTION_LABEL in labels else 'assigned')
         )
+        lines.append(f'• <https://github.com/{repo}/issues/{number}|{label}> — {phrase} · updated {updated} · {status}')
+        seen.add(number)
         if len(lines) == limit:
             break
     return lines
-
-
-def _legacy_search(
-    client: GitHubClient, repo: str, owners: Sequence[str], *, recently_active: bool, now: dt.datetime
-) -> tuple[int, list[dict[str, Any]]]:
-    query = _unowned_query(repo, owners, legacy=True, recently_active=recently_active, now=now)
-    if recently_active:
-        return _search_summary(
-            client,
-            f'{query} sort:updated-asc',
-            first=_LEGACY_ACTIVE_ITEM_LIMIT,
-        )
-    week_slot = now.date().toordinal() // 7
-    return _rotated_search_result(
-        client,
-        query,
-        order='asc',
-        limit=_LEGACY_DORMANT_ITEM_LIMIT,
-        slot=week_slot,
-    )
 
 
 def _legacy_items(
@@ -1482,10 +1402,8 @@ def _legacy_items(
     matches: Sequence[dict[str, Any]],
     owners: Sequence[str],
     *,
-    recently_active: bool,
     now: dt.datetime,
 ) -> list[str]:
-    cutoff = (now - dt.timedelta(days=14)).date()
     lines: list[str] = []
     owner_keys = {owner.casefold() for owner in owners}
     for match in matches:
@@ -1493,12 +1411,11 @@ def _legacy_items(
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
         assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
         updated_at = _parse_time(str(current['updated_at']))
-        is_recent = updated_at.date() >= cutoff
         if (
             str(current.get('state') or '').casefold() != 'open'
             or assignees.intersection(owner_keys)
+            or current.get('draft') is True
             or _parse_time(str(current['created_at'])).date() >= dt.date.fromisoformat(ROUTING_RECOVERY_EPOCH)
-            or is_recent != recently_active
         ):
             continue
         timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100')
@@ -1512,11 +1429,10 @@ def _legacy_items(
 
 
 def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
-    """Build a bounded Monday view of each maintainer's assignments."""
+    """Build a bounded Monday view of every ownership lane."""
     if repo not in REPOSITORIES:
         raise ValueError(f'Unsupported repository: {repo}')
     lines = [f':spiral_calendar_pad: *Monday maintainer queues — {_slack_escape(repo)}* · {now.date().isoformat()}']
-    states: tuple[Literal['active', 'cooling', 'other'], ...] = ('active', 'cooling', 'other')
     owners = _qualified_routing_owners(client, repo)
     for owner in MAINTAINER_OWNERS:
         name = _MAINTAINER_NAMES[owner]
@@ -1530,53 +1446,61 @@ def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
             query = urllib.parse.quote_plus(f'repo:{repo} is:open assignee:{owner}')
             lines.append(f'<https://github.com/{repo}/issues?q={query}|View all {total}>')
             continue
-        found = {state: _weekly_search(client, repo, owner, state) for state in states}
-        counts = {state: result[0] for state, result in found.items()}
-        total = _search_count(client, f'repo:{repo} is:open assignee:{owner}')
+        base = f'repo:{repo} is:open assignee:{owner}'
+        total, assigned = _search_summary(client, f'{base} sort:updated-asc', first=_WEEKLY_ITEM_LIMIT * 2)
         if not total:
             lines.extend(['', f'*{name}* (`{owner}`) — clear'])
             continue
-        category_total = sum(counts.values())
-        categories = (
-            f'snapshot: {counts["active"]} awaiting action · {counts["cooling"]} cooling'
-            if category_total == total
-            else 'attention categories updating'
+        awaiting, attention = _search_summary(
+            client,
+            f'{base} label:"{_ACTION_LABEL}" sort:updated-asc',
+            first=_WEEKLY_ITEM_LIMIT,
         )
-        lines.extend(['', f'*{name}* (`{owner}`) — {total} open assigned · {categories}'])
-        remaining = _WEEKLY_ITEM_LIMIT
-        for state in states:
-            details = _weekly_items(client, repo, owner, state, found[state][1], limit=remaining, now=now)
-            lines.extend(details)
-            remaining -= len(details)
-            if not remaining:
-                break
+        lines.extend(['', f'*{name}* (`{owner}`) — {total} open assigned · {awaiting} awaiting action'])
+        seen: set[int] = set()
+        details = _weekly_items(
+            client, repo, owner, attention, seen, attention_only=True, limit=_WEEKLY_ITEM_LIMIT, now=now
+        )
+        details.extend(
+            _weekly_items(
+                client,
+                repo,
+                owner,
+                assigned,
+                seen,
+                attention_only=False,
+                limit=_WEEKLY_ITEM_LIMIT - len(details),
+                now=now,
+            )
+        )
+        lines.extend(details)
         query = urllib.parse.quote_plus(f'repo:{repo} is:open assignee:{owner}')
         lines.append(f'<https://github.com/{repo}/issues?q={query}|View all {total}>')
-    active_total, active_matches = _legacy_search(client, repo, owners, recently_active=True, now=now)
-    dormant_total, dormant_matches = _legacy_search(client, repo, owners, recently_active=False, now=now)
+    recent_query = _unowned_query(repo, owners, lane='recent')
+    legacy_query = _unowned_query(repo, owners, lane='legacy')
+    draft_query = _unowned_query(repo, owners, lane='draft')
+    recent_total = _search_count(client, recent_query)
+    legacy_total, legacy_matches = _search_summary(
+        client, f'{legacy_query} sort:updated-desc', first=_LEGACY_ITEM_LIMIT
+    )
+    draft_total = _search_count(client, draft_query)
     lines.extend(
         [
             '',
-            f'*Manual legacy backlog — Aditya* — {active_total + dormant_total} pre-rollout items without a '
-            f'designated owner · '
-            f'{active_total} recently active · {dormant_total} dormant',
+            f'*Unassigned queues* — {recent_total} post-rollout · {legacy_total} legacy · {draft_total} drafts '
+            'without a designated owner',
         ]
     )
-    active_lines = _legacy_items(client, repo, active_matches, owners, recently_active=True, now=now)
-    dormant_lines = _legacy_items(client, repo, dormant_matches, owners, recently_active=False, now=now)
-    if active_lines:
-        lines.extend(['Recently active, oldest activity first:', *active_lines])
-    if dormant_lines:
-        lines.extend(['Rotating dormant sample:', *dormant_lines])
-    if not active_lines and not dormant_lines:
-        lines.append('No live legacy preview items in this snapshot; use the full-queue links.')
-    if dormant_total > 1_000:
-        lines.append(":warning: Dormant preview is saturated at GitHub Search's first 1,000 matches.")
-    active_query = urllib.parse.quote_plus(_unowned_query(repo, owners, legacy=True, recently_active=True, now=now))
-    dormant_query = urllib.parse.quote_plus(_unowned_query(repo, owners, legacy=True, recently_active=False, now=now))
+    legacy_lines = _legacy_items(client, repo, legacy_matches, owners, now=now)
+    if legacy_lines:
+        lines.extend(['Recently updated legacy items:', *legacy_lines])
+    encoded_recent = urllib.parse.quote_plus(recent_query)
+    encoded_legacy = urllib.parse.quote_plus(legacy_query)
+    encoded_drafts = urllib.parse.quote_plus(draft_query)
     lines.append(
-        f'<https://github.com/{repo}/issues?q={active_query}|View recently active> · '
-        f'<https://github.com/{repo}/issues?q={dormant_query}|View dormant>'
+        f'<https://github.com/{repo}/issues?q={encoded_recent}|View post-rollout> · '
+        f'<https://github.com/{repo}/issues?q={encoded_legacy}|View legacy> · '
+        f'<https://github.com/{repo}/issues?q={encoded_drafts}|View drafts>'
     )
     text = '\n'.join(lines)
     if len(text.encode()) > _WEEKLY_TEXT_LIMIT:

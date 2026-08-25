@@ -3,6 +3,7 @@ name: Weekly maintainer digest
 on:
   schedule:
     - cron: '23 14 * * 1'
+  workflow_dispatch: {}
   workflow_call:
     secrets:
       PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
@@ -16,7 +17,9 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') && github.event.schedule == '23 14 * * 1' }}
+    if: >-
+      ${{ (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') &&
+      (github.event.schedule == '23 14 * * 1' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
