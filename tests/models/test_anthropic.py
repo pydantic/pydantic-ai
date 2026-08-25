@@ -316,7 +316,27 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
     history = ModelMessagesTypeAdapter.validate_json(
         ModelMessagesTypeAdapter.dump_json(
             [
-                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'Research the earlier document.',
+                                BinaryContent(data=b'Earlier document.', media_type='text/plain'),
+                            ]
+                        )
+                    ]
+                ),
+                ModelResponse(parts=[TextPart('Earlier answer.')], provider_name='anthropic'),
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'Research the latest document.',
+                                BinaryContent(data=b'Latest document.', media_type='text/plain'),
+                            ]
+                        )
+                    ]
+                ),
                 ModelResponse(
                     parts=[
                         TextPart(
@@ -326,7 +346,7 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
                                     sources=[
                                         WebCitationSource(
                                             url='https://example.com/source',
-                                            title='Source',
+                                            title='',
                                             excerpts=['supporting passage'],
                                         )
                                     ],
@@ -336,11 +356,11 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
                                     sources=[
                                         DocumentCitationSource(
                                             document_id='file-not-allowed-on-this-input-type',
-                                            title='Report',
+                                            title='',
                                             excerpts=['document passage'],
                                             provider_details={
                                                 'type': 'char_location',
-                                                'document_index': 2,
+                                                'document_index': 1,
                                                 'start_char_index': 10,
                                                 'end_char_index': 26,
                                             },
@@ -359,7 +379,7 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
 
     await model.request(history, None, ModelRequestParameters())
 
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == snapshot(
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][3] == snapshot(
         {
             'role': 'assistant',
             'content': [
@@ -370,15 +390,15 @@ async def test_anthropic_citations_replay_after_message_json_round_trip(allow_mo
                         {
                             'type': 'web_search_result_location',
                             'url': 'https://example.com/source',
-                            'title': 'Source',
+                            'title': None,
                             'cited_text': 'supporting passage',
                             'encrypted_index': 'opaque-web-index',
                         },
                         {
                             'type': 'char_location',
                             'cited_text': 'document passage',
-                            'document_index': 2,
-                            'document_title': 'Report',
+                            'document_index': 1,
+                            'document_title': None,
                             'start_char_index': 10,
                             'end_char_index': 26,
                         },
@@ -469,6 +489,26 @@ def _anthropic_replayable_web_citation() -> Citation:
                 )
             ],
             id='zero-page-number',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'char_location',
+                                'document_index': 0,
+                                'start_char_index': 0,
+                                'end_char_index': 11,
+                            },
+                        )
+                    ]
+                )
+            ],
+            id='orphan-document-index',
         ),
         pytest.param(
             'anthropic',

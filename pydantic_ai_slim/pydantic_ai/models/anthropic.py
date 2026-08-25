@@ -165,7 +165,7 @@ def _citation_range(
     return start, end
 
 
-def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None:
+def _map_citation_for_replay(citation: Citation, document_count: int) -> BetaTextCitationParam | None:
     """Reconstruct one Anthropic citation only when the normalized shape is lossless enough."""
     if citation.anchor is not None or len(citation.sources) != 1:
         return None
@@ -178,7 +178,7 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
         return BetaCitationWebSearchResultLocationParam(
             type='web_search_result_location',
             url=source.url,
-            title=source.title,
+            title=source.title or None,
             cited_text=source.excerpts[0],
             encrypted_index=encrypted_index,
         )
@@ -189,7 +189,7 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
     details = source.provider_details or {}
     citation_type = details.get('type')
     document_index = details.get('document_index')
-    if not _is_int_at_least(document_index, 0):
+    if not _is_int_at_least(document_index, 0) or document_index >= document_count:
         return None
 
     cited_text = source.excerpts[0]
@@ -205,7 +205,7 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
             type='char_location',
             cited_text=cited_text,
             document_index=document_index,
-            document_title=source.title,
+            document_title=source.title or None,
             start_char_index=start_char_index,
             end_char_index=end_char_index,
         )
@@ -218,7 +218,7 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
             type='page_location',
             cited_text=cited_text,
             document_index=document_index,
-            document_title=source.title,
+            document_title=source.title or None,
             start_page_number=start_page_number,
             end_page_number=end_page_number,
         )
@@ -231,7 +231,7 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
             type='content_block_location',
             cited_text=cited_text,
             document_index=document_index,
-            document_title=source.title,
+            document_title=source.title or None,
             start_block_index=start_block_index,
             end_block_index=end_block_index,
         )
@@ -239,11 +239,13 @@ def _map_citation_for_replay(citation: Citation) -> BetaTextCitationParam | None
         return None
 
 
-def _map_citations_for_replay(citations: list[Citation] | None) -> list[BetaTextCitationParam] | None:
+def _map_citations_for_replay(
+    citations: list[Citation] | None, document_count: int
+) -> list[BetaTextCitationParam] | None:
     if not citations:
         return None
 
-    result = [_map_citation_for_replay(citation) for citation in citations]
+    result = [_map_citation_for_replay(citation, document_count) for citation in citations]
     if any(citation is None for citation in result):
         return None
     return [citation for citation in result if citation is not None]
@@ -1831,6 +1833,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         include_citations = model_settings.get('include_citations', False)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        # Anthropic's document indices count every document block across the request history, including tool results.
+        document_count = 0
         # Cross-provider files are dropped silently here, not raised via
         # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
         pending_container_uploads = [
@@ -1934,6 +1938,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                             else:
                                 user_content_params.append(content)
+                                if isinstance(content, dict) and content.get('type') == 'document':
+                                    document_count += 1
                     elif isinstance(request_part, ToolAvailabilityDeltaPart):
                         if not supports_tool_availability_delta:
                             # `prepare_messages` projects the delta onto the local tool-search exchange
@@ -2015,19 +2021,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                             include_citations,
                                         )
                                     )
+                                    document_count += 1
                                 else:
                                     raise UserError(
                                         f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
                                         'Only image and document (text/application) types are supported.'
                                     )
                             elif is_multi_modal_content(item):
-                                tool_result_content.append(
-                                    await self._map_file_to_content_block(
-                                        cast(BinaryContent | ImageUrl | DocumentUrl | AudioUrl | VideoUrl, item),
-                                        'tool returns',
-                                        include_citations=include_citations,
-                                    )
+                                file_content_block = await self._map_file_to_content_block(
+                                    cast(BinaryContent | ImageUrl | DocumentUrl | AudioUrl | VideoUrl, item),
+                                    'tool returns',
+                                    include_citations=include_citations,
                                 )
+                                tool_result_content.append(file_content_block)
+                                if file_content_block['type'] == 'document':
+                                    document_count += 1
                             elif isinstance(item, str):  # pragma: no branch
                                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
@@ -2100,7 +2108,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     if isinstance(response_part, TextPart):
                         if response_part.content:
                             citations = (
-                                _map_citations_for_replay(response_part.citations)
+                                _map_citations_for_replay(response_part.citations, document_count)
                                 if response_part.provider_name == self.system
                                 or (response_part.provider_name is None and m.provider_name == self.system)
                                 else None
