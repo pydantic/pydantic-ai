@@ -130,13 +130,12 @@ if the head changes, capture the new SHA and restart the loop.
    flake or pre-existing on main, say so with evidence.
 2. **Wait for a standards review on the captured SHA.**
    [`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
-   and [`.github/workflows/bots.yml`](../../../.github/workflows/bots.yml) are the sole source of
-   truth for eligibility, accepted verdicts or no-ops, and fallback mechanics. Require an accepted
-   terminal outcome under those rules that identifies the captured SHA, then recheck that the live
-   head is unchanged. Triage existing feedback before a fallback; any valid finding and push restarts
-   the lifecycle. A human request remains blocking until that human re-reviews or a maintainer
-   dismisses it; do not dismiss a human request. Missing, stale, or failed reviews are unsatisfied;
-   retry when appropriate, otherwise escalate.
+   is the source of truth for eligibility and accepted verdicts or no-ops. Require its accepted
+   terminal outcome to identify the captured SHA, then recheck that the live head is unchanged.
+   Do not substitute a named reviewer unless repository instructions explicitly require one. Any
+   valid finding and push restarts the lifecycle. A human request remains blocking until that human
+   re-reviews or a maintainer dismisses it; do not dismiss a human request. Missing, stale, or failed
+   required reviews are unsatisfied; retry when appropriate, otherwise escalate.
 3. **Triage every comment** (bots and humans alike). For each one:
    - **Valid** → fix it, run targeted verification, commit, pass the fresh pre-push gate, push, and
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
@@ -152,48 +151,22 @@ if the head changes, capture the new SHA and restart the loop.
    documented skip explicitly. Repeat until CI is green, the required hosted review covers the
    current HEAD, no applicable check is pending or failing, and no comment is outstanding.
 
-## After the required hosted review — consider an optional `douwebot` review
-
-Once the workflow-defined hosted-review gate is satisfied, `douwebot` can add a deeper second
-opinion when the source workflows permit it. It is optional here, not another definition of the
-required verdict or fallback path.
-
-Once the loop above has terminated — CI green, every comment triaged — decide whether to apply it
-before handing the PR back or requesting merge:
-
-- **Apply it last, not early.** It won't re-run on later pushes, so a deep review of a
-  still-moving PR is wasted money.
-- **Use judgment on whether it's warranted.** Skip it when you're highly confident there's nothing
-  left to catch (typo fixes, dependency bumps, mechanical chores). Apply it for substantive
-  changes: new features, behavior changes, public API surface, non-trivial bug fixes — and
-  user-facing docs, where it catches things like examples using outdated models. In between, weigh
-  cost against risk; smaller PRs are cheaper to review, so lean toward applying when unsure.
-- **How:** `gh pr edit <number> --add-label douwebot`. This requires triage permission on the repo
-  (Pydantic team members and their agents). If it fails, quote the actual error — don't skip it
-  based on an assumed lack of permission.
-- **Afterwards, re-enter the loop.** The review posts comments that need the same triage as any
-  other.
-
 ## Before handing the PR back
 
-Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
+Run this final metadata check after CI, the required hosted review, and comments have settled:
 
 1. Capture the exact current title and body before dispatching the reviewer.
 2. Dispatch a fresh subagent under the fresh reviewer context contract that has not worked on the PR.
-3. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, and captured title
-   and body.
-4. Ask it to check only objective title and body requirements in this section and the root
+3. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, and captured
+   metadata. Ask it to check only objective title and body rules in this section and root
    `AGENTS.md`.
-5. Require either `current` or an exact correction that names the objective rule it satisfies. The
-   reviewer returns text only; the implementing agent applies only objective-rule corrections.
-6. Before applying metadata, record the edit timestamp. Code changes restart the full lifecycle.
-   Metadata-only changes skip code pre-push review and CI, but require the corresponding
-   `edited`-event workflow runs created after that timestamp to succeed. Classify any documented
-   permitted skip or neutral result explicitly; otherwise keep the PR incomplete. Stale checks on
-   the same HEAD are not evidence. Triage any resulting feedback.
-7. After a correction and its checks, repeat the metadata check once with another fresh subagent;
-   otherwise retain the first review. Immediately before handing the PR back, re-read the title and
-   body and compare them with the final reviewer's snapshot. If either differs, restart the metadata
-   gate on the new snapshot. Hand the PR back only if it reports `current`; escalate conflicting,
-   repeated, or discretionary rewrites to a maintainer rather than looping.
-8. Report the human-only AI-code checkbox separately.
+4. Require either `current` or an exact, rule-backed correction. The reviewer returns text only.
+   For a correction, record the edit timestamp, apply it, and wait for the corresponding
+   `edited`-event checks; stale checks on the same HEAD are not evidence. Require their
+   workflow-defined accepted terminal outcomes, classifying any permitted skip or no-op; otherwise
+   keep the PR incomplete. Triage feedback. Metadata-only changes skip code review and CI; code
+   changes restart the full lifecycle.
+5. Recheck corrected metadata once with another fresh subagent. Immediately before handoff, compare
+   the live title and body with the reviewed snapshot; any difference restarts this gate. Escalate
+   repeated or discretionary rewrites instead of looping.
+6. Report the human-only AI-code checkbox separately.

@@ -14,13 +14,13 @@ developer's model subscription. It is independent of the hosted review that runs
 
 ## Read the review rubric
 
-When `.github/workflows/bots.yml` contains the `douwebot` job, read its `prompt:`; that is the
-source of truth. Apply its judgment and comment-quality rules, but ignore hosted-workflow mechanics.
-In repositories without that workflow, apply the same core rubric:
+The stable target branch's root and directory instructions are the source of truth. Apply this
+review rubric independently of any named hosted reviewer:
 
-- Is the work ready, correctly scoped, non-duplicative, and aligned with maintainer guidance?
+- Is the work ready, correctly scoped, non-duplicative, and aligned with the task and settled
+  repository decisions?
 - Does it meet root and directory instructions, including public API and compatibility requirements?
-- Does any behavior, design decision, or trade-off require explicit maintainer consideration?
+- Does any behavior, design decision, or trade-off require an explicit human decision?
 - Review in priority order: public API, concepts and behavior, documentation, tests, code quality.
 - If a high-level problem may invalidate lower-level work, report it first and defer the lower-level
   pass until remediation.
