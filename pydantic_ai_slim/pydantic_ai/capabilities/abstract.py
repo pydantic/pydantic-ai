@@ -450,6 +450,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Return a filtered or modified list. The result flows into both the model's request
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
+
+        On a deferred capability this runs only once the capability is loaded, and then receives
+        every function tool, as an always-available capability does. There is nothing to govern
+        before that: an unloaded capability's tools are neither advertised to the model nor
+        callable, so no filtering here could change what the model can reach.
         """
         return tool_defs
 

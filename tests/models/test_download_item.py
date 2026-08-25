@@ -1,7 +1,7 @@
 import re
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
@@ -63,20 +63,20 @@ async def test_download_item_rejects_oversized_body(
 ) -> None:
     """File URL downloads reject response bodies larger than the 50 MiB default limit."""
 
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             content=b'x' * 1024,
             headers={'content-type': url.media_type},
             request=request,
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
-    def create_http_client(*, timeout: int) -> httpx.AsyncClient:
+    def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
         return http_client
 
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
 
     with (
         patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 512),

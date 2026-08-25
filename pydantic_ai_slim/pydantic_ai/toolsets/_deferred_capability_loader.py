@@ -53,7 +53,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         load_tool = ToolsetTool(
             toolset=self,
             tool_def=load_tool_def,
-            max_retries=1,
+            max_retries=ctx.max_retries,
             args_validator=_load_capability_args_ta.validator,  # pyright: ignore[reportArgumentType]
         )
 
@@ -87,7 +87,6 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         instructions_text = InstructionPart.join(parts)
 
-        ctx.loaded_capability_ids.add(capability_id)
         result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
         tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
         return ToolReturn(return_value=result, tools=tools or None)

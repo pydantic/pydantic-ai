@@ -2,7 +2,7 @@
 
 A capability is a bundle of instructions and/or tools, optionally with settings and hooks. A multi-workflow agent normally sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks for the whole run — even though most requests need just one workflow. That cost grows with each workflow you add: more input tokens, and worse tool selection once the visible tool set passes the ~30–50-tool mark where models start picking the wrong one (the same pressure behind [tool search](../tools-advanced.md#tool-search)).
 
-Mark a [capability](overview.md) with `defer_loading=True` and give it a stable `id`, and it collapses to a one-line catalog entry — its `id` plus an optional `description` — that the model pulls in on demand. Here's the minimal shape:
+Mark a [capability](overview.md) with `defer_loading=True` and give it a stable `id`, and it collapses to a one-line catalog entry — its `id` plus an optional `description` — that the model pulls in on demand. The minimal setup is:
 
 ```python {title="on_demand_capability.py"}
 from pydantic_ai import Agent
@@ -120,7 +120,7 @@ History carries *which* capability ids were loaded, not the capabilities themsel
 
 Several [`RunContext`][pydantic_ai.tools.RunContext] fields expose progressive-disclosure state to tools, hooks, and capability-owned callbacks:
 
-- `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded through the `load_capability` tool, reconstructed from message history and updated when a capability loads during the current step.
+- `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded through the `load_capability` tool, reconstructed from message history before each model request. A capability loaded during a step appears from the *next* step onwards, which is also the first step on which its instructions and tools reach the model.
 - `ctx.available_capability_ids` — the currently-live capability IDs: always-available capabilities plus `ctx.loaded_capability_ids`.
 - `ctx.capability_loaded` — only meaningful while Pydantic AI is running a capability-owned hook or callback. It is scoped to that capability; deferred hooks and callbacks are skipped until this value would be true.
 - `ctx.discovered_tool_names` — deferred function tools revealed by durable history, whether through tool search, [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn], or a capability load.
@@ -255,7 +255,7 @@ agent = Agent('openai-responses:gpt-5.4', capabilities=[AccountSecurityWorkflow(
 
 ### Deferred native tools
 
-Any [native capability](overview.md#built-in-capabilities) (`WebSearch`, `WebFetch`, `MCP`, …) can be deferred the same way. The native tool definition only enters the request after the `load_capability` tool loads the capability — see [Cache implications](#cache-implications) for the trade-off:
+Any [provider-adaptive capability](overview.md#provider-adaptive-tools) (`WebSearch`, `WebFetch`, `MCP`, …) can be deferred the same way. The native tool definition only enters the request after the `load_capability` tool loads the capability — see [Cache implications](#cache-implications) for the trade-off:
 
 ```python {title="deferred_native_tool.py"}
 from pydantic_ai import Agent
@@ -406,7 +406,7 @@ def issue_refund(order_id: str, amount: float) -> str:
     return f'Refund of ${amount} issued for {order_id}.'
 ```
 
-The model sees `issue_refund` from turn 1. If it tries to call it before opening `refund-policy`, the hook bounces the call back with a message pointing at the exact `load_capability` tool call to make. The model loads the policy, the policy text lands in its recent context, and the refund runs *within* the rules — and only then. Same shape for any tool-and-runbook pair.
+The model sees `issue_refund` from turn 1. If it tries to call it before opening `refund-policy`, the hook bounces the call back with a message pointing at the exact `load_capability` tool call to make. The model loads the policy, the policy text lands in its recent context, and the refund runs *within* the rules — and only then. The same pattern works for any tool-and-runbook pair.
 
 Because the loaded set is just runtime data on [`RunContext`][pydantic_ai.tools.RunContext], the pattern generalises: dynamic instructions can warn when a risky pair of workflows is open, audit hooks can tag traces with the loaded set, escalation hooks can require an extra confirmation when both `payments` and `account-security` are active.
 
