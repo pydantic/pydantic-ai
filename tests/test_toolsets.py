@@ -1808,6 +1808,20 @@ async def test_combined_toolset_collects_instructions_concurrently_in_child_orde
     ]
 
 
+async def test_combined_toolset_instruction_override_is_authoring_boundary():
+    """A subclass that authors instructions does not collect its children's instructions."""
+
+    class AuthoringCombinedToolset(CombinedToolset[object]):
+        async def get_instructions(self, ctx: RunContext[object]) -> str:
+            return 'Combined override.'
+
+    combined = AuthoringCombinedToolset([MockToolsetWithInstructions('Child.', id='child')])
+
+    assert await CombinedToolset([combined]).get_instructions(build_run_context(None)) == [
+        InstructionPart(content='Combined override.', dynamic=True)
+    ]
+
+
 async def test_toolset_ids_must_be_unique_when_they_key_instruction_blocks():
     """Distinct toolsets cannot share the id that addresses their instruction blocks.
 

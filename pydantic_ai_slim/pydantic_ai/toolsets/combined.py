@@ -11,6 +11,7 @@ from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
 from ..messages import InstructionPart
+from ._instruction_collection import collect_toolset_instructions
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -109,6 +110,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
-        from ._instruction_collection import collect_toolset_instructions
-
         return await collect_toolset_instructions(self, ctx) or None
+
+    async def _collect_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]]:
+        if type(self).get_instructions is not CombinedToolset.get_instructions:
+            return await super()._collect_instruction_contributions(ctx)
+        child_contributions = await gather(
+            *(toolset._collect_instruction_contributions(ctx) for toolset in self.toolsets)
+        )
+        return [contribution for contributions in child_contributions for contribution in contributions]

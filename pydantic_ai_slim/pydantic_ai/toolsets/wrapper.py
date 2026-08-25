@@ -6,8 +6,10 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
+from ._instruction_collection import collect_toolset_instructions
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -51,9 +53,18 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         """Collect instructions from the wrapped authoring toolset."""
-        from ._instruction_collection import collect_toolset_instructions
-
         return await collect_toolset_instructions(self.wrapped, ctx) or None
+
+    async def _collect_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]]:
+        if type(self).get_instructions is not WrapperToolset.get_instructions:
+            result = await self.get_instructions(ctx)
+            source = self.wrapped
+            while isinstance(source, WrapperToolset):
+                source = source.wrapped
+            return [(source, normalize_toolset_instructions(result, self.id))]
+        return await self.wrapped._collect_instruction_contributions(ctx)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)
