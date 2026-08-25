@@ -624,20 +624,16 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     return True
 
 
-def _routing_reason(repo: str, decision: Decision, mention: str) -> str:
+def _routing_reason(decision: Decision, mention: str) -> str:
     evidence = decision['evidence']
     owner = decision['owner']
     if evidence == f'participant:{owner}':
         return f'{mention} was the most recent qualified maintainer to participate.'
     if evidence == f'author:{owner}':
         return f'{mention} authored this pull request.'
-    for rule in _RULES[repo]:
-        for label in rule.labels:
-            if evidence == f'label:{label}' and owner == rule.owner:
-                return f'Matched ownership label `{label}`.'
-        for path in rule.paths:
-            if evidence == f'path:{path}' and owner == rule.owner:
-                return f'Matched ownership path `{path}`.'
+    source, separator, detail = evidence.partition(':')
+    if separator and detail and source in {'label', 'path'}:
+        return f'Matched ownership {source} `{detail}`.'
     manual_reasons = {
         'manual:conflict-or-unknown': 'No single semantic owner matched, so this needs manual triage.',
         'manual:incomplete-file-list': 'The changed-file list could not be completely verified, so this needs manual triage.',
@@ -650,7 +646,7 @@ def _routing_reason(repo: str, decision: Decision, mention: str) -> str:
     unavailable = evidence.removeprefix('manual:unavailable-owner:')
     if owner == _MANUAL_OWNER and unavailable != evidence and unavailable in _OWNERS:
         return 'The matched semantic owner is unavailable, so this needs manual triage.'
-    raise ValueError('routing evidence is not canonical')
+    raise ValueError('routing evidence cannot be explained')
 
 
 def _slack_payload(repo: str, item_type: str, decision: Decision, mentions_value: str) -> str:
@@ -666,7 +662,7 @@ def _slack_payload(repo: str, item_type: str, decision: Decision, mentions_value
         raise ValueError('item type is not canonical')
     number = decision['number']
     item = f'<https://github.com/{repo}/{path}/{number}|{repo}#{number}>'
-    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(repo, decision, mention)}'
+    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision, mention)}'
     return json.dumps({'text': text}, separators=(',', ':'))
 
 

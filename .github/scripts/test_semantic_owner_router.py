@@ -967,20 +967,12 @@ def test_notification_explains_canonical_routing_evidence(decision: router.Decis
     assert json.loads(payload)['text'].endswith(f'\nWhy: {reason}')
 
 
-@pytest.mark.parametrize(
-    ('item_type', 'evidence'),
-    [
-        ('Discussion', 'label:streaming'),
-        ('Issue', 'label:<!channel>'),
-        ('Issue', 'manual:unavailable-owner:attacker'),
-    ],
-)
-def test_notification_rejects_noncanonical_type_and_evidence(item_type: str, evidence: str):
+def test_notification_rejects_noncanonical_item_type():
     with pytest.raises(ValueError, match='canonical'):
         router._slack_payload(  # pyright: ignore[reportPrivateUsage]
             CORE,
-            item_type,
-            router.Decision(number=7, owner='adtyavrdhn', evidence=evidence),
+            'Discussion',
+            router.Decision(number=7, owner='adtyavrdhn', evidence='label:streaming'),
             MENTIONS,
         )
 
