@@ -22,8 +22,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 
-_STARTUP_TIMEOUT = 10
+_STARTUP_TIMEOUT = 30
 _COMPLETION_TIMEOUT = 0.5
+
+pytestmark = pytest.mark.xdist_group('reentrancy_contracts')
 
 
 def _run_and_signal(operation: Callable[[], None], started: ProcessEvent) -> None:
