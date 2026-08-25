@@ -283,6 +283,7 @@ class CohereModel(Model[AsyncClientV2]):
             parts=parts,
             usage=_map_usage(response, self._provider.name, provider_url, self._model_name),
             model_name=self._model_name,
+            provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=provider_url,
             finish_reason=finish_reason,

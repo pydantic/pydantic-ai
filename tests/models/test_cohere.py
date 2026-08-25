@@ -173,6 +173,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -191,12 +192,36 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_provider_response_id_forwarded(allow_model_requests: None):
+    """The Cohere adapter must forward `ChatResponse.id` as `ModelResponse.provider_response_id`.
+
+    Unit-style mock: the mock's `completion_message` sets `id='resp-abc'`, and the adapter must pass
+    it through rather than silently dropping it — a regression a VCR test cannot reliably pin because
+    the cassette matcher ignores response-id drift.
+    """
+    c = ChatResponse(
+        id='resp-abc',
+        finish_reason='COMPLETE',
+        message=AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='hello')],
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hi')
+    response = next(m for m in result.all_messages() if isinstance(m, ModelResponse))
+    assert response.provider_response_id == 'resp-abc'
 
 
 async def test_request_simple_usage(allow_model_requests: None):
@@ -364,6 +389,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -463,6 +489,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -499,6 +526,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -524,6 +552,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
