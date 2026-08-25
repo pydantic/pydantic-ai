@@ -79,8 +79,10 @@ from ._toolset import (
     get_dynamic_tools,
     guard_run_context,
     resolve_tool_durable_config,
+    run_args_validator,
     unwrap_recorded_tool_call_result,
     unwrap_tool_call_result,
+    validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
 from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, unwrap_model
@@ -623,6 +625,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             case GetInstructionsId(toolset_id=toolset_id):
                 prefix = f'{self.name}__mcp_server__{toolset_id}'
                 return self._unit_name('mcp_server', prefix=prefix, suffix='.get_instructions')
+            case ValidateToolArgumentsId(toolset_kind=kind, toolset_id=toolset_id):
+                legacy_kind = f'{kind}_toolset'
+                prefix = f'{self.name}__{legacy_kind}__{toolset_id}'
+                return self._unit_name(legacy_kind, prefix=prefix, suffix='.validate_args')
             # Call identities are named by `_legacy_invocation_name`, which also has the tool name.
             case CallToolId(toolset_kind=kind, toolset_id=toolset_id):  # pragma: no cover
                 legacy_kind = 'mcp_server' if kind == 'mcp' else f'{kind}_toolset'
@@ -839,6 +845,61 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _dynamic_call_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> Any:
         return IdentityParameterTransport[_DynamicCallToolParams]()
 
+    def _validation_context(self, ctx: RunContext[Any]) -> Any:
+        return ctx.validation_context
+
+    def _bind_validate_tool_arguments_operation(
+        self,
+        backend: DurableOperationBackend[Any],
+        toolset: FunctionToolset[AgentDepsT] | DynamicToolset[AgentDepsT],
+        kind: Literal['function', 'dynamic'],
+    ) -> Any:
+        """Bind the single shared tool-argument-validation declaration."""
+        toolset_id = cast(str, toolset.id)
+        parameter_transport: Any
+        cache_identity: Any
+        if kind == 'function':
+            function_toolset = cast(FunctionToolset[AgentDepsT], toolset)
+            parameter_transport = self._function_call_parameter_transport(function_toolset)
+            cache_identity = _FunctionCallToolCacheIdentity()
+        else:
+            dynamic_toolset = cast(DynamicToolset[AgentDepsT], toolset)
+            parameter_transport = self._dynamic_call_parameter_transport(dynamic_toolset)
+            cache_identity = _DynamicCallToolCacheIdentity()
+
+        async def handler(params: _CallToolParams | _DynamicCallToolParams) -> CallToolResult:
+            if isinstance(params, _CallToolParams):
+                function_params = await self._prepare_function_call_params(
+                    cast(FunctionToolset[AgentDepsT], toolset), params
+                )
+                assert function_params.tool is not None
+                with self._tool_run_context_scope(function_params.ctx) as durable_ctx:
+                    return await wrap_tool_call_result(
+                        run_args_validator(function_params.tool, function_params.tool_args, durable_ctx)
+                    )
+            with self._tool_run_context_scope(params.ctx) as durable_ctx:
+                return await wrap_tool_call_result(
+                    validate_dynamic_tool_args(
+                        cast(DynamicToolset[AgentDepsT], toolset),
+                        params.name,
+                        params.tool_args,
+                        durable_ctx,
+                        tool_def=params.tool_def,
+                        validation_context=self._validation_context,
+                    )
+                )
+
+        return backend.bind(
+            DurableOperation(
+                operation_id=ValidateToolArgumentsId(kind, toolset_id),
+                handler=handler,
+                parameter_transport=parameter_transport,
+                cache_identity=cache_identity,
+                result_codec=self._legacy_result_codec(CallToolResult),
+                config_role=OperationConfigRole.TOOL_VALIDATION,
+            )
+        )
+
     def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> Any:
         return IdentityParameterTransport[_CallToolParams]()
 
@@ -904,9 +965,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             config_role=OperationConfigRole.TOOL_CALL,
         )
         call_tool = backend.bind(operation)
+        validate_args = self._bind_validate_tool_arguments_operation(backend, toolset, 'function')
 
         def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
             return backend.config_for_tool(operation, tool, tool_name)
+
+        def resolve_validation_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            return backend.config_for_tool(validate_args.operation, tool, tool_name)
 
         async def call_tool_operation(
             name: str,
@@ -919,13 +984,26 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
             return self._unwrap_tool_result(payload)
 
+        async def validate_args_operation(
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+            config: Any,
+        ) -> None:
+            with self._tool_call_payload_errors(name):
+                payload = await validate_args(_CallToolParams(name, tool_args, ctx, tool), config=config)
+            self._unwrap_tool_result(payload)
+
         return DurableFunctionToolset(
             toolset,
             in_durable_context=self._toolset_in_durable_context,
             call_tool_operation=call_tool_operation,
+            validate_args_operation=validate_args_operation,
             resolve_tool_config=resolve_tool_config,
+            resolve_validation_config=resolve_validation_config,
             lifecycle=self._toolset_lifecycles['function'],
-            durable_registrations=self._bound_operation_registrations(call_tool),
+            durable_registrations=self._bound_operation_registrations(call_tool, validate_args),
             durable_config=base_config,
         )
 
@@ -939,7 +1017,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def call_tool_handler(params: _DynamicCallToolParams) -> CallToolResult:
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
                 return await wrap_tool_call_result(
-                    call_dynamic_tool(toolset, params.name, params.tool_args, durable_ctx)
+                    call_dynamic_tool(
+                        toolset,
+                        params.name,
+                        params.tool_args,
+                        durable_ctx,
+                        tool_def=params.tool_def,
+                        validation_context=self._validation_context,
+                    )
                 )
 
         backend = self._build_operation_backend()
@@ -962,9 +1047,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             config_role=OperationConfigRole.TOOL_CALL,
         )
         call_tool = backend.bind(call_operation)
+        validate_args = self._bind_validate_tool_arguments_operation(backend, toolset, 'dynamic')
 
         def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
             return backend.config_for_tool(call_operation, tool, tool_name)
+
+        def resolve_validation_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            return backend.config_for_tool(validate_args.operation, tool, tool_name)
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
             if not self._journal_discovery:
@@ -986,14 +1075,29 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 )
             return self._unwrap_tool_result(payload)
 
+        async def validate_args_operation(
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+            config: Any,
+        ) -> None:
+            with self._tool_call_payload_errors(name):
+                payload = await validate_args(
+                    _DynamicCallToolParams(name, tool_args, ctx, tool_def=tool.tool_def), config=config
+                )
+            self._unwrap_tool_result(payload)
+
         return DurableDynamicToolset(
             toolset,
             in_durable_context=self._toolset_in_durable_context,
             get_tools_operation=get_tools_operation,
             call_tool_operation=call_tool_operation,
+            validate_args_operation=validate_args_operation,
             resolve_tool_config=resolve_tool_config,
+            resolve_validation_config=resolve_validation_config,
             lifecycle=self._toolset_lifecycles['dynamic'],
-            durable_registrations=self._bound_operation_registrations(get_tools, call_tool),
+            durable_registrations=self._bound_operation_registrations(get_tools, call_tool, validate_args),
             durable_config=base_config,
         )
 

@@ -7245,8 +7245,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities (request, request_stream, cancel) + 1 for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 4
+    # 3 base activities + call/validation activities for the agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 5
 
 
 def test_durability_temporal_activities_with_toolsets():
@@ -7259,8 +7259,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
-    assert len(bound.temporal_activities) == 5
+    # 3 base activities + call/validation activities for both function toolsets
+    assert len(bound.temporal_activities) == 7
 
 
 def test_durability_duplicate_toolset_id_rejected():
@@ -7293,8 +7293,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + 1 for <agent> FunctionToolset + 1 (not 2) for the shared toolset
-    assert len(bound.temporal_activities) == 5
+    # 3 base activities + call/validation activities for <agent> and the shared toolset (once)
+    assert len(bound.temporal_activities) == 7
 
 
 def test_durability_activity_config_not_mutated():
@@ -11526,7 +11526,13 @@ async def heartbeat_probe_agent_tool() -> str:
     return 'probe agent tool ran'
 
 
-_heartbeat_function_toolset = FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_tools')
+async def _heartbeat_probe_args_validator(ctx: RunContext[None]) -> None:
+    await asyncio.sleep(0.01)
+
+
+_heartbeat_function_toolset = FunctionToolset[None](
+    tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_tools'
+)
 _heartbeat_mcp_toolset = MCPToolset(
     StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
     id='hb_mcp',
@@ -11539,7 +11545,9 @@ _heartbeat_mcp_toolset = MCPToolset(
 
 async def _heartbeat_dynamic_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
     await asyncio.sleep(0.01)
-    return FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_dynamic_inner')
+    return FunctionToolset[None](
+        tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_dynamic_inner'
+    )
 
 
 async def _heartbeat_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -11566,7 +11574,7 @@ _heartbeat_agent = Agent(
     _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
     name='heartbeat_probe_agent',
     deps_type=type(None),
-    tools=[heartbeat_probe_agent_tool],
+    tools=[Tool(heartbeat_probe_agent_tool, args_validator=_heartbeat_probe_args_validator)],
     toolsets=[
         _heartbeat_function_toolset,
         _heartbeat_mcp_toolset,
@@ -11626,6 +11634,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__toolset__<agent>__validate_args': [
+                CallToolParams(
+                    name='heartbeat_probe_agent_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=agent_tool_def,
+                ),
+                None,
+            ],
             f'{prefix}__model_request': [request_params, None],
             f'{prefix}__model_request_stream': [request_params, None],
             f'{prefix}__model_cancel_suspended_response': [
@@ -11651,6 +11668,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__toolset__hb_tools__validate_args': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
             f'{prefix}__mcp_server__hb_mcp__get_tools': [get_tools_params, None],
             f'{prefix}__mcp_server__hb_mcp__get_instructions': [get_tools_params, None],
             f'{prefix}__mcp_server__hb_mcp__call_tool': [
@@ -11664,6 +11690,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             ],
             f'{prefix}__dynamic_toolset__hb_dynamic__get_tools': [get_tools_params, None],
             f'{prefix}__dynamic_toolset__hb_dynamic__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__dynamic_toolset__hb_dynamic__validate_args': [
                 CallToolParams(
                     name='heartbeat_probe_tool',
                     tool_args={},

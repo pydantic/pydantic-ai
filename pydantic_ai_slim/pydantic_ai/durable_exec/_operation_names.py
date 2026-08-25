@@ -35,12 +35,6 @@ class _NamedToolInvocation(Protocol):
     name: str
 
 
-def _validation_name_unassigned() -> RuntimeError:
-    return RuntimeError(
-        'Validate-tool-arguments operation names are pinned by PR #6906 integration and not yet assigned here'
-    )
-
-
 def _toolset_prefix(kind: ToolsetKind) -> str:
     return 'mcp_server' if kind == 'mcp' else f'{kind}_toolset'
 
@@ -72,8 +66,8 @@ class JournalOperationNamer:
                 return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.get_tools'
             case GetInstructionsId(toolset_id=toolset_id):
                 return f'{self._agent_name}__mcp_server__{toolset_id}.get_instructions'
-            case ValidateToolArgumentsId():
-                raise _validation_name_unassigned()
+            case ValidateToolArgumentsId(toolset_kind=kind, toolset_id=toolset_id):
+                return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.validate_args'
             case CallToolId(toolset_kind=kind, toolset_id=toolset_id):
                 return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.call_tool'
         assert_never(operation_id)
@@ -101,7 +95,7 @@ class PrefectOperationNamer:
                     'Prefect discovery operations do not have durable unit names in the current implementation'
                 )
             case ValidateToolArgumentsId():
-                raise _validation_name_unassigned()
+                return 'Validate Tool Args'
             case CallToolId(toolset_kind='mcp'):
                 return 'Call MCP Tool'
             case CallToolId():
@@ -110,7 +104,7 @@ class PrefectOperationNamer:
 
     def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
         name = self.operation_name(operation_id)
-        if isinstance(operation_id, CallToolId):
+        if isinstance(operation_id, CallToolId | ValidateToolArgumentsId):
             name = f'{name}: {_tool_name(params)}'
         return DurableInvocationName(name, display_name=name)
 
@@ -141,8 +135,9 @@ class TemporalOperationNamer:
                 return f'{self._prefix}__{_toolset_prefix(kind)}__{toolset_id}__get_tools'
             case GetInstructionsId(toolset_id=toolset_id):
                 return f'{self._prefix}__mcp_server__{toolset_id}__get_instructions'
-            case ValidateToolArgumentsId():
-                raise _validation_name_unassigned()
+            case ValidateToolArgumentsId(toolset_kind=kind, toolset_id=toolset_id):
+                prefix = 'toolset' if kind == 'function' else _toolset_prefix(kind)
+                return f'{self._prefix}__{prefix}__{toolset_id}__validate_args'
             case CallToolId(toolset_kind=kind, toolset_id=toolset_id):
                 prefix = 'toolset' if kind == 'function' else _toolset_prefix(kind)
                 return f'{self._prefix}__{prefix}__{toolset_id}__call_tool'

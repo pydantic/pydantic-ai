@@ -12,6 +12,7 @@ from pydantic_ai.durable_exec._operation import (
     EventStreamHandlerId,
     OperationConfigRole,
     ToolsetKind,
+    ValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer
@@ -36,7 +37,7 @@ class PrefectOperationConfig:
             return self._model
         if role is OperationConfigRole.EVENT:
             return self._event
-        assert isinstance(operation_id, CallToolId)
+        assert isinstance(operation_id, CallToolId | ValidateToolArgumentsId)
         config = self._tool(operation_id.toolset_kind, None, '')
         assert config is not False
         return config
@@ -48,8 +49,8 @@ class PrefectOperationConfig:
         tool: object | None,
         tool_name: str,
     ) -> TaskConfig | Literal[False]:
-        assert role is OperationConfigRole.TOOL_CALL
-        assert isinstance(operation_id, CallToolId)
+        assert role in (OperationConfigRole.TOOL_CALL, OperationConfigRole.TOOL_VALIDATION)
+        assert isinstance(operation_id, CallToolId | ValidateToolArgumentsId)
         return self._tool(operation_id.toolset_kind, tool, tool_name)
 
 

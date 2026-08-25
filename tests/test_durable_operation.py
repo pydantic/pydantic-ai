@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Literal, cast
 import pytest
 from typing_extensions import assert_never
 
-from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart
+from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart, Tool
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
@@ -38,6 +38,9 @@ from pydantic_ai.durable_exec._operation_names import (
 )
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
+    DurableDynamicToolset,
+    DynamicToolInfo,
+    DynamicToolsResult,
     Lifecycle,
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
@@ -45,8 +48,13 @@ from pydantic_ai.durable_exec._toolset import (
     _ToolFailed,  # pyright: ignore[reportPrivateUsage]
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import RetryPromptPart, ToolCallPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.usage import RunUsage
 
 JOURNAL_OPERATION_NAMES = {
     'compat__model.request',
@@ -57,11 +65,13 @@ JOURNAL_OPERATION_NAMES = {
     'compat__model.cancel_suspended_response.registered',
     'compat__event_stream_handler',
     'compat__function_toolset__functions.call_tool:function_tool',
+    'compat__function_toolset__functions.validate_args',
     'compat__mcp_server__mcp.get_tools',
     'compat__mcp_server__mcp.get_instructions',
     'compat__mcp_server__mcp.call_tool',
     'compat__dynamic_toolset__dynamic.get_tools',
     'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool',
+    'compat__dynamic_toolset__dynamic.validate_args',
 }
 PREFECT_OPERATION_NAMES = {
     'Model Request: test',
@@ -69,8 +79,10 @@ PREFECT_OPERATION_NAMES = {
     'Cancel Suspended Response: test',
     'Handle Stream Event',
     'Call Tool: function_tool',
+    'Validate Tool Args: function_tool',
     'Call MCP Tool: mcp_tool',
     'Call Tool: dynamic_tool',
+    'Validate Tool Args: dynamic_tool',
 }
 DBOS_OPERATION_NAMES = {
     'compat__model.request',
@@ -82,6 +94,7 @@ DBOS_OPERATION_NAMES = {
     'compat__mcp_server__mcp.call_tool',
     'compat__dynamic_toolset__dynamic.get_tools',
     'compat__dynamic_toolset__dynamic.call_tool',
+    'compat__dynamic_toolset__dynamic.validate_args',
 }
 TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__model_request',
@@ -89,12 +102,15 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__model_cancel_suspended_response',
     'agent__compat__event_stream_handler',
     'agent__compat__toolset__<agent>__call_tool',
+    'agent__compat__toolset__<agent>__validate_args',
     'agent__compat__toolset__functions__call_tool',
+    'agent__compat__toolset__functions__validate_args',
     'agent__compat__mcp_server__mcp__get_tools',
     'agent__compat__mcp_server__mcp__get_instructions',
     'agent__compat__mcp_server__mcp__call_tool',
     'agent__compat__dynamic_toolset__dynamic__get_tools',
     'agent__compat__dynamic_toolset__dynamic__call_tool',
+    'agent__compat__dynamic_toolset__dynamic__validate_args',
 }
 
 
@@ -169,14 +185,16 @@ def _ids() -> list[DurableOperationId]:
         GetToolsId('mcp', 'mcp'),
         GetInstructionsId('mcp'),
         CallToolId('function', 'functions'),
+        ValidateToolArgumentsId('function', 'functions'),
         CallToolId('mcp', 'mcp'),
         GetToolsId('dynamic', 'dynamic'),
         CallToolId('dynamic', 'dynamic'),
+        ValidateToolArgumentsId('dynamic', 'dynamic'),
     ]
 
 
 def _params(operation_id: DurableOperationId) -> object:
-    if isinstance(operation_id, CallToolId):
+    if isinstance(operation_id, CallToolId | ValidateToolArgumentsId):
         names = {'function': 'function_tool', 'mcp': 'mcp_tool', 'dynamic': 'dynamic_tool'}
         return _ToolParams(names[operation_id.toolset_kind])
     return object()
@@ -197,11 +215,13 @@ def test_journal_name_parity_with_live_old_implementation_and_table() -> None:
         old._unit_name(  # pyright: ignore[reportPrivateUsage]
             'function_toolset', prefix='compat__function_toolset__functions', tool_name='function_tool'
         ),
+        'compat__function_toolset__functions.validate_args',
         old._unit_name('mcp_server', prefix='compat__mcp_server__mcp', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name('dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name(  # pyright: ignore[reportPrivateUsage]
             'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
         ),
+        'compat__dynamic_toolset__dynamic.validate_args',
     ]
     namer = JournalOperationNamer('compat')
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in _ids()]
@@ -214,7 +234,7 @@ def test_prefect_name_parity_with_live_old_implementation_and_table() -> None:
     from pydantic_ai.durable_exec.prefect import PrefectDurability
 
     old = PrefectDurability(name='compat')
-    ids = [*_ids()[:1], _ids()[2], _ids()[4], _ids()[6], _ids()[9], _ids()[10], _ids()[12]]
+    ids = [*_ids()[:1], _ids()[2], _ids()[4], _ids()[6], _ids()[9], _ids()[10], _ids()[11], _ids()[13], _ids()[14]]
     live = [
         old._unit_name('model.request', label='Model Request', model_name='test'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name(  # pyright: ignore[reportPrivateUsage]
@@ -225,8 +245,10 @@ def test_prefect_name_parity_with_live_old_implementation_and_table() -> None:
         ),
         old._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
+        old._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
+        old._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
     ]
     namer = PrefectOperationNamer()
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
@@ -251,7 +273,18 @@ def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
     backend = old._operation_backend  # pyright: ignore[reportPrivateUsage]
     assert backend is not None
     live = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
-    ids = [_ids()[0], _ids()[2], _ids()[4], _ids()[6], _ids()[7], _ids()[8], _ids()[10], _ids()[11], _ids()[12]]
+    ids = [
+        _ids()[0],
+        _ids()[2],
+        _ids()[4],
+        _ids()[6],
+        _ids()[7],
+        _ids()[8],
+        _ids()[11],
+        _ids()[12],
+        _ids()[13],
+        _ids()[14],
+    ]
     namer = DBOSOperationNamer('compat')
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
     assert set(actual) == live
@@ -283,12 +316,15 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
         CancelSuspendedResponseId(None, 'test'),
         EventStreamHandlerId(),
         CallToolId('function', '<agent>'),
+        ValidateToolArgumentsId('function', '<agent>'),
         CallToolId('function', 'functions'),
+        ValidateToolArgumentsId('function', 'functions'),
         GetToolsId('mcp', 'mcp'),
         GetInstructionsId('mcp'),
         CallToolId('mcp', 'mcp'),
         GetToolsId('dynamic', 'dynamic'),
         CallToolId('dynamic', 'dynamic'),
+        ValidateToolArgumentsId('dynamic', 'dynamic'),
     ]
     namer = TemporalOperationNamer('compat')
     actual = {namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids}
@@ -438,17 +474,16 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
 
 
 @pytest.mark.parametrize(
-    'namer',
+    ('namer', 'expected'),
     [
-        JournalOperationNamer('agent'),
-        PrefectOperationNamer(),
-        DBOSOperationNamer('agent'),
-        TemporalOperationNamer('agent'),
+        (JournalOperationNamer('agent'), 'agent__function_toolset__tools.validate_args'),
+        (PrefectOperationNamer(), 'Validate Tool Args'),
+        (DBOSOperationNamer('agent'), 'agent__function_toolset__tools.validate_args'),
+        (TemporalOperationNamer('agent'), 'agent__agent__toolset__tools__validate_args'),
     ],
 )
-def test_validation_names_wait_for_pr_6906(namer: DurableOperationNamer) -> None:
-    with pytest.raises(RuntimeError, match=r'pinned by PR #6906 integration'):
-        namer.operation_name(ValidateToolArgumentsId('function', 'tools'))
+def test_validation_operation_names(namer: DurableOperationNamer, expected: str) -> None:
+    assert namer.operation_name(ValidateToolArgumentsId('function', 'tools')) == expected
 
 
 def test_namer_error_paths_and_unrepresented_formats() -> None:
@@ -859,8 +894,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
         result_codec=TypedResultCodec[None](type(None), mode='identity'),
         config_role=OperationConfigRole.TOOL_VALIDATION,
     )
-    with pytest.raises(RuntimeError, match='not yet assigned'):
-        backend.bind(unsupported)
+    assert backend.bind(unsupported).operation is unsupported
 
     with pytest.raises(TypeError, match='not a model or event operation'):
         backend._bind_model_or_event(unsupported, 'unsupported', {})  # pyright: ignore[reportPrivateUsage]
@@ -868,3 +902,97 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
     unsupported_call = replace(unsupported, operation_id=CallToolId('function', 'tools'))
     with pytest.raises(TypeError, match='not registered'):
         backend.bind(unsupported_call)
+
+
+async def test_dynamic_args_validator_runs_in_declarative_unit_and_preserves_schedule() -> None:
+    calls: list[str] = []
+
+    def validate_path(ctx: RunContext[None], path: str) -> None:
+        if path == '/etc/shadow':
+            raise ModelRetry('forbidden path')
+
+    async def read_file(path: str) -> str:
+        calls.append(path)
+        return path
+
+    async def stat_file(path: str) -> str:
+        calls.append(path)
+        return path
+
+    def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        prompt = messages[0].parts[-1]
+        assert isinstance(prompt, UserPromptPart)
+        tool_name, path = str(prompt.content).split(' ', 1)
+        return ModelResponse(parts=[ToolCallPart(tool_name, {'path': path})])
+
+    inner = FunctionToolset(tools=[Tool(read_file, args_validator=validate_path), Tool(stat_file)], id='inner')
+    durability = JournalDurability()
+    agent = Agent[None, str](
+        FunctionModel(model),
+        name='validation',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(lambda _: inner, id='files')],
+        capabilities=[durability],
+    )
+
+    rejected = await agent.run('read_file /etc/shadow')
+    assert calls == []
+    assert [
+        str(part.content)
+        for message in rejected.all_messages()
+        for part in message.parts
+        if isinstance(part, RetryPromptPart)
+    ] == ['forbidden path']
+    recorded_names = [name for name, _, _ in durability.calls]
+    assert 'validation__dynamic_toolset__files.validate_args' in recorded_names
+    assert 'validation__dynamic_toolset__files.call_tool:read_file' not in recorded_names
+
+    durability.calls.clear()
+    await agent.run('stat_file /tmp/file')
+    assert calls == ['/tmp/file']
+    recorded_names = [name for name, _, _ in durability.calls]
+    assert 'validation__dynamic_toolset__files.validate_args' not in recorded_names
+    assert 'validation__dynamic_toolset__files.call_tool:stat_file' in recorded_names
+
+    static_durability = JournalDurability()
+    static_agent = Agent[None, str](
+        FunctionModel(model),
+        name='static_validation',
+        deps_type=type(None),
+        toolsets=[inner],
+        capabilities=[static_durability],
+    )
+    await static_agent.run('read_file /tmp/static')
+    assert calls[-1] == '/tmp/static'
+    static_names = [name for name, _, _ in static_durability.calls]
+    assert 'static_validation__function_toolset__inner.validate_args' in static_names
+    assert 'static_validation__function_toolset__inner.call_tool:read_file' in static_names
+
+
+async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
+    async def get_tools(ctx: RunContext[None]) -> DynamicToolsResult:
+        return DynamicToolsResult(
+            tools={
+                'guarded': DynamicToolInfo(
+                    tool_def=ToolDefinition(name='guarded'), max_retries=1, has_args_validator=True
+                )
+            },
+            instructions=None,
+        )
+
+    async def never_called(*args: Any) -> Any:
+        raise AssertionError('not called')
+
+    durable = DurableDynamicToolset(
+        DynamicToolset(lambda _: None, id='missing_validation'),
+        in_durable_context=lambda: True,
+        get_tools_operation=get_tools,
+        call_tool_operation=never_called,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-never',
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    with pytest.raises(UserError, match=r"Tool 'guarded'.*has an `args_validator`"):
+        await durable.get_tools(ctx)

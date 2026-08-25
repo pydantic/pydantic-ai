@@ -23,9 +23,9 @@ from pydantic_ai.durable_exec._base import (
     _CallToolParams,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import CallToolId, DurableOperationId
+from pydantic_ai.durable_exec._operation import CallToolId, DurableOperationId, ValidateToolArgumentsId
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle
+from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
@@ -364,7 +364,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if config is False:
             from pydantic_ai.mcp import MCPToolset
 
-            if isinstance(operation_id, CallToolId) and operation_id.toolset_kind == 'dynamic':
+            if (
+                isinstance(operation_id, (CallToolId, ValidateToolArgumentsId))
+                and operation_id.toolset_kind == 'dynamic'
+            ):
                 raise UserError(
                     f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
                     '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
@@ -400,6 +403,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _dynamic_call_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> _DynamicCallTransport:
         return _DynamicCallTransport(self)
 
+    def _validation_context(self, ctx: RunContext[Any]) -> Any:
+        return validation_context_from_agent(self._agent)(ctx)
+
     def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _MCPCallTransport:
         return _MCPCallTransport(self, toolset)
 
@@ -418,7 +424,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from exc
-        args = tool.args_validator.validate_python(params.tool_args)
+        args = tool.args_validator.validate_python(params.tool_args, context=self._validation_context(params.ctx))
         return _CallToolParams(params.name, args, params.ctx, tool)
 
     def _tool_call_payload_errors(self, tool_name: str):

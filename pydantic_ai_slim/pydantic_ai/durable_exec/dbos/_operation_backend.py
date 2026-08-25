@@ -24,13 +24,14 @@ from pydantic_ai.durable_exec._operation import (
     GetToolsId,
     ModelRequestId,
     OperationConfigRole,
+    ValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.durable_exec._operation_names import DBOSOperationNamer
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 from ._utils import StepConfig
 
@@ -216,19 +217,22 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
 
                 dispatch = dispatch_mcp_call
 
-            case CallToolId(toolset_kind='dynamic'):
+            case CallToolId(toolset_kind='dynamic') | ValidateToolArgumentsId(toolset_kind='dynamic'):
 
                 async def dynamic_call_step(
-                    tool_name: str, tool_args: dict[str, Any], run_context: RunContext[Any]
+                    tool_name: str,
+                    tool_args: dict[str, Any],
+                    run_context: RunContext[Any],
+                    tool_def: ToolDefinition | None,
                 ) -> object:
-                    params = _DynamicCallToolParams(tool_name, tool_args, run_context)
+                    params = _DynamicCallToolParams(tool_name, tool_args, run_context, tool_def)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(dynamic_call_step)
 
                 async def dispatch_dynamic_call(step: Callable[..., Any], params: P) -> R:
                     call_params = cast(_DynamicCallToolParams, params)
-                    payload = await step(call_params.name, call_params.tool_args, call_params.ctx)
+                    payload = await step(call_params.name, call_params.tool_args, call_params.ctx, call_params.tool_def)
                     return operation.result_codec.load(payload)
 
                 dispatch = dispatch_dynamic_call

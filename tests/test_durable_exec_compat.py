@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from typing import Any, ClassVar, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
@@ -17,7 +17,11 @@ from pydantic_ai.durable_exec._toolset import (
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
     _ToolFailed,  # pyright: ignore[reportPrivateUsage]
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    _ValidationError,  # pyright: ignore[reportPrivateUsage]
+    _ValidationErrorDetail,  # pyright: ignore[reportPrivateUsage]
     unwrap_recorded_tool_call_result,
+    unwrap_tool_call_result,
+    wrap_tool_call_result,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -32,11 +36,13 @@ JOURNAL_OPERATION_NAMES = {
     'compat__model.cancel_suspended_response.registered',
     'compat__event_stream_handler',
     'compat__function_toolset__functions.call_tool:function_tool',
+    'compat__function_toolset__functions.validate_args',
     'compat__mcp_server__mcp.get_tools',
     'compat__mcp_server__mcp.get_instructions',
     'compat__mcp_server__mcp.call_tool',
     'compat__dynamic_toolset__dynamic.get_tools',
     'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool',
+    'compat__dynamic_toolset__dynamic.validate_args',
 }
 
 PREFECT_OPERATION_NAMES = {
@@ -45,8 +51,10 @@ PREFECT_OPERATION_NAMES = {
     'Cancel Suspended Response: test',
     'Handle Stream Event',
     'Call Tool: function_tool',
+    'Validate Tool Args: function_tool',
     'Call MCP Tool: mcp_tool',
     'Call Tool: dynamic_tool',
+    'Validate Tool Args: dynamic_tool',
 }
 
 TEMPORAL_ACTIVITY_NAMES = {
@@ -55,12 +63,15 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__model_cancel_suspended_response',
     'agent__compat__event_stream_handler',
     'agent__compat__toolset__<agent>__call_tool',
+    'agent__compat__toolset__<agent>__validate_args',
     'agent__compat__toolset__functions__call_tool',
+    'agent__compat__toolset__functions__validate_args',
     'agent__compat__mcp_server__mcp__get_tools',
     'agent__compat__mcp_server__mcp__get_instructions',
     'agent__compat__mcp_server__mcp__call_tool',
     'agent__compat__dynamic_toolset__dynamic__get_tools',
     'agent__compat__dynamic_toolset__dynamic__call_tool',
+    'agent__compat__dynamic_toolset__dynamic__validate_args',
 }
 
 DBOS_OPERATION_NAMES = {
@@ -73,6 +84,7 @@ DBOS_OPERATION_NAMES = {
     'compat__mcp_server__mcp.call_tool',
     'compat__dynamic_toolset__dynamic.get_tools',
     'compat__dynamic_toolset__dynamic.call_tool',
+    'compat__dynamic_toolset__dynamic.validate_args',
 }
 
 
@@ -155,6 +167,7 @@ def test_default_journal_operation_name_matrix() -> None:
         durability._unit_name(  # pyright: ignore[reportPrivateUsage]
             'function_toolset', prefix='compat__function_toolset__functions', tool_name='function_tool'
         ),
+        'compat__function_toolset__functions.validate_args',
         durability._unit_name('mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name(  # pyright: ignore[reportPrivateUsage]
             'mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_instructions'
@@ -166,6 +179,7 @@ def test_default_journal_operation_name_matrix() -> None:
         durability._unit_name(  # pyright: ignore[reportPrivateUsage]
             'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
         ),
+        'compat__dynamic_toolset__dynamic.validate_args',
     }
     assert names == JOURNAL_OPERATION_NAMES
 
@@ -185,8 +199,10 @@ def test_prefect_operation_name_matrix() -> None:
         ),
         durability._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
+        durability._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
+        durability._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
     }
     assert names == PREFECT_OPERATION_NAMES
 
@@ -219,8 +235,10 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         ),
         durability._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
+        durability._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
+        durability._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
     }
     assert assembled_names == PREFECT_OPERATION_NAMES
 
@@ -297,6 +315,14 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         (_ApprovalRequired({'scope': 'write'}), {'metadata': {'scope': 'write'}, 'kind': 'approval_required'}),
         (_CallDeferred({'ticket': 7}), {'metadata': {'ticket': 7}, 'kind': 'call_deferred'}),
         (_ModelRetry('retry me'), {'message': 'retry me', 'kind': 'model_retry'}),
+        (
+            _ValidationError('int', [_ValidationErrorDetail('int_parsing', ['value'], 'bad integer', 'x')]),
+            {
+                'title': 'int',
+                'errors': [{'type': 'int_parsing', 'loc': ['value'], 'msg': 'bad integer', 'input': 'x'}],
+                'kind': 'validation_error',
+            },
+        ),
         (_ToolFailed('failed'), {'message': 'failed', 'kind': 'tool_failed'}),
     ],
 )
@@ -390,3 +416,12 @@ def test_pre_wrapper_tool_result_upgrade_paths() -> None:
     assert unwrap_recorded_tool_call_result(raw_payload) is raw_payload
     with pytest.raises(ValidationError):
         JSON_CODEC.load(CallToolResult, raw_payload)
+
+
+async def test_validation_error_crosses_call_tool_result_boundary() -> None:
+    async def invalid() -> None:
+        TypeAdapter(int).validate_python('not-an-int')
+
+    payload = await wrap_tool_call_result(invalid())
+    with pytest.raises(ValidationError, match='valid integer'):
+        unwrap_tool_call_result(payload)

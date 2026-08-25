@@ -17,6 +17,7 @@ from pydantic_ai.durable_exec._operation import (
     GetToolsId,
     ModelRequestId,
     OperationConfigRole,
+    ValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.durable_exec._operation_names import TemporalOperationNamer
@@ -109,6 +110,9 @@ class TemporalBoundOperation(Generic[P, W, R]):
         elif isinstance(operation_id, CallToolId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'call tool: {operation_id.toolset_id}:{tool_name}'
+        elif isinstance(operation_id, ValidateToolArgumentsId):
+            tool_name = cast(Any, params).name
+            activity_config['summary'] = f'validate tool args: {operation_id.toolset_id}:{tool_name}'
         elif isinstance(operation_id, GetToolsId):
             activity_config['summary'] = f'get tools: {operation_id.toolset_id}'
         elif isinstance(operation_id, GetInstructionsId):
