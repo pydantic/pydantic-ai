@@ -14572,8 +14572,13 @@ async def test_openai_responses_phase_streamed_on_part_start(allow_model_request
     assert delta_phases == snapshot({None})
 
 
-@pytest.mark.parametrize('emitted_delta', [None, 'Par', 'Lyon.'])
-async def test_openai_responses_done_uses_complete_text(allow_model_requests: None, emitted_delta: str | None):
+@pytest.mark.parametrize(
+    ('emitted_delta', 'expected_streamed_deltas'),
+    [(None, ['Paris.']), ('Par', ['Par', 'is.']), ('Lyon.', ['Lyon.'])],
+)
+async def test_openai_responses_done_uses_complete_text(
+    allow_model_requests: None, emitted_delta: str | None, expected_streamed_deltas: list[str]
+):
     """The done event is authoritative when a gateway omits or contradicts text deltas.
 
     Not a VCR test: OpenAI itself always sends deltas — `test_openai_responses_phase_streamed_on_part_start`
@@ -14672,29 +14677,26 @@ async def test_openai_responses_done_uses_complete_text(allow_model_requests: No
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
 
-    events: list[Any] = []
-    async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        events.append(event)
-                # Only the model stream is under test.
-                break
+    async with agent.run_stream('What is the capital of France?') as result:
+        streamed_deltas = [text async for text in result.stream_text(delta=True, debounce_by=None)]
 
-    part_end = next(event for event in reversed(events) if isinstance(event, PartEndEvent))
-    assert part_end.part == TextPart(
-        content='Paris.',
-        id='msg_001',
-        provider_name='openai',
-        provider_details={'phase': 'final_answer'},
-        citations=[
-            Citation(
-                sources=[WebCitationSource(url='https://example.com/france', title='France')],
-                anchor=MarkerCitationAnchor(start=0, end=6),
-            )
-        ],
-    )
+    # A gateway can correct its text in the done event, but cannot retract text already streamed to callers.
+    # It must not emit a second text-part start that makes callers receive both strings.
+    assert streamed_deltas == expected_streamed_deltas
+    assert result.all_messages()[-1].parts == [
+        TextPart(
+            content='Paris.',
+            id='msg_001',
+            provider_name='openai',
+            provider_details={'phase': 'final_answer'},
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com/france', title='France')],
+                    anchor=MarkerCitationAnchor(start=0, end=6),
+                )
+            ],
+        )
+    ]
 
 
 async def test_openai_responses_phase_round_trip(allow_model_requests: None):

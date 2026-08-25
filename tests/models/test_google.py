@@ -5726,6 +5726,33 @@ async def test_google_stream_merges_adjacent_text_without_citations():
     assert sum(isinstance(event, PartStartEvent) for event in events) == 1
 
 
+async def test_google_stream_text_text_then_text_continues_trailing_text():
+    """A `[text, text]` chunk followed by `[text]` continues the existing text part."""
+    chunks = [
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='first'), Part(text='second')], role='model'))],
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text=' third')], role='model'))],
+            model_version='gemini-test',
+        ),
+    ]
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
+        _provider_name='google',
+        _model_id_namespace='google',
+        _provider_url='',
+    )
+
+    events = [event async for event in streamed_response]
+
+    assert streamed_response.get().parts == [TextPart('firstsecond third')]
+    assert sum(isinstance(event, PartStartEvent) for event in events) == 1
+
+
 async def test_google_stream_citations_can_reference_earlier_grounding_chunks():
     chunks = [
         GenerateContentResponse(

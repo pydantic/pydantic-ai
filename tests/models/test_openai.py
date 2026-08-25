@@ -4070,6 +4070,47 @@ async def test_openai_chat_stream_annotations_before_referenced_text(allow_model
     ]
 
 
+async def test_openai_chat_stream_skips_unsupported_annotation(allow_model_requests: None):
+    citation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        text_chunk('Answer [1]'),
+        chunk(
+            [
+                ChoiceDelta.model_construct(
+                    role='assistant',
+                    annotations=[citation.model_dump(), {'type': 'file'}],
+                )
+            ],
+            finish_reason='stop',
+        ),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [
+        TextPart(
+            'Answer [1]',
+            provider_name='openai',
+            provider_details={'annotations': [citation.model_dump(), {'type': 'file'}]},
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com', title='Example')],
+                    anchor=MarkerCitationAnchor(start=7, end=10),
+                )
+            ],
+        )
+    ]
+
+
 async def test_openai_chat_stream_accumulates_raw_annotation_batches(allow_model_requests: None):
     annotations = [
         chat.chat_completion_message.Annotation(

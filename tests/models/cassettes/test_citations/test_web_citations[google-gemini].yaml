@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '210'
+      - '207'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Use Google Search to find Pydantic AI's documentation and cite it.
+        - text: Use web search to find Pydantic AI's documentation and cite it.
         role: user
       generationConfig:
         responseModalities:

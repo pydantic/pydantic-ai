@@ -1944,6 +1944,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 chat_annotations_ta = TypeAdapter(list[chat.chat_completion_message.Annotation])
+chat_annotation_ta = TypeAdapter(chat.chat_completion_message.Annotation)
 raw_annotations_ta = TypeAdapter(list[object])
 
 
@@ -4115,19 +4116,30 @@ class OpenAIStreamedResponse(StreamedResponse):
     def _map_chat_annotations(
         self, raw_annotations: object, part: TextPart
     ) -> tuple[list[Citation] | None, dict[str, Any] | None]:
+        serialized_annotations: object
         try:
-            annotations = chat_annotations_ta.validate_python(raw_annotations)
+            raw_annotation_items = raw_annotations_ta.validate_python(raw_annotations)
         except ValidationError:  # pragma: no cover
             citations = None
             serialized_annotations = raw_annotations
         else:
+            annotations: list[chat.chat_completion_message.Annotation] = []
+            serialized_annotation_items: list[object] = []
+            for raw_annotation in raw_annotation_items:
+                try:
+                    annotation = chat_annotation_ta.validate_python(raw_annotation)
+                except ValidationError:
+                    serialized_annotation_items.append(raw_annotation)
+                else:
+                    annotations.append(annotation)
+                    serialized_annotation_items.append(chat_annotation_ta.dump_python(annotation, warnings=False))
+            serialized_annotations = serialized_annotation_items
             if self._raw_text_content == part.content:
                 citations = _map_chat_citations(annotations, part.content)
             else:
                 # Annotation offsets address the raw provider text, not text transformed by
                 # thinking-tag removal or leading-whitespace normalization.
                 citations = None
-            serialized_annotations = chat_annotations_ta.dump_python(annotations, warnings=False)
         provider_details = (
             {'annotations': serialized_annotations}
             if self._model_settings and self._model_settings.get('openai_include_raw_annotations')
@@ -4739,7 +4751,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 or None,
                                 citations=[*(existing_part.citations or []), *(citations or [])] or None,
                             )
-                            yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=part)
+                            self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=part)
                             continue
                         content = chunk.text[len(existing_part.content) :]
                     if content or provider_details or citations:

@@ -1537,9 +1537,24 @@ class GeminiStreamedResponse(StreamedResponse):
 
                 parts = (candidate.content and candidate.content.parts) or []
 
-                # A shorter part list starts a new segment after a previously emitted trailing part
-                # (commonly text after a tool call), rather than continuing the old positional text part.
-                if parts and len(parts) < len(self._active_parts):
+                # A shorter list normally continues an earlier text part. It starts a new text segment only
+                # when it follows a tool part, which must remain between the preceding and following text.
+                if (
+                    parts
+                    and len(parts) < len(self._active_parts)
+                    and any(
+                        part_kind
+                        in {
+                            'function_call',
+                            'tool_call',
+                            'tool_response',
+                            'executable_code',
+                            'code_execution_result',
+                            'function_response',
+                        }
+                        for part_kind, _ in self._active_parts[len(parts) :]
+                    )
+                ):
                     self._active_parts.clear()
 
                 if not self._has_tool_invocations:
