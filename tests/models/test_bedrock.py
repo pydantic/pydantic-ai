@@ -1238,6 +1238,34 @@ async def test_bedrock_include_citations_request_setting(
     assert document == expected
 
 
+async def test_bedrock_include_citations_for_uploaded_document(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """The shared setting also applies to supported documents already stored in S3."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'The document is a test.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 6},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await Agent(model, model_settings=ModelSettings(include_citations=True)).run(
+        [
+            'What is in this document?',
+            UploadedFile(file_id='s3://bucket/report.pdf', provider_name='bedrock', media_type='application/pdf'),
+        ]
+    )
+
+    assert mock_converse.call_args.kwargs['messages'][0]['content'][1]['document'] == {
+        'name': 'Document 1',
+        'format': 'pdf',
+        'source': {'s3Location': {'uri': 's3://bucket/report.pdf'}},
+        'citations': {'enabled': True},
+    }
+
+
 async def test_bedrock_include_citations_rejects_non_utf8_text_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:

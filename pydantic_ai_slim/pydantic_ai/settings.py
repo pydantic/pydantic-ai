@@ -460,7 +460,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * Anthropic (inline documents and Web Fetch)
-    * Bedrock (inline documents)
+    * Bedrock (TXT and PDF document inputs)
     * xAI (inline citations)
 
     Providers that return citations without an explicit request setting ignore this field; their citations are
