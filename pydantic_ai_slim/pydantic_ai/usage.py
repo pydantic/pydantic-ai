@@ -25,6 +25,27 @@ conceptual quantity under two attributes that consumers like Langfuse then sum, 
 and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streaming carry-forward, Cohere's
 billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
 
+_GEMINI_TOKEN_SUBCOUNT_KEYS = frozenset({
+    'cached_content_tokens',
+    'thoughts_tokens',
+    'tool_use_prompt_tokens',
+})
+"""Gemini-specific `details` keys that are subsets of first-class token totals (`input_tokens`,
+`output_tokens`, `cache_read_tokens`). The Google adapter also emits per-modality breakdowns
+(`text_prompt_tokens`, `audio_candidates_tokens`, …) that follow the `{modality}_{prefix}_tokens`
+pattern — those are caught by `_GEMINI_TOKEN_SUBCOUNT_SUFFIXES` below."""
+
+_GEMINI_TOKEN_SUBCOUNT_SUFFIXES = (
+    '_prompt_tokens',
+    '_cache_tokens',
+    '_candidates_tokens',
+    '_output_tokens',
+    '_tool_use_prompt_tokens',
+)
+"""Suffixes of Gemini per-modality token breakdown keys.  Every key matching one of these is a
+subset of a first-class total and must be suppressed from OTel for the same reason as
+`_FIRST_CLASS_TOKEN_DETAIL_KEYS`."""
+
 _LEGACY_USAGE_KEYS = frozenset({'requests', 'request_tokens', 'response_tokens', 'total_tokens'})
 """Keys accepted in stored usage data for backwards compatibility but not preserved as arbitrary fields."""
 
@@ -241,10 +262,13 @@ class UsageBase:
         if details:
             prefix = 'gen_ai.usage.details.'
             for key, value in details.items():
-                # Never emit a `details` entry whose name collides with a first-class token attribute: the
-                # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
-                # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
-                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
+                # Never emit a `details` entry that duplicates or is a subset of a first-class token
+                # attribute: the value is already included in `gen_ai.usage.{input,output}_tokens` (or
+                # the cache/audio typed fields), and emitting it again under `gen_ai.usage.details.*`
+                # makes consumers like Langfuse sum the two and double-count.
+                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS or key in _GEMINI_TOKEN_SUBCOUNT_KEYS:
+                    continue
+                if key.endswith(_GEMINI_TOKEN_SUBCOUNT_SUFFIXES):
                     continue
                 # Zero is a meaningful value, but a `None` would be an invalid OTel attribute value.
                 # Provider data can contain None despite the annotation.

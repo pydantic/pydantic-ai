@@ -399,6 +399,43 @@ def test_opentelemetry_attributes_excludes_first_class_token_details():
     }
 
 
+def test_opentelemetry_attributes_excludes_gemini_token_subcounts():
+    """Gemini-specific token subcount keys must not leak into OTel `details.*` attributes.
+
+    The Google adapter stores per-modality breakdowns (`text_prompt_tokens`, `text_candidates_tokens`,
+    …) and aggregate subcounts (`thoughts_tokens`, `cached_content_tokens`, `tool_use_prompt_tokens`)
+    in `details`. These are all subsets of the first-class `input_tokens`/`output_tokens` totals, so
+    emitting them under `gen_ai.usage.details.*` lets consumers like Langfuse sum them with the
+    first-class attributes and double-count. They stay accessible on `RequestUsage.details`; only the
+    OTel emission is suppressed.
+    """
+    usage = RequestUsage(
+        input_tokens=500,
+        output_tokens=200,
+        details={
+            'thoughts_tokens': 35,
+            'cached_content_tokens': 100,
+            'tool_use_prompt_tokens': 50,
+            'text_prompt_tokens': 350,
+            'text_candidates_tokens': 165,
+            'audio_prompt_tokens': 150,
+            'text_cache_tokens': 80,
+            'text_tool_use_prompt_tokens': 50,
+            'reasoning_tokens': 10,
+        },
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 500,
+        'gen_ai.usage.output_tokens': 200,
+        # reasoning_tokens is the only detail that survives — it's a standard OTel concept,
+        # not a Gemini-specific modality breakdown.
+        'gen_ai.usage.details.reasoning_tokens': 10,
+    }
+    # The details dict itself is untouched — programmatic access is preserved.
+    assert usage.details['text_prompt_tokens'] == 350
+    assert usage.details['thoughts_tokens'] == 35
+
+
 async def test_multi_agent_usage_sync():
     """As in `test_multi_agent_usage_async`, with a sync tool."""
     controller_agent = Agent(TestModel())
