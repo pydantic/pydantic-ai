@@ -4108,10 +4108,11 @@ class DeferredToolResultsEvent:
 
 @dataclass(repr=False)
 class RealtimeTurnCompleteEvent:
-    """The exchange is over: the model has finished replying and nothing is outstanding.
+    """The model exchange is over: generation and tool work are complete.
 
-    This is the event to stop consuming on. It is synthesized by the session once no tool calls are
-    still running and no further response is in flight.
+    It is synthesized by the session once no tool calls are still running and no further response is
+    in flight. Input transcription can finish after this event. On WebRTC sidebands, provider playback
+    can also continue until [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """
 
     _: KW_ONLY
