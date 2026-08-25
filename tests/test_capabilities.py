@@ -741,8 +741,6 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-haiku-4-5-20251001',
                         'anthropic:claude-mythos-5',
                         'anthropic:claude-mythos-preview',
-                        'anthropic:claude-opus-4-1',
-                        'anthropic:claude-opus-4-1-20250805',
                         'anthropic:claude-opus-4-5',
                         'anthropic:claude-opus-4-5-20251101',
                         'anthropic:claude-opus-4-6',
@@ -905,8 +903,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-fable-5',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
-                        'gateway/anthropic:claude-opus-4-1',
-                        'gateway/anthropic:claude-opus-4-1-20250805',
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-5-20251101',
                         'gateway/anthropic:claude-opus-4-6',
@@ -1045,9 +1041,13 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.4-mini-2026-03-17',
                         'gateway/openai:gpt-5.4-nano',
                         'gateway/openai:gpt-5.4-nano-2026-03-17',
+                        'gateway/openai:gpt-5.5',
+                        'gateway/openai:gpt-5.6-cyber',
                         'gateway/openai:gpt-5.6-luna',
                         'gateway/openai:gpt-5.6-sol',
                         'gateway/openai:gpt-5.6-terra',
+                        'gateway/openai:gpt-daybreak-blue-latest',
+                        'gateway/openai:gpt-daybreak-red-latest',
                         'gateway/openai:o1',
                         'gateway/openai:o1-2024-12-17',
                         'gateway/openai:o1-pro',
@@ -1224,9 +1224,13 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5.4-mini-2026-03-17',
                         'openai-chat:gpt-5.4-nano',
                         'openai-chat:gpt-5.4-nano-2026-03-17',
+                        'openai-chat:gpt-5.5',
+                        'openai-chat:gpt-5.6-cyber',
                         'openai-chat:gpt-5.6-luna',
                         'openai-chat:gpt-5.6-sol',
                         'openai-chat:gpt-5.6-terra',
+                        'openai-chat:gpt-daybreak-blue-latest',
+                        'openai-chat:gpt-daybreak-red-latest',
                         'openai-chat:o1',
                         'openai-chat:o1-2024-12-17',
                         'openai-chat:o1-pro',
@@ -1297,9 +1301,13 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5.4-mini-2026-03-17',
                         'openai:gpt-5.4-nano',
                         'openai:gpt-5.4-nano-2026-03-17',
+                        'openai:gpt-5.5',
+                        'openai:gpt-5.6-cyber',
                         'openai:gpt-5.6-luna',
                         'openai:gpt-5.6-sol',
                         'openai:gpt-5.6-terra',
+                        'openai:gpt-daybreak-blue-latest',
+                        'openai:gpt-daybreak-red-latest',
                         'openai:o1',
                         'openai:o1-2024-12-17',
                         'openai:o1-pro',
@@ -1403,6 +1411,7 @@ def test_model_json_schema_with_capabilities():
                         'zai:glm-5-turbo',
                         'zai:glm-5.1',
                         'zai:glm-5.2',
+                        'zai:glm-5.3',
                         'zai:glm-5v-turbo',
                     ],
                     'type': 'string',
@@ -4754,6 +4763,36 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert not any(isinstance(part, LoadCapabilityReturnPart) for part in history_parts)
     [retry] = [part for part in history_parts if isinstance(part, RetryPromptPart)]
     assert retry.content == snapshot("No capability found with id 'missing'.")
+
+
+async def test_load_capability_inherits_agent_tool_retries() -> None:
+    """`load_capability` honors the agent's tool retry budget."""
+    deferred = Capability[object](
+        id='deferred',
+        description='Deferred.',
+        defer_loading=True,
+    )
+    calls = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    args={'id': 'missing'},
+                    tool_call_id=f'load-missing-{calls}',
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[deferred], retries={'tools': 3})
+
+    with pytest.raises(UnexpectedModelBehavior):
+        await agent.run('load missing')
+
+    assert calls == 4
 
 
 async def test_load_capability_retries_for_already_available_capability() -> None:

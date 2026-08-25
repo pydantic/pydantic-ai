@@ -37,7 +37,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](https://pydantic.dev/docs/ai/harness/shell/) | Harness | Command execution with allowlists, denylists, timeouts, and credential-stripping |
 | [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 
-### Tools & native abilities
+### Tools & native abilities {#tools-native-abilities}
 
 Connections to systems outside the agent's workspace, and abilities the provider executes natively.
 
@@ -50,7 +50,7 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](https://pydantic.dev/docs/ai/harness/macroscope/) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
 
-### Web & research
+### Web & research {#web-research}
 
 Finding and reading things on the open web.
 
@@ -63,7 +63,7 @@ Finding and reading things on the open web.
 | [Exa Agent](https://pydantic.dev/docs/ai/harness/exa-search/) | Harness | Delegate open-ended research to the Exa Agent API |
 | [Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 
-### Reasoning, planning & delegation
+### Reasoning, planning & delegation {#reasoning-planning-delegation}
 
 How the agent thinks and divides the work.
 
@@ -88,7 +88,7 @@ How the agent spends its context window: the difference between an agent that de
 | [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
 
-### Knowledge & memory
+### Knowledge & memory {#knowledge-memory}
 
 What the agent knows and remembers, loaded when relevant instead of carried in every prompt.
 
@@ -100,7 +100,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Pydantic AI Docs](https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/) | Harness | On-demand Pydantic AI documentation lookup |
 
-### Control & safety
+### Control & safety {#control-safety}
 
 Bounding what the agent may do, and keeping it on-instructions.
 
@@ -190,7 +190,7 @@ def refund_status(order_id: str) -> str:
 agent = Agent('openai:gpt-5.6-sol', capabilities=[refunds])
 ```
 
-Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-demand.md) that stays collapsed to a one-line catalog entry until the model loads it — the same shape as [Agent Skills](on-demand.md#loading-skills-from-markdown-files), which you can wrap in a `Capability` directly. See [The `Capability` convenience class](on-demand.md#the-capability-convenience-class) for the full API. For behavior beyond instructions, tools, and toolsets — lifecycle hooks, model settings, native tools — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as covered in [Building Custom Capabilities](custom.md).
+Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-demand.md) that stays collapsed to a one-line catalog entry until the model loads it — like [Agent Skills](on-demand.md#loading-skills-from-markdown-files), which you can wrap in a `Capability` directly. See [The `Capability` convenience class](on-demand.md#the-capability-convenience-class) for the full API. For behavior beyond instructions, tools, and toolsets — lifecycle hooks, model settings, native tools — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as covered in [Building Custom Capabilities](custom.md).
 
 ## Provider-adaptive tools
 

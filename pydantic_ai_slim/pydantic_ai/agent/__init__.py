@@ -615,7 +615,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
-            capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/overview/) to configure the agent with,
+            capabilities: Optional list of [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) to configure the agent with,
                 including functions which take a run context and return a capability.
                 See [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] for more information.
                 Custom capabilities can be created by subclassing
@@ -1294,7 +1294,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -3195,6 +3195,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
         run_id = _agent_graph.resolve_run_id(run_id, message_history)
         max_tool_retries = self._resolve_tool_retries()
+        cancellation = RunCancellation() if run_lifecycle else None
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
@@ -3357,14 +3358,55 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         async def _finalize_session_result(result: AgentRunResult[Any]) -> None:
             assert lifecycle_state is not None
+            if cancellation is not None and cancellation.cancel_requested:
+                raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
             if lifecycle_state.session is None:
                 lifecycle_state.short_result = result
             else:
                 lifecycle_state.session._result = result  # pyright: ignore[reportPrivateUsage]
 
+        @asynccontextmanager
+        async def _translate_cancellation() -> AsyncGenerator[None]:
+            assert cancellation is not None and lifecycle_state is not None
+
+            def _run_cancelled(message: str) -> exceptions.RunCancelled:
+                assert lifecycle_state is not None
+                session = lifecycle_state.session
+                return exceptions.RunCancelled(
+                    message,
+                    messages=session.all_messages() if session is not None else message_history or (),
+                    new_message_index=len(message_history or ()),
+                    usage=run_context.usage,
+                    metadata=run_context.metadata,
+                    run_id=run_id,
+                    conversation_id=conversation_id,
+                )
+
+            try:
+                yield
+            except exceptions.RunCancelled as exc:
+                # Match classic runs: a nested run carries its own history, but this session's
+                # caller must receive the outer conversation it can actually resume.
+                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
+            except asyncio.CancelledError as exc:
+                cancelled = _run_cancelled('The agent run was cancelled.')
+                if cancellation.resolve():
+                    raise cancelled from exc
+                cancelled._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
+            finally:
+                cancellation.release_issued()
+
         yielded = False
         async with AsyncExitStack() as session_stack:
             if lifecycle_state is not None:
+                assert cancellation is not None
+                # Setup-time `for_run` callbacks have the same context contract as a classic run:
+                # cancellation becomes available only once the run lifecycle has an owning task.
+                run_context._cancellation = cancellation  # pyright: ignore[reportPrivateUsage]
+                await session_stack.enter_async_context(_translate_cancellation())
+                cancellation.bind()
+                session_stack.callback(cancellation.finish)
                 lifecycle = await session_stack.enter_async_context(
                     _run_lifecycle_hooks(
                         run_capability,

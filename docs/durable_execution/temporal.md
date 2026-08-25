@@ -200,7 +200,7 @@ When [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability
 
 [Capabilities](../capabilities/overview.md) that contribute a toolset — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or an [`MCP`][pydantic_ai.capabilities.MCP] server running locally — derive the toolset's `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. (`MCP` falls back to an id derived from the server URL's host and path when no `id` is given.) A toolset passed to a capability via `toolsets=` keeps its own `id`, which must be set on the toolset itself.
 
-Other than that, any agent and toolset will just work!
+All other agents and toolsets are supported.
 
 ### Agent Run Context and Dependencies
 

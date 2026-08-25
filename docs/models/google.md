@@ -267,10 +267,10 @@ agent = Agent(model)
 
 ## Custom HTTP Client
 
-You can customize the `GoogleProvider` with a custom `httpx.AsyncClient`:
+Google providers use `httpx2` by default. You can pass a custom `httpx2.AsyncClient` to control transport settings:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
@@ -284,6 +284,8 @@ model = GoogleModel(
 agent = Agent(model)
 ...
 ```
+
+The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
 ## HTTP Retries
 

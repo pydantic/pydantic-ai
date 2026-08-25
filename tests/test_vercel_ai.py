@@ -158,6 +158,59 @@ def test_build_run_input_allows_regenerate_without_message_id():
 
 
 @pytest.mark.parametrize(
+    'reasoning_part, expected_ui_id, expected_thinking_id',
+    [
+        ({'type': 'reasoning', 'text': 'think', 'state': 'done'}, None, None),
+        ({'type': 'reasoning', 'id': 'ui-r1', 'text': 'think', 'state': 'done'}, 'ui-r1', None),
+        (
+            {
+                'type': 'reasoning',
+                'id': 'ui-r1',
+                'text': 'think',
+                'state': 'done',
+                'providerMetadata': {'pydantic_ai': {'id': 'provider-r1'}},
+            },
+            'ui-r1',
+            'provider-r1',
+        ),
+    ],
+)
+def test_build_run_input_reasoning_part_id_mapping(
+    reasoning_part: dict[str, Any], expected_ui_id: str | None, expected_thinking_id: str | None
+):
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {'id': 'msg_1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'hi'}]},
+            {
+                'id': 'msg_2',
+                'role': 'assistant',
+                'parts': [reasoning_part],
+            },
+            {'id': 'msg_3', 'role': 'user', 'parts': [{'type': 'text', 'text': 'and again'}]},
+        ],
+    }
+
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+
+    assert isinstance(run_input, SubmitMessage)
+    parsed_reasoning_part = run_input.messages[1].parts[0]
+    assert isinstance(parsed_reasoning_part, ReasoningUIPart)
+    assert parsed_reasoning_part.id == expected_ui_id
+
+    messages = VercelAIAdapter.load_messages(run_input.messages)
+    thinking_part = messages[1].parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.id == expected_thinking_id
+
+
+def test_reasoning_part_id_serialization():
+    assert 'id' not in ReasoningUIPart(text='think').model_dump()
+    assert ReasoningUIPart(id='r1', text='think').model_dump()['id'] == 'r1'
+
+
+@pytest.mark.parametrize(
     'part',
     [
         {'state': 'input-streaming', 'input': '{"query":'},
@@ -2745,7 +2798,7 @@ Fix the errors and try again.\
             },
             {
                 'type': 'error',
-                'errorText': "Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries",
+                'errorText': "Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries",
             },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
