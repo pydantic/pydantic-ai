@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assign new issues and pull requests to a semantic maintainer owner."""
+"""Deterministically assign one open item to its semantic maintainer owner."""
 
 from __future__ import annotations
 
@@ -10,349 +10,570 @@ import re
 import sys
 import urllib.error
 import urllib.parse
+import urllib.request
 from collections.abc import Mapping, Sequence
-from pathlib import Path
-
-# This script runs under bare Python in Actions and intentionally shares the
-# attention monitor's bounded GitHub client and permission checks.
-from typing import Any, Literal, TypedDict, cast  # noqa: TID251
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any, TypedDict, cast  # noqa: TID251
 
 import issue_pr_attention_monitor as attention
 
-_CANDIDATE_LIMIT = 10
-_SNAPSHOT_LIMIT = 80_000
-_FILE_LIMIT = 30
+_REPOSITORIES = frozenset({'pydantic/pydantic-ai', 'pydantic/pydantic-ai-harness'})
+_OWNERS = frozenset({'adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger'})
+_MANUAL_OWNER = 'adtyavrdhn'
+# Everything before this rollout watermark was handled by the one-time manual
+# audit. Keeping it fixed makes later outages recoverable without draining years
+# of historical backlog into the triage channel.
+_RECOVERY_EPOCH = '2026-08-18'
+_FILE_LIMIT = 100
+_MAX_ITEM_NUMBER = 2_147_483_647
+_SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
+_ITEM_QUERY = """
+query RoutingItem($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue {
+        number state
+        labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
+        assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
+      }
+      ... on PullRequest {
+        number state isDraft changedFiles
+        labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
+        assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
+        files(first: 100) { nodes { path } pageInfo { hasNextPage } }
+      }
+    }
+  }
+}
+"""
+_SEARCH_QUERY = """
+query RoutingRecovery($query: String!) {
+  search(query: $query, type: ISSUE, first: 100) {
+    nodes {
+      ... on Issue { number }
+      ... on PullRequest { number }
+    }
+  }
+}
+"""
 
-Route = Literal[
-    'aditya-streaming-runtime',
-    'david-model-integrations',
-    'douwe-durable-architecture',
-    'mike-tools-harness',
-    'aditya-manual-route',
-]
 
-
-class RoutePolicy(TypedDict):
-    """The fixed owner and channel explanation for one semantic route."""
+@dataclass(frozen=True)
+class Rule:
+    """A code-reviewed owner signal and its canonical evidence string."""
 
     owner: str
-    basis: str
+    labels: tuple[str, ...] = ()
+    paths: tuple[str, ...] = ()
 
 
-_ROUTES: dict[Route, RoutePolicy] = {
-    'aditya-streaming-runtime': {
-        'owner': 'adtyavrdhn',
-        'basis': 'streaming, cancellation, UI protocols, or CodeMode runtime',
-    },
-    'david-model-integrations': {
-        'owner': 'dsfaccini',
-        'basis': 'model/provider adapters, message mapping, compaction, or compatibility',
-    },
-    'douwe-durable-architecture': {
-        'owner': 'DouweM',
-        'basis': 'durable execution, deferred work, capability lifecycle, or identity',
-    },
-    'mike-tools-harness': {
-        'owner': 'mpfaffenberger',
-        'basis': 'tools, TestModel, general Harness capabilities, or contributor APIs',
-    },
-    'aditya-manual-route': {
-        'owner': 'adtyavrdhn',
-        'basis': 'no specialist route was clear; manual routing is required',
-    },
+_RULES: dict[str, tuple[Rule, ...]] = {
+    'pydantic/pydantic-ai': (
+        Rule(
+            'adtyavrdhn',
+            ('streaming', 'run_stream', 'AG-UI', 'UI adapters'),
+            (
+                'pydantic_ai_slim/pydantic_ai/ui/',
+                'pydantic_ai_slim/pydantic_ai/realtime/',
+                'pydantic_ai_slim/pydantic_ai/_cancel.py',
+            ),
+        ),
+        Rule(
+            'dsfaccini',
+            (
+                'model issue',
+                'model settings',
+                'MCP',
+                'message-history',
+                'cross-model-provider-mapping',
+                'provider-parity',
+            ),
+            (
+                'pydantic_ai_slim/pydantic_ai/models/',
+                'pydantic_ai_slim/pydantic_ai/providers/',
+                'pydantic_ai_slim/pydantic_ai/profiles/',
+                'pydantic_ai_slim/pydantic_ai/messages.py',
+                'pydantic_ai_slim/pydantic_ai/mcp.py',
+                'pydantic_ai_slim/pydantic_ai/_mcp.py',
+                'pydantic_ai_slim/pydantic_ai/_mcp_compat.py',
+            ),
+        ),
+        Rule(
+            'DouweM',
+            ('durable exec', 'temporal', 'DBOS', 'deferred-tools'),
+            (
+                'pydantic_ai_slim/pydantic_ai/durable_exec/',
+                'pydantic_ai_slim/pydantic_ai/capabilities/',
+                'pydantic_ai_slim/pydantic_ai/_deferred.py',
+                'pydantic_ai_slim/pydantic_ai/_enqueue.py',
+            ),
+        ),
+    ),
+    'pydantic/pydantic-ai-harness': (
+        Rule(
+            'adtyavrdhn',
+            ('cap:code-mode', 'cap:acp', 'upstream-compat'),
+            (
+                'pydantic_ai_harness/code_mode/',
+                'pydantic_ai_harness/acp/',
+                'pydantic_ai_harness/runtime_authoring/',
+            ),
+        ),
+        Rule('dsfaccini', ('cap:compaction',), ('pydantic_ai_harness/compaction/',)),
+        Rule('DouweM', ('durable-exec', 'cap:step-persistence'), ('pydantic_ai_harness/step_persistence/',)),
+    ),
 }
+_ROUTE_OWNERS = frozenset({_MANUAL_OWNER, *(rule.owner for rules in _RULES.values() for rule in rules)})
+_EVIDENCE = frozenset(
+    {
+        'manual:conflict-or-unknown',
+        'manual:incomplete-file-list',
+        'manual:incomplete-labels',
+        'manual:invalid-file-list',
+        'manual:unowned-production-path',
+        *(f'label:{label}' for rules in _RULES.values() for rule in rules for label in rule.labels),
+        *(f'path:{path}' for rules in _RULES.values() for rule in rules for path in rule.paths),
+    }
+)
+
+
+class Decision(TypedDict):
+    """One deterministic assignment decision."""
+
+    number: int
+    owner: str
+    evidence: str
+
+
+class Selection(TypedDict):
+    """One selection result, including no-op outcomes."""
+
+    number: int
+    decision: Decision | None
+    status: str
+
+
+def _repository(value: str) -> str:
+    if value not in _REPOSITORIES:
+        raise ValueError('repository is not allowlisted')
+    return value
+
+
+def _item_number(value: object) -> int:
+    if type(value) is not int or not 1 <= value <= _MAX_ITEM_NUMBER:
+        raise ValueError('item number must be a bounded positive integer')
+    return value
+
+
+def event_number(issue_value: str | None, pull_request_value: str | None) -> int | None:
+    """Validate the runner-projected issue or pull request number."""
+    values = [value for value in (issue_value, pull_request_value) if value]
+    if not values:
+        return None
+    if len(values) != 1:
+        raise ValueError('GitHub event must identify exactly one issue or pull request')
+    value = values[0]
+    if re.fullmatch(r'[1-9][0-9]{0,9}', value) is None:
+        raise ValueError('item number must be a bounded positive integer')
+    return _item_number(int(value))
 
 
 def _labels(item: Mapping[str, Any]) -> set[str]:
-    return {str(label['name']) for label in item.get('labels', [])}
+    values: set[str] = set()
+    for entry in item.get('labels', []):
+        if not isinstance(entry, Mapping):
+            raise ValueError('GitHub returned a malformed label')
+        name = cast(Mapping[str, object], entry).get('name')
+        if not isinstance(name, str):
+            raise ValueError('GitHub returned a malformed label')
+        if name.isascii() and not any(character.isspace() and character != ' ' for character in name):
+            values.add(name.casefold())
+    return values
+
+
+def _valid_path(value: str) -> bool:
+    if not value or len(value) > 300 or not value.isascii() or '\\' in value or value.startswith('/'):
+        return False
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        return False
+    parts = PurePosixPath(value).parts
+    return bool(parts) and all(part not in {'', '.', '..'} for part in parts)
+
+
+def _path_rule(repo: str, filename: str) -> tuple[str, str] | None:
+    matches: list[tuple[int, str, str]] = []
+    for rule in _RULES[repo]:
+        for prefix in rule.paths:
+            if filename == prefix or (prefix.endswith('/') and filename.startswith(prefix)):
+                matches.append((len(prefix), rule.owner, prefix))
+    if not matches:
+        return None
+    longest = max(length for length, _, _ in matches)
+    owners = {(owner, prefix) for length, owner, prefix in matches if length == longest}
+    if len({owner for owner, _ in owners}) != 1:
+        return None
+    owner, prefix = min(owners)
+    return owner, f'path:{prefix}'
+
+
+def _route(repo: str, labels: set[str], filenames: Sequence[str] | None) -> tuple[str, str]:
+    signals: set[tuple[str, str]] = set()
+    for rule in _RULES[repo]:
+        for label in rule.labels:
+            if label.casefold() in labels:
+                signals.add((rule.owner, f'label:{label}'))
+    if filenames is not None:
+        for filename in filenames:
+            if not _valid_path(filename):
+                return _MANUAL_OWNER, 'manual:invalid-file-list'
+            if signal := _path_rule(repo, filename):
+                signals.add(signal)
+            elif not _neutral_path(filename):
+                return _MANUAL_OWNER, 'manual:unowned-production-path'
+    owners = {owner for owner, _ in signals}
+    if len(owners) != 1:
+        return _MANUAL_OWNER, 'manual:conflict-or-unknown'
+    owner = owners.pop()
+    evidence = min(evidence for signal_owner, evidence in signals if signal_owner == owner)
+    return owner, evidence
+
+
+def _neutral_path(filename: str) -> bool:
+    return (
+        filename.startswith(('tests/', 'docs/', 'examples/', '.github/'))
+        or '/tests/' in filename
+        or filename.endswith(('.md', '.rst', '.lock'))
+    )
 
 
 def _maintainer_assignees(client: attention.GitHubClient, repo: str, item: Mapping[str, Any]) -> list[str]:
-    return sorted(
-        (
-            maintainer
-            for assignee in item.get('assignees', [])
-            if (login := str(assignee['login'])) and (maintainer := client.maintainer_login(repo, login))
-        ),
-        key=str.casefold,
+    maintainers: list[str] = []
+    for entry in item.get('assignees', []):
+        if not isinstance(entry, Mapping):
+            raise ValueError('GitHub returned a malformed assignee')
+        login = cast(Mapping[str, object], entry).get('login')
+        if not isinstance(login, str) or not login:
+            raise ValueError('GitHub returned a malformed assignee')
+        if maintainer := client.maintainer_login(repo, login):
+            maintainers.append(maintainer)
+    return sorted(set(maintainers), key=str.casefold)
+
+
+def _connection_nodes(value: object) -> list[object]:
+    if not isinstance(value, Mapping):
+        return []
+    nodes = cast(Mapping[str, object], value).get('nodes')
+    return cast(list[object], nodes) if isinstance(nodes, list) else []
+
+
+def _connection_complete(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    page_info = cast(Mapping[str, object], value).get('pageInfo')
+    return isinstance(page_info, Mapping) and cast(Mapping[str, object], page_info).get('hasNextPage') is False
+
+
+def _fetch_item(client: attention.GitHubClient, repo: str, number: int) -> Mapping[str, Any] | None:
+    owner, name = repo.split('/', 1)
+    result = client.post(
+        '/graphql',
+        {'query': _ITEM_QUERY, 'variables': {'owner': owner, 'name': name, 'number': number}},
     )
-
-
-def _slack_escape(value: str) -> str:
-    normalized = value.replace('\r\n', '\n').replace('\r', '\n').replace('\n', ' ')
-    return normalized.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-
-
-class RouteDecision(TypedDict):
-    """The complete model-controlled surface."""
-
-    item_number: int
-    route: Route
-
-
-class AssignmentNotice(TypedDict):
-    """One host-built Slack assignment line."""
-
-    number: int
-    title: str
-    owner: str
-    basis: str
-
-
-def _event_number(path: str | None) -> int | None:
-    if not path:
+    if not isinstance(result, Mapping):
+        raise RuntimeError('GitHub rejected the routing metadata query')
+    response = cast(Mapping[str, object], result)
+    if response.get('errors'):
+        raise RuntimeError('GitHub rejected the routing metadata query')
+    data = response.get('data')
+    if not isinstance(data, Mapping):
+        raise RuntimeError('GitHub returned invalid routing metadata')
+    repository = cast(Mapping[str, object], data).get('repository')
+    if not isinstance(repository, Mapping):
         return None
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('GitHub event must be an object')
-    event = cast(Mapping[str, object], loaded)
-    for key in ('issue', 'pull_request'):
-        value = event.get(key)
-        if isinstance(value, Mapping):
-            number = cast(Mapping[str, object], value).get('number')
-            if isinstance(number, int) and number > 0:
-                return number
-    return None
+    value = cast(Mapping[str, object], repository).get('issueOrPullRequest')
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else None
 
 
-def _unassigned_page(client: attention.GitHubClient, repo: str) -> list[dict[str, Any]]:
-    query = urllib.parse.quote_plus(f'repo:{repo} is:open no:assignee')
-    result = cast(
-        dict[str, Any],
-        client.get(f'/search/issues?q={query}&sort=created&order=asc&per_page={_CANDIDATE_LIMIT}'),
-    )
-    return cast(list[dict[str, Any]], result.get('items') or [])
-
-
-def _candidate(client: attention.GitHubClient, repo: str, number: int) -> dict[str, object] | None:
-    current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    if current.get('state') != 'open' or _maintainer_assignees(client, repo, current):
-        return None
-    files: list[str] = []
-    if 'pull_request' in current:
-        changed = cast(list[dict[str, Any]], client.get(f'/repos/{repo}/pulls/{number}/files?per_page=100'))
-        files = [str(value.get('filename') or '')[:300] for value in changed[:_FILE_LIMIT]]
-    user = current.get('user')
-    author = str(cast(Mapping[str, object], user).get('login') or '') if isinstance(user, Mapping) else ''
-    return {
-        'number': number,
-        'kind': 'pull_request' if 'pull_request' in current else 'issue',
-        'title': str(current.get('title') or '')[:300],
-        'body': str(current.get('body') or '')[:3_000],
-        'author': author,
-        'updated_at': str(current.get('updated_at') or ''),
-        'labels': sorted(_labels(current)),
-        'files': files,
+def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Selection:
+    """Refetch one item and make a deterministic, fail-closed decision."""
+    repo = _repository(repo)
+    number = _item_number(number)
+    item = _fetch_item(client, repo, number)
+    if item is None or item.get('state') != 'OPEN':
+        return Selection(number=number, decision=None, status='closed')
+    if item.get('number') != number or item.get('__typename') not in {'Issue', 'PullRequest'}:
+        raise RuntimeError('GitHub returned mismatched routing metadata')
+    labels = item.get('labels')
+    assignees = item.get('assignees')
+    if not _connection_complete(assignees):
+        return Selection(number=number, decision=None, status='incomplete-assignees')
+    normalized = {
+        'labels': _connection_nodes(labels),
+        'assignees': _connection_nodes(assignees),
     }
+    if _maintainer_assignees(client, repo, normalized):
+        return Selection(number=number, decision=None, status='maintainer-present')
+    filenames: list[str] | None = None
+    if item.get('__typename') == 'PullRequest':
+        is_draft = item.get('isDraft')
+        if type(is_draft) is not bool:
+            return Selection(number=number, decision=None, status='invalid-draft-state')
+        if is_draft:
+            return Selection(number=number, decision=None, status='draft')
+        changed_files = item.get('changedFiles')
+        files = item.get('files')
+        entries = _connection_nodes(files)
+        page_info = cast(Mapping[str, object], files).get('pageInfo') if isinstance(files, Mapping) else None
+        filenames = []
+        complete = (
+            type(changed_files) is int
+            and 0 <= changed_files <= _FILE_LIMIT
+            and len(entries) == changed_files
+            and isinstance(page_info, Mapping)
+            and cast(Mapping[str, object], page_info).get('hasNextPage') is False
+        )
+        if complete:
+            for entry in entries:
+                path = cast(Mapping[str, object], entry).get('path') if isinstance(entry, Mapping) else None
+                if not isinstance(path, str):
+                    complete = False
+                    break
+                filenames.append(path)
+        if not complete:
+            return Selection(
+                number=number,
+                decision=Decision(number=number, owner=_MANUAL_OWNER, evidence='manual:incomplete-file-list'),
+                status='route',
+            )
+    if not _connection_complete(labels):
+        return Selection(
+            number=number,
+            decision=Decision(number=number, owner=_MANUAL_OWNER, evidence='manual:incomplete-labels'),
+            status='route',
+        )
+    owner, evidence = _route(repo, _labels(normalized), filenames)
+    return Selection(
+        number=number,
+        decision=Decision(number=number, owner=owner, evidence=evidence),
+        status='route',
+    )
 
 
-def build_snapshot(
+def _recovery_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
+    negatives = ' '.join(f'-assignee:{owner}' for owner in sorted(_OWNERS, key=str.casefold))
+    query = f'repo:{repo} is:open created:>={_RECOVERY_EPOCH} -draft:true {negatives} sort:created-asc'
+    result = client.post('/graphql', {'query': _SEARCH_QUERY, 'variables': {'query': query}})
+    if not isinstance(result, Mapping):
+        raise RuntimeError('GitHub rejected the recovery query')
+    response = cast(Mapping[str, object], result)
+    if response.get('errors'):
+        raise RuntimeError('GitHub rejected the recovery query')
+    data = response.get('data')
+    search = cast(Mapping[str, object], data).get('search') if isinstance(data, Mapping) else None
+    values = _connection_nodes(search)
+    if not values:
+        return []
+    numbers: list[int] = []
+    for entry in values:
+        if isinstance(entry, Mapping):
+            try:
+                numbers.append(_item_number(cast(Mapping[str, object], entry).get('number')))
+            except ValueError:
+                continue
+    return numbers
+
+
+def select(
     client: attention.GitHubClient,
     repo: str,
-    *,
-    event_path: str | None = None,
-) -> dict[str, object]:
-    """Build one exact event candidate or a bounded unassigned safety batch."""
-    if number := _event_number(event_path):
-        numbers = [number]
-    else:
-        numbers = [int(value['number']) for value in _unassigned_page(client, repo)]
-    candidates = [candidate for number in numbers if (candidate := _candidate(client, repo, number)) is not None]
-    snapshot: dict[str, object] = {'candidates': candidates}
-    if len(json.dumps(snapshot, indent=2, ensure_ascii=False).encode()) > _SNAPSHOT_LIMIT:
-        raise RuntimeError(f'Owner-routing snapshot exceeds {_SNAPSHOT_LIMIT} bytes')
-    return snapshot
+    issue_number: str | None,
+    pull_request_number: str | None,
+) -> Selection:
+    """Select exactly the event item or one recovery candidate."""
+    repo = _repository(repo)
+    if number := event_number(issue_number, pull_request_number):
+        return decision_for(client, repo, number)
+    for number in _recovery_numbers(client, repo):
+        selection = decision_for(client, repo, number)
+        if selection['decision'] is not None:
+            return selection
+    return Selection(number=0, decision=None, status='nothing-to-route')
 
 
-def write_snapshot(
-    client: attention.GitHubClient,
-    repo: str,
-    path: str,
-    *,
-    event_path: str | None = None,
-) -> list[str]:
-    """Write the immutable input consumed by the sandboxed router."""
-    snapshot = build_snapshot(client, repo, event_path=event_path)
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding='utf-8')
-    candidates = cast(list[object], snapshot['candidates'])
-    return [f'wrote {len(candidates)} semantic owner candidate(s)']
+def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> bool:
+    """Recompute under concurrency, then add one currently qualified owner."""
+    repo = _repository(repo)
+    if expected['owner'] not in _OWNERS:
+        raise ValueError('owner is not allowlisted')
+    current = decision_for(client, repo, expected['number'])
+    if current['decision'] is None:
+        return False
+    if current['decision'] != expected:
+        raise RuntimeError('routing evidence changed before assignment')
+    if client.maintainer_login(repo, expected['owner']) is None:
+        raise RuntimeError('selected owner no longer has maintainer permission')
+    client.post(
+        f'/repos/{repo}/issues/{expected["number"]}/assignees',
+        {'assignees': [expected['owner']]},
+    )
+    assigned = _fetch_item(client, repo, expected['number'])
+    if assigned is None:
+        raise RuntimeError('assigned item disappeared')
+    assigned_maintainers = _maintainer_assignees(
+        client, repo, {'assignees': _connection_nodes(assigned.get('assignees'))}
+    )
+    if expected['owner'].casefold() not in {login.casefold() for login in assigned_maintainers}:
+        raise RuntimeError('GitHub did not apply the selected owner')
+    return True
 
 
-def _snapshot_candidates(path: str) -> dict[int, str]:
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Snapshot must contain a candidates list')
-    values = cast(Mapping[str, object], loaded).get('candidates')
-    if not isinstance(values, list):
-        raise ValueError('Snapshot must contain a candidates list')
-    candidates: dict[int, str] = {}
-    for value in cast(list[object], values):
-        if not isinstance(value, Mapping):
-            raise ValueError('Snapshot candidate must be an object')
-        candidate = cast(Mapping[str, object], value)
-        number = candidate.get('number')
-        updated_at = candidate.get('updated_at')
-        if not isinstance(number, int) or number < 1 or number in candidates or not isinstance(updated_at, str):
-            raise ValueError('Snapshot candidates must have unique positive numbers and timestamps')
-        candidates[number] = updated_at
-    if len(candidates) > _CANDIDATE_LIMIT:
-        raise ValueError('Snapshot exceeds the candidate limit')
-    return candidates
-
-
-def parse_decisions(path: str) -> list[RouteDecision]:
-    """Parse and validate the bounded semantic route outputs."""
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Agent output must contain an items list')
-    values = cast(Mapping[str, object], loaded).get('items')
-    if not isinstance(values, list):
-        raise ValueError('Agent output must contain an items list')
-    decisions: list[RouteDecision] = []
-    for value in cast(list[object], values):
-        if not isinstance(value, Mapping):
-            continue
-        decision = cast(Mapping[str, object], value)
-        if decision.get('type') != 'route_maintainer_owner':
-            continue
-        number = decision.get('item_number')
-        route = decision.get('route')
-        if not isinstance(number, str) or re.fullmatch(r'[1-9][0-9]*', number) is None:
-            raise ValueError('Decision item_number must be a positive decimal string')
-        if route not in _ROUTES:
-            raise ValueError(f'Invalid semantic route: {route!r}')
-        decisions.append(RouteDecision(item_number=int(number), route=route))
-    numbers = [decision['item_number'] for decision in decisions]
-    if len(numbers) > _CANDIDATE_LIMIT or len(numbers) != len(set(numbers)):
-        raise ValueError('Agent output contains too many or duplicate decisions')
-    return decisions
-
-
-_SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
-
-
-def parse_slack_mentions(value: str) -> dict[str, str]:
-    """Validate the caller-owned GitHub-login to Slack-member mapping."""
+def parse_mentions(value: str) -> dict[str, str]:
+    """Validate the complete caller-owned GitHub-to-Slack identity map."""
     loaded: object = json.loads(value)
     if not isinstance(loaded, Mapping):
         raise ValueError('Slack mention mapping must be an object')
     mentions = {str(key): str(mention) for key, mention in cast(Mapping[object, object], loaded).items()}
-    owners = {policy['owner'] for policy in _ROUTES.values()}
-    if set(mentions) != owners or any(_SLACK_MENTION.fullmatch(mention) is None for mention in mentions.values()):
-        raise ValueError('Slack mention mapping must contain one valid member mention for every semantic owner')
+    if set(mentions) != set(_ROUTE_OWNERS) or any(
+        _SLACK_MENTION.fullmatch(mention) is None for mention in mentions.values()
+    ):
+        raise ValueError('Slack mention mapping must contain every owner exactly once')
     return mentions
 
 
-def apply_routes(
+def notify(repo: str, decision: Decision, mentions_value: str, webhook: str) -> None:
+    """Send a constant-only Slack assignment notice without redirects."""
+    repo = _repository(repo)
+    if decision['owner'] not in _OWNERS or decision['evidence'] not in _EVIDENCE:
+        raise ValueError('notification decision is not canonical')
+    mentions = parse_mentions(mentions_value)
+    parsed = urllib.parse.urlparse(webhook)
+    if (
+        parsed.scheme != 'https'
+        or parsed.hostname != 'hooks.slack.com'
+        or parsed.port is not None
+        or not parsed.path.startswith('/services/')
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+    ):
+        raise ValueError('Slack webhook URL is invalid')
+    text = f'Routing intent: {repo}#{decision["number"]} → {mentions[decision["owner"]]}\nWhy: {decision["evidence"]}'
+    request = urllib.request.Request(
+        webhook,
+        data=json.dumps({'text': text}).encode(),
+        method='POST',
+        headers={'Content-Type': 'application/json'},
+    )
+    try:
+        with urllib.request.build_opener(attention.NoRedirect).open(request, timeout=10) as response:
+            body = response.read(3)
+            if response.status != 200 or body != b'ok':
+                raise RuntimeError('Slack rejected the notification')
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+        exc.close()
+        raise RuntimeError(f'Slack notification failed with HTTP {code}') from None
+    except urllib.error.URLError:
+        raise RuntimeError('Slack notification failed at the network boundary') from None
+
+
+def notify_current(
     client: attention.GitHubClient,
     repo: str,
-    output_path: str,
-    snapshot_path: str,
-) -> tuple[list[str], list[AssignmentNotice]]:
-    """Revalidate every route, preserve human ownership, then assign."""
-    candidates = _snapshot_candidates(snapshot_path)
-    decisions = parse_decisions(output_path)
-    unknown = {decision['item_number'] for decision in decisions} - candidates.keys()
-    if unknown:
-        raise ValueError(f'Agent output contains numbers outside the snapshot: {sorted(unknown)}')
-    if {decision['item_number'] for decision in decisions} != candidates.keys():
-        raise ValueError('Agent output must route every snapshot candidate exactly once')
-    lines: list[str] = []
-    notices: list[AssignmentNotice] = []
-    failures: list[str] = []
-    for decision in decisions:
-        number = decision['item_number']
-        policy = _ROUTES[decision['route']]
-        try:
-            current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-            if current.get('state') != 'open' or str(current.get('updated_at') or '') != candidates[number]:
-                lines.append(f'#{number}: skipped because the item changed after routing')
-                continue
-            if maintainers := _maintainer_assignees(client, repo, current):
-                lines.append(
-                    f'#{number}: kept existing maintainer owner {" ".join(f"@{login}" for login in maintainers)}'
-                )
-                continue
-            owner = policy['owner']
-            client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [owner]})
-            assigned = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-            assigned_maintainers = _maintainer_assignees(client, repo, assigned)
-            if assigned.get('state') != 'open' or owner.casefold() not in {
-                login.casefold() for login in assigned_maintainers
-            }:
-                raise RuntimeError(f'GitHub did not assign @{owner}')
-            lines.append(f'#{number}: routed to @{owner} for {policy["basis"]}')
-            notices.append(
-                AssignmentNotice(
-                    number=number,
-                    title=str(current.get('title') or '')[:300],
-                    owner=owner,
-                    basis=policy['basis'],
-                )
-            )
-        except (urllib.error.URLError, RuntimeError) as exc:
-            if isinstance(exc, urllib.error.HTTPError):
-                exc.close()
-            failures.append(f'#{number}: {type(exc).__name__}: {exc}')
-    if failures:
-        raise RuntimeError('Failed to apply semantic owner routes: ' + '; '.join(failures))
-    return lines, notices
+    expected: Decision,
+    mentions_value: str,
+    webhook: str,
+) -> bool:
+    """Notify only while the selected route still matches current GitHub state."""
+    current = decision_for(client, repo, expected['number'])
+    if current['decision'] != expected:
+        return False
+    notify(repo, expected, mentions_value, webhook)
+    return True
 
 
-def write_notifications(repo: str, notices: Sequence[AssignmentNotice], mentions: Mapping[str, str]) -> None:
-    """Write one fixed Slack digest for assignments made by this run."""
-    if not (output_path := os.environ.get('GITHUB_OUTPUT')):
-        return
-    details = [
-        f'• <https://github.com/{repo}/issues/{notice["number"]}|#{notice["number"]} '
-        f'{_slack_escape(notice["title"]) or "(untitled)"}> → {mentions[notice["owner"]]}'
-        f'\n      why: {notice["basis"]}'
-        for notice in notices
-    ]
-    payload = {'text': f':label: Semantic owner routing for {repo}\n' + '\n'.join(details)}
-    with Path(output_path).open('a', encoding='utf-8') as output:
-        output.write(f'has_assignments={str(bool(notices)).lower()}\n')
-        output.write(f'slack_payload={json.dumps(payload, separators=(",", ":"))}\n')
+def _output(values: Mapping[str, object]) -> None:
+    if path := os.environ.get('GITHUB_OUTPUT'):
+        with Path(path).open('a', encoding='utf-8') as output:
+            for key, value in values.items():
+                output.write(f'{key}={value}\n')
 
 
-def _write_summary(lines: Sequence[str]) -> None:
+def _summary(line: str) -> None:
+    print(line)
     if path := os.environ.get('GITHUB_STEP_SUMMARY'):
         with Path(path).open('a', encoding='utf-8') as summary:
-            summary.write('## Semantic owner routing\n\n')
-            summary.write('\n'.join(f'- {line}' for line in lines) or '- No changes')
-            summary.write('\n')
+            summary.write(f'## Semantic owner routing\n\n- {line}\n')
 
 
 def main() -> int:
-    """Build an owner snapshot or apply validated semantic routes."""
+    """Run the select, assign, or notify workflow phase."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['snapshot', 'apply'])
-    parser.add_argument('--snapshot-path', default='owner-routing-candidates.json')
-    parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
+    parser.add_argument('mode', choices=['select', 'assign', 'notify'])
+    parser.add_argument('--number', type=int)
+    parser.add_argument('--owner')
+    parser.add_argument('--evidence')
     args = parser.parse_args()
-    token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
-    if not token:
-        print('GITHUB_TOKEN or GH_TOKEN is required', file=sys.stderr)
+    repo = os.environ.get('GITHUB_REPOSITORY', '')
+    try:
+        token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
+        if not token:
+            raise ValueError('GITHUB_TOKEN is required')
+        client = attention.GitHubClient(token)
+        if args.mode == 'notify':
+            if args.number is None or args.owner is None or args.evidence is None:
+                parser.error('notify requires --number, --owner, and --evidence')
+            expected = Decision(number=_item_number(args.number), owner=args.owner, evidence=args.evidence)
+            did_notify = notify_current(
+                client,
+                repo,
+                expected,
+                os.environ['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'],
+                os.environ['PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL'],
+            )
+            _output({'did_notify': str(did_notify).lower()})
+            _summary(f'#{args.number}: ' + ('notified routing intent' if did_notify else 'route changed'))
+            return 0
+        if args.mode == 'select':
+            selected = select(
+                client,
+                repo,
+                os.environ.get('ROUTING_ISSUE_NUMBER'),
+                os.environ.get('ROUTING_PULL_REQUEST_NUMBER'),
+            )
+            decision = selected['decision']
+            _output(
+                {
+                    'should_assign': str(decision is not None).lower(),
+                    'number': selected['number'],
+                    'owner': decision['owner'] if decision else '',
+                    'evidence': decision['evidence'] if decision else '',
+                }
+            )
+            _summary(f'#{selected["number"]}: {selected["status"]}' if selected['number'] else selected['status'])
+            return 0
+        if args.number is None or args.owner is None or args.evidence is None:
+            parser.error('assign requires --number, --owner, and --evidence')
+        expected = Decision(number=_item_number(args.number), owner=args.owner, evidence=args.evidence)
+        did_assign = assign(client, repo, expected)
+        _output(
+            {
+                'did_assign': str(did_assign).lower(),
+                'number': expected['number'],
+                'owner': expected['owner'],
+                'evidence': expected['evidence'],
+            }
+        )
+        _summary(f'#{expected["number"]}: ' + ('assigned' if did_assign else 'already owned'))
+        return 0
+    except (KeyError, OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
+        print(f'owner routing failed: {type(exc).__name__}', file=sys.stderr)
         return 1
-    client = attention.GitHubClient(token)
-    repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
-    if args.mode == 'snapshot':
-        lines = write_snapshot(client, repo, args.snapshot_path, event_path=os.environ.get('GITHUB_EVENT_PATH'))
-    else:
-        if not args.agent_output:
-            parser.error('--agent-output is required')
-        mentions_value = os.environ.get('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS')
-        if mentions_value is None:
-            parser.error('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS is required')
-        mentions = parse_slack_mentions(mentions_value)
-        lines, notices = apply_routes(client, repo, args.agent_output, args.snapshot_path)
-        write_notifications(repo, notices, mentions)
-    _write_summary(lines)
-    for line in lines:
-        print(line)
-    return 0
 
 
 if __name__ == '__main__':

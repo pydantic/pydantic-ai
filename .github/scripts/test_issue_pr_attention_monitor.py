@@ -1822,10 +1822,45 @@ class StubResponse(io.BytesIO):
 
 
 def test_github_client_bounds_response_parsing(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(monitor.urllib.request, 'urlopen', lambda request, timeout: StubResponse(b'{"ok": true}'))
+    class StubOpener:
+        def __init__(self, response: bytes) -> None:
+            self.response = response
+
+        def open(self, request: object, timeout: int) -> StubResponse:
+            return StubResponse(self.response)
+
+    monkeypatch.setattr(
+        monitor.urllib.request,
+        'build_opener',
+        lambda handler: StubOpener(b'{"ok": true}'),
+    )
     assert monitor.GitHubClient('token').get('/test') == {'ok': True}
 
     monkeypatch.setattr(monitor, '_RESPONSE_LIMIT', 2)
-    monkeypatch.setattr(monitor.urllib.request, 'urlopen', lambda request, timeout: StubResponse(b'{}\n'))
+    monkeypatch.setattr(
+        monitor.urllib.request,
+        'build_opener',
+        lambda handler: StubOpener(b'{}\n'),
+    )
     with pytest.raises(RuntimeError, match='response exceeds'):
         monitor.GitHubClient('token').get('/test')
+
+
+def test_github_client_disables_redirects(monkeypatch: pytest.MonkeyPatch):
+    seen: list[object] = []
+
+    class StubOpener:
+        def open(self, request: object, timeout: int) -> StubResponse:
+            return StubResponse(b'{}')
+
+    def build_opener(handler: object) -> StubOpener:
+        seen.append(handler)
+        return StubOpener()
+
+    monkeypatch.setattr(monitor.urllib.request, 'build_opener', build_opener)
+
+    monitor.GitHubClient('token').get('/test')
+
+    assert len(seen) == 1
+    assert seen[0] is monitor.NoRedirect
+    assert monitor.NoRedirect().redirect_request(None, None, 302, '', None, 'https://evil.example') is None

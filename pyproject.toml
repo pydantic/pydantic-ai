@@ -352,7 +352,6 @@ include = [
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/semantic_owner_router.py",
-    ".github/scripts/test_semantic_owner_router.py",
 ]
 # The monitor policy tests deliberately exercise private helpers and loose GitHub
 # webhook dictionaries through monkeypatching; pytest covers them, while the
@@ -369,7 +368,6 @@ executionEnvironments = [
     { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
-    { root = ".github/scripts/test_semantic_owner_router.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",

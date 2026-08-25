@@ -60,6 +60,21 @@ _LABELS = {
 }
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward a GitHub bearer token through an HTTP redirect."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
 class Decision(TypedDict):
     """The complete model-controlled surface."""
 
@@ -111,7 +126,7 @@ class GitHubClient:
                 'X-GitHub-Api-Version': '2022-11-28',
             },
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
             if response.status == 204:
                 return None, response.headers.get('Link')
             body = response.read(_RESPONSE_LIMIT + 1)

@@ -1,0 +1,103 @@
+name: Semantic owner routing
+
+on:
+  issues:
+    types: [opened, reopened]
+  # zizmor: ignore[dangerous-triggers] -- executable checkouts use the reusable workflow's trusted SHA
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+  schedule:
+    - cron: '25 */6 * * *'
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
+        required: true
+
+permissions: {}
+
+jobs:
+  select:
+    name: Select one item
+    if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      should_route: ${{ steps.select.outputs.should_assign }}
+      number: ${{ steps.select.outputs.number }}
+      owner: ${{ steps.select.outputs.owner }}
+      evidence: ${{ steps.select.outputs.evidence }}
+    steps:
+      - name: Check out trusted routing policy
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/issue_pr_attention_monitor.py
+            .github/scripts/semantic_owner_router.py
+          sparse-checkout-cone-mode: false
+      - name: Select one exact item
+        id: select
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ROUTING_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ROUTING_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+        run: python .github/scripts/semantic_owner_router.py select
+
+  route:
+    name: Notify intent and assign maintainer
+    needs: select
+    if: needs.select.outputs.should_route == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: pydantic-ai-triage
+    concurrency:
+      group: semantic-owner-${{ github.repository }}-${{ needs.select.outputs.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check out trusted routing policy
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/issue_pr_attention_monitor.py
+            .github/scripts/semantic_owner_router.py
+          sparse-checkout-cone-mode: false
+      - name: Revalidate and send canonical routing intent
+        id: notify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
+          PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          ROUTE_NUMBER: ${{ needs.select.outputs.number }}
+          ROUTE_OWNER: ${{ needs.select.outputs.owner }}
+          ROUTE_EVIDENCE: ${{ needs.select.outputs.evidence }}
+        run: >-
+          python .github/scripts/semantic_owner_router.py notify
+          --number "$ROUTE_NUMBER"
+          --owner "$ROUTE_OWNER"
+          --evidence "$ROUTE_EVIDENCE"
+      - name: Revalidate and assign
+        if: steps.notify.outputs.did_notify == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ROUTE_NUMBER: ${{ needs.select.outputs.number }}
+          ROUTE_OWNER: ${{ needs.select.outputs.owner }}
+          ROUTE_EVIDENCE: ${{ needs.select.outputs.evidence }}
+        run: >-
+          python .github/scripts/semantic_owner_router.py assign
+          --number "$ROUTE_NUMBER"
+          --owner "$ROUTE_OWNER"
+          --evidence "$ROUTE_EVIDENCE"
