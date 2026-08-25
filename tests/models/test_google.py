@@ -106,6 +106,7 @@ with try_import() as imports_successful:
         CitationMetadata,
         Content,
         FinishReason as GoogleFinishReason,
+        FunctionCall,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
@@ -5768,7 +5769,8 @@ async def test_google_stream_shorter_chunk_after_tool_starts_new_text():
             candidates=[
                 Candidate(
                     content=Content(
-                        parts=[Part(text='before'), Part(function_call={'name': 'tool', 'args': {}})], role='model'
+                        parts=[Part(text='before'), Part(function_call=FunctionCall(name='tool', args={}))],
+                        role='model',
                     )
                 )
             ],
