@@ -896,6 +896,7 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
     with pytest.raises(ValueError, match='selected owner'):
         router._slack_payload(  # pyright: ignore[reportPrivateUsage]
             CORE,
+            'Issue',
             router.Decision(number=7, owner='DouweM', evidence='label:durable exec'),
             value,
         )
@@ -904,13 +905,84 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
 def test_notification_payload_contains_only_canonical_fields():
     payload = router._slack_payload(  # pyright: ignore[reportPrivateUsage]
         HARNESS,
+        'PullRequest',
         router.Decision(number=620, owner='dsfaccini', evidence='label:cap:compaction'),
         MENTIONS,
     )
 
     assert json.loads(payload) == {
-        'text': 'Routing intent: pydantic/pydantic-ai-harness#620 → <@UDAVID>\nWhy: label:cap:compaction'
+        'text': (
+            'Routing intent: Pull request '
+            '<https://github.com/pydantic/pydantic-ai-harness/pull/620|pydantic/pydantic-ai-harness#620> → <@UDAVID>\n'
+            'Why: Matched ownership label `cap:compaction`.'
+        )
     }
+
+
+def test_participant_notification_names_and_links_issue_with_readable_reason():
+    payload = router._slack_payload(  # pyright: ignore[reportPrivateUsage]
+        CORE,
+        'Issue',
+        router.Decision(number=7177, owner='dsfaccini', evidence='participant:dsfaccini'),
+        MENTIONS,
+    )
+
+    assert json.loads(payload) == {
+        'text': (
+            'Routing intent: Issue '
+            '<https://github.com/pydantic/pydantic-ai/issues/7177|pydantic/pydantic-ai#7177> → <@UDAVID>\n'
+            'Why: <@UDAVID> was the most recent qualified maintainer to participate.'
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ('decision', 'reason'),
+    [
+        (
+            router.Decision(number=7, owner='adtyavrdhn', evidence='author:adtyavrdhn'),
+            '<@UADITYA> authored this pull request.',
+        ),
+        (
+            router.Decision(
+                number=7,
+                owner='dsfaccini',
+                evidence='path:pydantic_ai_slim/pydantic_ai/models/',
+            ),
+            'Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
+        ),
+        (
+            router.Decision(number=7, owner='adtyavrdhn', evidence='manual:conflict-or-unknown'),
+            'No single semantic owner matched, so this needs manual triage.',
+        ),
+        (
+            router.Decision(number=7, owner='adtyavrdhn', evidence='manual:unavailable-owner:dsfaccini'),
+            'The matched semantic owner is unavailable, so this needs manual triage.',
+        ),
+    ],
+)
+def test_notification_explains_canonical_routing_evidence(decision: router.Decision, reason: str):
+    payload = router._slack_payload(CORE, 'PullRequest', decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
+
+    assert json.loads(payload)['text'].endswith(f'\nWhy: {reason}')
+
+
+@pytest.mark.parametrize(
+    ('item_type', 'evidence'),
+    [
+        ('Discussion', 'label:streaming'),
+        ('Issue', 'label:<!channel>'),
+        ('Issue', 'manual:unavailable-owner:attacker'),
+    ],
+)
+def test_notification_rejects_noncanonical_type_and_evidence(item_type: str, evidence: str):
+    with pytest.raises(ValueError, match='canonical'):
+        router._slack_payload(  # pyright: ignore[reportPrivateUsage]
+            CORE,
+            item_type,
+            router.Decision(number=7, owner='adtyavrdhn', evidence=evidence),
+            MENTIONS,
+        )
 
 
 def test_no_attacker_text_is_used_in_output_or_notification():
@@ -923,7 +995,7 @@ def test_no_attacker_text_is_used_in_output_or_notification():
     serialized = json.dumps(decision)
     assert attacker not in serialized
 
-    assert attacker not in router._slack_payload(CORE, decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
+    assert attacker not in router._slack_payload(CORE, 'Issue', decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_stale_route_is_not_prepared():

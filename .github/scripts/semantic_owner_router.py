@@ -624,11 +624,49 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     return True
 
 
-def _slack_payload(repo: str, decision: Decision, mentions_value: str) -> str:
+def _routing_reason(repo: str, decision: Decision, mention: str) -> str:
+    evidence = decision['evidence']
+    owner = decision['owner']
+    if evidence == f'participant:{owner}':
+        return f'{mention} was the most recent qualified maintainer to participate.'
+    if evidence == f'author:{owner}':
+        return f'{mention} authored this pull request.'
+    for rule in _RULES[repo]:
+        for label in rule.labels:
+            if evidence == f'label:{label}' and owner == rule.owner:
+                return f'Matched ownership label `{label}`.'
+        for path in rule.paths:
+            if evidence == f'path:{path}' and owner == rule.owner:
+                return f'Matched ownership path `{path}`.'
+    manual_reasons = {
+        'manual:conflict-or-unknown': 'No single semantic owner matched, so this needs manual triage.',
+        'manual:incomplete-file-list': 'The changed-file list could not be completely verified, so this needs manual triage.',
+        'manual:incomplete-labels': 'The label list could not be completely verified, so this needs manual triage.',
+        'manual:invalid-file-list': 'The changed-file list was invalid, so this needs manual triage.',
+        'manual:unowned-production-path': 'A changed production path has no semantic owner, so this needs manual triage.',
+    }
+    if owner == _MANUAL_OWNER and evidence in manual_reasons:
+        return manual_reasons[evidence]
+    unavailable = evidence.removeprefix('manual:unavailable-owner:')
+    if owner == _MANUAL_OWNER and unavailable != evidence and unavailable in _OWNERS:
+        return 'The matched semantic owner is unavailable, so this needs manual triage.'
+    raise ValueError('routing evidence is not canonical')
+
+
+def _slack_payload(repo: str, item_type: str, decision: Decision, mentions_value: str) -> str:
     """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
     mentions = attention.slack_mentions(mentions_value, decision['owner'])
-    text = f'Routing intent: {repo}#{decision["number"]} → {mentions[decision["owner"]]}\nWhy: {decision["evidence"]}'
+    mention = mentions[decision['owner']]
+    if item_type == 'Issue':
+        kind, path = 'Issue', 'issues'
+    elif item_type == 'PullRequest':
+        kind, path = 'Pull request', 'pull'
+    else:
+        raise ValueError('item type is not canonical')
+    number = decision['number']
+    item = f'<https://github.com/{repo}/{path}/{number}|{repo}#{number}>'
+    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(repo, decision, mention)}'
     return json.dumps({'text': text}, separators=(',', ':'))
 
 
@@ -639,6 +677,12 @@ def prepare_current(
     mentions_value: str,
 ) -> str | None:
     """Build a notice only while the selected route still matches GitHub."""
+    item = _fetch_item(client, repo, expected['number'])
+    if item is None:
+        return None
+    item_type = item.get('__typename')
+    if not isinstance(item_type, str):
+        raise RuntimeError('GitHub returned invalid routing metadata')
     current = decision_for(
         client,
         repo,
@@ -647,7 +691,7 @@ def prepare_current(
     )
     if current['decision'] != expected:
         return None
-    return _slack_payload(repo, expected, mentions_value)
+    return _slack_payload(repo, item_type, expected, mentions_value)
 
 
 def _output(values: Mapping[str, object]) -> None:
