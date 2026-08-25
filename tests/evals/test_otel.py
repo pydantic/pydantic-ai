@@ -5,6 +5,7 @@ import gc
 import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from threading import Barrier
 
 import pytest
@@ -24,7 +25,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
-    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
+    from pydantic_evals.otel.span_tree import AttributeValue, SpanNode, SpanQuery, SpanTree
 
 with try_import() as logfire_import_successful:
     import logfire
@@ -108,20 +109,42 @@ async def test_context_subtree_concurrent():
 
 
 @pytest.fixture
-async def span_tree() -> SpanTree:
-    """Fixture that creates a span tree with a predefined structure and attributes."""
-    # Create spans with a tree structure and attributes
-    with context_subtree() as tree:
-        with logfire.span('root', level='0'):
-            with logfire.span('child1', level='1', type='important'):
-                with logfire.span('grandchild1', level='2', type='important'):
-                    pass
-                with logfire.span('grandchild2', level='2', type='normal'):
-                    pass
-            with logfire.span('child2', level='1', type='normal'):
-                with logfire.span('grandchild3', level='2', type='normal'):
-                    pass
-    assert isinstance(tree, SpanTree)
+def span_tree() -> SpanTree:
+    """Build deterministic input for pure tree queries, which have no provider request to record with VCR.
+
+    Live Logfire/OTel capture is exercised separately by the `context_subtree` tests above.
+    """
+
+    def make_span(
+        name: str,
+        span_id: int,
+        parent_span_id: int | None,
+        start: int,
+        duration: int,
+        **attributes: AttributeValue,
+    ) -> SpanNode:
+        start_timestamp = datetime.fromtimestamp(start, tz=timezone.utc)
+        return SpanNode(
+            name=name,
+            trace_id=1,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            start_timestamp=start_timestamp,
+            end_timestamp=start_timestamp + timedelta(seconds=duration),
+            attributes=attributes,
+        )
+
+    tree = SpanTree()
+    tree.add_spans(
+        [
+            make_span('root', 1, None, 1, 11, level='0'),
+            make_span('child1', 3, 1, 2, 5, level='1', type='important'),
+            make_span('grandchild1', 5, 3, 3, 1, level='2', type='important'),
+            make_span('grandchild2', 7, 3, 5, 1, level='2', type='normal'),
+            make_span('child2', 9, 1, 8, 3, level='1', type='normal'),
+            make_span('grandchild3', 11, 9, 9, 1, level='2', type='normal'),
+        ]
+    )
     return tree
 
 
@@ -221,6 +244,11 @@ async def test_span_node_find_descendants(span_tree: SpanTree):
     child1_node = root_node.first_child(lambda node: node.name == 'child1')
     assert child1_node is not None
     assert child1_node.matches({'min_descendant_count': 2, 'max_descendant_count': 2})
+
+    grandchild1_node = root_node.first_descendant(lambda node: node.name == 'grandchild1')
+    assert grandchild1_node is not None
+    assert grandchild1_node.matches({'max_descendant_count': 0})
+    assert not root_node.matches({'max_descendant_count': 0})
 
 
 async def test_span_node_matches(span_tree: SpanTree):
@@ -453,6 +481,11 @@ async def test_span_tree_ancestors_methods():
     assert leaf_node.matches({'min_depth': 4, 'max_depth': 4})
     assert not leaf_node.matches({'min_depth': 3, 'max_depth': 3})
     assert not leaf_node.matches({'min_depth': 5, 'max_depth': 5})
+
+    root_node = tree.first(lambda node: node.name == 'root')
+    assert root_node is not None
+    assert root_node.matches({'max_depth': 0})
+    assert not leaf_node.matches({'max_depth': 0})
 
     assert [node.name for node in leaf_node.ancestors] == ['level3', 'level2', 'level1', 'root']
     assert leaf_node.matches({'some_ancestor_has': {'name_equals': 'level1'}})
@@ -932,6 +965,13 @@ async def test_span_query_child_count():
     assert parent_three.matches({'min_child_count': 3})
     assert parent_three.matches({'min_child_count': 2, 'max_child_count': 3})
     assert not parent_three.matches({'max_child_count': 2})
+
+    parent_no_children = tree.first(lambda node: node.name == 'parent_no_children')
+    parent_one_child = tree.first(lambda node: node.name == 'parent_one_child')
+    assert parent_no_children is not None
+    assert parent_one_child is not None
+    assert parent_no_children.matches({'max_child_count': 0})
+    assert not parent_one_child.matches({'max_child_count': 0})
 
     # Test with logical operators
     logical_query: SpanQuery = {

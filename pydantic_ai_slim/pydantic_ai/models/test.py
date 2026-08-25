@@ -548,7 +548,18 @@ class _JsonSchemaTestData:
                 minimum = exc_min + 1
 
         if minimum is not None and maximum is not None:
-            return minimum + self.seed % (maximum - minimum)
+            span = maximum - minimum
+            if (
+                schema.get('type') == 'integer'
+                and minimum % 1 == 0
+                and maximum % 1 == 0
+                and 'exclusiveMinimum' not in schema
+                and 'exclusiveMaximum' not in schema
+                and span > 0
+            ):
+                minimum = int(minimum)
+                span = int(maximum) - minimum + 1
+            return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
         elif maximum is not None:

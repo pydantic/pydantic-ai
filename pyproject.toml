@@ -260,6 +260,8 @@ include = [
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
+    ".github/scripts/semantic_owner_router.py",
+    ".github/scripts/test_semantic_owner_router.py",
     ".github/scripts/agentic_workflow_guard.py",
     ".github/scripts/test_agentic_workflow_guard.py",
     ".github/scripts/agent_spend_report.py",
@@ -322,6 +324,7 @@ quote-style = "single"
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
+".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
@@ -348,6 +351,7 @@ include = [
     ".github/scripts/pydantic_ai_gh_aw_shim",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
+    ".github/scripts/semantic_owner_router.py",
 ]
 # The monitor policy tests deliberately exercise private helpers and loose GitHub
 # webhook dictionaries through monkeypatching; pytest covers them, while the
