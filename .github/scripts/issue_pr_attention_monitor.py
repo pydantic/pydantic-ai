@@ -10,6 +10,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1155,6 +1156,7 @@ def reconcile(
 
 def _slack_escape(value: str) -> str:
     normalized = ' '.join(value.split())
+    normalized = ''.join(character for character in normalized if unicodedata.category(character) != 'Cf')
     for character in '*_~`|\\':
         normalized = normalized.replace(character, '')
     normalized = ' '.join(normalized.split())
@@ -1311,7 +1313,7 @@ def _weekly_items(
         return []
     lines: list[str] = []
     phrases = {'active': 'awaiting maintainer action', 'cooling': 'channel escalation cooling', 'other': 'assigned'}
-    for match in matches[:limit]:
+    for match in matches:
         number = int(match['number'])
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
         assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
@@ -1325,10 +1327,12 @@ def _weekly_items(
         updated = _age(now, _parse_time(str(current['updated_at'])))
         title = _slack_escape(str(current.get('title') or ''))[:120]
         status = _slack_escape(_weekly_status(current, timeline, owner, now=now))
+        label = f'#{number} {title}'.rstrip()
         lines.append(
-            f'• <https://github.com/{repo}/issues/{number}|#{number}> {title} — {phrases[state]} · updated {updated} · '
-            f'{status}'
+            f'• <https://github.com/{repo}/issues/{number}|{label}> — {phrases[state]} · updated {updated} · {status}'
         )
+        if len(lines) == limit:
+            break
     return lines
 
 
@@ -1346,13 +1350,13 @@ def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
         if not total:
             lines.extend(['', f'*{name}* (`{owner}`) — clear'])
             continue
-        lines.extend(
-            [
-                '',
-                f'*{name}* (`{owner}`) — {total} open assigned · {counts["active"]} awaiting action · '
-                f'{counts["cooling"]} cooling',
-            ]
+        category_total = sum(counts.values())
+        categories = (
+            f'snapshot: {counts["active"]} awaiting action · {counts["cooling"]} cooling'
+            if category_total == total
+            else 'attention categories updating'
         )
+        lines.extend(['', f'*{name}* (`{owner}`) — {total} open assigned · {categories}'])
         remaining = _WEEKLY_ITEM_LIMIT
         for state in states:
             details = _weekly_items(client, repo, owner, state, found[state][1], limit=remaining, now=now)
