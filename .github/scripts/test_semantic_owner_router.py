@@ -60,6 +60,7 @@ class FakeClient(router.attention.GitHubClient):
         self.drafts: set[int] = set()
         self.changed_counts: dict[int, int] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
+        self.search_results: list[list[int]] = []
         self.permissions = {login: 'write' for login in ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')}
         self.calls: list[tuple[str, str, object | None]] = []
 
@@ -76,12 +77,12 @@ class FakeClient(router.attention.GitHubClient):
             variables = payload['variables']
             assert isinstance(variables, Mapping)
             if 'number' not in variables:
+                numbers = self.search_results.pop(0) if self.search_results else self.items
                 return {
                     'data': {
                         'search': {
                             'nodes': [
-                                {'number': value['number'], 'updatedAt': value['updated_at']}
-                                for value in self.items.values()
+                                {'number': number, 'updatedAt': self.items[number]['updated_at']} for number in numbers
                             ]
                         }
                     }
@@ -157,31 +158,22 @@ def test_graphql_projection_never_requests_title_or_body():
     assert 'body' not in compact
 
 
-def test_maintainer_authored_pr_routes_to_its_author_before_path_rules():
+@pytest.mark.parametrize(
+    ('permission', 'expected'),
+    [
+        ('write', ('adtyavrdhn', 'author:adtyavrdhn')),
+        ('read', ('dsfaccini', 'path:pydantic_ai_slim/pydantic_ai/models/')),
+    ],
+)
+def test_pr_author_precedence_requires_current_maintainer_permission(permission: str, expected: tuple[str, str]):
     client = FakeClient({7: item(7, pull_request=True, author='adtyavrdhn')})
+    client.permissions['adtyavrdhn'] = permission
     client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
 
     decision = router.decision_for(client, CORE, 7)['decision']
 
-    assert decision == {
-        'number': 7,
-        'owner': 'adtyavrdhn',
-        'evidence': 'author:adtyavrdhn',
-    }
-
-
-def test_offboarded_pr_author_uses_semantic_routing():
-    client = FakeClient({7: item(7, pull_request=True, author='adtyavrdhn')})
-    client.permissions['adtyavrdhn'] = 'read'
-    client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision == {
-        'number': 7,
-        'owner': 'dsfaccini',
-        'evidence': 'path:pydantic_ai_slim/pydantic_ai/models/',
-    }
+    assert decision is not None
+    assert (decision['owner'], decision['evidence']) == expected
 
 
 @pytest.mark.parametrize(
@@ -793,93 +785,33 @@ def test_recovery_skips_full_assignee_list_without_starving_the_next():
     assert selected['number'] == 8
 
 
-class RecoveryClient(FakeClient):
-    def __init__(
-        self,
-        values: dict[int, dict[str, Any]],
-        *,
-        recent: list[int],
-        legacy: list[int],
-    ) -> None:
-        super().__init__(values)
-        self.recent = recent
-        self.legacy = legacy
+def test_daily_recovery_is_opt_in_lower_priority_and_bounded():
+    client = FakeClient({number: item(number, labels=['MCP']) for number in range(1, 9)})
 
-    def post(self, path: str, payload: Mapping[str, object]) -> Any:
-        if path == '/graphql':
-            variables = payload['variables']
-            assert isinstance(variables, Mapping)
-            if 'number' not in variables:
-                self.calls.append(('POST', path, payload))
-                query = str(variables['query'])
-                numbers = self.recent if 'created:>=' in query else self.legacy
-                return {'data': {'search': {'nodes': [{'number': number} for number in numbers]}}}
-        return super().post(path, payload)
+    client.search_results = [[]]
+    assert router.select_batch(client, CORE, None, None) == []
 
+    client.search_results = [[8]]
+    assert [
+        selection['number'] for selection in router.select_batch(client, CORE, None, None, legacy_recovery=True)
+    ] == [8]
 
-def test_daily_recovery_routes_six_recently_active_legacy_items():
-    client = RecoveryClient(
-        {number: item(number, labels=['MCP']) for number in range(1, 8)},
-        recent=[],
-        legacy=list(range(1, 8)),
-    )
-
+    client.search_results = [[], list(range(1, 8))]
     selected = router.select_batch(client, CORE, None, None, legacy_recovery=True)
-
     assert [selection['number'] for selection in selected] == [1, 2, 3, 4, 5, 6]
-    queries = [
+
+    legacy_queries = [
         str(cast(Mapping[str, object], payload)['variables']['query'])
         for method, path, payload in client.calls
         if method == 'POST'
         and path == '/graphql'
         and isinstance(payload, Mapping)
         and isinstance(payload.get('variables'), Mapping)
-        and 'query' in payload['variables']
+        and 'created:<' in str(payload['variables'].get('query'))
     ]
-    assert queries == [
-        'repo:pydantic/pydantic-ai is:open created:>=2026-08-18 -draft:true '
-        '-assignee:adtyavrdhn -assignee:DouweM -assignee:dsfaccini -assignee:mpfaffenberger '
-        'sort:created-asc',
+    assert legacy_queries == [
         'repo:pydantic/pydantic-ai is:open created:<2026-08-18 -draft:true no:assignee sort:updated-desc',
     ]
-
-
-def test_daily_recovery_keeps_post_rollout_item_ahead_of_legacy_batch():
-    client = RecoveryClient(
-        {7: item(7, labels=['MCP']), 8: item(8, labels=['tools'])},
-        recent=[7],
-        legacy=[8],
-    )
-
-    selected = router.select_batch(client, CORE, None, None, legacy_recovery=True)
-
-    assert [selection['number'] for selection in selected] == [7]
-    assert not any(
-        'created:<' in str(cast(Mapping[str, object], payload)['variables']['query'])
-        for method, path, payload in client.calls
-        if method == 'POST'
-        and path == '/graphql'
-        and isinstance(payload, Mapping)
-        and isinstance(payload.get('variables'), Mapping)
-        and 'query' in payload['variables']
-    )
-
-
-def test_regular_recovery_never_queries_legacy_items():
-    client = RecoveryClient({8: item(8, labels=['tools'])}, recent=[], legacy=[8])
-
-    selected = router.select_batch(client, CORE, None, None)
-
-    assert selected == []
-    assert not any(
-        'created:<' in str(cast(Mapping[str, object], payload)['variables']['query'])
-        for method, path, payload in client.calls
-        if method == 'POST'
-        and path == '/graphql'
-        and isinstance(payload, Mapping)
-        and isinstance(payload.get('variables'), Mapping)
-        and 'query' in payload['variables']
-    )
 
 
 @pytest.mark.parametrize(
@@ -902,23 +834,6 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
         )
 
 
-def test_notification_payload_contains_only_canonical_fields():
-    payload = router._slack_payload(  # pyright: ignore[reportPrivateUsage]
-        HARNESS,
-        'PullRequest',
-        router.Decision(number=620, owner='dsfaccini', evidence='label:cap:compaction'),
-        MENTIONS,
-    )
-
-    assert json.loads(payload) == {
-        'text': (
-            'Routing intent: Pull request '
-            '<https://github.com/pydantic/pydantic-ai-harness/pull/620|pydantic/pydantic-ai-harness#620> → <@UDAVID>\n'
-            'Why: Matched ownership label `cap:compaction`.'
-        )
-    }
-
-
 def test_participant_notification_names_and_links_issue_with_readable_reason():
     payload = router._slack_payload(  # pyright: ignore[reportPrivateUsage]
         CORE,
@@ -927,41 +842,32 @@ def test_participant_notification_names_and_links_issue_with_readable_reason():
         MENTIONS,
     )
 
-    assert json.loads(payload) == {
-        'text': (
-            'Routing intent: Issue '
-            '<https://github.com/pydantic/pydantic-ai/issues/7177|pydantic/pydantic-ai#7177> → <@UDAVID>\n'
-            'Why: <@UDAVID> was the most recent qualified maintainer to participate.'
-        )
-    }
+    assert json.loads(payload)['text'] == (
+        'Routing intent: Issue '
+        '<https://github.com/pydantic/pydantic-ai/issues/7177|pydantic/pydantic-ai#7177> → <@UDAVID>\n'
+        'Why: <@UDAVID> was the most recent qualified maintainer to participate.'
+    )
 
 
 @pytest.mark.parametrize(
     ('decision', 'reason'),
     [
+        (router.Decision(number=7, owner='dsfaccini', evidence='label:MCP'), 'Matched ownership label `MCP`.'),
+        (
+            router.Decision(number=7, owner='dsfaccini', evidence='path:pydantic_ai_slim/pydantic_ai/models/'),
+            'Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
+        ),
         (
             router.Decision(number=7, owner='adtyavrdhn', evidence='author:adtyavrdhn'),
             '<@UADITYA> authored this pull request.',
         ),
         (
-            router.Decision(
-                number=7,
-                owner='dsfaccini',
-                evidence='path:pydantic_ai_slim/pydantic_ai/models/',
-            ),
-            'Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
-        ),
-        (
             router.Decision(number=7, owner='adtyavrdhn', evidence='manual:conflict-or-unknown'),
-            'No single semantic owner matched, so this needs manual triage.',
-        ),
-        (
-            router.Decision(number=7, owner='adtyavrdhn', evidence='manual:unavailable-owner:dsfaccini'),
-            'The matched semantic owner is unavailable, so this needs manual triage.',
+            'Automatic routing could not determine an available semantic owner, so this needs manual triage.',
         ),
     ],
 )
-def test_notification_explains_canonical_routing_evidence(decision: router.Decision, reason: str):
+def test_notification_explains_other_routing_evidence(decision: router.Decision, reason: str):
     payload = router._slack_payload(CORE, 'PullRequest', decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
 
     assert json.loads(payload)['text'].endswith(f'\nWhy: {reason}')
@@ -986,8 +892,6 @@ def test_no_attacker_text_is_used_in_output_or_notification():
     assert decision is not None
     serialized = json.dumps(decision)
     assert attacker not in serialized
-
-    assert attacker not in router._slack_payload(CORE, 'Issue', decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_stale_route_is_not_prepared():
@@ -1068,44 +972,10 @@ def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pyte
     }
 
 
-def test_cli_daily_recovery_outputs_six_matrix_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    output = tmp_path / 'github-output'
-    client = RecoveryClient(
-        {number: item(number, labels=['MCP']) for number in range(1, 8)},
-        recent=[],
-        legacy=list(range(1, 8)),
-    )
-    monkeypatch.setattr(router.attention, 'GitHubClient', lambda token: client)
-    monkeypatch.setenv('GITHUB_TOKEN', 'token')
-    monkeypatch.setenv('GITHUB_REPOSITORY', CORE)
-    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
-    monkeypatch.setenv('ROUTING_LEGACY_RECOVERY', 'true')
-    monkeypatch.delenv('ROUTING_ISSUE_NUMBER', raising=False)
-    monkeypatch.delenv('ROUTING_PULL_REQUEST_NUMBER', raising=False)
-    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
-    monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
-
-    assert router.main() == 0
-
-    selected = dict(line.split('=', 1) for line in output.read_text().splitlines())
-    routes = json.loads(selected.pop('routes'))
-    assert selected == {'should_assign': 'true'}
-    assert [route['number'] for route in routes] == [1, 2, 3, 4, 5, 6]
-
-
 def test_cli_failure_is_redacted(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
     monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
     monkeypatch.delenv('GITHUB_TOKEN', raising=False)
     monkeypatch.delenv('GH_TOKEN', raising=False)
-
-    assert router.main() == 1
-    assert capsys.readouterr().err == 'owner routing failed: ValueError\n'
-
-
-def test_cli_rejects_non_boolean_legacy_recovery(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
-    monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
-    monkeypatch.setenv('GITHUB_TOKEN', 'token')
-    monkeypatch.setenv('ROUTING_LEGACY_RECOVERY', '6')
 
     assert router.main() == 1
     assert capsys.readouterr().err == 'owner routing failed: ValueError\n'

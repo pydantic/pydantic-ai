@@ -305,20 +305,6 @@ def _participant_owner(login: str) -> str | None:
     return next((owner for owner in _PARTICIPATION_OWNERS if owner.casefold() == key), None)
 
 
-def _pull_request_author_owner(
-    client: attention.GitHubClient,
-    repo: str,
-    item: Mapping[str, Any],
-) -> str | None:
-    author = item.get('author')
-    login = cast(Mapping[str, object], author).get('login') if isinstance(author, Mapping) else None
-    if not isinstance(login, str):
-        return None
-    key = login.casefold()
-    owner = next((candidate for candidate in _OWNERS if candidate.casefold() == key), None)
-    return owner if owner is not None and client.maintainer_login(repo, owner, refresh=True) is not None else None
-
-
 def _latest_participant(
     client: attention.GitHubClient,
     repo: str,
@@ -394,12 +380,17 @@ def _pull_request_precedence(
 ) -> Selection | None:
     if draft_status := _pull_request_draft_status(item):
         return Selection(number=number, decision=None, status=draft_status)
-    if author := _pull_request_author_owner(client, repo, item):
-        return Selection(
-            number=number,
-            decision=Decision(number=number, owner=author, evidence=f'author:{author}'),
-            status='route',
-        )
+    author = item.get('author')
+    login = cast(Mapping[str, object], author).get('login') if isinstance(author, Mapping) else None
+    if isinstance(login, str):
+        key = login.casefold()
+        owner = next((candidate for candidate in _OWNERS if candidate.casefold() == key), None)
+        if owner is not None and client.maintainer_login(repo, owner, refresh=True) is not None:
+            return Selection(
+                number=number,
+                decision=Decision(number=number, owner=owner, evidence=f'author:{owner}'),
+                status='route',
+            )
     return None
 
 
@@ -634,18 +625,8 @@ def _routing_reason(decision: Decision, mention: str) -> str:
     source, separator, detail = evidence.partition(':')
     if separator and detail and source in {'label', 'path'}:
         return f'Matched ownership {source} `{detail}`.'
-    manual_reasons = {
-        'manual:conflict-or-unknown': 'No single semantic owner matched, so this needs manual triage.',
-        'manual:incomplete-file-list': 'The changed-file list could not be completely verified, so this needs manual triage.',
-        'manual:incomplete-labels': 'The label list could not be completely verified, so this needs manual triage.',
-        'manual:invalid-file-list': 'The changed-file list was invalid, so this needs manual triage.',
-        'manual:unowned-production-path': 'A changed production path has no semantic owner, so this needs manual triage.',
-    }
-    if owner == _MANUAL_OWNER and evidence in manual_reasons:
-        return manual_reasons[evidence]
-    unavailable = evidence.removeprefix('manual:unavailable-owner:')
-    if owner == _MANUAL_OWNER and unavailable != evidence and unavailable in _OWNERS:
-        return 'The matched semantic owner is unavailable, so this needs manual triage.'
+    if evidence.startswith('manual:'):
+        return 'Automatic routing could not determine an available semantic owner, so this needs manual triage.'
     raise ValueError('routing evidence cannot be explained')
 
 
@@ -732,16 +713,13 @@ def main() -> int:
             _summary(f'#{args.number}: ' + ('prepared routing intent' if payload else 'route changed'))
             return 0
         if args.mode == 'select':
-            legacy_recovery_value = os.environ.get('ROUTING_LEGACY_RECOVERY', 'false')
-            if legacy_recovery_value not in {'false', 'true'}:
-                raise ValueError('ROUTING_LEGACY_RECOVERY must be false or true')
             selected = select_batch(
                 client,
                 repo,
                 os.environ.get('ROUTING_ISSUE_NUMBER'),
                 os.environ.get('ROUTING_PULL_REQUEST_NUMBER'),
                 os.environ.get('ROUTING_PARTICIPANT_LOGIN'),
-                legacy_recovery=legacy_recovery_value == 'true',
+                legacy_recovery=os.environ.get('ROUTING_LEGACY_RECOVERY') == 'true',
             )
             decisions = [selection['decision'] for selection in selected if selection['decision'] is not None]
             first = selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
