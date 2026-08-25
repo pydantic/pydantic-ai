@@ -578,21 +578,6 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
         model_settings.pop(setting, None)
 
 
-async def _aggregate_forced_stream(stream: AsyncStream[responses.ResponseStreamEvent]) -> responses.Response:
-    """Consume a forced stream and return the final response from its `response.completed` event.
-
-    Used when the endpoint serves streaming responses only (`openai_responses_requires_streaming`) so
-    that nominally non-streaming requests still return an ordinary `responses.Response`.
-    """
-    response: responses.Response | None = None
-    async for event in stream:
-        if event.type == 'response.completed':
-            response = event.response
-    if response is None:
-        raise UnexpectedModelBehavior('Forced stream ended without a `response.completed` event')
-    return response
-
-
 @dataclass
 class _ResponsesRequestParams:
     """Typed request parameters shared by Responses API calls."""
@@ -2212,10 +2197,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
         elif self.profile.get('openai_responses_requires_streaming', False):
-            # The endpoint serves streaming responses only (e.g. Codex subscription auth): send a
-            # forced stream and aggregate it so callers still get an ordinary `ModelResponse`.
+            # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
+            # streamed-response path, which handles `response.completed` arriving with an empty `output`.
             stream = await self._responses_create(messages, True, settings, model_request_parameters)
-            response = await _aggregate_forced_stream(stream)
+            async with stream:
+                streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
+                async for _ in streamed_response:
+                    pass
+            return streamed_response.get()
         else:
             response = await self._responses_create(messages, False, settings, model_request_parameters)
 

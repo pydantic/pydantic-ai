@@ -4,7 +4,6 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx2
@@ -20,15 +19,9 @@ from pydantic_ai.providers import infer_provider_class
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncStream
     from openai.types import responses
 
-    from pydantic_ai.models.openai import (
-        OMIT,
-        OpenAIResponsesModel,
-        OpenAIResponsesModelSettings,
-        _aggregate_forced_stream,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai_codex import (
         CredentialsPersistenceError,
         CredentialsRefreshError,
@@ -39,6 +32,8 @@ with try_import() as imports_successful:
         OpenAICodexProvider,
         _jwt_expires_at,  # pyright: ignore[reportPrivateUsage]
     )
+
+    from ..models.mock_openai import MockOpenAIResponses
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
@@ -519,44 +514,116 @@ _MINIMAL_RESPONSE: dict[str, Any] = {
 }
 
 
-def _completed_event() -> SimpleNamespace:
-    response = responses.Response.model_validate(_MINIMAL_RESPONSE)
-    return SimpleNamespace(type='response.completed', response=response)
+def _codex_stream(*, slim_completed: bool) -> list[responses.ResponseStreamEvent]:
+    """The SSE sequence observed live against the Codex backend (2026-08-25).
+
+    With `slim_completed=True` this reproduces the real Codex shape: `response.completed` carries an
+    EMPTY `output` array, and content exists only in the incremental events. `slim_completed=False`
+    is the api.openai.com shape, where the terminal event repeats the full output.
+    """
+    completed = responses.Response.model_validate(_MINIMAL_RESPONSE)
+    in_progress = completed.model_copy(update={'status': 'in_progress', 'usage': None, 'output': []})
+    if slim_completed:
+        completed = completed.model_copy(update={'output': []})
+    message_done = responses.ResponseOutputMessage(
+        id='m1',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[responses.ResponseOutputText(type='output_text', text='hi there', annotations=[])],
+    )
+    return [
+        responses.ResponseCreatedEvent(type='response.created', response=in_progress, sequence_number=0),
+        responses.ResponseInProgressEvent(type='response.in_progress', response=in_progress, sequence_number=1),
+        responses.ResponseOutputItemAddedEvent(
+            type='response.output_item.added',
+            item=message_done.model_copy(update={'status': 'in_progress', 'content': []}),
+            output_index=0,
+            sequence_number=2,
+        ),
+        responses.ResponseContentPartAddedEvent(
+            type='response.content_part.added',
+            part=responses.ResponseOutputText(type='output_text', text='', annotations=[]),
+            item_id='m1',
+            output_index=0,
+            content_index=0,
+            sequence_number=3,
+        ),
+        responses.ResponseTextDeltaEvent(
+            type='response.output_text.delta',
+            delta='hi ',
+            item_id='m1',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            sequence_number=4,
+        ),
+        responses.ResponseTextDeltaEvent(
+            type='response.output_text.delta',
+            delta='there',
+            item_id='m1',
+            output_index=0,
+            content_index=0,
+            logprobs=[],
+            sequence_number=5,
+        ),
+        responses.ResponseContentPartDoneEvent(
+            type='response.content_part.done',
+            part=responses.ResponseOutputText(type='output_text', text='hi there', annotations=[]),
+            item_id='m1',
+            output_index=0,
+            content_index=0,
+            sequence_number=6,
+        ),
+        responses.ResponseOutputItemDoneEvent(
+            type='response.output_item.done', item=message_done, output_index=0, sequence_number=7
+        ),
+        responses.ResponseCompletedEvent(type='response.completed', response=completed, sequence_number=8),
+    ]
 
 
-class StubResponsesApi:
-    def __init__(self) -> None:
-        self.create_kwargs: list[dict[str, Any]] = []
-
-    async def create(self, **kwargs: Any) -> Any:
-        self.create_kwargs.append(kwargs)
-
-        class Stream:
-            def __init__(self) -> None:
-                self._done = False
-
-            def __aiter__(self) -> 'Stream':
-                return self
-
-            async def __anext__(self) -> SimpleNamespace:
-                if self._done:
-                    raise StopAsyncIteration
-                self._done = True
-                return _completed_event()
-
-        return Stream()
+def _codex_model_with_stream(
+    events: list[responses.ResponseStreamEvent],
+) -> tuple[OpenAIResponsesModel, MockOpenAIResponses]:
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    return model, cast(MockOpenAIResponses, mock_client)
 
 
-def _codex_model_with_stub_client() -> tuple[OpenAIResponsesModel, StubResponsesApi]:
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=make_provider())
-    stub = StubResponsesApi()
-    assert model.provider is not None
-    model.provider._client = SimpleNamespace(responses=stub)  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
-    return model, stub
+def _assert_aggregated_response(response: Any, kwargs: dict[str, Any]) -> None:
+    part = response.parts[0]
+    assert isinstance(part, TextPart)
+    assert part.content == 'hi there'
+    assert response.usage.input_tokens == 3
+    assert response.usage.output_tokens == 2
+    assert response.provider_response_id == 'resp_123'
+    # `stream=True` itself is proven by the mock: it refuses to serve a non-streaming create call
+    # when only stream events are configured.
+    assert kwargs['store'] is False  # cannot be omitted under Codex subscription auth
 
 
-async def test_request_forces_stream_and_sends_store_false(allow_model_requests: None):
-    model, stub = _codex_model_with_stub_client()
+async def test_forced_stream_aggregates_codex_slim_completed(allow_model_requests: None):
+    """REGRESSION (live-verified 2026-08-25): Codex sends `response.completed` with an EMPTY `output`.
+
+    Content exists only in the incremental events, so trusting the terminal event's `response`
+    produced `ModelResponse(parts=[])` with billed tokens. The forced stream must be drained through
+    the streamed-response machinery, which builds parts from the incremental events.
+    """
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+    _assert_aggregated_response(response, mock.response_kwargs[0])
+
+
+async def test_forced_stream_aggregates_full_completed_output(allow_model_requests: None):
+    # api.openai.com repeats the full output on `response.completed`; the profile flag must keep
+    # working there too if some other streaming-only endpoint ever sets it.
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=False))
+    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+    _assert_aggregated_response(response, mock.response_kwargs[0])
+
+
+async def test_forced_stream_drops_unsupported_settings(allow_model_requests: None):
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
     settings = OpenAIResponsesModelSettings(
         max_tokens=128,
         temperature=0.5,
@@ -572,53 +639,15 @@ async def test_request_forces_stream_and_sends_store_false(allow_model_requests:
     with pytest.warns(UserWarning):
         response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], settings, ModelRequestParameters())
 
-    part = response.parts[0]
-    assert isinstance(part, TextPart)
-    assert part.content == 'hi there'
-    kwargs = stub.create_kwargs[0]
-    assert kwargs['stream'] is True
-    assert kwargs['store'] is False
-    assert kwargs['max_output_tokens'] is OMIT
-    assert kwargs['temperature'] is OMIT
-    assert kwargs['top_p'] is OMIT
-    assert kwargs['top_logprobs'] is OMIT
-    assert kwargs['user'] is OMIT
-    assert kwargs['truncation'] is OMIT
+    _assert_aggregated_response(response, mock.response_kwargs[0])
+    kwargs = mock.response_kwargs[0]
+    for wire_name in ('max_output_tokens', 'temperature', 'top_p', 'top_logprobs', 'user', 'truncation'):
+        assert wire_name not in kwargs  # dropped before anything reached the wire
 
 
-async def test_request_sends_store_false_even_when_unset(allow_model_requests: None):
-    model, stub = _codex_model_with_stub_client()
-    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
-
-    assert response.usage.input_tokens == 3
-    kwargs = stub.create_kwargs[0]
-    assert kwargs['store'] is False  # cannot be omitted under Codex subscription auth
-    assert kwargs['stream'] is True
-
-
-async def test_aggregate_forced_stream_returns_completed_response():
-    class Stream:
-        def __init__(self) -> None:
-            self.events = [_completed_event(), SimpleNamespace(type='other.event')]
-
-        def __aiter__(self) -> 'Stream':
-            return self
-
-        async def __anext__(self) -> SimpleNamespace:
-            if not self.events:
-                raise StopAsyncIteration
-            return self.events.pop(0)
-
-    # Duck-typed stand-ins for the SDK's `AsyncStream`: the aggregator only iterates.
-    response = await _aggregate_forced_stream(cast(AsyncStream[responses.ResponseStreamEvent], Stream()))
-    assert response.id == 'resp_123'
-
-    class EmptyStream:
-        def __aiter__(self) -> 'EmptyStream':
-            return self
-
-        async def __anext__(self) -> SimpleNamespace:
-            raise StopAsyncIteration
-
-    with pytest.raises(UnexpectedModelBehavior, match='response.completed'):
-        await _aggregate_forced_stream(cast(AsyncStream[responses.ResponseStreamEvent], EmptyStream()))
+async def test_forced_stream_without_events_raises(allow_model_requests: None):
+    # The nested-list form is how the shared mock represents a single, empty stream.
+    mock_client = MockOpenAIResponses.create_mock_stream([[]])
+    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    with pytest.raises(UnexpectedModelBehavior, match='without content'):
+        await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
