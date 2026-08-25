@@ -496,6 +496,23 @@ async def test_span_tree_ancestors_methods():
         {'no_ancestor_has': {'name_matches_regex': 'root'}, 'stop_recursing_when': {'name_equals': 'level1'}}
     )
 
+    # A `stop_recursing_when` that never matches must not change the verdict when multiple conditions
+    # iterate the pruned ancestors; the pruned list used to be a cached generator that the first
+    # condition exhausted, making `no_ancestor_has` pass vacuously:
+    assert not leaf_node.matches(
+        {
+            'all_ancestors_have': {'name_matches_regex': 'level|root'},
+            'no_ancestor_has': {'name_equals': 'root'},
+        }
+    )
+    assert not leaf_node.matches(
+        {
+            'all_ancestors_have': {'name_matches_regex': 'level|root'},
+            'no_ancestor_has': {'name_equals': 'root'},
+            'stop_recursing_when': {'name_equals': 'never-matches'},
+        }
+    )
+
 
 async def test_span_tree_descendants_methods():
     """Test the descendant traversal methods in SpanNode."""
@@ -581,6 +598,23 @@ async def test_span_tree_descendants_methods():
     )
     assert root_node.matches(
         {'no_descendant_has': {'name_equals': 'leaf'}, 'stop_recursing_when': {'name_equals': 'level3'}}
+    )
+
+    # A `stop_recursing_when` that never matches must not change the verdict when multiple conditions
+    # iterate the pruned descendants; the pruned list used to be a cached generator that the first
+    # condition exhausted, making `no_descendant_has` pass vacuously:
+    assert not root_node.matches(
+        {
+            'some_descendant_has': {'name_equals': 'leaf'},
+            'no_descendant_has': {'name_equals': 'leaf'},
+        }
+    )
+    assert not root_node.matches(
+        {
+            'some_descendant_has': {'name_equals': 'leaf'},
+            'no_descendant_has': {'name_equals': 'leaf'},
+            'stop_recursing_when': {'name_equals': 'never-matches'},
+        }
     )
 
 
