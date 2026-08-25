@@ -1,6 +1,8 @@
+import functools
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import timezone
 
@@ -15,13 +17,20 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RunContext,
+    SpeechPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    _estimate_usage,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
 from pydantic_ai.usage import RequestUsage
@@ -117,6 +126,146 @@ def test_simple():
             ),
         ]
     )
+
+
+async def _sync_returning_coroutine_impl(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('coroutine awaited')])
+
+
+def sync_returning_coroutine(messages: list[ModelMessage], info: AgentInfo) -> Awaitable[ModelResponse]:
+    # A plain `def` that returns a coroutine: not detected by `iscoroutinefunction`, so it's run in the
+    # executor and its return value must still be awaited (via `await_maybe`) rather than asserted to be a
+    # `ModelResponse` directly.
+    return _sync_returning_coroutine_impl(messages, info)
+
+
+def test_sync_function_returning_coroutine():
+    agent = Agent(FunctionModel(sync_returning_coroutine))
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('coroutine awaited')
+
+
+class AsyncCallableFunction:
+    """A callable instance with an `async def __call__`, e.g. a custom model configured at construction."""
+
+    def __init__(self, text: str):
+        self.text = text
+
+    async def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.text)])
+
+
+class SyncCallableFunction:
+    def __init__(self, text: str):
+        self.text = text
+
+    def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.text)])
+
+
+class AsyncCallableStreamFunction:
+    def __init__(self, text: str):
+        self.text = text
+
+    async def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield self.text
+
+
+def test_init_callable_instance() -> None:
+    m = FunctionModel(function=AsyncCallableFunction('hello world'))
+    assert m.model_name == 'function:AsyncCallableFunction:'
+
+    m1 = FunctionModel(stream_function=AsyncCallableStreamFunction('hello world'))
+    assert m1.model_name == 'function::AsyncCallableStreamFunction'
+
+    m2 = FunctionModel(
+        function=AsyncCallableFunction('hello world'), stream_function=AsyncCallableStreamFunction('hello world')
+    )
+    assert m2.model_name == 'function:AsyncCallableFunction:AsyncCallableStreamFunction'
+
+
+async def test_async_callable_instance_does_not_need_a_worker_thread():
+    # A predicate that only recognizes `async def` sends an `async def __call__` to the executor, where a
+    # saturated thread pool blocks it indefinitely instead of running it on the event loop. An executor that
+    # cannot accept work at all makes that routing observable: it's the *call* that gets submitted, so a
+    # thread-name assertion would not discriminate -- the coroutine's body awaits on the event loop either way.
+    executor = ThreadPoolExecutor(max_workers=1)
+    executor.shutdown(wait=True)
+    with Agent.using_thread_executor(executor):
+        result = await Agent(FunctionModel(AsyncCallableFunction('from the async instance'))).run('Hello')
+        assert result.output == snapshot('from the async instance')
+
+        # `is_async_callable` unwraps `functools.partial`, so a wrapped async instance stays off the executor
+        # too. Output and model name are identical on both arms, so only the executor can pin this.
+        partial_agent = Agent(FunctionModel(functools.partial(AsyncCallableFunction('from the partial'))))
+        assert (await partial_agent.run('Hello')).output == snapshot('from the partial')
+
+        # The counterpart proves the executor really is unusable: a genuinely sync callable still needs it.
+        sync_agent = Agent(FunctionModel(SyncCallableFunction('from the sync instance')))
+        with pytest.raises(RuntimeError, match='cannot schedule new futures'):
+            await sync_agent.run('Hello')
+
+
+async def test_sync_callable_instance():
+    agent = Agent(FunctionModel(SyncCallableFunction('from the sync instance')))
+    result = await agent.run('Hello')
+    assert result.output == snapshot('from the sync instance')
+
+
+class SyncCallableReturningCoroutine:
+    def __init__(self, text: str):
+        self.text = text
+
+    def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> Awaitable[ModelResponse]:
+        return self._respond()
+
+    async def _respond(self) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.text)])
+
+
+async def test_sync_callable_instance_returning_coroutine():
+    # The instance analogue of `sync_returning_coroutine`: `is_async_callable` is False either way, so this
+    # runs in the executor and `await_maybe` still has to resolve what it returned.
+    agent = Agent(FunctionModel(SyncCallableReturningCoroutine('coroutine awaited')))
+    result = await agent.run('Hello')
+    assert result.output == snapshot('coroutine awaited')
+
+
+async def test_stream_callable_instance():
+    agent = Agent(FunctionModel(stream_function=AsyncCallableStreamFunction('hello world')))
+    async with agent.run_stream('Hello') as result:
+        assert await result.get_output() == snapshot('hello world')
+
+
+class SyncCallableStreamFunction:
+    def __init__(self, text: str):
+        self.text = text
+
+    def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        return self._stream()
+
+    async def _stream(self) -> AsyncIterator[str]:
+        yield self.text
+
+
+async def test_stream_sync_callable_instance():
+    # `request_stream` never inspects async-ness, so a sync `__call__` returning an async iterator streams
+    # just like an async-generator one -- the contract is about the returned value, not the callable.
+    agent = Agent(FunctionModel(stream_function=SyncCallableStreamFunction('hello world')))
+    async with agent.run_stream('Hello') as result:
+        assert await result.get_output() == snapshot('hello world')
+
+
+async def hello_named(_messages: list[ModelMessage], _agent_info: AgentInfo, *, name: str) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(f'hello {name}')])
+
+
+async def test_partial_function():
+    # `functools.partial` has no `__name__` either, so it hits the same fallback as a callable instance.
+    model = FunctionModel(functools.partial(hello_named, name='world'))
+    assert model.model_name == 'function:partial:'
+    result = await Agent(model).run('Hello')
+    assert result.output == snapshot('hello world')
 
 
 async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
@@ -330,7 +479,9 @@ def test_model_arg():
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
     assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
 
-    with pytest.raises(RuntimeError, match='`model` must either be set on the agent or included when calling it.'):
+    with pytest.raises(
+        RuntimeError, match=re.escape('`model` must either be set on the agent or included when calling it.')
+    ):
         agent.run_sync('Hello')
 
 
@@ -406,6 +557,7 @@ def test_call_all():
                 usage=RequestUsage(input_tokens=52, output_tokens=21),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -436,6 +588,7 @@ def test_call_all():
                 usage=RequestUsage(input_tokens=57, output_tokens=33),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -518,6 +671,11 @@ async def test_stream_text():
             ]
         )
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
+
+
+async def test_speech_response_estimates_transcript_tokens() -> None:
+    response = ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='hello spoken world')])
+    assert _estimate_usage([response]) == RequestUsage(input_tokens=50, output_tokens=3)
 
 
 class Foo(BaseModel):

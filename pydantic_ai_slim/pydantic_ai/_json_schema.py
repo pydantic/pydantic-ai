@@ -49,6 +49,7 @@ class JsonSchemaTransformer(ABC):
         self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
+        self._walked_defs: dict[str, JsonSchema] = {}
 
     @abstractmethod
     def transform(self, schema: JsonSchema) -> JsonSchema:
@@ -57,6 +58,9 @@ class JsonSchemaTransformer(ABC):
 
     def walk(self) -> JsonSchema:
         schema = deepcopy(self.schema)
+
+        self.recursive_refs.clear()
+        self._walked_defs.clear()
 
         # First, handle everything but $defs:
         schema.pop('$defs', None)
@@ -70,10 +74,10 @@ class JsonSchemaTransformer(ABC):
             # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
-            defs = {key: self.defs[key] for key in self.recursive_refs}
+            defs = {key: deepcopy(self._walked_def(key)) for key in self.recursive_refs}
             root_ref = self.schema.get('$ref')
             root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
-            if root_key is None:  # pragma: no cover
+            if root_key is None:
                 root_key = self.schema.get('title', 'root')
                 while root_key in defs:
                     # Modify the root key until it is not already in use
@@ -88,22 +92,20 @@ class JsonSchemaTransformer(ABC):
         if isinstance(schema, bool):
             return schema
 
-        nested_refs = 0
-        if self.prefer_inlined_defs:
-            while ref := schema.get('$ref'):
-                key = re.sub(r'^#/\$defs/', '', ref)
-                if key in self.recursive_refs:
-                    break
-                if key in self.refs_stack:
-                    self.recursive_refs.add(key)
-                    break  # recursive ref can't be unpacked
-                self.refs_stack.append(key)
-                nested_refs += 1
-
-                def_schema = self.defs.get(key)
-                if def_schema is None:  # pragma: no cover
-                    raise UserError(f'Could not find $ref definition for {key}')
-                schema = def_schema
+        if self.prefer_inlined_defs and (ref := schema.get('$ref')):
+            key = re.sub(r'^#/\$defs/', '', ref)
+            if key in self.refs_stack:
+                # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
+                self.recursive_refs.add(key)
+            elif key not in self.recursive_refs:
+                # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
+                # or `default`) are part of the field's own schema and must survive
+                # inlining, so merge them over the referenced definition.
+                if siblings := {k: v for k, v in schema.items() if k != '$ref'}:
+                    # `transform()` sees the merged schema, so the result is specific to this reference
+                    # site and can't come from (or go into) the shared walked-definition cache.
+                    return self._walk_def(key, siblings)
+                return deepcopy(self._walked_def(key))
 
         # Handle the schema based on its type / structure
         type_ = schema.get('type')
@@ -112,16 +114,41 @@ class JsonSchemaTransformer(ABC):
         elif type_ == 'array':
             schema = self._handle_array(schema)
         elif type_ is None:
+            schema = self._handle_union(schema, 'allOf')
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
 
+        if type_ is not None:
+            for union_kind in ('allOf', 'anyOf', 'oneOf'):
+                if members := schema.get(union_kind):
+                    schema[union_kind] = [self._handle(member) for member in members]
         # Apply the base transform
-        schema = self.transform(schema)
+        return self.transform(schema)
 
-        if nested_refs > 0:
-            self.refs_stack = self.refs_stack[:-nested_refs]
+    def _walked_def(self, key: str) -> JsonSchema:
+        """The definition `key` refers to, walked once per transformer and cached.
 
-        return schema
+        Inlining a definition means walking its whole subtree at every reference site, and the result
+        is the same at each of them, so the walk is done once and callers get a `deepcopy` of it. This
+        also keeps the inlined copies independent of each other: the walk transforms schemas in place,
+        so handing out the same object at multiple sites would let each site corrupt the next.
+        """
+        if (walked := self._walked_defs.get(key)) is None:
+            self._walked_defs[key] = walked = self._walk_def(key, {})
+        return walked
+
+    def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
+        """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it."""
+        def_schema = self.defs.get(key)
+        if def_schema is None:  # pragma: no cover
+            raise UserError(f'Could not find $ref definition for {key}')
+
+        self.refs_stack.append(key)
+        walked = self._handle({**deepcopy(def_schema), **siblings})
+        self.refs_stack.pop()
+
+        assert not isinstance(walked, bool)
+        return walked
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         if properties := schema.get('properties'):
@@ -153,7 +180,7 @@ class JsonSchemaTransformer(ABC):
 
         return schema
 
-    def _handle_union(self, schema: JsonSchema, union_kind: Literal['anyOf', 'oneOf']) -> JsonSchema:
+    def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         try:
             members = schema.pop(union_kind)
         except KeyError:

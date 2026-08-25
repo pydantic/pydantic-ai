@@ -3,27 +3,27 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-from openai import AsyncOpenAI
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Alibaba provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
-class AlibabaProvider(Provider[AsyncOpenAI]):
+class AlibabaProvider(_OpenAICompatibleProvider):
     """Provider for Alibaba Cloud Model Studio (DashScope) OpenAI-compatible API."""
 
     @property
@@ -42,9 +42,15 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         base_profile = qwen_model_profile(model_name)
 
-        # Wrap/merge into OpenAIModelProfile
+        # Wrap/merge into OpenAIModelProfile.
+        # Alibaba's compatible-mode Chat Completions API rejects OpenAI `type:file` content parts,
+        # so document input must fail client-side with a clear UserError.
         openai_profile = merge_profile(
-            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), base_profile
+            OpenAIModelProfile(
+                json_schema_transformer=OpenAIJsonSchemaTransformer,
+                openai_chat_supports_document_input=False,
+            ),
+            base_profile,
         )
 
         # For Qwen Omni models, force URI audio input encoding
@@ -60,7 +66,7 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -71,7 +77,7 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         if openai_client is not None:
             self._client = openai_client
@@ -87,12 +93,4 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
 
             self._base_url = base_url or 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
 
-            if http_client is None:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
-
-            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+            self._client = self._create_openai_client(base_url=self._base_url, api_key=api_key, http_client=http_client)

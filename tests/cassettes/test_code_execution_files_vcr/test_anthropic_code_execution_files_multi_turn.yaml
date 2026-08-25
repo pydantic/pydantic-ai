@@ -1,0 +1,361 @@
+interactions:
+- request:
+    body: "--0842952a6365ffefe93c200233c4d516\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
+      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--0842952a6365ffefe93c200233c4d516--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '198'
+      content-type:
+      - multipart/form-data; boundary=0842952a6365ffefe93c200233c4d516
+      host:
+      - api.anthropic.com
+    method: POST
+    uri: https://api.anthropic.com/v1/files?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '190'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=230
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      created_at: '2026-06-30T22:58:50.064000Z'
+      downloadable: false
+      filename: data.csv
+      id: file_011CcaGoMcMyMnhMwste6i8r
+      mime_type: text/csv
+      size_bytes: 30
+      type: file
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '389'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
+          type: text
+        - file_id: file_011CcaGoMcMyMnhMwste6i8r
+          type: container_upload
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1718'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-aa179a981e1aeaff64a2f8caf62adf93-5789229a4ab87598-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-06-30T23:58:54.741773Z'
+        id: container_01EG1LKXFPoQJ9tpbsZ1dh74
+      content:
+      - id: srvtoolu_01P9KoHAS2PSorMZSSjLfQ5N
+        input:
+          command: |
+            python3 -c "
+            import csv, os
+
+            filepath = os.path.join(os.environ['INPUT_DIR'], 'data.csv')
+
+            total = 0
+            with open(filepath, newline='') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    total += float(row['value'])
+
+            print(f'Sum of value column: {total}')
+            "
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            Sum of value column: 100.0
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01P9KoHAS2PSorMZSSjLfQ5N
+        type: bash_code_execution_tool_result
+      - text: |-
+          The sum of the `value` column in **data.csv** is **100.0**.
+
+          Here's a quick breakdown of what the code did:
+          1. **Opened** the uploaded `data.csv` file.
+          2. **Parsed** it using Python's `csv.DictReader`, which automatically uses the header row to identify columns.
+          3. **Iterated** over each row, converting the `value` field to a float and accumulating the total.
+          4. **Printed** the final sum: **100.0**.
+        type: text
+      id: msg_012ePLiJVuf7ZSDosS12yVxb
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 4723
+        output_tokens: 275
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1706'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      container: container_01EG1LKXFPoQJ9tpbsZ1dh74
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
+          type: text
+        - file_id: file_011CcaGoMcMyMnhMwste6i8r
+          type: container_upload
+        role: user
+      - content:
+        - id: srvtoolu_01P9KoHAS2PSorMZSSjLfQ5N
+          input:
+            command: |
+              python3 -c "
+              import csv, os
+
+              filepath = os.path.join(os.environ['INPUT_DIR'], 'data.csv')
+
+              total = 0
+              with open(filepath, newline='') as f:
+                  reader = csv.DictReader(f)
+                  for row in reader:
+                      total += float(row['value'])
+
+              print(f'Sum of value column: {total}')
+              "
+          name: bash_code_execution
+          type: server_tool_use
+        - content:
+            content: []
+            return_code: 0
+            stderr: ''
+            stdout: |
+              Sum of value column: 100.0
+            type: bash_code_execution_result
+          tool_use_id: srvtoolu_01P9KoHAS2PSorMZSSjLfQ5N
+          type: bash_code_execution_tool_result
+        - text: |-
+            The sum of the `value` column in **data.csv** is **100.0**.
+
+            Here's a quick breakdown of what the code did:
+            1. **Opened** the uploaded `data.csv` file.
+            2. **Parsed** it using Python's `csv.DictReader`, which automatically uses the header row to identify columns.
+            3. **Iterated** over each row, converting the `value` field to a float and accumulating the total.
+            4. **Printed** the final sum: **100.0**.
+          type: text
+        role: assistant
+      - content:
+        - text: Use the code execution tool again to report the average of the `value` column.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1682'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-e2d5cb3591cb4e51f2c31c50c1975470-197991ed81de0617-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-06-30T23:59:01.493437Z'
+        id: container_01EG1LKXFPoQJ9tpbsZ1dh74
+      content:
+      - id: srvtoolu_01XGfy9qZtk1UzEgv64F2dK4
+        input:
+          command: |
+            python3 -c "
+            import csv, os
+
+            filepath = os.path.join(os.environ['INPUT_DIR'], 'data.csv')
+
+            total = 0
+            count = 0
+            with open(filepath, newline='') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    total += float(row['value'])
+                    count += 1
+
+            average = total / count if count > 0 else 0
+            print(f'Count: {count}')
+            print(f'Sum: {total}')
+            print(f'Average of value column: {average}')
+            "
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            Count: 2
+            Sum: 100.0
+            Average of value column: 50.0
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01XGfy9qZtk1UzEgv64F2dK4
+        type: bash_code_execution_tool_result
+      - text: |-
+          The average of the `value` column in **data.csv** is **50.0**.
+
+          Here's a summary of the calculation:
+          - **Count** of rows: 2
+          - **Sum** of values: 100.0
+          - **Average** (Sum ÷ Count): 100.0 ÷ 2 = **50.0**
+        type: text
+      id: msg_01UowF3wtG8ggiMBadRDZWXA
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 5425
+        output_tokens: 286
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: DELETE
+    uri: https://api.anthropic.com/v1/files/file_011CcaGoMcMyMnhMwste6i8r?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '63'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=435
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      id: file_011CcaGoMcMyMnhMwste6i8r
+      type: file_deleted
+    status:
+      code: 200
+      message: OK
+version: 1

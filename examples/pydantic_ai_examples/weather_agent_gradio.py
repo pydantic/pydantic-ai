@@ -45,10 +45,9 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
                     chatbot.append(gr_message)
                 if isinstance(call, ToolReturnPart):
                     for gr_message in chatbot:
-                        if (
-                            gr_message.get('metadata', {}).get('id', '')
-                            == call.tool_call_id
-                        ):
+                        if (gr_message.get('metadata') or {}).get(
+                            'id', ''
+                        ) == call.tool_call_id:
                             if isinstance(call.content, BaseModel):
                                 json_content = call.content.model_dump_json()
                             else:
@@ -86,7 +85,7 @@ with gr.Blocks() as demo:
     gr.HTML(
         """
 <div style="display: flex; justify-content: center; align-items: center; gap: 2rem; padding: 1rem; width: 100%">
-    <img src="https://ai.pydantic.dev/img/logo-white.svg" style="max-width: 200px; height: auto">
+    <img src="https://pydantic.dev/docs/ai/img/logo-white.svg" style="max-width: 200px; height: auto">
     <div>
         <h1 style="margin: 0 0 1rem 0">Weather Assistant</h1>
         <h3 style="margin: 0 0 0.5rem 0">
@@ -99,7 +98,7 @@ with gr.Blocks() as demo:
     past_messages = gr.State([])
     chatbot = gr.Chatbot(
         label='Packing Assistant',
-        avatar_images=(None, 'https://ai.pydantic.dev/img/logo-white.svg'),
+        avatar_images=(None, 'https://pydantic.dev/docs/ai/img/logo-white.svg'),
         examples=[
             {'text': 'What is the weather like in Miami?'},
             {'text': 'What is the weather like in London?'},

@@ -80,7 +80,7 @@ options:
                         Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Cursor, and the MCP specification).
 ```
 
-For more information on how to use it, see the [CLI documentation](https://ai.pydantic.dev/cli/).
+For more information on how to use it, see the [CLI documentation](https://pydantic.dev/docs/ai/integrations/cli/).
 
 ## Web Chat UI
 
@@ -90,7 +90,7 @@ Launch a web-based chat interface:
 clai web -m openai:gpt-5.2
 ```
 
-![Web Chat UI](https://ai.pydantic.dev/img/web-chat-ui.png)
+![Web Chat UI](https://pydantic.dev/docs/ai/img/web-chat-ui.png)
 
 This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
 
@@ -108,4 +108,4 @@ Launch the web UI with:
 clai web --agent my_agent:my_agent
 ```
 
-For full Web UI documentation, see [Web Chat UI](https://ai.pydantic.dev/web/).
+For full Web UI documentation, see [Web Chat UI](https://pydantic.dev/docs/ai/guides/web/).

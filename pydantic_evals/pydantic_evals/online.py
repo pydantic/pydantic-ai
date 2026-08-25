@@ -39,6 +39,8 @@ import anyio
 from opentelemetry import trace
 from typing_extensions import LiteralString, ParamSpec, TypeVar
 
+from pydantic_ai._utils import is_async_callable
+
 from . import _online as _online_internal, _task_run
 from ._online import CallbackSink, EvaluationSink, SinkPayload
 from ._utils import UNSET, Unset, logfire_span
@@ -259,6 +261,8 @@ class OnlineEvaluator:
     """
 
     def __post_init__(self) -> None:
+        if self.max_concurrency < 1:
+            raise ValueError(f'max_concurrency must be >= 1, got {self.max_concurrency}')
         self.semaphore = threading.Semaphore(self.max_concurrency)
 
 
@@ -581,7 +585,7 @@ class OnlineEvalConfig:
                 extract_args=resolved_extract_args,
                 record_return=record_return,
             )
-            if inspect.iscoroutinefunction(func):
+            if is_async_callable(func):
                 # ParamSpec can't distinguish async from sync return types — _wrap_async returns
                 # Callable[_P, Awaitable[_R]] but the decorator signature expects Callable[_P, _R]
                 return _wrap_async(func, sig, online_evals, self, resolved_target, call_span)  # pyright: ignore[reportReturnType]
@@ -685,7 +689,8 @@ def _wrap_async(
                         # observability, not a contract to fail the call.
                         try:
                             span.set_attribute('return', result)
-                        except Exception:  # pragma: no cover - defensive
+                        except Exception:  # pragma: no cover
+                            # Defensive.
                             pass
             except Exception as e:
                 _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)
@@ -759,7 +764,8 @@ def _wrap_sync(
                         # observability, not a contract to fail the call.
                         try:
                             span.set_attribute('return', result)
-                        except Exception:  # pragma: no cover - defensive
+                        except Exception:  # pragma: no cover
+                            # Defensive.
                             pass
             except Exception as e:
                 _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)

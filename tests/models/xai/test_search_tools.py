@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -43,6 +44,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
+    from tests.models.xai_proto_cassettes import XaiProtoCassetteClient
 
 
 pytestmark = [
@@ -179,11 +181,16 @@ def test_x_search_tool_validation():
     with pytest.raises(ValueError, match='Cannot specify both allowed_x_handles and excluded_x_handles'):
         XSearchTool(allowed_x_handles=['foo'], excluded_x_handles=['bar'])
 
-    with pytest.raises(ValueError, match='allowed_x_handles cannot contain more than 10 handles'):
-        XSearchTool(allowed_x_handles=['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'h9', 'h10', 'h11'])
+    handles = [f'h{i}' for i in range(1, 21)]
+    assert XSearchTool(allowed_x_handles=handles).allowed_x_handles == handles
+    assert XSearchTool(excluded_x_handles=handles).excluded_x_handles == handles
 
-    with pytest.raises(ValueError, match='excluded_x_handles cannot contain more than 10 handles'):
-        XSearchTool(excluded_x_handles=['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'h9', 'h10', 'h11'])
+    handles = [f'h{i}' for i in range(1, 22)]
+    with pytest.raises(ValueError, match='allowed_x_handles cannot contain more than 20 handles'):
+        XSearchTool(allowed_x_handles=handles)
+
+    with pytest.raises(ValueError, match='excluded_x_handles cannot contain more than 20 handles'):
+        XSearchTool(excluded_x_handles=handles)
 
     tool = XSearchTool(allowed_x_handles=['handle1', 'handle2'])
     assert tool.allowed_x_handles == ['handle1', 'handle2']
@@ -287,8 +294,10 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                 usage=RequestUsage(
                     input_tokens=5821,
                     cache_read_tokens=2692,
-                    output_tokens=62,
+                    output_tokens=586,
+                    output_reasoning_tokens=524,
                     details={'reasoning_tokens': 524, 'server_side_tools_x_search': 1},
+                    cost=Decimal('0.0010534'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -382,8 +391,10 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                 usage=RequestUsage(
                     input_tokens=5828,
                     cache_read_tokens=2701,
-                    output_tokens=66,
+                    output_tokens=664,
+                    output_reasoning_tokens=598,
                     details={'reasoning_tokens': 598, 'server_side_tools_x_search': 1},
+                    cost=Decimal('0.00109245'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -648,6 +659,7 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
                     ),
                     TextPart(content='Search results here'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -784,6 +796,7 @@ async def test_xai_x_search_usage_mapping(allow_model_requests: None):
             output_tokens=30,
             details={'server_side_tools_x_search': 1},
             requests=1,
+            cost=Decimal('0.000025'),
         )
     )
 
@@ -861,13 +874,23 @@ async def test_xai_builtin_file_search_tool(
             wait_for_indexing=True,
             timeout=timedelta(seconds=180),
         )
-        # PROCESSED status doesn't guarantee the search index is fully propagated; give it a moment.
-        await asyncio.sleep(5)
+        if not isinstance(client, XaiProtoCassetteClient):  # pragma: no cover
+            # PROCESSED status doesn't guarantee the live search index is fully propagated; give it a moment.
+            await asyncio.sleep(5)
 
         m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
         agent = Agent(
             m,
-            capabilities=[NativeTool(FileSearchTool(file_store_ids=[collection.collection_id]))],
+            capabilities=[
+                NativeTool(
+                    FileSearchTool(
+                        file_store_ids=[collection.collection_id],
+                        max_num_results=1,
+                        instructions='Prioritize exact factual matches from the uploaded research memo.',
+                        retrieval_mode='semantic',
+                    )
+                )
+            ],
             model_settings=XaiModelSettings(xai_include_collections_search_output=True),
         )
 
@@ -892,27 +915,44 @@ async def test_xai_builtin_file_search_tool(
                     parts=[
                         NativeToolCallPart(
                             tool_name='file_search',
-                            args={'query': 'Zorblax Protocol invention year and principal inventors', 'limit': 10},
+                            args={
+                                'search_request': '{"query": "Zorblax Protocol invented year principal inventors", "limit": 10, "retrieval_mode": "semantic"}'
+                            },
                             tool_call_id=IsStr(),
                             provider_name='xai',
                             provider_details={'function_name': 'collections_search'},
                         ),
                         NativeToolReturnPart(
                             tool_name='file_search',
-                            content={'search_matches': [], 'info': 'No results found.'},
+                            content={
+                                'search_matches': [
+                                    {
+                                        'file_id': 'file_e9ef3a06-160e-4a51-a3e2-762cd070cc32',
+                                        'chunk_id': 'file_e9ef3a06-160e-4a51-a3e2-762cd070cc32_5',
+                                        'chunk_content': 'ary substrate. The Zorblax Protocol was adopted as the galactic standard by the Outer Rim Treaty of 2193. Researchers cite three principal inventors: Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen. \\n\\nSection 10. Zorblax Research Memo 7742. The Zorblax Protocol is a fictional encryption scheme invented by the Zorblax Research Collective in the year 2187. Its defining property is the use of heptapod-prime key rotation, which cycles every 7919 milliseconds across the primary substrate. The Zorblax Protocol was adopted as the galactic standard by the Outer Rim Treaty of 2193. Researchers cite three principal inventors: Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen. "}]',
+                                        'score': 0.7739996314048767,
+                                        'collection_ids': ['collection_744aab7b-44f2-41ab-a982-9c49d1690c2f'],
+                                    }
+                                ]
+                            },
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='xai',
                         ),
                         TextPart(
-                            content='I\'m sorry, but I don\'t have access to any "Zorblax Research Memo" or related information in my knowledge base. If you can provide the content or more details, I may be able to assist further.'
+                            content="""\
+**2187**, by **Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen**. \n\
+
+This is stated directly in the uploaded Zorblax Research Memo (Section 10), which describes the Zorblax Protocol as a fictional encryption scheme invented by the Zorblax Research Collective in 2187, with those three researchers cited as the principal inventors.\
+"""
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=980,
-                        cache_read_tokens=920,
-                        output_tokens=88,
+                        input_tokens=2417,
+                        cache_read_tokens=1152,
+                        output_tokens=120,
                         details={'server_side_tools_file_search': 1},
+                        cost=Decimal('0.0003706'),
                     ),
                     model_name='grok-4-fast-non-reasoning',
                     timestamp=IsDatetime(),
@@ -948,6 +988,66 @@ async def test_xai_file_search_sends_collection_ids(allow_model_requests: None):
     assert len(tools) == 1
     tool_dict = tools[0]
     assert 'collections_search' in tool_dict
+
+
+async def test_xai_file_search_options_forwarded(allow_model_requests: None):
+    """FileSearchTool option fields are forwarded to xAI's collections search payload."""
+    response = create_response(content='result', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(
+                FileSearchTool(
+                    file_store_ids=['col-1', 'col-2'],
+                    max_num_results=5,
+                    instructions='Focus on recent documents.',
+                    retrieval_mode='hybrid',
+                )
+            )
+        ],
+    )
+
+    await agent.run('Search my docs')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'collections_search': {
+                    'collection_ids': ['col-1', 'col-2'],
+                    'limit': 5,
+                    'instructions': 'Focus on recent documents.',
+                    'hybrid_retrieval': {},
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_file_search_options_omitted_when_none(allow_model_requests: None):
+    """Unset FileSearchTool options are omitted from the outgoing collections search payload."""
+    response = create_response(content='result', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(FileSearchTool(file_store_ids=['col-1']))],
+    )
+
+    await agent.run('Search my docs')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'collections_search': {
+                    'collection_ids': ['col-1'],
+                }
+            }
+        ]
+    )
 
 
 async def test_xai_file_search_include_option(allow_model_requests: None):
@@ -1045,5 +1145,6 @@ async def test_xai_file_search_usage_mapping(allow_model_requests: None):
             output_tokens=30,
             details={'server_side_tools_file_search': 1},
             requests=1,
+            cost=Decimal('0.000025'),
         )
     )

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
+from anyio import create_task_group
 
 from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.graph_builder import GraphTask, _GraphIterator  # pyright: ignore[reportPrivateUsage]
+from pydantic_graph.id_types import NodeRunID, TaskID
 from pydantic_graph.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
 
 pytestmark = pytest.mark.anyio
@@ -18,10 +22,32 @@ class ExecutionState:
     counter: int = 0
 
 
+def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`Graph.run_sync` must replace a closed thread-current event loop."""
+    builder = GraphBuilder(state_type=ExecutionState, output_type=int)
+
+    @builder.step
+    async def produce_result(ctx: StepContext[ExecutionState, None, None]) -> int:
+        return 42
+
+    builder.add(
+        builder.edge_from(builder.start_node).to(produce_result),
+        builder.edge_from(produce_result).to(builder.end_node),
+    )
+    graph = builder.build()
+
+    assert graph.run_sync(state=ExecutionState()) == 42
+    replacement_loop = asyncio.get_event_loop()
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    assert graph.run_sync(state=ExecutionState()) == 42
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
 async def test_map_to_end_node_cancels_pending():
     """Test that mapping directly to end_node cancels pending tasks"""
-    import asyncio
-
     g = GraphBuilder(state_type=ExecutionState, output_type=int)
 
     @g.step
@@ -63,7 +89,7 @@ async def test_map_non_iterable_raises_error():
 
     g.add(
         g.edge_from(g.start_node).to(return_non_iterable),
-        g.edge_from(return_non_iterable).map().to(process_item),  # type: ignore  # purposely have a type error here
+        g.edge_from(return_non_iterable).map().to(process_item),  # pyright: ignore[reportAttributeAccessIssue, reportUnknownArgumentType, reportUnknownMemberType]  # purposely have a type error here
         g.edge_from(process_item).to(g.end_node),
     )
 
@@ -397,6 +423,63 @@ async def test_early_termination_from_nested_generator():
     async for _ in gen:  # pragma: no branch
         break
     await gen.aclose()
+
+
+async def test_tracked_task_send_after_sender_closed_is_swallowed():
+    """A node task whose `send` lands after the run's stream sender is closed must not crash the run.
+
+    When a run is cancelled before reaching its end node, teardown closes
+    `iter_stream_sender` while node tasks may still be in flight. An in-flight
+    `send` to a closed sender raises `anyio.ClosedResourceError` (a closed
+    *receiver* would instead raise `BrokenResourceError`); both are benign during
+    teardown and must be swallowed rather than escape into the task group.
+
+    The real-world trigger is a teardown race that can't be reproduced reliably
+    through the public API, so this drives `_run_tracked_task` directly: closing
+    the sender up front guarantees the deterministic equivalent of the race (the
+    task finishing its `send` against an already-closed sender). Regression test
+    for #6146; without the fix this leaks `ClosedResourceError` out of the group.
+    """
+    g = GraphBuilder(output_type=int)
+
+    ran = False
+
+    @g.step
+    async def produce(ctx: StepContext[None, None, None]) -> int:
+        nonlocal ran
+        ran = True
+        return 42
+
+    g.add(
+        g.edge_from(g.start_node).to(produce),
+        g.edge_from(produce).to(g.end_node),
+    )
+    graph = g.build()
+
+    next_task_id_counter = 0
+
+    def next_task_id() -> TaskID:
+        nonlocal next_task_id_counter
+        next_task_id_counter += 1
+        return TaskID(f'task:{next_task_id_counter}')
+
+    def next_node_run_id() -> NodeRunID:  # pragma: no cover
+        # Not reached for a single leaf step, but required to construct the iterator.
+        return NodeRunID('node-run:0')
+
+    async with create_task_group() as task_group:
+        iterator = _GraphIterator(graph, None, None, task_group, next_node_run_id, next_task_id)
+        # Simulate run teardown closing the streams while a node task is still in flight.
+        # `send_nowait` checks the sender's own closed flag before the receiver's, so the
+        # in-flight `send` raises `ClosedResourceError` (not `BrokenResourceError`) here.
+        iterator.iter_stream_sender.close()
+        iterator.iter_stream_receiver.close()
+        task = GraphTask(produce.id, None, (), next_task_id())
+        task_group.start_soon(iterator._run_tracked_task, task)  # pyright: ignore[reportPrivateUsage]
+
+    # Reaching here means the task group exited cleanly; the `ClosedResourceError`
+    # from the closed-sender `send` was swallowed instead of propagating.
+    assert ran, 'the node task should have run and attempted to send its result'
 
 
 def test_run_sync():

@@ -54,10 +54,10 @@ def test_evaluator_context_span_tree_error():
 
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('Test error'),
         attributes={},
@@ -188,6 +188,7 @@ def test_evaluator_context_serde_with_span_tree():
                         'start_timestamp': '2025-01-01T00:00:00Z',
                         'end_timestamp': '2025-01-01T00:00:01Z',
                         'attributes': {'key': 'value'},
+                        'status': 'unset',
                     }
                 ],
                 'nodes_by_id': {
@@ -199,6 +200,7 @@ def test_evaluator_context_serde_with_span_tree():
                         'start_timestamp': '2025-01-01T00:00:00Z',
                         'end_timestamp': '2025-01-01T00:00:01Z',
                         'attributes': {'key': 'value'},
+                        'status': 'unset',
                     },
                     '00000000000000000000000000000001:0000000000000002': {
                         'name': 'child',
@@ -208,6 +210,7 @@ def test_evaluator_context_serde_with_span_tree():
                         'start_timestamp': '2025-01-01T00:00:00.500000Z',
                         'end_timestamp': '2025-01-01T00:00:01Z',
                         'attributes': {},
+                        'status': 'unset',
                     },
                 },
             },

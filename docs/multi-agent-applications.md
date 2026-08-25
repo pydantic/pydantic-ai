@@ -19,8 +19,10 @@ Since agents are stateless and designed to be global, you do not need to include
 
 You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
+[Cancellation](agent.md#cancellation-and-sub-agents) is run-scoped: a delegate agent cancelling itself surfaces to the parent as a failed tool return rather than cancelling the parent, and a shared [`CancellationToken`][pydantic_ai.CancellationToken] cancels a whole tree of runs at once.
+
 !!! note "Multiple models"
-    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
+    Agent delegation doesn't need to use the same model for each agent. If you choose different models within a run, the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] still accumulates any per-response cost that could be calculated. However, monetary cost cannot be reconstructed from its aggregate token counts because models may have different pricing. You can use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `cost_limit`, `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
 
 ```python {title="agent_delegation_simple.py"}
 from pydantic_ai import Agent, RunContext, UsageLimits
@@ -54,7 +56,15 @@ result = joke_selection_agent.run_sync(
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage)
-#> RunUsage(input_tokens=165, output_tokens=24, requests=3, tool_calls=1)
+"""
+RunUsage(
+    cost=Decimal('0.00051200'),
+    input_tokens=165,
+    output_tokens=24,
+    requests=3,
+    tool_calls=1,
+)
+"""
 ```
 
 1. The "parent" or controlling agent.
@@ -65,6 +75,14 @@ print(result.usage)
 6. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
 
 _(This example is complete, it can be run "as is")_
+
+!!! warning "Delegate from an `async def` function, not a sync one"
+    Note that `joke_factory` above is `async def` and uses `await joke_generation_agent.run(...)`. That's required, not stylistic: [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cannot be used inside a tool, [output function](output.md#output-functions), or other function called during an agent run, and raise [`UserError`][pydantic_ai.exceptions.UserError] there.
+
+    The parent agent can still be started with `run_sync()`, as in the example above; only the delegating function has to be `async def`. If it also needs to do blocking work, keep it `async def` and push just that part into [`asyncio.to_thread()`][asyncio.to_thread].
+
+!!! note "Delegation inside a Temporal workflow"
+    A tool running in a [Temporal](durable_execution/temporal.md) activity receives a copy of the run context, so `usage=ctx.usage` does not carry the delegate's usage back to the parent run. See [Agent Run Context and Dependencies](durable_execution/temporal.md#agent-run-context-and-dependencies).
 
 The control flow for this example is pretty simple and can be summarised as follows:
 
@@ -148,7 +166,15 @@ async def main():
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage)  # (6)!
-        #> RunUsage(input_tokens=220, output_tokens=32, requests=4, tool_calls=2)
+        """
+        RunUsage(
+            cost=Decimal('0.00056350'),
+            input_tokens=220,
+            output_tokens=32,
+            requests=4,
+            tool_calls=2,
+        )
+        """
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
@@ -181,6 +207,12 @@ graph TD
 "Programmatic agent hand-off" refers to the scenario where multiple agents are called in succession, with application code and/or a human in the loop responsible for deciding which agent to call next.
 
 Here agents don't need to use the same deps.
+
+!!! tip "Message history between agents"
+    To give another agent the previous conversation as context, pass
+    `message_history` to its run method. See
+    [Sharing messages between agents](message-history.md#sharing-messages-between-agents)
+    for the details on instructions, system prompts, and tool context.
 
 Here we show two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
 

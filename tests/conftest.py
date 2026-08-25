@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import dataclasses
 import importlib.util
 import logging
 import os
@@ -8,21 +9,23 @@ import re
 import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
-from functools import cached_property
+from functools import cache, cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
+import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
 
+import pydantic_ai._http
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.messages import (
@@ -44,8 +47,22 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import Builder, Custom, customize
+from .cassette_utils import check_cache_prefix_stability
+
+# `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
+# (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
+# that first import happens inside an async test with the detector configured below armed, the read
+# is reported as blocking and aborts the import, leaving a partially initialized `pandas` in
+# `sys.modules` that every later import in the session trips over. Importing it here means the
+# detector never sees a first import. The read genuinely blocks, so this stays regardless of what
+# BlockBuster reports: https://github.com/pydantic/pydantic-ai/issues/7446.
+with suppress(ImportError):
+    import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+
+T = TypeVar('T')
 
 __all__ = (
     'IsDatetime',
@@ -61,6 +78,8 @@ __all__ = (
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
     'strip_logfire_metrics',
     'remove_schema_descriptions',
+    'message',
+    'message_part',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -73,16 +92,21 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
-if TYPE_CHECKING:
-    from typing import TypeVar
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        'markers',
+        'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
+    )
+
+
+if TYPE_CHECKING:
+    from blockbuster import BlockBuster
     from pluggy import Result
     from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
-
-    T = TypeVar('T')
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -202,6 +226,21 @@ def isdatetime_handler(value: Any, builder: Builder) -> Any | None:  # pragma: n
 
 
 @customize
+def usage_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: no cover
+    if isinstance(value, (RequestUsage, RunUsage)):
+        # Usage objects accept arbitrary fields that inline-snapshot's default dataclass handler cannot see.
+        kwargs = value.__dict__.copy()
+        for field in dataclasses.fields(value):
+            if field.name not in kwargs:
+                continue
+            if field.default is not dataclasses.MISSING:
+                kwargs[field.name] = builder.with_default(kwargs[field.name], field.default)
+            elif field.default_factory is not dataclasses.MISSING:
+                kwargs[field.name] = builder.with_default(kwargs[field.name], field.default_factory())
+        return builder.create_call(type(value), [], kwargs)
+
+
+@customize
 def content_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: no cover
     # special handler for types which need an identifier argument for __init__ but declare an _identifier in the class
     if isinstance(value, BinaryImage):
@@ -313,6 +352,121 @@ def anyio_backend():
     return 'asyncio'
 
 
+# Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
+# Each entry should say why the blocking call is acceptable; anything not listed here should be
+# fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
+BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
+    # coverage reads Python source files while collecting coverage data. Remove these once
+    # https://github.com/cbornet/blockbuster/pull/69 is released in a compatible version.
+    ('os.stat', 'coverage/python.py', 'get_python_source'),
+    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
+    # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
+    # example printing from inside a running event loop trips the detector on the harness's own
+    # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
+    # code detectable.
+    ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
+    ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
+    ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
+    # fastmcp's transport inference stats candidate paths when the client is constructed.
+    ('os.stat', 'pydantic_ai/mcp.py', '__init__'),
+    # boto3/botocore read AWS config files and service models during sync, setup-time client construction.
+    ('os.stat', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('os.listdir', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('io.BufferedReader.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    # google-genai's sync client constructor has google-auth read mTLS/credential config files.
+    ('os.stat', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    ('io.BufferedReader.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    # Anthropic's async Bedrock clients synchronously resolve/sign AWS credentials
+    # (https://github.com/anthropics/anthropic-sdk-python/issues/1770); remove after upstream
+    # covers both auth paths.
+    ('os.stat', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('io.BufferedReader.read', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('os.stat', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    ('io.BufferedReader.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
+    # tool schema is built, which can happen during an agent run.
+    ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    # logfire resolves the current working directory while classifying user stack frames.
+    ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
+    # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
+    # their documented job, even when called from async user code.
+    ('os.stat', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.TextIOWrapper.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+]
+
+
+def _configure_blockbuster(
+    exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
+    excluded_modules: tuple[str, ...] = (),
+) -> BlockBuster:
+    # BlockBuster imports ForbiddenFruit, which mutates builtins during import. Disabled CI lanes
+    # must remain unaffected by that instrumentation.
+    from blockbuster import BlockBuster
+
+    bb = BlockBuster(
+        ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        excluded_modules=excluded_modules or None,
+    )
+    for func, filename, functions in exemptions:
+        bb.functions[func].can_block_in(filename, functions)
+    return bb
+
+
+@cache
+def _configured_blockbuster(excluded_modules: tuple[str, ...]) -> BlockBuster:
+    """Create one configured detector for each module-exclusion set in a pytest worker."""
+    return _configure_blockbuster(excluded_modules=excluded_modules)
+
+
+@pytest.fixture
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    return ()
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    return True
+
+
+@contextmanager
+def _activated_blockbuster(blockbuster: BlockBuster) -> Generator[BlockBuster]:
+    try:
+        blockbuster.activate()
+        yield blockbuster
+    finally:
+        blockbuster.deactivate()
+
+
+@pytest.fixture(autouse=True)
+def blockbuster(
+    blockbuster_enabled: bool,
+    blockbuster_excluded_modules: tuple[str, ...],
+) -> Iterator[BlockBuster | None]:
+    """Raise `BlockingError` when library code makes a blocking call inside the event loop.
+
+    Scanned modules are the shipped packages only, so test-only and third-party stacks (e.g. VCR
+    reading cassettes) are ignored. Calls from user callbacks and tools remain covered when a
+    scanned library frame is below them. CI enables the detector on one complete Python-version
+    lane to avoid multiplying its stack-inspection overhead across the version matrix.
+    """
+    if os.getenv('BLOCKBUSTER_ENABLED') == 'false' or not blockbuster_enabled:
+        yield None
+        return
+
+    bb = _configured_blockbuster(blockbuster_excluded_modules)
+    with _activated_blockbuster(bb):
+        yield bb
+
+
 @pytest.fixture
 def allow_model_requests():
     with pydantic_ai.models.override_allow_model_requests(True):
@@ -388,6 +542,53 @@ def event_loop() -> Iterator[None]:
     new_loop.close()
 
 
+class UndrivableEventLoop(asyncio.AbstractEventLoop):
+    """An event loop that inherits `AbstractEventLoop`'s unimplemented `run_until_complete()`.
+
+    This is how Temporal's workflow event loop behaves: it subclasses `asyncio.AbstractEventLoop` and never
+    implements `run_until_complete()`, so calling that raises a bare `NotImplementedError` from CPython.
+    """
+
+
+@contextmanager
+def undrivable_event_loop() -> Generator[None]:
+    """Make the current event loop one that can't be driven by the caller."""
+    previous = asyncio.get_event_loop()
+    asyncio.set_event_loop(UndrivableEventLoop())
+    try:
+        yield
+    finally:
+        asyncio.set_event_loop(previous)
+
+
+@pytest.fixture
+def closed_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    original_loop = asyncio.get_event_loop()
+    closed_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(closed_loop)
+    closed_loop.close()
+
+    try:
+        yield closed_loop
+    finally:
+        asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
+
+
+@pytest.fixture
+def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """Empty the thread's event loop slot, yielding the loop that was installed before."""
+    original_loop = asyncio.get_event_loop()
+    asyncio.set_event_loop(None)
+
+    try:
+        yield original_loop
+    finally:
+        with suppress(RuntimeError):
+            asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
+
+
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
@@ -396,6 +597,7 @@ def no_instrumentation_by_default():
 
 try:
     import logfire
+    from opentelemetry import context as otel_context
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
     logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
@@ -410,6 +612,19 @@ try:
         # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
         if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
             _httpx_instrumentor.uninstrument()
+        # The worker's main-thread OTel context also persists across tests: an `attach` without a
+        # matching `detach` leaves its values (an active span, suppression flags) visible to every
+        # later test in the worker. A leaked *non-sampled* span is the nasty case: parent-based
+        # sampling then marks all descendant spans unsampled and exporters silently drop them
+        # (seen as `context_subtree()` returning an empty tree in `tests/evals/test_otel.py`).
+        # The detach below resets the context to its pre-test snapshot, so no leaked `attach`
+        # outlives its test. (The clean context itself only shields sync test bodies: async bodies
+        # run in anyio's runner task, whose context is copied before this fixture attaches.)
+        token = otel_context.attach(otel_context.Context())
+        try:
+            yield
+        finally:
+            otel_context.detach(token)
 
 except ImportError:
     pass
@@ -437,6 +652,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         """Match URL paths after scrubbing AWS account IDs from ARNs."""
         path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
         path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
+        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
+        # against a different GCP project than the fixture default)
+        path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
+        path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
+        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
+        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
         if path1 != path2:
             raise AssertionError(f'{path1} != {path2}')
 
@@ -461,6 +682,10 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         # Normalize Bedrock hosts by removing region
         host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
         host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
+        # Normalize Vertex AI hosts by removing region prefix
+        vertex_host_pattern = re.compile(r'^[a-z0-9-]+-aiplatform\.googleapis\.com$')
+        host1_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host1_normalized)
+        host2_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host2_normalized)
         if host1_normalized != host2_normalized:
             raise AssertionError(f'{host1} != {host2}')
 
@@ -508,7 +733,7 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
     # So we turn `content` into a cached property to return the same one each time.
     # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
     cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
     mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
@@ -552,31 +777,69 @@ def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Casse
     check_vcr_cassette_usage(vcr, strict_usage)
 
 
-_HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
+@pytest.fixture(autouse=True)
+def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
+    """Check final recorded conversations during playback; recording leaves the on-disk cassette unfinished."""
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    if vcr is None or vcr.record_mode != RecordMode.NONE:
+        return
+
+    cassette_path_value = getattr(vcr, '_path', None)
+    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
+        return
+    check_cache_prefix_stability(request.node, cassette_path)
+
+
+_HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
+_HttpClientCache: TypeAlias = 'dict[tuple[str, int, int], _HttpClient]'
 
 
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
-    """Monkeypatch `create_async_http_client` in all loaded modules and track created clients.
+    """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
 
     Within a single test, calls with the same (timeout, connect) args reuse the same
-    httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
+    client. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
     companion `close_httpx_clients` fixture handles async cleanup first.
     """
     cache: _HttpClientCache = {}
-    original = pydantic_ai.models.create_async_http_client
+    original_httpx = pydantic_ai.models.create_async_http_client
+    original_httpx2 = pydantic_ai._http.create_async_httpx2_client
 
-    def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
-        key = (kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
-        if key not in cache or cache[key].is_closed:
-            cache[key] = original(**kwargs)
-        return cache[key]
+    def make_cached(
+        family: str, factory: Callable[..., _HttpClient], expected: type[_HttpClient]
+    ) -> Callable[..., _HttpClient]:
+        def cached_per_test(**kwargs: Any) -> _HttpClient:
+            key = (family, kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+            if key not in cache or cache[key].is_closed:
+                cache[key] = factory(**kwargs)
+            client = cache[key]
+            assert isinstance(client, expected)
+            return client
+
+        return cached_per_test
+
+    cached_per_test = make_cached('httpx', original_httpx, httpx.AsyncClient)
+    cached_httpx2_per_test = make_cached('httpx2', original_httpx2, httpx2.AsyncClient)
 
     for mod in list(sys.modules.values()):
-        if getattr(mod, 'create_async_http_client', None) is original:
+        # Read the module's own namespace via `__dict__` rather than `getattr`: some
+        # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
+        # that imports submodules on attribute access, and probing every loaded module
+        # with `getattr` would trigger those unrelated (and possibly failing) imports.
+        mod_dict: dict[str, object] = getattr(mod, '__dict__', None) or {}
+        if mod_dict.get('create_async_http_client', None) is original_httpx:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
+        if mod_dict.get('create_async_httpx2_client', None) is original_httpx2:
+            monkeypatch.setattr(mod, 'create_async_httpx2_client', cached_httpx2_per_test)
 
     yield cache
 
@@ -687,8 +950,30 @@ def text_document_content(assets_path: Path) -> BinaryContent:
     return bin_content
 
 
+# `tiny_*` fixtures: opaque 3-byte payloads for roundtrip / serialization tests where the bytes
+# are never decoded by a model and assertions only check structure (e.g. `IsStr()` on base64).
+# Prefer these whenever a real, decodable image is not required: keeps inline-snapshot diffs
+# small and avoids CI errors that explode when failure traces include large base64 payloads.
+# When the model has to actually see the content (e.g. VCR tests against provider APIs), use
+# the KB-scale session fixtures above (`image_content`, `audio_content`, `video_content`).
+@pytest.fixture
+def tiny_image() -> BinaryImage:
+    return BinaryImage(data=b'\x00\x01\x02', media_type='image/jpeg')
+
+
+@pytest.fixture
+def tiny_audio() -> BinaryContent:
+    return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
+
+
+@pytest.fixture
+def tiny_video() -> BinaryContent:
+    return BinaryContent(data=b'\x20\x21\x22', media_type='video/mp4')
+
+
 os.environ.pop('OPENAI_BASE_URL', None)
 os.environ.pop('ANTHROPIC_BASE_URL', None)
+os.environ.pop('LOGFIRE_EMIT_CONFIGURATION_SPAN', None)
 
 
 @pytest.fixture(scope='session')
@@ -699,6 +984,11 @@ def deepseek_api_key() -> str:
 @pytest.fixture(scope='session')
 def openai_api_key() -> str:
     return os.getenv('OPENAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def azure_api_key() -> str:
+    return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -801,8 +1091,28 @@ def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def zai_api_key() -> str:
+    return os.getenv('ZAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def crusoe_api_key() -> str:
+    return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def snowflake_account() -> str:
+    return os.getenv('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
+
+
+@pytest.fixture(scope='session')
+def snowflake_token() -> str:
+    return os.getenv('SNOWFLAKE_TOKEN', 'mock-api-key')
+
+
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
-def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
+async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
@@ -820,7 +1130,7 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
 
     cassette_name = sanitize_filename(request.node.name, 240)
     test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
+    cassette_path = Path(request.node.fspath).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
@@ -838,6 +1148,7 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
         yield provider
     finally:
         session.dump_if_recording()
+        await session.aclose()
 
 
 @pytest.fixture(scope='session')
@@ -1042,6 +1353,23 @@ def iter_message_parts(
             for part in msg.parts:
                 if isinstance(part, part_type):
                     yield part
+
+
+def message(messages: Sequence[ModelMessage], message_type: type[T], *, index: int = 0) -> T:
+    """Return `messages[index]`, asserting it is an instance of `message_type`."""
+    msg = messages[index]
+    assert isinstance(msg, message_type)
+    return msg
+
+
+def message_part(
+    messages: Sequence[ModelMessage], part_type: type[T], *, message_index: int = 0, part_index: int = 0
+) -> T:
+    """Return `messages[message_index].parts[part_index]`, asserting it is an instance of `part_type`."""
+    msg = messages[message_index]
+    part = msg.parts[part_index]
+    assert isinstance(part, part_type)
+    return part
 
 
 # endregion

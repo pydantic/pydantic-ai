@@ -2,18 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from .._run_context import AgentDepsT, RunContext
-from ..messages import (
-    ModelRequest,
-    ModelResponse,
-    ToolSearchCallPart,
-    ToolSearchReturnPart,
-)
 from ..native_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
@@ -31,8 +24,8 @@ from ..tools import (
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._capability_owned import tool_defs_for_loaded_capabilities
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
+from ._deferred_capabilities import record_loaded_capability_tools
 from .abstract import AbstractCapability, CapabilityOrdering
 
 if TYPE_CHECKING:
@@ -212,45 +205,12 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Append a synthetic tool-search exchange for tools unlocked by a capability load."""
+        """Record tools unlocked by a capability load."""
         # The tools to record are those owned by a loaded deferred capability but not yet
         # present in tool-search history (`ctx.discovered_tool_names`), so we don't
         # duplicate an existing exchange. `discovered_tool_names` is the clean history
         # field (`in_history`), which keeps this append collapse-proof.
-        loaded = tool_defs_for_loaded_capabilities(ctx, request_context.model_request_parameters.function_tools)
-        newly_loaded = [tool_def for name, tool_def in loaded.items() if name not in ctx.discovered_tool_names]
-        if not newly_loaded:
-            return request_context
+        return record_loaded_capability_tools(ctx, request_context)
 
-        newly_loaded = sorted(newly_loaded, key=lambda td: td.name)
-        capability_ids = sorted({td.capability_id for td in newly_loaded if td.capability_id})
-        call_id_digest = hashlib.blake2s(
-            '\x00'.join(td.name for td in newly_loaded).encode(), digest_size=8
-        ).hexdigest()
-        call_id = f'auto_load_{call_id_digest}'
-
-        request_context.messages.extend(
-            [
-                ModelResponse(
-                    parts=[
-                        ToolSearchCallPart(
-                            args={'queries': capability_ids},
-                            tool_call_id=call_id,
-                        ),
-                    ]
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolSearchReturnPart(
-                            content={
-                                'discovered_tools': [
-                                    {'name': td.name, 'description': td.description} for td in newly_loaded
-                                ]
-                            },
-                            tool_call_id=call_id,
-                        ),
-                    ]
-                ),
-            ]
-        )
-        return request_context
+    function_tool_name: ClassVar[str] = 'search_tools'
+    """Reserved name of the local function tool used when tool search runs client-side."""

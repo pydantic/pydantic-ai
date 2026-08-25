@@ -314,8 +314,8 @@ async def test_iter_with_async_iterable_map():
             events.append(event)
 
     assert isinstance(events[-1], EndMarker)
-    result = events[-1].value  # type: ignore
-    assert sorted(result) == [10, 20, 30, 40]  # type: ignore
+    result = events[-1].value  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert sorted(result) == [10, 20, 30, 40]  # pyright: ignore[reportUnknownArgumentType]
     assert state.counter == 4
 
 

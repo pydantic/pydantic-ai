@@ -1,16 +1,28 @@
+import json
+import re
 import sys
+import warnings
+from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast, get_args
+from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
 from pydantic import TypeAdapter
+from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
     Agent,
+    AgentStreamEvent,
     AudioUrl,
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
+    DeferredToolRequests,
+    DeferredToolRequestsEvent,
+    DeferredToolResults,
+    DeferredToolResultsEvent,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -20,26 +32,53 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
     RequestUsage,
     RetryPromptPart,
+    SpeechPart,
+    SpeechPartDelta,
     TextContent,
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolApproved,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolDenied,
+    ToolReturn,
     ToolReturnPart,
     UploadedFile,
+    UserError,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai._parts_manager import ModelResponsePartsManager
+from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
+    MULTI_MODAL_CONTENT_TYPES,
+    CompactionPart,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    RealtimeSessionErrorEvent,
+    ToolReturnContent,
+    is_multi_modal_content,
+    narrow_message_parts,
+    post_compaction_window,
+)
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+
+with try_import() as openai_import_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 def test_image_url():
@@ -68,6 +107,8 @@ def test_video_url():
         pytest.param('https://youtu.be/lCdaVNyHtjU', True, id='youtu.be'),
         pytest.param('https://www.youtube.com/lCdaVNyHtjU', True, id='www.youtube.com'),
         pytest.param('https://youtube.com/lCdaVNyHtjU', True, id='youtube.com'),
+        pytest.param('https://m.youtube.com/watch?v=lCdaVNyHtjU', True, id='m.youtube.com'),
+        pytest.param('https://youtube.com.example.com/video.mp4', False, id='youtube.com.example.com'),
         pytest.param('https://dummy.com/video.mp4', False, id='dummy.com'),
     ],
 )
@@ -76,6 +117,26 @@ def test_youtube_video_url(url: str, is_youtube: bool):
     assert video_url.is_youtube is is_youtube
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
+
+
+def test_music_youtube_video_url_is_not_youtube():
+    """`music.youtube.com` is deliberately not a YouTube host.
+
+    Google rejects it as a `file_uri` with 400 INVALID_ARGUMENT, so recognizing it would hand
+    the provider a URL it cannot resolve. Staying unrecognized also means an extension-less
+    watch URL has no media type to infer, which is what the raise below pins.
+
+    Not a VCR test: with the host unrecognized the `ValueError` is raised locally, before
+    anything reaches the wire, so there is no exchange to record.
+    """
+    video_url = VideoUrl(url='https://music.youtube.com/watch?v=lCdaVNyHtjU')
+    assert video_url.is_youtube is False
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape('Could not infer media type from video URL: https://music.youtube.com/watch?v=lCdaVNyHtjU'),
+    ):
+        video_url.media_type
 
 
 @pytest.mark.parametrize(
@@ -150,6 +211,16 @@ def test_binary_image_requires_image_media_type():
         BinaryImage(data=b'test', media_type='text/plain')
 
 
+def test_binary_audio_requires_audio_media_type():
+    # Valid audio media type should work
+    audio = BinaryAudio(data=b'test', media_type='audio/pcm')
+    assert audio.is_audio
+
+    # Non-audio media type should raise
+    with pytest.raises(ValueError, match='`BinaryAudio` must have a media type that starts with "audio/"'):
+        BinaryAudio(data=b'test', media_type='text/plain')
+
+
 @pytest.mark.parametrize(
     'media_type, format',
     [
@@ -207,7 +278,7 @@ def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
 
 
 def test_audio_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from audio URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from audio URL: foobar.potato')):
         AudioUrl('foobar.potato').media_type
 
 
@@ -227,10 +298,10 @@ def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
 
 
 def test_image_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from image URL: foobar.potato')):
         ImageUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from image URL: foobar.potato')):
         ImageUrl('foobar.potato').format
 
 
@@ -268,7 +339,7 @@ def test_document_url_formats(document_url: DocumentUrl, media_type: str, format
 
 
 def test_document_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from document URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from document URL: foobar.potato')):
         DocumentUrl('foobar.potato').media_type
 
     with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
@@ -374,7 +445,7 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 
 
 def test_video_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from video URL: foobar.potato')):
         VideoUrl('foobar.potato').media_type
 
 
@@ -389,7 +460,7 @@ def test_url_with_query_parameters() -> None:
 
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
-    """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
+    """Apply ThinkingPartDelta to another ThinkingPartDelta (delta-on-delta merge)."""
     original_delta = ThinkingPartDelta(
         content_delta='original',
         signature_delta='sig1',
@@ -462,6 +533,45 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
 
 
+def test_thinking_part_delta_callable_provider_details_serializable():
+    # Reproduce the real streaming path: OpenAI's gpt-oss raw-CoT handler passes a callable
+    # `provider_details` to `handle_thinking_delta`, which emits it verbatim inside a `PartDeltaEvent`
+    # (see `_make_raw_content_updater` in models/openai.py). Such an event must still serialize, e.g.
+    # when crossing a Temporal activity boundary in durable execution.
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    list(manager.handle_thinking_delta(vendor_part_id='t', content='reasoning', provider_details={'raw_content': ['']}))
+
+    def update_details(existing: dict[str, Any] | None) -> dict[str, Any]:
+        details = {**(existing or {})}
+        details['raw_content'] = [*details.get('raw_content', []), 'tok']
+        return details
+
+    events = list(manager.handle_thinking_delta(vendor_part_id='t', content=' more', provider_details=update_details))
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, PartDeltaEvent)
+    assert isinstance(event.delta, ThinkingPartDelta)
+    assert callable(event.delta.provider_details)
+
+    adapter: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
+
+    # The callable merge callback can't be JSON-serialized, so it is emitted as `null` instead of raising.
+    serialized = adapter.dump_json(event)
+    assert json.loads(serialized)['delta']['provider_details'] is None
+    # The serialized event round-trips back into an `AgentStreamEvent`.
+    assert isinstance(adapter.validate_json(serialized), PartDeltaEvent)
+
+    # Serialization is scoped to JSON mode, so Python-mode `model_dump()` keeps the callable intact.
+    assert callable(adapter.dump_python(event)['delta']['provider_details'])
+
+    # A plain dict `provider_details` is preserved as-is.
+    dict_event = PartDeltaEvent(
+        index=0,
+        delta=ThinkingPartDelta(content_delta='dict', provider_details={'provider': 'detail'}),
+    )
+    assert json.loads(adapter.dump_json(dict_event))['delta']['provider_details'] == {'provider': 'detail'}
+
+
 def test_pre_usage_refactor_messages_deserializable():
     # https://github.com/pydantic/pydantic-ai/pull/2378 changed the `ModelResponse` fields,
     # but we as tell people to store those in the DB we want to be very careful not to break deserialization.
@@ -520,6 +630,77 @@ def test_pre_usage_refactor_messages_deserializable():
             ),
         ]
     )
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[1]['usage'] == snapshot(
+        {
+            'input_tokens': 13,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 76,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {},
+            'cost': None,
+        }
+    )
+
+
+def test_pre_usage_refactor_empty_usage_deserializable():
+    data: list[dict[str, Any]] = [
+        {
+            'parts': [],
+            'usage': {
+                'requests': 0,
+                'request_tokens': None,
+                'response_tokens': None,
+                'total_tokens': None,
+                'details': None,
+            },
+            'kind': 'response',
+        }
+    ]
+
+    [message] = ModelMessagesTypeAdapter.validate_python(data)
+    assert isinstance(message, ModelResponse)
+    assert message.usage == RequestUsage()
+
+
+def test_usage_arbitrary_fields_serialization_roundtrip():
+    usage = RequestUsage(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    messages: list[ModelMessage] = [ModelResponse(parts=[], usage=usage)]
+
+    expected_usage = snapshot(
+        {
+            'input_tokens': 5,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {'reasoning_tokens': 3},
+            'cost': None,
+            'future_tokens': 42,
+            'label': 'original',
+            'zero_tokens': 0,
+        }
+    )
+    assert to_jsonable_python(messages)[0]['usage'] == expected_usage
+    assert json.loads(to_json(messages))[0]['usage'] == expected_usage
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    assert json.loads(serialized)[0]['usage'] == expected_usage
+
+    [loaded] = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert isinstance(loaded, ModelResponse)
+    assert loaded.usage == usage
+    assert loaded.usage.__dict__['future_tokens'] == 42
 
 
 @pytest.mark.anyio
@@ -656,6 +837,7 @@ def test_file_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': None,
                 'timestamp': IsStr(),
@@ -665,10 +847,10 @@ def test_file_part_serialization_roundtrip():
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
+                'state': 'complete',
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
-                'state': 'complete',
             }
         ]
     )
@@ -743,6 +925,110 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
     assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
+
+
+def test_deferred_tool_events_serialization_roundtrip():
+    """`DeferredToolRequestsEvent` and `DeferredToolResultsEvent` round-trip through `TypeAdapter(AgentStreamEvent)`.
+
+    Unit test rather than VCR because no model behavior is involved: durable execution backends ship each
+    `AgentStreamEvent` across a process boundary via Pydantic serialization (Temporal sends events from an
+    activity to the workflow, Prefect passes them to tasks), so the new `event_kind` union members must
+    serialize and deserialize by their discriminator.
+    """
+    adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+
+    realtime_event = RealtimeSessionErrorEvent(message='Connection dropped', recoverable=False)
+    serialized = adapter.dump_python(realtime_event, mode='json')
+    assert serialized == {
+        'message': 'Connection dropped',
+        'type': None,
+        'code': None,
+        'recoverable': False,
+        'event_kind': 'realtime_session_error',
+    }
+    assert adapter.validate_python(serialized) == realtime_event
+
+    requests_event = DeferredToolRequestsEvent(
+        requests=DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='call_1')],
+            approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 1}, tool_call_id='approval_1')],
+            metadata={'call_1': {'foo': 'bar'}},
+        )
+    )
+    serialized = adapter.dump_python(requests_event, mode='json')
+    assert serialized == snapshot(
+        {
+            'requests': {
+                'calls': [
+                    {
+                        'tool_name': 'my_tool',
+                        'args': {'x': 0},
+                        'tool_call_id': 'call_1',
+                        'tool_kind': None,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'tool-call',
+                    }
+                ],
+                'approvals': [
+                    {
+                        'tool_name': 'my_other_tool',
+                        'args': {'x': 1},
+                        'tool_call_id': 'approval_1',
+                        'tool_kind': None,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'tool-call',
+                    }
+                ],
+                'metadata': {'call_1': {'foo': 'bar'}},
+            },
+            'event_kind': 'deferred_tool_requests',
+        }
+    )
+    assert adapter.validate_python(serialized) == requests_event
+
+    results_event = DeferredToolResultsEvent(
+        results=DeferredToolResults(
+            approvals={
+                'approval_1': ToolApproved(override_args={'x': 2}),
+                'approval_2': ToolDenied(message='Not allowed'),
+            },
+            calls={
+                'call_1': 'plain value',
+                'call_2': ToolReturn(return_value={'result': 42}, content='Done', metadata={'foo': 'bar'}),
+                'call_3': ModelRetry('Try again'),
+            },
+            metadata={'call_1': {'foo': 'bar'}},
+        )
+    )
+    serialized = adapter.dump_python(results_event, mode='json')
+    assert serialized == snapshot(
+        {
+            'results': {
+                'calls': {
+                    'call_1': 'plain value',
+                    'call_2': {
+                        'return_value': {'result': 42},
+                        'content': 'Done',
+                        'metadata': {'foo': 'bar'},
+                        'tools': None,
+                        'kind': 'tool-return',
+                    },
+                    'call_3': {'message': 'Try again', 'kind': 'model-retry'},
+                },
+                'approvals': {
+                    'approval_1': {'override_args': {'x': 2}, 'kind': 'tool-approved'},
+                    'approval_2': {'message': 'Not allowed', 'kind': 'tool-denied'},
+                },
+                'metadata': {'call_1': {'foo': 'bar'}},
+            },
+            'event_kind': 'deferred_tool_results',
+        }
+    )
+    assert adapter.validate_python(serialized) == results_event
 
 
 def test_model_response_convenience_methods():
@@ -1110,8 +1396,7 @@ def test_uploaded_file_custom_identifier_and_media_type_roundtrip():
     ]
     serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
-    part = deserialized[0].parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(deserialized, UserPromptPart)
     uploaded = part.content[0]
     assert isinstance(uploaded, UploadedFile)
     assert uploaded.identifier == 'my-id'
@@ -1160,8 +1445,7 @@ def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     # Deserialize - the dict with 'url' should remain as a dict, not become ImageUrl
     deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
 
-    tool_return_part = deserialized[2].parts[0]
-    assert isinstance(tool_return_part, ToolReturnPart)
+    tool_return_part = message_part(deserialized, ToolReturnPart, message_index=2)
 
     # The content should be preserved as a dict, not coerced to ImageUrl
     expected_content = {'items': [{'name': 'Example', 'url': '/some/path/12345'}]}
@@ -1171,8 +1455,7 @@ def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
     reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
 
-    reloaded_tool_return = reloaded[2].parts[0]
-    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    reloaded_tool_return = message_part(reloaded, ToolReturnPart, message_index=2)
     assert reloaded_tool_return.content == expected_content
 
 
@@ -1205,8 +1488,7 @@ def test_tool_return_content_with_explicit_image_url():
 
     deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
 
-    tool_return_part = deserialized[1].parts[0]
-    assert isinstance(tool_return_part, ToolReturnPart)
+    tool_return_part = message_part(deserialized, ToolReturnPart, message_index=1)
 
     # Content with explicit kind: "image-url" should become ImageUrl
     assert isinstance(tool_return_part.content, ImageUrl)
@@ -1245,8 +1527,7 @@ def test_tool_return_content_nested_multimodal():
     """
 
     deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
-    tool_return_part = deserialized[0].parts[0]
-    assert isinstance(tool_return_part, ToolReturnPart)
+    tool_return_part = message_part(deserialized, ToolReturnPart)
 
     # `ToolReturnPart`'s typed `ToolSearchReturnPart` subclass narrows `content` to a
     # `TypedDict`; cast back to a plain dict so we can probe arbitrary keys here.
@@ -1266,8 +1547,7 @@ def test_tool_return_content_nested_multimodal():
     # Round-trip should preserve types
     reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
     reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
-    reloaded_tool_return = reloaded[0].parts[0]
-    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    reloaded_tool_return = message_part(reloaded, ToolReturnPart)
     reloaded_content = cast('dict[str, Any]', reloaded_tool_return.content)
     assert isinstance(reloaded_content, dict)
 
@@ -1279,7 +1559,11 @@ def test_tool_return_content_nested_multimodal():
 def test_multi_modal_content_types_matches_union():
     """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
     and that is_multi_modal_content correctly narrows types."""
-    union_members = set(get_args(get_args(MultiModalContent)[0]))
+    # Unwrap any `Annotated` wrappers (e.g. `BinaryContent` carries an `AfterValidator` that narrows
+    # image content to `BinaryImage`) so the comparison is against the underlying content types.
+    union_members = {
+        get_args(m)[0] if get_origin(m) is Annotated else m for m in get_args(get_args(MultiModalContent)[0])
+    }
     assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
 
     # Positive cases: each multimodal type is recognized
@@ -1295,11 +1579,191 @@ def test_multi_modal_content_types_matches_union():
     assert not is_multi_modal_content(42)
 
 
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_binary_image_narrowed_wherever_multimodal_content_is_validated(mode: str):
+    """An image `BinaryContent` narrows to `BinaryImage` on validation of any `MultiModalContent`
+    (here via `UserPromptPart`), not just `FilePart.content`; non-image `BinaryContent` is left as-is.
+    """
+    image = BinaryContent(data=b'\x89PNG', media_type='image/png')
+    audio = BinaryContent(data=b'\x00\x01', media_type='audio/mpeg')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[image, audio])])]
+
+    if mode == 'json':
+        loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    else:
+        loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+
+    part = message_part(loaded, UserPromptPart)
+    assert isinstance(part.content, list)
+    reloaded_image, reloaded_audio = part.content
+    assert type(reloaded_image) is BinaryImage
+    assert reloaded_image.data == image.data and reloaded_image.media_type == image.media_type
+    # Non-image content is not narrowed.
+    assert type(reloaded_audio) is BinaryContent
+
+
+def test_every_multimodal_type_rehydrates_as_tool_return_content():
+    """Every `MultiModalContent` type, dumped as scalar `ToolReturnPart.content`, must rehydrate to
+    its own subclass through `ModelMessagesTypeAdapter` — not collapse to a plain dict.
+
+    Guards the `ToolReturnContent` discriminator's type-specific-field gate (`_MULTIMODAL_FIELDS`):
+    if a future `MultiModalContent` type serialized without a `url`/`media_type`/`file_id` key, the
+    gate would route its dumped dict to the `mapping` branch and silently stop rehydrating it. The
+    factory must cover exactly `MULTI_MODAL_CONTENT_TYPES`, so a new type forces a deliberate update.
+    `BinaryContent` uses a non-image media type so it isn't narrowed to `BinaryImage`.
+    """
+    samples: dict[type, MultiModalContent] = {
+        ImageUrl: ImageUrl(url='https://example.com/a.png'),
+        AudioUrl: AudioUrl(url='https://example.com/a.mp3'),
+        VideoUrl: VideoUrl(url='https://example.com/a.mp4'),
+        DocumentUrl: DocumentUrl(url='https://example.com/a.pdf'),
+        BinaryContent: BinaryContent(data=b'x', media_type='application/pdf'),
+        UploadedFile: UploadedFile(file_id='f1', provider_name='openai', media_type='image/png'),
+    }
+    assert set(samples) == set(MULTI_MODAL_CONTENT_TYPES)
+
+    for cls, instance in samples.items():
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='t', content=instance, tool_call_id='c')])
+        ]
+        reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+        part = message_part(reloaded, ToolReturnPart)
+        assert type(part.content) is cls, (
+            f'{cls.__name__} did not rehydrate through the discriminator gate '
+            f'(got {type(part.content).__name__}) — a `_MULTIMODAL_FIELDS` mismatch would cause this'
+        )
+
+
 def test_tool_return_part_binary_content_serialization():
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
     binary_content = BinaryContent(png_data, media_type='image/png')
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
     assert tool_return.model_response_object() == snapshot({})
+
+
+@pytest.mark.parametrize('case_id', ['scalar', 'list-with-binary', 'dict-with-nested-binary'])
+def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: BinaryContent):
+    """`ToolReturnPart.content` containing `BinaryContent` (scalar, in a list, or in a dict)
+    must round-trip via `ModelMessagesTypeAdapter` in both `validate_json` (the wire path)
+    and `validate_python` (the replay path used by UI adapters that already parsed JSON).
+
+    Without the explicit `Discriminator` on `ToolReturnContent`, smart-union resolution picks
+    `Mapping`/`Sequence`/`Any` over the discriminated `MultiModalContent` branch in
+    `validate_python`, leaving binary leaves as plain dicts.
+
+    Uses `tiny_audio` (non-image `BinaryContent`) to focus on rehydration, not the
+    `BinaryImage` narrowing applied by UI adapters.
+    """
+    contents: dict[str, ToolReturnContent] = {
+        'scalar': tiny_audio,
+        'list-with-binary': ['hello', tiny_audio],
+        'dict-with-nested-binary': {'caption': 'see audio', 'attachment': tiny_audio},
+    }
+    content = contents[case_id]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    json_loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    json_part = message_part(json_loaded, ToolReturnPart)
+    assert json_part.content == content
+
+    python_loaded = ModelMessagesTypeAdapter.validate_python(
+        ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    )
+    python_part = message_part(python_loaded, ToolReturnPart)
+    assert python_part.content == content
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param({'kind': 'binary', 'label': 'foo'}, id='kind-binary-no-media-type'),
+        pytest.param({'kind': 'image-url', 'note': 'not a real url part'}, id='kind-url-no-media-type'),
+    ],
+)
+def test_tool_return_dict_reusing_kind_without_type_field_stays_mapping(content: dict[str, str]):
+    """A user dict that reuses one of our `kind` values but lacks a type-specific field
+    (`media_type`/`file_id`) is left as a plain mapping rather than forced through
+    `MultiModalContent` validation (which would raise a hard `ValidationError`).
+
+    The discriminator is wired into core `ToolReturnContent`, so this guards every
+    `ModelMessagesTypeAdapter` round trip, not just the UI adapters.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+    part = message_part(loaded, ToolReturnPart)
+    assert part.content == content
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        # Reserved `kind` + a type-specific field, but not a valid instance of that type:
+        pytest.param({'kind': 'binary', 'media_type': 'text/plain', 'text': 'hello'}, id='binary-without-data'),
+        pytest.param(
+            {'kind': 'uploaded-file', 'file_id': 'abc', 'status': 'ready'}, id='uploaded-file-without-provider'
+        ),
+        pytest.param({'kind': 'image-url', 'media_type': 'image/png', 'note': 'x'}, id='image-url-without-url'),
+    ],
+)
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_dict_reusing_kind_with_type_field_stays_mapping(content: dict[str, str], mode: str):
+    """A user dict that reuses a `kind` value AND carries a type field (`media_type`/`url`/`file_id`)
+    but isn't a valid instance of that type must stay a plain mapping, not raise.
+
+    The discriminator gates such a dict into the `multimodal` branch on the `kind`+field heuristic;
+    `_validate_multimodal_or_passthrough` falls back to the raw dict when `MultiModalContent` validation
+    fails, and `_serialize_multimodal_or_passthrough` dumps it without a spurious serializer warning —
+    together matching the pre-discriminator behavior where these fell through to the `Any` arm.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # a `PydanticSerializationUnexpectedValue` warning would fail here
+        if mode == 'json':
+            loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+        else:
+            loaded = ModelMessagesTypeAdapter.validate_python(
+                ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+            )
+
+    part = message_part(loaded, ToolReturnPart)
+    assert part.content == content
+
+
+@pytest.mark.parametrize(
+    'kind',
+    [
+        pytest.param([1, 2], id='kind-list'),
+        pytest.param({'x': 'y'}, id='kind-dict'),
+        pytest.param(bytearray(b'binary'), id='kind-bytearray'),
+    ],
+)
+@pytest.mark.parametrize('nested', [False, True], ids=['top-level', 'nested-in-sequence'])
+def test_tool_return_dict_unhashable_kind_stays_mapping(kind: object, nested: bool):
+    """A client dict whose `kind` is unhashable must not crash the discriminator with a `TypeError`.
+
+    The discriminator's `kind in _MULTIMODAL_KINDS` membership test raises `TypeError` on an unhashable
+    `kind` (`list`/`dict`/`bytearray`); the `isinstance(kind, str)` guard routes it to the `mapping`
+    branch instead, where it round-trips as a plain mapping — the same graceful handling of malformed
+    client input as the `_js_binary_to_bytes` hardening.
+    """
+    inner: dict[str, Any] = {'kind': kind, 'media_type': 'image/png', 'data': 'YWJj'}
+    content: Any = [inner] if nested else inner
+    dumped = {
+        'parts': [{'tool_name': 't', 'content': content, 'tool_call_id': 'c', 'part_kind': 'tool-return'}],
+        'kind': 'request',
+    }
+
+    loaded = ModelMessagesTypeAdapter.validate_python([dumped])
+    part = message_part(loaded, ToolReturnPart)
+    assert part.content == content
 
 
 def test_tool_return_part_list_structure_preserved():
@@ -1318,6 +1782,39 @@ def test_tool_return_part_list_structure_preserved():
     tool_return_multi_list = ToolReturnPart(tool_name='test', content=multi_item_list, tool_call_id='tc3')
     assert tool_return_multi_list.model_response_object() == snapshot({'return_value': [{'a': 1}, {'b': 2}]})
     assert tool_return_multi_list.model_response_str() == snapshot('[{"a":1},{"b":2}]')
+
+
+@pytest.mark.parametrize(
+    'outcome,expected_str,expected_object',
+    [
+        pytest.param('success', 'Disk full', {'return_value': 'Disk full'}, id='success'),
+        pytest.param('denied', 'Disk full', {'return_value': 'Disk full'}, id='denied'),
+        pytest.param('failed', '{"error":"Disk full"}', {'error': 'Disk full'}, id='failed'),
+    ],
+)
+def test_tool_return_part_model_response_outcome(
+    outcome: Literal['success', 'failed', 'denied'], expected_str: str, expected_object: dict[str, Any]
+) -> None:
+    """Public model-conversion helpers frame only failed results and let native error channels opt out."""
+    part = ToolReturnPart(tool_name='tool', content='Disk full', tool_call_id='call_1', outcome=outcome)
+
+    assert part.model_response_str() == expected_str
+    assert part.model_response_object() == expected_object
+
+    if outcome == 'failed':
+        assert part.model_response_str(wrap_if_error=False) == 'Disk full'
+        assert part.model_response_object(wrap_if_error=False) == {'return_value': 'Disk full'}
+
+        structured = ToolReturnPart(
+            tool_name='tool',
+            content={'error': 'legitimate output'},
+            tool_call_id='call_2',
+            outcome='failed',
+        )
+        assert structured.model_response_str() == '{"error":"{\\"error\\":\\"legitimate output\\"}"}'
+        assert structured.model_response_str(wrap_if_error=False) == '{"error":"legitimate output"}'
+        assert structured.model_response_object() == {'error': '{"error":"legitimate output"}'}
+        assert structured.model_response_object(wrap_if_error=False) == {'error': 'legitimate output'}
 
 
 def test_tool_return_part_content_items():
@@ -1456,6 +1953,21 @@ def test_tool_return_part_model_response_str_and_user_content():
     assert text == snapshot('See file d5a901.')
     assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
 
+    # Failed content keeps file references so the trailing user message remains attributable.
+    failed_img = ImageUrl(url='https://example.com/failed.png', identifier='report')
+    p_failed = ToolReturnPart(tool_name='t', content=['Disk full', failed_img], tool_call_id='c5', outcome='failed')
+    text, user_content = p_failed.model_response_str_and_user_content()
+    assert text == snapshot('[{"error":"Disk full"},"See file report."]')
+    assert user_content == snapshot(
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
+    )
+
+    text, user_content = p_failed.model_response_str_and_user_content(wrap_if_error=False)
+    assert text == snapshot('["Disk full","See file report."]')
+    assert user_content == snapshot(
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
+    )
+
 
 def test_args_as_dict_valid_json():
     """args_as_dict should return parsed dict for valid JSON args."""
@@ -1505,6 +2017,38 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+def test_args_as_json_str_valid_json_verbatim():
+    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
+    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+
+
+def test_args_as_json_str_dict_args():
+    """args_as_json_str should serialize dict args."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_json_str() == '{"key":"value"}'
+
+
+def test_args_as_json_str_malformed_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for malformed JSON, like args_as_dict."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_json_str_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for valid JSON that's not a dict."""
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: json_list}
+
+
+def test_args_as_json_str_empty_args():
+    """args_as_json_str should return '{}' when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_json_str() == '{}'
+
+
 def test_user_prompt_part_with_text_content():
     part = UserPromptPart(
         content=[
@@ -1547,8 +2091,7 @@ class TestInstructionParts:
         serialized = ModelMessagesTypeAdapter.dump_json([original])
         deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
 
-        msg = deserialized[0]
-        assert isinstance(msg, ModelRequest)
+        msg = message(deserialized, ModelRequest)
         assert msg.instructions == 'static part\n\ndynamic part'
 
     def test_repr(self):
@@ -1649,3 +2192,676 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+def test_retry_prompt_otel_message_parts_include_content():
+    """Retry prompt parts honor `include_content` like every other message part, in both the
+    tool-call and non-tool branches."""
+    non_tool = RetryPromptPart(
+        content=[
+            {
+                'type': 'string_type',
+                'loc': ('items', 0, 'name'),
+                'msg': 'Input should be a valid string',
+                'input': 'model-generated value',
+            },
+        ],
+    )
+    tool = RetryPromptPart(tool_name='my_tool', tool_call_id='call_1', content='Try again')
+
+    with_content = InstrumentationSettings(include_content=True)
+    assert non_tool.otel_message_parts(with_content) == snapshot(
+        [
+            {
+                'type': 'text',
+                'content': """\
+1 validation error:
+```json
+[
+  {
+    "type": "string_type",
+    "loc": [
+      "items",
+      0,
+      "name"
+    ],
+    "msg": "Input should be a valid string",
+    "input": "model-generated value"
+  }
+]
+```
+
+Fix the errors and try again.\
+""",
+            }
+        ]
+    )
+    assert tool.otel_message_parts(with_content) == snapshot(
+        [
+            {
+                'type': 'tool_call_response',
+                'id': 'call_1',
+                'name': 'my_tool',
+                'result': 'Try again\n\nFix the errors and try again.',
+            }
+        ]
+    )
+
+    without_content = InstrumentationSettings(include_content=False)
+    assert non_tool.otel_message_parts(without_content) == snapshot([{'type': 'text'}])
+    assert tool.otel_message_parts(without_content) == snapshot(
+        [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'my_tool'}]
+    )
+
+
+def test_narrow_type_leaves_claim_free_part_unchanged_on_invalid_data():
+    """Best-effort: a kwarg `tool_kind` claim whose data doesn't validate against the typed
+    subclass leaves the (claim-free) part untouched instead of raising.
+
+    Not reachable as a unit through one public flow: each part class's lenient branch sits
+    behind a different producer (dict-args providers for calls, UI adapters for returns),
+    so the four classes are pinned directly here.
+    """
+    call = ToolCallPart(tool_name='load_capability', args={'name': 'oops'})
+    assert ToolCallPart.narrow_type(call, tool_kind='capability-load') is call
+
+    tool_return = ToolReturnPart(tool_name='load_capability', tool_call_id='c1', content='error text')
+    assert ToolReturnPart.narrow_type(tool_return, tool_kind='capability-load') is tool_return
+
+    native_call = NativeToolCallPart(tool_name='tool_search', args={'bad': 1})
+    assert NativeToolCallPart.narrow_type(native_call, tool_kind='tool-search') is native_call
+
+    native_return = NativeToolReturnPart(tool_name='tool_search', tool_call_id='c2', content='oops')
+    assert NativeToolReturnPart.narrow_type(native_return, tool_kind='tool-search') is native_return
+
+
+def test_narrow_type_strips_unsubstantiated_tool_kind_set_on_part():
+    """A `tool_kind` set directly on a part whose data doesn't validate against the typed subclass
+    is stripped (rather than left on a base part), across all four part classes.
+
+    Counterpart to the kwarg case above: there the claim is never on the part, here it is, so the
+    narrower must actively clear it.
+    """
+    call = ToolCallPart(tool_name='load_capability', args={'name': 'oops'}, tool_kind='capability-load')
+    assert ToolCallPart.narrow_type(call) == replace(call, tool_kind=None)
+
+    tool_return = ToolReturnPart(
+        tool_name='load_capability', tool_call_id='c1', content='not-a-dict', tool_kind='capability-load'
+    )
+    assert ToolReturnPart.narrow_type(tool_return) == replace(tool_return, tool_kind=None)
+
+    native_call = NativeToolCallPart(tool_name='tool_search', args={'bad': 1}, tool_kind='tool-search')
+    assert NativeToolCallPart.narrow_type(native_call) == replace(native_call, tool_kind=None)
+
+    native_return = NativeToolReturnPart(
+        tool_name='tool_search', tool_call_id='c2', content='oops', tool_kind='tool-search'
+    )
+    assert NativeToolReturnPart.narrow_type(native_return) == replace(native_return, tool_kind=None)
+
+
+def test_structured_content_returns_structured_json_or_none():
+    """`structured_content` parses a JSON-string `content` into structured data (dict/list), returns
+    already-structured content as-is, and yields `None` for anything that isn't structured JSON."""
+    assert ToolReturnPart(tool_name='t', tool_call_id='c1', content='{"a": 1}').structured_content() == {'a': 1}
+    assert ToolReturnPart(tool_name='t', tool_call_id='c2', content={'a': 1}).structured_content() == {'a': 1}
+    assert ToolReturnPart(tool_name='t', tool_call_id='c3', content='[1, 2]').structured_content() == [1, 2]
+    # A non-JSON string, a JSON scalar, and a bare scalar all lack structured JSON data.
+    assert ToolReturnPart(tool_name='t', tool_call_id='c4', content='not json').structured_content() is None
+    assert ToolReturnPart(tool_name='t', tool_call_id='c5', content='"just a string"').structured_content() is None
+    assert ToolReturnPart(tool_name='t', tool_call_id='c6', content=42).structured_content() is None
+
+
+def test_narrow_type_upgrades_json_string_content():
+    """A typed return whose content arrives as a JSON string (as UI adapters transmit it) is parsed
+    and promoted to its typed subclass with structured content, not left as a base part."""
+    tool_return = ToolReturnPart(
+        tool_name='load_capability',
+        tool_call_id='c1',
+        content='{"instructions": "hi"}',
+        tool_kind='capability-load',
+    )
+    narrowed = ToolReturnPart.narrow_type(tool_return)
+    assert type(narrowed) is LoadCapabilityReturnPart
+    assert narrowed.content == {'instructions': 'hi'}
+
+
+def test_stripped_tool_kind_part_survives_roundtrip():
+    """A base part that kept an unvalidatable `tool_kind` would be routed back to the typed subclass
+    by the discriminator and fail validation on reload; stripping it preserves the round-trip."""
+    invalid = ToolReturnPart(
+        tool_name='load_capability', tool_call_id='c1', content='not-a-dict', tool_kind='capability-load'
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart.narrow_type(invalid)])]
+    reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+    assert type(reloaded[0].parts[0]) is ToolReturnPart
+
+
+def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
+    """`narrow_message_parts` promotes shape-valid claims to their typed subclass and leaves parts
+    without a `tool_kind` untouched (same object), so callers can hand it a whole history."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='load_capability', tool_call_id='c1', args={'id': 'foo'}, tool_kind='capability-load'
+                ),
+                TextPart(content='hello'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='load_capability',
+                    tool_call_id='c1',
+                    content={'instructions': 'hi'},
+                    tool_kind='capability-load',
+                )
+            ]
+        ),
+    ]
+    narrowed = narrow_message_parts(messages)
+    assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
+    assert narrowed[0].parts[1] is messages[0].parts[1]
+    assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+
+def test_speech_part_has_content():
+    assert SpeechPart(speaker='user', transcript='Hello').has_content()
+    audio = BinaryContent(data=b'\x01', media_type='audio/pcm')
+    assert SpeechPart(speaker='user', audio=audio).has_content()
+    assert not SpeechPart(speaker='user').has_content()
+    assert not SpeechPart(speaker='assistant', transcript='').has_content()
+
+
+def test_speech_part_content():
+    """`SpeechPart.content` mirrors `TextPart.content`: the transcript, or `''` when unavailable."""
+    assert SpeechPart(speaker='user', transcript='Hello').content == 'Hello'
+    assert SpeechPart(speaker='user').content == ''
+
+
+def test_model_response_text_includes_speech_transcript() -> None:
+    response = ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hello'), TextPart(content=' world')])
+    assert response.text == 'Hello world'
+
+
+def test_speech_part_speaker_invariant():
+    """In `ModelRequest.parts` the speaker must be 'user'; in `ModelResponse.parts` it must be 'assistant'."""
+    user_part = SpeechPart(speaker='user', transcript='Hello')
+    assistant_part = SpeechPart(speaker='assistant', transcript='Hi!')
+
+    assert ModelRequest(parts=[user_part]).parts == [user_part]
+    assert ModelResponse(parts=[assistant_part]).parts == [assistant_part]
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape("`SpeechPart` in `ModelRequest.parts` must have `speaker='user'`, got 'assistant'"),
+    ):
+        ModelRequest(parts=[assistant_part])
+    with pytest.raises(
+        ValueError,
+        match=re.escape("`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'`, got 'user'"),
+    ):
+        ModelResponse(parts=[user_part])
+
+
+def test_speech_part_serialization_roundtrip():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SpeechPart(
+                    speaker='user',
+                    transcript='Hello',
+                    audio=BinaryContent(data=b'\x01\x02', media_type='audio/pcm'),
+                    id='item-1',
+                    provider_name='openai',
+                )
+            ]
+        ),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hi!', interrupted_at_ms=420)]),
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert serialized == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'speaker': 'user',
+                        'transcript': 'Hello',
+                        'audio': {
+                            'data': 'AQI=',
+                            'media_type': 'audio/pcm',
+                            'vendor_metadata': None,
+                            'kind': 'binary',
+                            'identifier': '0ca623',
+                        },
+                        'interrupted_at_ms': None,
+                        'id': 'item-1',
+                        'provider_name': 'openai',
+                        'provider_details': None,
+                        'part_kind': 'speech',
+                    }
+                ],
+                'timestamp': None,
+                'instructions': None,
+                'kind': 'request',
+                'run_id': None,
+                'conversation_id': None,
+                'metadata': None,
+                'state': 'complete',
+            },
+            {
+                'parts': [
+                    {
+                        'speaker': 'assistant',
+                        'transcript': 'Hi!',
+                        'audio': None,
+                        'interrupted_at_ms': 420,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'speech',
+                    }
+                ],
+                'usage': {
+                    'input_tokens': 0,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
+                    'cost': None,
+                },
+                'model_name': None,
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'provider_name': None,
+                'provider_url': None,
+                'provider_details': None,
+                'provider_response_id': None,
+                'finish_reason': None,
+                'run_id': None,
+                'conversation_id': None,
+                'metadata': None,
+                'state': 'complete',
+            },
+        ]
+    )
+    assert ModelMessagesTypeAdapter.validate_python(serialized) == messages
+
+
+def test_speech_part_delta_apply():
+    part = SpeechPart(
+        speaker='assistant', transcript='Hello', audio=BinaryContent(data=b'\x01', media_type='audio/pcm')
+    )
+    delta = SpeechPartDelta(transcript_delta=' there', audio_chunk=b'\x02')
+
+    applied = delta.apply(part)
+    assert applied == SpeechPart(
+        speaker='assistant', transcript='Hello there', audio=BinaryContent(data=b'\x01\x02', media_type='audio/pcm')
+    )
+    # The original part is unchanged.
+    assert part.transcript == 'Hello'
+    assert part.audio == BinaryContent(data=b'\x01', media_type='audio/pcm')
+
+
+def test_speech_part_delta_apply_without_transcript():
+    """A `transcript_delta` applied to a part with `transcript=None` starts the transcript."""
+    applied = SpeechPartDelta(transcript_delta='Hello').apply(SpeechPart(speaker='user'))
+    assert applied == SpeechPart(speaker='user', transcript='Hello')
+
+
+def test_speech_part_delta_apply_whole_transcript_replaces():
+    """A `transcript` (as opposed to a `transcript_delta`) is the whole transcript so far, so it replaces.
+
+    Providers that revise what they already said — xAI corrects `'Hello?'` to `'Hello, my name is'` —
+    send the corrected whole rather than an increment. Appending it would say everything twice.
+    """
+    part = SpeechPart(speaker='user', transcript='Hello?')
+    applied = SpeechPartDelta(transcript='Hello, my name is').apply(part)
+    assert applied == SpeechPart(speaker='user', transcript='Hello, my name is')
+
+
+def test_speech_part_delta_apply_not_retaining_audio():
+    """A part with `audio=None` is not retaining audio, so an `audio_chunk` delta doesn't create it."""
+    applied = SpeechPartDelta(audio_chunk=b'\x01').apply(SpeechPart(speaker='assistant', transcript='Hi'))
+    assert applied == SpeechPart(speaker='assistant', transcript='Hi')
+
+
+def test_speech_part_delta_apply_wrong_part_type():
+    with pytest.raises(ValueError, match='Cannot apply SpeechPartDeltas to non-SpeechParts'):
+        SpeechPartDelta(transcript_delta='Hello').apply(TextPart(content='Hi'))
+
+
+def test_speech_part_otel_message_parts():
+    part = SpeechPart(speaker='user', transcript='Hello', audio=BinaryContent(data=b'\x01', media_type='audio/pcm'))
+    assert part.otel_message_parts(InstrumentationSettings()) == snapshot(
+        [
+            {'type': 'text', 'content': 'Hello'},
+            {'type': 'blob', 'mime_type': 'audio/pcm', 'modality': 'audio', 'content': 'AQ=='},
+        ]
+    )
+    assert part.otel_message_parts(InstrumentationSettings(include_content=False)) == snapshot(
+        [{'type': 'text'}, {'type': 'blob', 'mime_type': 'audio/pcm', 'modality': 'audio'}]
+    )
+    assert SpeechPart(speaker='assistant').otel_message_parts(InstrumentationSettings()) == []
+
+
+def test_prepare_messages_converts_speech_parts():
+    """`Model.prepare_messages` is the shared seam that converts realtime session history into parts any
+    standard model can consume, so per-provider message-mapping code never sees `SpeechPart`s.
+
+    Unit test rather than VCR because it pins the seam itself; `test_agent_run_with_speech_history`
+    covers the public-API flow.
+    """
+    audio = BinaryContent(data=b'\x01', media_type='audio/pcm')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='What time is it?', audio=audio)]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='It is noon.'), TextPart(content='Bye!')]),
+    ]
+
+    # The default profile doesn't support audio input, so the transcript is used.
+    prepared = TestModel().prepare_messages(history)
+    assert message(prepared, ModelRequest, index=0).parts == [
+        UserPromptPart(content='What time is it?', timestamp=IsNow(tz=timezone.utc))
+    ]
+    assert message(prepared, ModelResponse, index=1).parts == [
+        TextPart(content='It is noon.'),
+        TextPart(content='Bye!'),
+    ]
+
+    # A model that supports audio input receives the retained audio instead of the transcript.
+    prepared = TestModel(profile={'supports_audio_input': True}).prepare_messages(history)
+    assert message(prepared, ModelRequest, index=0).parts == [
+        UserPromptPart(content=[audio], timestamp=IsNow(tz=timezone.utc))
+    ]
+
+
+@pytest.mark.parametrize(
+    ('response', 'expected'),
+    [
+        pytest.param(
+            ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='The answer is', interrupted_at_ms=640)]),
+            'The answer is\n[Interrupted after 640 ms]',
+            id='known-offset',
+        ),
+        pytest.param(
+            ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='The answer is')], state='interrupted'),
+            'The answer is\n[Interrupted]',
+            id='unknown-offset',
+        ),
+        pytest.param(
+            ModelResponse(parts=[SpeechPart(speaker='assistant', interrupted_at_ms=640)]),
+            '[Interrupted after 640 ms]',
+            id='empty-transcript',
+        ),
+        pytest.param(
+            ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='The answer is')]),
+            'The answer is',
+            id='not-interrupted',
+        ),
+    ],
+)
+def test_prepare_messages_renders_speech_interruption(response: ModelResponse, expected: str) -> None:
+    prepared = TestModel().prepare_messages([response])
+    assert message(prepared, ModelResponse, index=0).parts == [TextPart(content=expected)]
+
+
+def test_prepare_messages_drops_empty_speech_parts():
+    """Parts without usable content are dropped, as are messages left without parts."""
+    user_prompt = UserPromptPart(content='hello')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SpeechPart(speaker='user')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant')]),
+        ModelRequest(parts=[user_prompt, SpeechPart(speaker='user')]),
+    ]
+    prepared = TestModel().prepare_messages(history)
+    assert len(prepared) == 1
+    assert message(prepared, ModelRequest, index=0).parts == [user_prompt]
+
+    # A user part with audio but no transcript is also dropped when the model doesn't support audio input.
+    audio_only: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                user_prompt,
+                SpeechPart(speaker='user', audio=BinaryContent(data=b'\x01', media_type='audio/pcm')),
+            ]
+        ),
+    ]
+    prepared = TestModel().prepare_messages(audio_only)
+    assert message(prepared, ModelRequest, index=0).parts == [user_prompt]
+
+
+def test_prepare_messages_passes_through_without_speech_parts():
+    """History without `SpeechPart`s passes through untouched (same message objects)."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(parts=[TextPart(content='hi')]),
+    ]
+    prepared = TestModel().prepare_messages(history)
+    assert prepared[0] is history[0]
+    assert prepared[1] is history[1]
+
+
+@pytest.mark.anyio
+async def test_agent_run_with_speech_history():
+    """History from a realtime session (containing both speaker variants) replays through
+    `agent.run(message_history=...)` against a standard model: the seam converts the parts before the
+    model's message mapping (which ends in `assert_never`) sees them."""
+    received: list[ModelMessage] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received[:] = messages
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SpeechPart(
+                    speaker='user',
+                    transcript='Hello',
+                    audio=BinaryContent(data=b'\x01', media_type='audio/pcm'),
+                )
+            ]
+        ),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hi! How can I help?')]),
+    ]
+
+    agent = Agent(FunctionModel(capture))
+    result = await agent.run('What time is it?', message_history=history)
+    assert result.output == 'done'
+    assert received == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Hi! How can I help?')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='What time is it?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_agent_run_with_speech_only_response():
+    """A custom model returning only realtime `SpeechPart`s yields their transcript as text output.
+
+    `ModelResponse.text` already reads speech transcripts as the response's text, so the agent graph
+    must agree — not judge the response empty and force a retry.
+    """
+
+    def speak(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='hello from speech')])
+
+    agent = Agent(FunctionModel(speak))
+    result = await agent.run('hi')
+    assert result.output == 'hello from speech'
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+@pytest.mark.anyio
+async def test_openai_mapping_of_prepared_speech_history():
+    """A real provider model's message mapping handles realtime session history once it has passed
+    through `prepare_messages`, which the framework applies before every request.
+
+    Unit test rather than VCR because it pins the request payload shape a cassette matcher
+    wouldn't catch.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='fake'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hi!')]),
+    ]
+    prepared = model.prepare_messages(history)
+    openai_messages = await model._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot([{'role': 'user', 'content': 'Hello'}, {'role': 'assistant', 'content': 'Hi!'}])
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+@pytest.mark.anyio
+async def test_unprepared_speech_history_raises():
+    """A `SpeechPart` that reaches an adapter unconverted raises rather than silently vanishing.
+
+    `Model.request()` / `count_tokens()` are public and don't run `prepare_messages`, so a caller
+    driving a model directly with realtime history would otherwise lose the turn's speech — possibly
+    the whole user message — with no error.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='fake'))
+    history: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello')])]
+    with pytest.raises(UserError, match=r'`SpeechPart` cannot be sent to this model as-is'):
+        await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_function_model_estimates_usage_from_unprepared_speech():
+    """`FunctionModel.request()` doesn't run `prepare_messages`, so user speech can arrive unconverted;
+    its transcript still counts toward estimated usage — the same as its converted text form — rather
+    than the turn undercounting to zero.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(respond)
+    speech: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello from speech')])]
+    text: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello from speech')])]
+
+    speech_usage = (await model.request(speech, None, ModelRequestParameters())).usage
+    text_usage = (await model.request(text, None, ModelRequestParameters())).usage
+    assert speech_usage.input_tokens == text_usage.input_tokens
+    assert speech_usage.input_tokens > 50  # more than the flat per-request overhead: the transcript counted
+
+
+def test_tool_availability_delta_round_trip():
+    """Tool availability changes retain their discriminator and optional cause across persistence."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])
+    ]
+
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+
+
+def test_tool_availability_delta_accepts_legacy_added_field():
+    messages = ModelMessagesTypeAdapter.validate_python(
+        [{'kind': 'request', 'parts': [{'part_kind': 'tool-availability-delta', 'added': ['new_tool']}]}]
+    )
+    assert messages == [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'])])]
+
+
+def test_tool_availability_delta_otel_message_uses_system_role():
+    """Tool availability is framework control state, not user-authored content."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'])])]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'system',
+                'parts': [{'type': 'text', 'content': 'Tool availability changed: +new_tool'}],
+            }
+        ]
+    )
+
+
+def test_post_compaction_window_returns_history_unchanged_without_compaction():
+    """No boundary: the whole history comes back (as a new list, input untouched)."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('hello'),
+        ModelResponse(parts=[TextPart(content='hi')]),
+    ]
+
+    window = post_compaction_window(messages)
+
+    assert window == messages
+    assert window is not messages
+
+
+def test_post_compaction_window_slices_at_the_latest_compaction_part():
+    """Latest boundary wins, at part-level precision within its response."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[CompactionPart(content='first summary', provider_name='anthropic')]),
+        ModelRequest.user_text_prompt('middle context'),
+        ModelResponse(
+            parts=[
+                TextPart(content='before the block'),
+                CompactionPart(content='latest summary', provider_name='anthropic'),
+                TextPart(content='after the block'),
+            ]
+        ),
+        ModelRequest.user_text_prompt('tail'),
+    ]
+
+    window = post_compaction_window(messages)
+
+    assert len(window) == 2
+    boundary_response = window[0]
+    assert isinstance(boundary_response, ModelResponse)
+    assert boundary_response.parts == [
+        CompactionPart(content='latest summary', provider_name='anthropic'),
+        TextPart(content='after the block'),
+    ]
+    assert window[1] is messages[-1]
+
+
+def test_post_compaction_window_accepts_a_minimal_sequence():
+    """The runtime `Sequence` contract only requires integer `__getitem__`; the window must
+    not depend on slice support that a minimal conforming implementation may lack."""
+
+    class IntOnlySequence(Sequence[ModelMessage]):
+        def __init__(self, items: list[ModelMessage]):
+            self._items = items
+
+        # The overloads satisfy typeshed's `Sequence` interface, which promises slicing —
+        # the runtime refusal below is exactly the type-vs-runtime gap this test pins.
+        @overload
+        def __getitem__(self, index: int) -> ModelMessage: ...
+        @overload
+        def __getitem__(self, index: slice) -> Sequence[ModelMessage]: ...
+        def __getitem__(self, index: int | slice) -> ModelMessage | Sequence[ModelMessage]:
+            if isinstance(index, slice):
+                raise TypeError('slices not supported')
+            return self._items[index]
+
+        def __len__(self) -> int:
+            return len(self._items)
+
+    messages = IntOnlySequence(
+        [
+            ModelRequest.user_text_prompt('old context'),
+            ModelResponse(parts=[CompactionPart(content='summary', provider_name='anthropic')]),
+            ModelRequest.user_text_prompt('tail'),
+        ]
+    )
+
+    # The test is only meaningful if the double really refuses slices.
+    with pytest.raises(TypeError, match='slices not supported'):
+        messages[0:1]
+
+    window = post_compaction_window(messages)
+
+    assert len(window) == 2
+    assert isinstance(window[0], ModelResponse)
+    assert isinstance(window[1], ModelRequest)

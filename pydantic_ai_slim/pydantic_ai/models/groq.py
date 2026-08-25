@@ -34,6 +34,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -48,6 +49,7 @@ from ..messages import (
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..output import OutputObjectDefinition
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
+from ..profiles.groq import GROQ_GPT_OSS_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -55,6 +57,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -68,6 +72,7 @@ try:
     from groq.types.chat.chat_completion_message import ExecutedTool
     from groq.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
     from groq.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
+    from groq.types.chat.completion_create_params import SearchSettings
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -76,12 +81,23 @@ except ImportError as _import_error:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
+def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
+            body: object | None = e.body
+            suggested_model_id = None
+            if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
+                if error.get('code') == 'model_not_found':
+                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            raise ModelHTTPError(
+                status_code=status_code,
+                model_name=model_name,
+                body=body,
+                headers=dict(e.response.headers),
+                suggested_model_id=suggested_model_id,
+            ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
@@ -100,14 +116,11 @@ ProductionGroqModelNames = Literal[
 
 PreviewGroqModelNames = Literal[
     'meta-llama/llama-4-maverick-17b-128e-instruct',
-    'meta-llama/llama-4-scout-17b-16e-instruct',
     'meta-llama/llama-prompt-guard-2-22m',
     'meta-llama/llama-prompt-guard-2-86m',
-    'moonshotai/kimi-k2-instruct-0905',
     'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
-    'qwen/qwen-3-32b',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -317,7 +330,8 @@ class GroqModel(Model[AsyncGroq]):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
-        tools += self._get_native_tools(model_request_parameters)
+        native_tools, search_settings = self._get_native_tools(model_request_parameters)
+        tools += native_tools
 
         groq_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -333,7 +347,7 @@ class GroqModel(Model[AsyncGroq]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`); `_translate_thinking`
@@ -346,9 +360,10 @@ class GroqModel(Model[AsyncGroq]):
         )
 
         extra_body = model_settings.get('extra_body')
-        # `reasoning_effort` value sets are family-specific on Groq (qwen3: none/default; gpt-oss: low/medium/high),
-        # so we don't map the unified `thinking` level here — only the explicit `groq_reasoning_effort` setting, plus
-        # the qwen3 disable signal (`'none'`), which wins. Unified thinking still controls `reasoning_format` above.
+        # `reasoning_effort` value sets are family-specific on Groq, so precedence is:
+        # qwen3 disable (`'none'`) > explicit `groq_reasoning_effort` > unified `thinking` mapping > nothing.
+        # The unified mapping only applies to graded families (gpt-oss: low/medium/high); qwen3's enable levels
+        # have no gradation (only none/default) so unified thinking there just controls `reasoning_format` above.
         groq_reasoning_effort = model_settings.get('groq_reasoning_effort')
         if disable_via_effort and groq_reasoning_effort is not None:
             warnings.warn(
@@ -357,6 +372,12 @@ class GroqModel(Model[AsyncGroq]):
                 UserWarning,
             )
         effort = 'none' if disable_via_effort else groq_reasoning_effort
+        if effort is None and self.profile.get('groq_supports_graded_reasoning_effort', False):
+            thinking = model_request_parameters.thinking
+            if thinking is True:
+                effort = 'medium'
+            elif thinking is not None and thinking is not False:
+                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP[thinking]
         if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
             # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
@@ -366,7 +387,7 @@ class GroqModel(Model[AsyncGroq]):
             merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
@@ -388,6 +409,7 @@ class GroqModel(Model[AsyncGroq]):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=extra_body,
+                search_settings=search_settings,
             )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
@@ -437,7 +459,7 @@ class GroqModel(Model[AsyncGroq]):
         peekable_response: _utils.PeekableAsyncStream[
             chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -450,6 +472,7 @@ class GroqModel(Model[AsyncGroq]):
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created),
         )
@@ -465,7 +488,7 @@ class GroqModel(Model[AsyncGroq]):
             A tuple of (filtered_tools, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: ChatCompletionToolChoiceOptionParam
         if resolved_tool_choice in ('auto', 'required', 'none'):
@@ -492,19 +515,31 @@ class GroqModel(Model[AsyncGroq]):
 
         return tools, tool_choice
 
-    def _get_native_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
+    def _get_native_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> tuple[list[chat.ChatCompletionToolParam], SearchSettings | NotGiven]:
         tools: list[chat.ChatCompletionToolParam] = []
+        search_settings: SearchSettings | NotGiven = NOT_GIVEN
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
                 if not self.profile.get('groq_always_has_web_search_builtin_tool', False):
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
+                # Compound models run web search implicitly, so we forward only the domain filters
+                # (as `search_settings`) rather than emitting a tool definition.
+                ss: SearchSettings = {}
+                if tool.allowed_domains:
+                    ss['include_domains'] = tool.allowed_domains
+                if tool.blocked_domains:
+                    ss['exclude_domains'] = tool.blocked_domains
+                if ss:
+                    search_settings = ss
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
                 )
-        return tools
+        return tools, search_settings
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
@@ -533,6 +568,9 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -664,6 +702,7 @@ class GroqStreamedResponse(StreamedResponse):
     _model_profile: ModelProfile
     _response: _utils.PeekableAsyncStream[chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
@@ -672,7 +711,7 @@ class GroqStreamedResponse(StreamedResponse):
         await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             try:
                 executed_tool_call_id: str | None = None
                 reasoning_index = 0
@@ -740,8 +779,8 @@ class GroqStreamedResponse(StreamedResponse):
                     for dtc in choice.delta.tool_calls or []:
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=dtc.index,
-                            tool_name=dtc.function and dtc.function.name,
-                            args=dtc.function and dtc.function.arguments,
+                            tool_name=dtc.function.name if dtc.function is not None else None,
+                            args=dtc.function.arguments if dtc.function is not None else None,
                             tool_call_id=dtc.id,
                         )
                         if maybe_event is not None:
@@ -815,11 +854,9 @@ def _map_usage(
         if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
         if isinstance(v, int)
     }
-    # `completion_tokens_details` carries `reasoning_tokens`, which the genai-prices
-    # extractors don't surface, so lift its integer fields into `details` here.
-    # `cached_tokens` (from `prompt_tokens_details`) is intentionally left to the
-    # genai-prices extractors invoked by `RequestUsage.extract`; see
-    # https://github.com/pydantic/genai-prices/issues/414.
+    # Lift only `completion_tokens_details` (reasoning_tokens) into `details`: genai-prices
+    # doesn't surface those, but it does map `prompt_tokens_details.cached_tokens` to
+    # first-class `cache_read_tokens`, so lifting that too would double-report it.
     completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
     details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 
@@ -909,5 +946,5 @@ def _map_executed_tool(
                 return call_part, None
         else:
             return call_part, return_part
-    else:  # pragma: no cover
+    else:
         return None, None

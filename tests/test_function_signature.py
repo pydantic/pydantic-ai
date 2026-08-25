@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import typing
 from enum import Enum
 from typing import Optional, Union
@@ -572,6 +573,62 @@ def search(*, query: str, limit: int | None = None) -> Any:
     """Search documents"""
     ...\
 ''')
+
+
+def test_tool_signature_renders_parameter_descriptions():
+    def multiply(left: float, right: float) -> float:
+        """Multiply two numbers.
+
+        Args:
+            left: The left operand.
+            right: The right operand.
+
+        Returns:
+            The product of `left` and `right`.
+        """
+        return left * right  # pragma: no cover
+
+    rendered = Tool(multiply).tool_def.render_signature('...', is_async=True)
+    assert rendered == snapshot('''\
+async def multiply(*, left: float, right: float) -> float:
+    """
+    <summary>Multiply two numbers.</summary>
+    <returns>
+    <description>The product of `left` and `right`.</description>
+    </returns>
+
+    Args:
+        left: The left operand.
+        right: The right operand.
+    """
+    ...\
+''')
+    compile(rendered, '<rendered>', 'exec')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.AsyncFunctionDef)
+    assert 'left: The left operand.' in (ast.get_docstring(function) or '')
+
+
+def test_tool_signature_escapes_parameter_descriptions():
+    tool_definition = ToolDefinition(
+        name='search',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'description': 'Use `"""exact"""` text or C:\\queries.\0',
+                }
+            },
+            'required': ['query'],
+        },
+    )
+
+    rendered = tool_definition.render_signature('...')
+    compile(rendered, '<rendered>', 'exec')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.get_docstring(function) == 'Args:\n    query: Use `"""exact"""` text or C:\\queries.\0'
 
 
 # =============================================================================
@@ -1374,6 +1431,19 @@ def test_function_with_enum_field_in_model():
     assert '_Color' not in type_names
 
 
+def test_function_with_enum_ref_parameter():
+    """Referenced enum values are visible in the rendered tool signature."""
+
+    def set_color(color: _Color) -> None:
+        pass  # pragma: no cover
+
+    td = Tool(set_color).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def set_color(*, color: Literal['red', 'green']) -> None:
+    ...\
+""")
+
+
 def test_schema_with_described_optional_fields():
     """Schema with descriptions and optional fields renders NotRequired and field descriptions."""
     sig = FunctionSignature.from_schema(
@@ -1432,3 +1502,106 @@ def test_render_empty_type_signature():
     # Empty with description renders docstring but no pass
     ts_with_desc = TypeSignature(name='Marker', description='A marker type')
     assert ts_with_desc.render_definition() == 'class Marker(TypedDict):\n    """A marker type"""'
+
+
+# Boolean JSON Schema nodes (`True`/`False` are valid schemas per spec, and surface from
+# e.g. MCP tool schemas). Each test below exercises a distinct walker entry point that would
+# otherwise index into a bool. See `_normalize_schema_node`.
+
+
+def test_boolean_property_schema_renders_as_any():
+    """A property whose schema is the bare boolean `True` renders as `Any` instead of crashing."""
+    sig = FunctionSignature.from_schema(
+        name='passthrough',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'anything': True},
+            'required': ['anything'],
+        },
+    )
+    assert str(sig.params['anything'].type) == 'Any'
+
+
+def test_boolean_array_items_render_as_list_any():
+    """`items: True` (any element allowed) recurses with a bool and renders as `list[Any]`."""
+    sig = FunctionSignature.from_schema(
+        name='collect',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'arr': {'type': 'array', 'items': True}},
+            'required': ['arr'],
+        },
+    )
+    assert str(sig.params['arr'].type) == 'list[Any]'
+
+
+def test_boolean_allof_member_renders_as_any():
+    """A single-member `allOf: [True]` recurses into `_schema_to_type_expr` with a bool."""
+    sig = FunctionSignature.from_schema(
+        name='allof_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'allOf': [True]}},
+            'required': ['value'],
+        },
+    )
+    assert str(sig.params['value'].type) == 'Any'
+
+
+def test_boolean_anyof_member_renders():
+    """A bool member inside `anyOf` is inspected (`.get('type')`) before recursion and must not crash."""
+    sig = FunctionSignature.from_schema(
+        name='anyof_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'anyOf': [True, {'type': 'null'}]}},
+            'required': ['value'],
+        },
+    )
+    assert str(sig.params['value'].type) == 'Any | None'
+
+
+def test_boolean_nested_object_property_renders_as_any():
+    """A bare-boolean property inside a NESTED object hits the `_build_type_signature` walker."""
+    sig = FunctionSignature.from_schema(
+        name='outer',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'nested': {'type': 'object', 'properties': {'x': True}}},
+            'required': ['nested'],
+        },
+    )
+    nested = next(t for t in sig.referenced_types if 'x' in t.fields)
+    assert str(nested.fields['x'].type) == 'Any'
+
+
+def test_boolean_def_schema_does_not_crash():
+    """A bare-boolean `$defs` entry (referenced via `$ref`) must not crash `_process_schema_defs`."""
+    sig = FunctionSignature.from_schema(
+        name='defs_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'$ref': '#/$defs/Anything'}},
+            'required': ['value'],
+            '$defs': {'Anything': True},
+        },
+    )
+    assert 'value' in sig.params
+
+
+def test_boolean_additional_properties_render_as_dict_any():
+    """`additionalProperties: True`/`False` on an object render as `dict[str, Any]`.
+
+    Unlike the cases above these never crashed (the object branch reads the value directly),
+    but the assertion documents the rendered shape and guards against regressions.
+    """
+    for value in (True, False):
+        sig = FunctionSignature.from_schema(
+            name='cfg',
+            parameters_schema={
+                'type': 'object',
+                'properties': {'meta': {'type': 'object', 'additionalProperties': value}},
+                'required': ['meta'],
+            },
+        )
+        assert str(sig.params['meta'].type) == 'dict[str, Any]'

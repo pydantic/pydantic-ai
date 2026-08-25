@@ -3,6 +3,8 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
+import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -12,6 +14,7 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_evals import _online
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext, EvaluatorFailure
     from pydantic_evals.evaluators.evaluator import EvaluatorOutput
@@ -232,6 +235,13 @@ async def test_online_evaluator_custom_config():
     assert online.max_concurrency == 5
 
 
+@pytest.mark.parametrize('max_concurrency', [0, -1])
+def test_online_evaluator_invalid_max_concurrency(max_concurrency: int):
+    """OnlineEvaluator rejects non-positive concurrency limits."""
+    with pytest.raises(ValueError, match=f'max_concurrency must be >= 1, got {max_concurrency}'):
+        OnlineEvaluator(evaluator=AlwaysTrue(), max_concurrency=max_concurrency)
+
+
 @pytest.mark.anyio
 async def test_run_evaluators_success():
     """run_evaluators returns results from all evaluators."""
@@ -310,6 +320,35 @@ async def test_evaluate_decorator_async_basic():
     assert results[0].value is True
     assert ctx.output == 42
     assert ctx.inputs == {'x': 21}
+
+
+@pytest.mark.anyio
+async def test_evaluate_decorator_async_callable_instance():
+    """An async callable instance is awaited; this local wrapper dispatch has no provider boundary to record."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    class AsyncCallable:
+        async def __call__(self, x: int) -> int:
+            return x * 2
+
+    # `target` is passed explicitly because a callable instance has no `__name__`.
+    wrapped = config.evaluate(
+        OutputEquals(value=42),
+        target='async-callable',
+        msg_template='Calling async callable',
+    )(AsyncCallable())
+
+    result = await wrapped(21)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert results[0].value is True
+    assert ctx.output == 42
+    assert inspect.isawaitable(ctx.output) is False
 
 
 @pytest.mark.anyio
@@ -1809,8 +1848,13 @@ async def test_sampling_context_input_based_sampling():
 
 
 @pytest.mark.anyio
-async def test_correlated_sampling_subset_property():
+async def test_correlated_sampling_subset_property(monkeypatch: pytest.MonkeyPatch):
     """In correlated mode, lower-rate evaluator calls are a subset of higher-rate ones."""
+    # Seed the sampler so the test is deterministic. Without a seed this test
+    # could fail with probability ~0.9**100 ≈ 2.7e-5 when no call fires the
+    # low-rate (0.1) evaluator. See https://github.com/pydantic/pydantic-ai/issues/5399.
+    monkeypatch.setattr(_online, 'random', random.Random(0))
+
     collector_high = Collector()
     collector_low = Collector()
     config = OnlineEvalConfig(sampling_mode='correlated')
@@ -1836,8 +1880,11 @@ async def test_correlated_sampling_subset_property():
 
 
 @pytest.mark.anyio
-async def test_correlated_sampling_max_overhead():
+async def test_correlated_sampling_max_overhead(monkeypatch: pytest.MonkeyPatch):
     """In correlated mode, total overhead probability equals max(rate_i)."""
+    # Seed the sampler so the `5 < calls < 40` window is deterministic.
+    monkeypatch.setattr(_online, 'random', random.Random(0))
+
     collector1 = Collector()
     collector2 = Collector()
     collector3 = Collector()
@@ -1863,8 +1910,11 @@ async def test_correlated_sampling_max_overhead():
 
 
 @pytest.mark.anyio
-async def test_independent_sampling_is_default():
+async def test_independent_sampling_is_default(monkeypatch: pytest.MonkeyPatch):
     """Independent mode is the default — evaluators sample independently."""
+    # Seed the sampler so `>0` for both collectors is deterministic.
+    monkeypatch.setattr(_online, 'random', random.Random(0))
+
     collector1 = Collector()
     collector2 = Collector()
     config = OnlineEvalConfig()  # default is 'independent'
@@ -2212,15 +2262,15 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(online_module, '_LOGFIRE_INSTALLED', False)
 
     with pytest.raises(RuntimeError, match='logfire'):
-
+        # The decorator raises before the body runs.
         @online_module.evaluate(AlwaysTrue(), extract_args=True)
-        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def f(x: int) -> int:  # pragma: no cover
             return x
 
     with pytest.raises(RuntimeError, match='logfire'):
-
+        # The decorator raises before the body runs.
         @online_module.evaluate(AlwaysTrue(), record_return=True)
-        async def g(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def g(x: int) -> int:  # pragma: no cover
             return x
 
 
@@ -2228,9 +2278,9 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
 def test_extract_args_unknown_parameter_raises():
     """Naming an unknown parameter in `extract_args` fails at decoration time."""
     with pytest.raises(ValueError, match='not in'):
-
+        # The decorator raises before the body runs.
         @evaluate(AlwaysTrue(), extract_args=['nonexistent'])
-        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+        async def f(x: int) -> int:  # pragma: no cover
             return x
 
 

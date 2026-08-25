@@ -1,5 +1,7 @@
 """Tests for parent fork identification and dominator analysis."""
 
+import re
+
 import pytest
 
 from pydantic_graph.exceptions import GraphBuildingError
@@ -269,7 +271,9 @@ def test_parent_fork_explicit_fail_with_cycle():
 
     with pytest.raises(
         GraphBuildingError,
-        match="There is a cycle in the graph passing through 'J' that does not include 'F'. Parent forks of a join must be a part of any cycles involving that join.",
+        match=re.escape(
+            "There is a cycle in the graph passing through 'J' that does not include 'F'. Parent forks of a join must be a part of any cycles involving that join."
+        ),
     ):
         finder.find_parent_fork(join_id, parent_fork_id='F')
 

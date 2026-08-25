@@ -1,0 +1,563 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '13058'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content:
+        - prompt_cache_breakpoint:
+            mode: explicit
+          text: |-
+            Reference catalogue for the prompt cache test corpus.
+            Entry 0000: shelf 0, aisle 0, volume 0, catalogued under subject heading 0.
+            Entry 0001: shelf 1, aisle 1, volume 1, catalogued under subject heading 1.
+            Entry 0002: shelf 2, aisle 2, volume 2, catalogued under subject heading 2.
+            Entry 0003: shelf 3, aisle 3, volume 3, catalogued under subject heading 3.
+            Entry 0004: shelf 4, aisle 4, volume 4, catalogued under subject heading 4.
+            Entry 0005: shelf 5, aisle 5, volume 5, catalogued under subject heading 5.
+            Entry 0006: shelf 6, aisle 6, volume 6, catalogued under subject heading 6.
+            Entry 0007: shelf 7, aisle 0, volume 7, catalogued under subject heading 7.
+            Entry 0008: shelf 8, aisle 1, volume 8, catalogued under subject heading 8.
+            Entry 0009: shelf 9, aisle 2, volume 9, catalogued under subject heading 9.
+            Entry 0010: shelf 10, aisle 3, volume 10, catalogued under subject heading 10.
+            Entry 0011: shelf 11, aisle 4, volume 11, catalogued under subject heading 0.
+            Entry 0012: shelf 12, aisle 5, volume 12, catalogued under subject heading 1.
+            Entry 0013: shelf 13, aisle 6, volume 13, catalogued under subject heading 2.
+            Entry 0014: shelf 14, aisle 0, volume 14, catalogued under subject heading 3.
+            Entry 0015: shelf 15, aisle 1, volume 15, catalogued under subject heading 4.
+            Entry 0016: shelf 16, aisle 2, volume 16, catalogued under subject heading 5.
+            Entry 0017: shelf 17, aisle 3, volume 17, catalogued under subject heading 6.
+            Entry 0018: shelf 18, aisle 4, volume 18, catalogued under subject heading 7.
+            Entry 0019: shelf 19, aisle 5, volume 19, catalogued under subject heading 8.
+            Entry 0020: shelf 20, aisle 6, volume 20, catalogued under subject heading 9.
+            Entry 0021: shelf 21, aisle 0, volume 21, catalogued under subject heading 10.
+            Entry 0022: shelf 22, aisle 1, volume 22, catalogued under subject heading 0.
+            Entry 0023: shelf 0, aisle 2, volume 23, catalogued under subject heading 1.
+            Entry 0024: shelf 1, aisle 3, volume 24, catalogued under subject heading 2.
+            Entry 0025: shelf 2, aisle 4, volume 25, catalogued under subject heading 3.
+            Entry 0026: shelf 3, aisle 5, volume 26, catalogued under subject heading 4.
+            Entry 0027: shelf 4, aisle 6, volume 27, catalogued under subject heading 5.
+            Entry 0028: shelf 5, aisle 0, volume 28, catalogued under subject heading 6.
+            Entry 0029: shelf 6, aisle 1, volume 29, catalogued under subject heading 7.
+            Entry 0030: shelf 7, aisle 2, volume 30, catalogued under subject heading 8.
+            Entry 0031: shelf 8, aisle 3, volume 31, catalogued under subject heading 9.
+            Entry 0032: shelf 9, aisle 4, volume 32, catalogued under subject heading 10.
+            Entry 0033: shelf 10, aisle 5, volume 33, catalogued under subject heading 0.
+            Entry 0034: shelf 11, aisle 6, volume 34, catalogued under subject heading 1.
+            Entry 0035: shelf 12, aisle 0, volume 35, catalogued under subject heading 2.
+            Entry 0036: shelf 13, aisle 1, volume 36, catalogued under subject heading 3.
+            Entry 0037: shelf 14, aisle 2, volume 37, catalogued under subject heading 4.
+            Entry 0038: shelf 15, aisle 3, volume 38, catalogued under subject heading 5.
+            Entry 0039: shelf 16, aisle 4, volume 39, catalogued under subject heading 6.
+            Entry 0040: shelf 17, aisle 5, volume 40, catalogued under subject heading 7.
+            Entry 0041: shelf 18, aisle 6, volume 41, catalogued under subject heading 8.
+            Entry 0042: shelf 19, aisle 0, volume 42, catalogued under subject heading 9.
+            Entry 0043: shelf 20, aisle 1, volume 43, catalogued under subject heading 10.
+            Entry 0044: shelf 21, aisle 2, volume 44, catalogued under subject heading 0.
+            Entry 0045: shelf 22, aisle 3, volume 45, catalogued under subject heading 1.
+            Entry 0046: shelf 0, aisle 4, volume 46, catalogued under subject heading 2.
+            Entry 0047: shelf 1, aisle 5, volume 47, catalogued under subject heading 3.
+            Entry 0048: shelf 2, aisle 6, volume 48, catalogued under subject heading 4.
+            Entry 0049: shelf 3, aisle 0, volume 49, catalogued under subject heading 5.
+            Entry 0050: shelf 4, aisle 1, volume 50, catalogued under subject heading 6.
+            Entry 0051: shelf 5, aisle 2, volume 51, catalogued under subject heading 7.
+            Entry 0052: shelf 6, aisle 3, volume 52, catalogued under subject heading 8.
+            Entry 0053: shelf 7, aisle 4, volume 53, catalogued under subject heading 9.
+            Entry 0054: shelf 8, aisle 5, volume 54, catalogued under subject heading 10.
+            Entry 0055: shelf 9, aisle 6, volume 55, catalogued under subject heading 0.
+            Entry 0056: shelf 10, aisle 0, volume 56, catalogued under subject heading 1.
+            Entry 0057: shelf 11, aisle 1, volume 57, catalogued under subject heading 2.
+            Entry 0058: shelf 12, aisle 2, volume 58, catalogued under subject heading 3.
+            Entry 0059: shelf 13, aisle 3, volume 59, catalogued under subject heading 4.
+            Entry 0060: shelf 14, aisle 4, volume 60, catalogued under subject heading 5.
+            Entry 0061: shelf 15, aisle 5, volume 61, catalogued under subject heading 6.
+            Entry 0062: shelf 16, aisle 6, volume 62, catalogued under subject heading 7.
+            Entry 0063: shelf 17, aisle 0, volume 63, catalogued under subject heading 8.
+            Entry 0064: shelf 18, aisle 1, volume 64, catalogued under subject heading 9.
+            Entry 0065: shelf 19, aisle 2, volume 65, catalogued under subject heading 10.
+            Entry 0066: shelf 20, aisle 3, volume 66, catalogued under subject heading 0.
+            Entry 0067: shelf 21, aisle 4, volume 67, catalogued under subject heading 1.
+            Entry 0068: shelf 22, aisle 5, volume 68, catalogued under subject heading 2.
+            Entry 0069: shelf 0, aisle 6, volume 69, catalogued under subject heading 3.
+            Entry 0070: shelf 1, aisle 0, volume 70, catalogued under subject heading 4.
+            Entry 0071: shelf 2, aisle 1, volume 71, catalogued under subject heading 5.
+            Entry 0072: shelf 3, aisle 2, volume 72, catalogued under subject heading 6.
+            Entry 0073: shelf 4, aisle 3, volume 73, catalogued under subject heading 7.
+            Entry 0074: shelf 5, aisle 4, volume 74, catalogued under subject heading 8.
+            Entry 0075: shelf 6, aisle 5, volume 75, catalogued under subject heading 9.
+            Entry 0076: shelf 7, aisle 6, volume 76, catalogued under subject heading 10.
+            Entry 0077: shelf 8, aisle 0, volume 77, catalogued under subject heading 0.
+            Entry 0078: shelf 9, aisle 1, volume 78, catalogued under subject heading 1.
+            Entry 0079: shelf 10, aisle 2, volume 79, catalogued under subject heading 2.
+            Entry 0080: shelf 11, aisle 3, volume 80, catalogued under subject heading 3.
+            Entry 0081: shelf 12, aisle 4, volume 81, catalogued under subject heading 4.
+            Entry 0082: shelf 13, aisle 5, volume 82, catalogued under subject heading 5.
+            Entry 0083: shelf 14, aisle 6, volume 83, catalogued under subject heading 6.
+            Entry 0084: shelf 15, aisle 0, volume 84, catalogued under subject heading 7.
+            Entry 0085: shelf 16, aisle 1, volume 85, catalogued under subject heading 8.
+            Entry 0086: shelf 17, aisle 2, volume 86, catalogued under subject heading 9.
+            Entry 0087: shelf 18, aisle 3, volume 87, catalogued under subject heading 10.
+            Entry 0088: shelf 19, aisle 4, volume 88, catalogued under subject heading 0.
+            Entry 0089: shelf 20, aisle 5, volume 89, catalogued under subject heading 1.
+            Entry 0090: shelf 21, aisle 6, volume 90, catalogued under subject heading 2.
+            Entry 0091: shelf 22, aisle 0, volume 91, catalogued under subject heading 3.
+            Entry 0092: shelf 0, aisle 1, volume 92, catalogued under subject heading 4.
+            Entry 0093: shelf 1, aisle 2, volume 93, catalogued under subject heading 5.
+            Entry 0094: shelf 2, aisle 3, volume 94, catalogued under subject heading 6.
+            Entry 0095: shelf 3, aisle 4, volume 95, catalogued under subject heading 7.
+            Entry 0096: shelf 4, aisle 5, volume 96, catalogued under subject heading 8.
+            Entry 0097: shelf 5, aisle 6, volume 97, catalogued under subject heading 9.
+            Entry 0098: shelf 6, aisle 0, volume 98, catalogued under subject heading 10.
+            Entry 0099: shelf 7, aisle 1, volume 99, catalogued under subject heading 0.
+            Entry 0100: shelf 8, aisle 2, volume 100, catalogued under subject heading 1.
+            Entry 0101: shelf 9, aisle 3, volume 101, catalogued under subject heading 2.
+            Entry 0102: shelf 10, aisle 4, volume 102, catalogued under subject heading 3.
+            Entry 0103: shelf 11, aisle 5, volume 103, catalogued under subject heading 4.
+            Entry 0104: shelf 12, aisle 6, volume 104, catalogued under subject heading 5.
+            Entry 0105: shelf 13, aisle 0, volume 105, catalogued under subject heading 6.
+            Entry 0106: shelf 14, aisle 1, volume 106, catalogued under subject heading 7.
+            Entry 0107: shelf 15, aisle 2, volume 107, catalogued under subject heading 8.
+            Entry 0108: shelf 16, aisle 3, volume 108, catalogued under subject heading 9.
+            Entry 0109: shelf 17, aisle 4, volume 109, catalogued under subject heading 10.
+            Entry 0110: shelf 18, aisle 5, volume 110, catalogued under subject heading 0.
+            Entry 0111: shelf 19, aisle 6, volume 111, catalogued under subject heading 1.
+            Entry 0112: shelf 20, aisle 0, volume 112, catalogued under subject heading 2.
+            Entry 0113: shelf 21, aisle 1, volume 113, catalogued under subject heading 3.
+            Entry 0114: shelf 22, aisle 2, volume 114, catalogued under subject heading 4.
+            Entry 0115: shelf 0, aisle 3, volume 115, catalogued under subject heading 5.
+            Entry 0116: shelf 1, aisle 4, volume 116, catalogued under subject heading 6.
+            Entry 0117: shelf 2, aisle 5, volume 117, catalogued under subject heading 7.
+            Entry 0118: shelf 3, aisle 6, volume 118, catalogued under subject heading 8.
+            Entry 0119: shelf 4, aisle 0, volume 119, catalogued under subject heading 9.
+            Entry 0120: shelf 5, aisle 1, volume 120, catalogued under subject heading 10.
+            Entry 0121: shelf 6, aisle 2, volume 121, catalogued under subject heading 0.
+            Entry 0122: shelf 7, aisle 3, volume 122, catalogued under subject heading 1.
+            Entry 0123: shelf 8, aisle 4, volume 123, catalogued under subject heading 2.
+            Entry 0124: shelf 9, aisle 5, volume 124, catalogued under subject heading 3.
+            Entry 0125: shelf 10, aisle 6, volume 125, catalogued under subject heading 4.
+            Entry 0126: shelf 11, aisle 0, volume 126, catalogued under subject heading 5.
+            Entry 0127: shelf 12, aisle 1, volume 127, catalogued under subject heading 6.
+            Entry 0128: shelf 13, aisle 2, volume 128, catalogued under subject heading 7.
+            Entry 0129: shelf 14, aisle 3, volume 129, catalogued under subject heading 8.
+            Entry 0130: shelf 15, aisle 4, volume 130, catalogued under subject heading 9.
+            Entry 0131: shelf 16, aisle 5, volume 131, catalogued under subject heading 10.
+            Entry 0132: shelf 17, aisle 6, volume 132, catalogued under subject heading 0.
+            Entry 0133: shelf 18, aisle 0, volume 133, catalogued under subject heading 1.
+            Entry 0134: shelf 19, aisle 1, volume 134, catalogued under subject heading 2.
+            Entry 0135: shelf 20, aisle 2, volume 135, catalogued under subject heading 3.
+            Entry 0136: shelf 21, aisle 3, volume 136, catalogued under subject heading 4.
+            Entry 0137: shelf 22, aisle 4, volume 137, catalogued under subject heading 5.
+            Entry 0138: shelf 0, aisle 5, volume 138, catalogued under subject heading 6.
+            Entry 0139: shelf 1, aisle 6, volume 139, catalogued under subject heading 7.
+            Entry 0140: shelf 2, aisle 0, volume 140, catalogued under subject heading 8.
+            Entry 0141: shelf 3, aisle 1, volume 141, catalogued under subject heading 9.
+            Entry 0142: shelf 4, aisle 2, volume 142, catalogued under subject heading 10.
+            Entry 0143: shelf 5, aisle 3, volume 143, catalogued under subject heading 0.
+            Entry 0144: shelf 6, aisle 4, volume 144, catalogued under subject heading 1.
+            Entry 0145: shelf 7, aisle 5, volume 145, catalogued under subject heading 2.
+            Entry 0146: shelf 8, aisle 6, volume 146, catalogued under subject heading 3.
+            Entry 0147: shelf 9, aisle 0, volume 147, catalogued under subject heading 4.
+            Entry 0148: shelf 10, aisle 1, volume 148, catalogued under subject heading 5.
+            Entry 0149: shelf 11, aisle 2, volume 149, catalogued under subject heading 6.
+            Entry 0150: shelf 12, aisle 3, volume 150, catalogued under subject heading 7.
+            Entry 0151: shelf 13, aisle 4, volume 151, catalogued under subject heading 8.
+            Entry 0152: shelf 14, aisle 5, volume 152, catalogued under subject heading 9.
+            Entry 0153: shelf 15, aisle 6, volume 153, catalogued under subject heading 10.
+            Entry 0154: shelf 16, aisle 0, volume 154, catalogued under subject heading 0.
+            Entry 0155: shelf 17, aisle 1, volume 155, catalogued under subject heading 1.
+            Entry 0156: shelf 18, aisle 2, volume 156, catalogued under subject heading 2.
+            Entry 0157: shelf 19, aisle 3, volume 157, catalogued under subject heading 3.
+            Entry 0158: shelf 20, aisle 4, volume 158, catalogued under subject heading 4.
+            Entry 0159: shelf 21, aisle 5, volume 159, catalogued under subject heading 5.
+          type: input_text
+        - text: 'Reply with exactly: OK'
+          type: input_text
+        role: user
+      model: openai/gpt-5.6-sol
+      prompt_cache_options:
+        mode: explicit
+        ttl: 30m
+      provider:
+        only:
+        - openai
+      stream: false
+    uri: https://openrouter.ai/api/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '1375'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      completed_at: 1784286313
+      created_at: 1784286312
+      error: null
+      frequency_penalty: 0
+      id: gen-1784286312-3R0SU4Mb8ucOpEJ79d2o
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: openai/gpt-5.6-sol
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: OK
+          type: output_text
+        id: msg_tmp_ym1zsqcli1m
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1
+      truncation: disabled
+      usage:
+        cost: 0.025265
+        cost_details:
+          upstream_inference_cost: 0.025265
+          upstream_inference_input_cost: 0.025115
+          upstream_inference_output_cost: 0.00015
+        input_tokens: 4020
+        input_tokens_details:
+          cache_write_tokens: 4012
+          cached_tokens: 0
+        is_byok: false
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 4025
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '13058'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content:
+        - prompt_cache_breakpoint:
+            mode: explicit
+          text: |-
+            Reference catalogue for the prompt cache test corpus.
+            Entry 0000: shelf 0, aisle 0, volume 0, catalogued under subject heading 0.
+            Entry 0001: shelf 1, aisle 1, volume 1, catalogued under subject heading 1.
+            Entry 0002: shelf 2, aisle 2, volume 2, catalogued under subject heading 2.
+            Entry 0003: shelf 3, aisle 3, volume 3, catalogued under subject heading 3.
+            Entry 0004: shelf 4, aisle 4, volume 4, catalogued under subject heading 4.
+            Entry 0005: shelf 5, aisle 5, volume 5, catalogued under subject heading 5.
+            Entry 0006: shelf 6, aisle 6, volume 6, catalogued under subject heading 6.
+            Entry 0007: shelf 7, aisle 0, volume 7, catalogued under subject heading 7.
+            Entry 0008: shelf 8, aisle 1, volume 8, catalogued under subject heading 8.
+            Entry 0009: shelf 9, aisle 2, volume 9, catalogued under subject heading 9.
+            Entry 0010: shelf 10, aisle 3, volume 10, catalogued under subject heading 10.
+            Entry 0011: shelf 11, aisle 4, volume 11, catalogued under subject heading 0.
+            Entry 0012: shelf 12, aisle 5, volume 12, catalogued under subject heading 1.
+            Entry 0013: shelf 13, aisle 6, volume 13, catalogued under subject heading 2.
+            Entry 0014: shelf 14, aisle 0, volume 14, catalogued under subject heading 3.
+            Entry 0015: shelf 15, aisle 1, volume 15, catalogued under subject heading 4.
+            Entry 0016: shelf 16, aisle 2, volume 16, catalogued under subject heading 5.
+            Entry 0017: shelf 17, aisle 3, volume 17, catalogued under subject heading 6.
+            Entry 0018: shelf 18, aisle 4, volume 18, catalogued under subject heading 7.
+            Entry 0019: shelf 19, aisle 5, volume 19, catalogued under subject heading 8.
+            Entry 0020: shelf 20, aisle 6, volume 20, catalogued under subject heading 9.
+            Entry 0021: shelf 21, aisle 0, volume 21, catalogued under subject heading 10.
+            Entry 0022: shelf 22, aisle 1, volume 22, catalogued under subject heading 0.
+            Entry 0023: shelf 0, aisle 2, volume 23, catalogued under subject heading 1.
+            Entry 0024: shelf 1, aisle 3, volume 24, catalogued under subject heading 2.
+            Entry 0025: shelf 2, aisle 4, volume 25, catalogued under subject heading 3.
+            Entry 0026: shelf 3, aisle 5, volume 26, catalogued under subject heading 4.
+            Entry 0027: shelf 4, aisle 6, volume 27, catalogued under subject heading 5.
+            Entry 0028: shelf 5, aisle 0, volume 28, catalogued under subject heading 6.
+            Entry 0029: shelf 6, aisle 1, volume 29, catalogued under subject heading 7.
+            Entry 0030: shelf 7, aisle 2, volume 30, catalogued under subject heading 8.
+            Entry 0031: shelf 8, aisle 3, volume 31, catalogued under subject heading 9.
+            Entry 0032: shelf 9, aisle 4, volume 32, catalogued under subject heading 10.
+            Entry 0033: shelf 10, aisle 5, volume 33, catalogued under subject heading 0.
+            Entry 0034: shelf 11, aisle 6, volume 34, catalogued under subject heading 1.
+            Entry 0035: shelf 12, aisle 0, volume 35, catalogued under subject heading 2.
+            Entry 0036: shelf 13, aisle 1, volume 36, catalogued under subject heading 3.
+            Entry 0037: shelf 14, aisle 2, volume 37, catalogued under subject heading 4.
+            Entry 0038: shelf 15, aisle 3, volume 38, catalogued under subject heading 5.
+            Entry 0039: shelf 16, aisle 4, volume 39, catalogued under subject heading 6.
+            Entry 0040: shelf 17, aisle 5, volume 40, catalogued under subject heading 7.
+            Entry 0041: shelf 18, aisle 6, volume 41, catalogued under subject heading 8.
+            Entry 0042: shelf 19, aisle 0, volume 42, catalogued under subject heading 9.
+            Entry 0043: shelf 20, aisle 1, volume 43, catalogued under subject heading 10.
+            Entry 0044: shelf 21, aisle 2, volume 44, catalogued under subject heading 0.
+            Entry 0045: shelf 22, aisle 3, volume 45, catalogued under subject heading 1.
+            Entry 0046: shelf 0, aisle 4, volume 46, catalogued under subject heading 2.
+            Entry 0047: shelf 1, aisle 5, volume 47, catalogued under subject heading 3.
+            Entry 0048: shelf 2, aisle 6, volume 48, catalogued under subject heading 4.
+            Entry 0049: shelf 3, aisle 0, volume 49, catalogued under subject heading 5.
+            Entry 0050: shelf 4, aisle 1, volume 50, catalogued under subject heading 6.
+            Entry 0051: shelf 5, aisle 2, volume 51, catalogued under subject heading 7.
+            Entry 0052: shelf 6, aisle 3, volume 52, catalogued under subject heading 8.
+            Entry 0053: shelf 7, aisle 4, volume 53, catalogued under subject heading 9.
+            Entry 0054: shelf 8, aisle 5, volume 54, catalogued under subject heading 10.
+            Entry 0055: shelf 9, aisle 6, volume 55, catalogued under subject heading 0.
+            Entry 0056: shelf 10, aisle 0, volume 56, catalogued under subject heading 1.
+            Entry 0057: shelf 11, aisle 1, volume 57, catalogued under subject heading 2.
+            Entry 0058: shelf 12, aisle 2, volume 58, catalogued under subject heading 3.
+            Entry 0059: shelf 13, aisle 3, volume 59, catalogued under subject heading 4.
+            Entry 0060: shelf 14, aisle 4, volume 60, catalogued under subject heading 5.
+            Entry 0061: shelf 15, aisle 5, volume 61, catalogued under subject heading 6.
+            Entry 0062: shelf 16, aisle 6, volume 62, catalogued under subject heading 7.
+            Entry 0063: shelf 17, aisle 0, volume 63, catalogued under subject heading 8.
+            Entry 0064: shelf 18, aisle 1, volume 64, catalogued under subject heading 9.
+            Entry 0065: shelf 19, aisle 2, volume 65, catalogued under subject heading 10.
+            Entry 0066: shelf 20, aisle 3, volume 66, catalogued under subject heading 0.
+            Entry 0067: shelf 21, aisle 4, volume 67, catalogued under subject heading 1.
+            Entry 0068: shelf 22, aisle 5, volume 68, catalogued under subject heading 2.
+            Entry 0069: shelf 0, aisle 6, volume 69, catalogued under subject heading 3.
+            Entry 0070: shelf 1, aisle 0, volume 70, catalogued under subject heading 4.
+            Entry 0071: shelf 2, aisle 1, volume 71, catalogued under subject heading 5.
+            Entry 0072: shelf 3, aisle 2, volume 72, catalogued under subject heading 6.
+            Entry 0073: shelf 4, aisle 3, volume 73, catalogued under subject heading 7.
+            Entry 0074: shelf 5, aisle 4, volume 74, catalogued under subject heading 8.
+            Entry 0075: shelf 6, aisle 5, volume 75, catalogued under subject heading 9.
+            Entry 0076: shelf 7, aisle 6, volume 76, catalogued under subject heading 10.
+            Entry 0077: shelf 8, aisle 0, volume 77, catalogued under subject heading 0.
+            Entry 0078: shelf 9, aisle 1, volume 78, catalogued under subject heading 1.
+            Entry 0079: shelf 10, aisle 2, volume 79, catalogued under subject heading 2.
+            Entry 0080: shelf 11, aisle 3, volume 80, catalogued under subject heading 3.
+            Entry 0081: shelf 12, aisle 4, volume 81, catalogued under subject heading 4.
+            Entry 0082: shelf 13, aisle 5, volume 82, catalogued under subject heading 5.
+            Entry 0083: shelf 14, aisle 6, volume 83, catalogued under subject heading 6.
+            Entry 0084: shelf 15, aisle 0, volume 84, catalogued under subject heading 7.
+            Entry 0085: shelf 16, aisle 1, volume 85, catalogued under subject heading 8.
+            Entry 0086: shelf 17, aisle 2, volume 86, catalogued under subject heading 9.
+            Entry 0087: shelf 18, aisle 3, volume 87, catalogued under subject heading 10.
+            Entry 0088: shelf 19, aisle 4, volume 88, catalogued under subject heading 0.
+            Entry 0089: shelf 20, aisle 5, volume 89, catalogued under subject heading 1.
+            Entry 0090: shelf 21, aisle 6, volume 90, catalogued under subject heading 2.
+            Entry 0091: shelf 22, aisle 0, volume 91, catalogued under subject heading 3.
+            Entry 0092: shelf 0, aisle 1, volume 92, catalogued under subject heading 4.
+            Entry 0093: shelf 1, aisle 2, volume 93, catalogued under subject heading 5.
+            Entry 0094: shelf 2, aisle 3, volume 94, catalogued under subject heading 6.
+            Entry 0095: shelf 3, aisle 4, volume 95, catalogued under subject heading 7.
+            Entry 0096: shelf 4, aisle 5, volume 96, catalogued under subject heading 8.
+            Entry 0097: shelf 5, aisle 6, volume 97, catalogued under subject heading 9.
+            Entry 0098: shelf 6, aisle 0, volume 98, catalogued under subject heading 10.
+            Entry 0099: shelf 7, aisle 1, volume 99, catalogued under subject heading 0.
+            Entry 0100: shelf 8, aisle 2, volume 100, catalogued under subject heading 1.
+            Entry 0101: shelf 9, aisle 3, volume 101, catalogued under subject heading 2.
+            Entry 0102: shelf 10, aisle 4, volume 102, catalogued under subject heading 3.
+            Entry 0103: shelf 11, aisle 5, volume 103, catalogued under subject heading 4.
+            Entry 0104: shelf 12, aisle 6, volume 104, catalogued under subject heading 5.
+            Entry 0105: shelf 13, aisle 0, volume 105, catalogued under subject heading 6.
+            Entry 0106: shelf 14, aisle 1, volume 106, catalogued under subject heading 7.
+            Entry 0107: shelf 15, aisle 2, volume 107, catalogued under subject heading 8.
+            Entry 0108: shelf 16, aisle 3, volume 108, catalogued under subject heading 9.
+            Entry 0109: shelf 17, aisle 4, volume 109, catalogued under subject heading 10.
+            Entry 0110: shelf 18, aisle 5, volume 110, catalogued under subject heading 0.
+            Entry 0111: shelf 19, aisle 6, volume 111, catalogued under subject heading 1.
+            Entry 0112: shelf 20, aisle 0, volume 112, catalogued under subject heading 2.
+            Entry 0113: shelf 21, aisle 1, volume 113, catalogued under subject heading 3.
+            Entry 0114: shelf 22, aisle 2, volume 114, catalogued under subject heading 4.
+            Entry 0115: shelf 0, aisle 3, volume 115, catalogued under subject heading 5.
+            Entry 0116: shelf 1, aisle 4, volume 116, catalogued under subject heading 6.
+            Entry 0117: shelf 2, aisle 5, volume 117, catalogued under subject heading 7.
+            Entry 0118: shelf 3, aisle 6, volume 118, catalogued under subject heading 8.
+            Entry 0119: shelf 4, aisle 0, volume 119, catalogued under subject heading 9.
+            Entry 0120: shelf 5, aisle 1, volume 120, catalogued under subject heading 10.
+            Entry 0121: shelf 6, aisle 2, volume 121, catalogued under subject heading 0.
+            Entry 0122: shelf 7, aisle 3, volume 122, catalogued under subject heading 1.
+            Entry 0123: shelf 8, aisle 4, volume 123, catalogued under subject heading 2.
+            Entry 0124: shelf 9, aisle 5, volume 124, catalogued under subject heading 3.
+            Entry 0125: shelf 10, aisle 6, volume 125, catalogued under subject heading 4.
+            Entry 0126: shelf 11, aisle 0, volume 126, catalogued under subject heading 5.
+            Entry 0127: shelf 12, aisle 1, volume 127, catalogued under subject heading 6.
+            Entry 0128: shelf 13, aisle 2, volume 128, catalogued under subject heading 7.
+            Entry 0129: shelf 14, aisle 3, volume 129, catalogued under subject heading 8.
+            Entry 0130: shelf 15, aisle 4, volume 130, catalogued under subject heading 9.
+            Entry 0131: shelf 16, aisle 5, volume 131, catalogued under subject heading 10.
+            Entry 0132: shelf 17, aisle 6, volume 132, catalogued under subject heading 0.
+            Entry 0133: shelf 18, aisle 0, volume 133, catalogued under subject heading 1.
+            Entry 0134: shelf 19, aisle 1, volume 134, catalogued under subject heading 2.
+            Entry 0135: shelf 20, aisle 2, volume 135, catalogued under subject heading 3.
+            Entry 0136: shelf 21, aisle 3, volume 136, catalogued under subject heading 4.
+            Entry 0137: shelf 22, aisle 4, volume 137, catalogued under subject heading 5.
+            Entry 0138: shelf 0, aisle 5, volume 138, catalogued under subject heading 6.
+            Entry 0139: shelf 1, aisle 6, volume 139, catalogued under subject heading 7.
+            Entry 0140: shelf 2, aisle 0, volume 140, catalogued under subject heading 8.
+            Entry 0141: shelf 3, aisle 1, volume 141, catalogued under subject heading 9.
+            Entry 0142: shelf 4, aisle 2, volume 142, catalogued under subject heading 10.
+            Entry 0143: shelf 5, aisle 3, volume 143, catalogued under subject heading 0.
+            Entry 0144: shelf 6, aisle 4, volume 144, catalogued under subject heading 1.
+            Entry 0145: shelf 7, aisle 5, volume 145, catalogued under subject heading 2.
+            Entry 0146: shelf 8, aisle 6, volume 146, catalogued under subject heading 3.
+            Entry 0147: shelf 9, aisle 0, volume 147, catalogued under subject heading 4.
+            Entry 0148: shelf 10, aisle 1, volume 148, catalogued under subject heading 5.
+            Entry 0149: shelf 11, aisle 2, volume 149, catalogued under subject heading 6.
+            Entry 0150: shelf 12, aisle 3, volume 150, catalogued under subject heading 7.
+            Entry 0151: shelf 13, aisle 4, volume 151, catalogued under subject heading 8.
+            Entry 0152: shelf 14, aisle 5, volume 152, catalogued under subject heading 9.
+            Entry 0153: shelf 15, aisle 6, volume 153, catalogued under subject heading 10.
+            Entry 0154: shelf 16, aisle 0, volume 154, catalogued under subject heading 0.
+            Entry 0155: shelf 17, aisle 1, volume 155, catalogued under subject heading 1.
+            Entry 0156: shelf 18, aisle 2, volume 156, catalogued under subject heading 2.
+            Entry 0157: shelf 19, aisle 3, volume 157, catalogued under subject heading 3.
+            Entry 0158: shelf 20, aisle 4, volume 158, catalogued under subject heading 4.
+            Entry 0159: shelf 21, aisle 5, volume 159, catalogued under subject heading 5.
+          type: input_text
+        - text: 'Reply with exactly: OK'
+          type: input_text
+        role: user
+      model: openai/gpt-5.6-sol
+      prompt_cache_options:
+        mode: explicit
+        ttl: 30m
+      provider:
+        only:
+        - openai
+      stream: false
+    uri: https://openrouter.ai/api/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '1350'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      completed_at: 1784286314
+      created_at: 1784286313
+      error: null
+      frequency_penalty: 0
+      id: gen-1784286313-o0LDhOFaHL3xExqbXInR
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: openai/gpt-5.6-sol
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: OK
+          type: output_text
+        id: msg_tmp_1b8w0afg47m
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1
+      truncation: disabled
+      usage:
+        cost: 0.002196
+        cost_details:
+          upstream_inference_cost: 0.002196
+          upstream_inference_input_cost: 0.002046
+          upstream_inference_output_cost: 0.00015
+        input_tokens: 4020
+        input_tokens_details:
+          cached_tokens: 4012
+        is_byok: false
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 4025
+    status:
+      code: 200
+      message: OK
+version: 1

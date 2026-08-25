@@ -1,3 +1,7 @@
+import re
+from unittest.mock import patch
+
+import httpx2
 import pytest
 
 from pydantic_ai import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
@@ -40,8 +44,45 @@ async def test_download_item_raises_user_error_with_unsupported_protocol(
 
 
 async def test_download_item_raises_user_error_with_youtube_url() -> None:
-    with pytest.raises(UserError, match='Downloading YouTube videos is not supported.'):
+    with pytest.raises(UserError, match=re.escape('Downloading YouTube videos is not supported.')):
         _ = await download_item(VideoUrl(url='https://youtu.be/lCdaVNyHtjU'), data_format='bytes')
+
+
+@pytest.mark.parametrize(
+    'url',
+    (
+        ImageUrl(url='https://93.184.215.14/image.png', media_type='image/png'),
+        DocumentUrl(url='https://93.184.215.14/doc.pdf', media_type='application/pdf'),
+        VideoUrl(url='https://93.184.215.14/video.mp4', media_type='video/mp4'),
+        AudioUrl(url='https://93.184.215.14/audio.mp3', media_type='audio/mpeg'),
+    ),
+)
+async def test_download_item_rejects_oversized_body(
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """File URL downloads reject response bodies larger than the 50 MiB default limit."""
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            content=b'x' * 1024,
+            headers={'content-type': url.media_type},
+            request=request,
+        )
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+
+    def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
+        return http_client
+
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
+
+    with (
+        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 512),
+        pytest.raises(ValueError, match='maximum size of 512 bytes'),
+    ):
+        await download_item(url, data_format='bytes')
 
 
 @pytest.mark.vcr()

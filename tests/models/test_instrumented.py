@@ -7,6 +7,7 @@ from typing import Literal
 
 import pytest
 from opentelemetry.trace import NoOpTracerProvider
+from pydantic_core import to_json
 
 from pydantic_ai import (
     AudioUrl,
@@ -35,15 +36,18 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._instrumentation import MessageJsonCache, has_stale_message_json
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot, warns
-from ..conftest import IsDatetime, IsInt, IsStr, try_import
+from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -92,7 +96,7 @@ class MyModel(Model):
                 ToolCallPart('tool1', 'args1', 'tool_call_1'),
                 ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
                 TextPart('text2'),
-                {},  # test unexpected parts  # type: ignore
+                {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             usage=RequestUsage(
                 input_tokens=100,
@@ -168,7 +172,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
                 RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
                 RetryPromptPart('retry_prompt2'),
-                {},  # test unexpected parts  # type: ignore
+                {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             timestamp=IsDatetime(),
         ),
@@ -204,6 +208,9 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -313,6 +320,138 @@ async def test_instrumented_model_not_recording():
     )
 
 
+class MalformedPortModel(MyModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:notaport/foo'
+
+
+async def test_instrumented_model_malformed_base_url_port(capfire: CaptureLogfire):
+    """A `base_url` whose port isn't an integer omits the server attributes instead of failing the request.
+
+    `urlparse` accepts the URL and only raises when `hostname`/`port` are read, so this is a unit test:
+    no real provider produces a `base_url` that survives client construction and fails at attribute-building.
+    """
+    model = InstrumentedModel(MalformedPortModel(), InstrumentationSettings())
+
+    await model.request(
+        [ModelRequest(parts=[UserPromptPart('user_prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == snapshot({})
+
+
+async def test_instrumented_model_wrapped_model_server_attributes(capfire: CaptureLogfire):
+    """A wrapper between the instrumentation and the concrete model still reports the server attributes.
+
+    Every durability engine and `ConcurrencyLimitedModel` interpose a `WrapperModel` here, so a wrapper
+    that didn't forward `base_url` would silently drop `server.*` from all of their spans.
+    """
+    model = InstrumentedModel(WrapperModel(MyModel()), InstrumentationSettings())
+
+    await model.request(
+        [ModelRequest(parts=[UserPromptPart('user_prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == snapshot(
+        {'server.address': 'example.com', 'server.port': 8000}
+    )
+
+
+def test_input_messages_json_matches_whole_history_with_and_without_cache():
+    """A per-run cache produces output byte-identical to serializing the whole history at once.
+
+    Walks growing prefixes through one shared cache (as an agent run does) and compares each result
+    to both the uncached path and a fresh whole-history `to_json`. The empty `ModelRequest` maps to
+    no OTel message and must be dropped from the array, not emitted as an empty fragment. Unit test:
+    byte-identity between the cached and uncached serialization paths isn't observable through the
+    public API (both produce the same span attribute).
+    """
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('sys'), UserPromptPart('hello')]),
+        ModelRequest(parts=[]),
+        ModelResponse(parts=[ToolCallPart('tool', {'a': 1}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('tool', 'result', 'call_1')]),
+        ModelResponse(parts=[TextPart('done')]),
+    ]
+    for length in range(len(history) + 1):
+        prefix = history[:length]
+        whole = to_json(settings.messages_to_otel_messages(prefix))
+        assert settings._input_messages_json(prefix, cache) == whole  # pyright: ignore[reportPrivateUsage]
+        assert settings._input_messages_json(prefix, None) == whole  # pyright: ignore[reportPrivateUsage]
+
+
+def test_input_messages_json_refreshes_when_message_parts_are_replaced():
+    """A cached message whose `parts` list is reassigned (e.g. dynamic system prompt re-evaluation)
+    is re-serialized rather than served stale, keeping a single entry per message. Unit test: the
+    refresh isn't observable through the public API — cached and refreshed paths emit the same span
+    attribute."""
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    message = ModelRequest(parts=[SystemPromptPart('old', dynamic_ref='ref')])
+
+    before = settings._input_messages_json([message], cache)  # pyright: ignore[reportPrivateUsage]
+    assert b'old' in before
+
+    message.parts = [SystemPromptPart('new', dynamic_ref='ref')]
+    after = settings._input_messages_json([message], cache)  # pyright: ignore[reportPrivateUsage]
+    assert b'new' in after and b'old' not in after
+    assert len(cache) == 1
+
+
+def test_input_messages_json_evicts_entries_for_dropped_messages():
+    """Entries for messages no longer in the input history are evicted, so a pruning or rebuilding
+    history processor keeps the cache (and the messages it holds alive) bounded by the current
+    history instead of accumulating every message ever serialized until run end. Unit test: cache
+    contents and entry identity aren't observable through the public API or recorded HTTP traffic —
+    the memory bound is invisible in span output."""
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    first = ModelRequest(parts=[UserPromptPart('first')])
+    second = ModelResponse(parts=[TextPart('second')])
+    third = ModelRequest(parts=[UserPromptPart('third')])
+
+    settings._input_messages_json([first, second], cache)  # pyright: ignore[reportPrivateUsage]
+    assert set(cache) == {id(first), id(second)}
+    second_entry = cache[id(second)]
+
+    settings._input_messages_json([second, third], cache)  # pyright: ignore[reportPrivateUsage]
+    assert set(cache) == {id(second), id(third)}
+    assert cache[id(second)] is second_entry
+
+
+def test_has_stale_message_json_detection_boundaries():
+    """`has_stale_message_json` flags only entries that are still valid (same `parts` list) yet
+    byte-stale, i.e. a message mutated in place below its `parts` list. Uncached messages are
+    skipped, and so are entries whose `parts` list was reassigned — the next request's
+    serialization would have refreshed those, so they can't have produced a stale span. Unit test:
+    the individual entry states can't be isolated through the public API.
+    """
+    settings = InstrumentationSettings()
+    cache: MessageJsonCache = {}
+    prompt = UserPromptPart('original')
+    request = ModelRequest(parts=[prompt])
+    response = ModelResponse(parts=[TextPart('reply')])
+    settings._input_messages_json([request, response], cache)  # pyright: ignore[reportPrivateUsage]
+
+    assert not has_stale_message_json(settings, [request, response], cache)
+    assert not has_stale_message_json(settings, [ModelRequest(parts=[UserPromptPart('uncached')])], cache)
+
+    prompt.content = 'mutated'
+    assert has_stale_message_json(settings, [request, response], cache)
+
+    request.parts = [UserPromptPart('rebuilt')]
+    assert not has_stale_message_json(settings, [request, response], cache)
+
+
 async def test_instrumented_model_serializes_lone_surrogates_without_crashing(capfire: CaptureLogfire):
     """Lone surrogates in message content make `to_json` raise; instrumentation must not crash the run.
 
@@ -340,7 +479,7 @@ def test_safe_to_json_falls_back_on_lone_surrogates():
 
 
 def test_instrumentation_settings_rejects_removed_version():
-    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, or 5'):
+    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, 5, or 6'):
         InstrumentationSettings(version=1)  # pyright: ignore[reportArgumentType]
 
 
@@ -406,6 +545,9 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -434,12 +576,22 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                     'operation.cost': 0.00475,
+                    'gen_ai.client.operation.time_to_first_chunk': IsFloat(),
                 },
             },
         ]
     )
 
     assert capfire.log_exporter.exported_logs_as_dicts() == snapshot([])
+
+    # Streaming records the time-to-first-chunk histogram (value is non-deterministic, so
+    # assert shape rather than snapshot the float).
+    ttft_metrics = [
+        m for m in capfire.get_collected_metrics() if m['name'] == 'gen_ai.client.operation.time_to_first_chunk'
+    ]
+    assert len(ttft_metrics) == 1
+    assert ttft_metrics[0]['unit'] == 's'
+    assert len(ttft_metrics[0]['data']['data_points']) == 1
 
 
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
@@ -488,6 +640,9 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -514,6 +669,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                     'operation.cost': 0.00475,
+                    'gen_ai.client.operation.time_to_first_chunk': IsFloat(),
                     'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
                     'logfire.level_num': 17,
                 },
@@ -550,7 +706,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
                 RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
                 RetryPromptPart('retry_prompt2'),
-                {},  # test unexpected parts  # type: ignore
+                {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             timestamp=IsDatetime(),
         ),
@@ -586,6 +742,9 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -784,6 +943,102 @@ def test_messages_to_otel_message_parts_compaction_part():
     otel_messages = settings.messages_to_otel_messages(messages)
     # CompactionPart is skipped; only TextPart appears
     assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+def test_messages_to_otel_message_parts_tool_availability_delta(include_content: bool):
+    """A tool-availability change is legible in the trace, with the names in either mode.
+
+    The names aren't user content — they're already in the request's tool definitions — and a run
+    where the model suddenly can, or can't, call something can't be read without them.
+    """
+    from pydantic_ai.messages import ToolAvailabilityDeltaPart
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolAvailabilityDeltaPart(tools_added=['lookup_exchange_rate']),
+                UserPromptPart(content='Convert 10 EUR.'),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(include_content=include_content)
+    # The delta renders as its own system-voice message rather than blending into user content.
+    [system_message, user_message] = settings.messages_to_otel_messages(messages)
+    assert system_message['role'] == 'system'
+    assert system_message['parts'] == snapshot(
+        [{'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate'}]
+    )
+    assert user_message['role'] == 'user'
+
+
+def test_messages_to_otel_messages_request_roles_v6():
+    """From version 6 a request splits into one message per role, in part order.
+
+    A tool return and a retry that answers a tool call both render as a `tool_call_response`, which
+    the GenAI semantic conventions put in a `tool` message. A retry that answers nothing renders as
+    text and reaches the model as user content, so it starts a new message.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be brief.'), UserPromptPart(content='Convert 10 EUR.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='convert', args={'amount': 10}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='convert', content='11 USD', tool_call_id='call_1'),
+                RetryPromptPart(content='Unknown currency.', tool_name='convert', tool_call_id='call_2'),
+                RetryPromptPart(content='Output did not validate.'),
+                UserPromptPart(content='Thanks.'),
+            ]
+        ),
+    ]
+    assert InstrumentationSettings(include_content=True, version=6).messages_to_otel_messages(messages) == snapshot(
+        [
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Be brief.'}]},
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'convert', 'arguments': {'amount': 10}}],
+            },
+            {
+                'role': 'tool',
+                'parts': [
+                    {'type': 'tool_call_response', 'id': 'call_1', 'name': 'convert', 'result': '11 USD'},
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'call_2',
+                        'name': 'convert',
+                        'result': """\
+Unknown currency.
+
+Fix the errors and try again.\
+""",
+                    },
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'text',
+                        'content': """\
+Validation feedback:
+Output did not validate.
+
+Fix the errors and try again.\
+""",
+                    },
+                    {'type': 'text', 'content': 'Thanks.'},
+                ],
+            },
+        ]
+    )
+
+    # Every earlier version keeps the tool results on `user`, in the single message they shared there.
+    settings = InstrumentationSettings(include_content=True)
+    assert [message['role'] for message in settings.messages_to_otel_messages(messages)] == snapshot(
+        ['system', 'user', 'assistant', 'user']
+    )
 
 
 def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent):
@@ -1171,6 +1426,7 @@ def test_messages_without_content(document_content: BinaryContent):
             parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
             timestamp=IsDatetime(),
         ),
+        ModelRequest(parts=[RetryPromptPart('retry_prompt_no_tool')], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart('simple text prompt')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
@@ -1200,6 +1456,7 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
+            {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'blob', 'mime_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'blob', 'mime_type': 'application/pdf'}]},
@@ -1237,14 +1494,10 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
     model = InstrumentedModel(MyModel())
 
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
-    monkeypatch.setattr(ModelResponse, 'cost', None)
+    monkeypatch.setattr('pydantic_ai._cost.calc_price', None)
 
     with warns(
-        snapshot(
-            [
-                "CostCalculationFailedWarning: Failed to get cost from response: TypeError: 'NoneType' object is not callable"
-            ]
-        )
+        snapshot(["CostCalculationFailedWarning: Failed to get cost: TypeError: 'NoneType' object is not callable"])
     ):
         await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
 
@@ -1266,6 +1519,9 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1500,8 +1756,25 @@ def test_build_tool_definitions():
         parameters_json_schema={'type': 'object', 'properties': {}},
     )
 
+    # A withheld tool is not represented anywhere in the request, so its (possibly sensitive)
+    # schema and description must not leak into telemetry; a `via_history` tool does reach the
+    # model, so it is recorded.
+    tool_withheld = ToolDefinition(
+        name='hidden_tool',
+        description='SECRET: hidden until revealed',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    tool_via_history = ToolDefinition(
+        name='revealed_tool',
+        description='Revealed through the additions channel',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+
     params = ModelRequestParameters(
-        function_tools=[tool_without_params, tool_with_params, tool_no_description],
+        function_tools=[tool_without_params, tool_with_params, tool_no_description, tool_withheld, tool_via_history],
+        tool_visibility={'hidden_tool': 'withheld', 'revealed_tool': 'via_history'},
         native_tools=[],
         output_tools=[],
         output_mode='text',
@@ -1524,6 +1797,12 @@ def test_build_tool_definitions():
         {
             'type': 'function',
             'name': 'no_desc_tool',
+            'parameters': {'type': 'object', 'properties': {}},
+        },
+        {
+            'type': 'function',
+            'name': 'revealed_tool',
+            'description': 'Revealed through the additions channel',
             'parameters': {'type': 'object', 'properties': {}},
         },
     ]
@@ -2004,6 +2283,58 @@ def test_messages_to_otel_messages_serialization_errors():
     )
 
 
+def test_messages_to_otel_messages_serializes_bytes():
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'tool',
+                    {'text': '🐈 Hello'.encode(), 'binary': {'data': b'\xff'}},
+                    tool_call_id='tool_call_id',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'tool',
+                    [b'\x00', b'\xff'],
+                    tool_call_id='return_tool_call_id',
+                )
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'tool_call_id',
+                        'name': 'tool',
+                        'arguments': {'text': '🐈 Hello', 'binary': {'data': '_w=='}},
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'return_tool_call_id',
+                        'name': 'tool',
+                        'result': ['AA==', '_w=='],
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello, world!')], timestamp=IsDatetime())]
     model = InstrumentedModel(MyModel())
@@ -2071,6 +2402,73 @@ async def test_instrumented_model_with_tools_and_finish_reason(capfire: CaptureL
     assert attrs['gen_ai.response.id'] == 'resp-123'
 
 
+async def test_instrumented_model_tolerates_lone_surrogates_in_request_parameters(capfire: CaptureLogfire):
+    """Lone surrogates in tool definitions / request parameters must not crash instrumentation.
+
+    `gen_ai.tool.definitions` and `model_request_parameters` are serialized on the model-request
+    span regardless of `include_content`; routing them through `safe_to_json` keeps a surrogate
+    (e.g. text decoded with `errors='surrogateescape'`) in a tool description from raising
+    `PydanticSerializationError` and crashing an otherwise-successful run.
+    """
+    tool_def = ToolDefinition(name='weather', description='get the weather before\udce4after')
+
+    model = InstrumentedModel(MyModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+    await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(function_tools=[tool_def]),
+    )
+
+    attrs = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
+    assert attrs['gen_ai.tool.definitions'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'name': 'weather',
+                'description': 'get the weather before\udce4after',
+                'parameters': {'type': 'object', 'properties': {}},
+            }
+        ]
+    )
+    assert 'weather' in attrs['model_request_parameters']['function_tools'][0]['name']
+
+
+async def test_instrumented_model_excludes_request_parameters(capfire: CaptureLogfire):
+    """`include_model_request_parameters=False` omits the `model_request_parameters` span attribute.
+
+    `gen_ai.tool.definitions` is emitted independently of this setting, so the tools available for a
+    request are still recorded on the span.
+    """
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+    )
+
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(include_model_request_parameters=False))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+    await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(function_tools=[tool_def]),
+    )
+
+    attrs = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
+    assert 'model_request_parameters' not in attrs
+    assert 'model_request_parameters' not in attrs['logfire.json_schema']['properties']
+    assert attrs['gen_ai.tool.definitions'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'name': 'get_weather',
+                'description': 'Get the weather',
+                'parameters': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
+            }
+        ]
+    )
+
+
 async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     """Test _instrument() when the wrapped model raises before finish() is called."""
 
@@ -2100,3 +2498,38 @@ async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     # finish() was never called, so response-specific attributes are absent
     assert 'gen_ai.response.id' not in spans[0]['attributes']
     assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']
+
+
+async def test_wrapped_model_receives_unprepared_request():
+    """The wrapped model must be handed the originals, not the span's prepared context.
+
+    `prepare_request` is not idempotent: every model re-prepares whatever it is given, so forwarding
+    an already-prepared context makes the second pass append the prompted-output instructions again
+    and re-walk an already-transformed JSON schema. Regression test for the behaviour introduced in
+    #5429 and released in v1.100.0.
+    """
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.output import OutputObjectDefinition
+    from pydantic_ai.profiles import ModelProfile
+
+    seen: list[int] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(len(info.instructions or ''))
+        return ModelResponse(parts=[TextPart('{"answer": "x"}')])
+
+    wrapped = FunctionModel(respond, profile=ModelProfile(default_structured_output_mode='prompted'))
+    params = ModelRequestParameters(
+        output_mode='auto',
+        output_object=OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}}),
+        allow_text_output=True,
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')])]
+
+    await wrapped.request(messages, None, params)
+    baseline = seen[-1]
+
+    await InstrumentedModel(wrapped, InstrumentationSettings(tracer_provider=NoOpTracerProvider())).request(
+        messages, None, params
+    )
+    assert seen[-1] == baseline, 'instrumentation changed the instructions the wrapped model received'

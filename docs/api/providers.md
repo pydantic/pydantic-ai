@@ -8,6 +8,8 @@
 
 ::: pydantic_ai.providers.google
 
+::: pydantic_ai.providers.google_cloud
+
 ::: pydantic_ai.providers.openai
 
 ::: pydantic_ai.providers.xai
@@ -16,6 +18,8 @@
 
 ::: pydantic_ai.providers.bedrock
 
+::: pydantic_ai.providers.bedrock_mantle
+
 ::: pydantic_ai.providers.groq
 
 ::: pydantic_ai.providers.azure
@@ -23,6 +27,8 @@
 ::: pydantic_ai.providers.cohere
 
 ::: pydantic_ai.providers.voyageai.VoyageAIProvider
+
+::: pydantic_ai.providers.sentence_transformers.SentenceTransformersProvider
 
 ::: pydantic_ai.providers.cerebras.CerebrasProvider
 
@@ -52,6 +58,12 @@
 
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
 
+::: pydantic_ai.providers.crusoe.CrusoeProvider
+
 ::: pydantic_ai.providers.alibaba.AlibabaProvider
 
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
+
+::: pydantic_ai.providers.snowflake.SnowflakeProvider
+
+::: pydantic_ai.providers.zai.ZaiProvider

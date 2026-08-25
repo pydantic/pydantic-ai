@@ -1,32 +1,47 @@
 from __future__ import annotations
 
+try:
+    import temporalio  # noqa: F401  # pyright: ignore[reportUnusedImport]
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install the `temporalio` package to use the Temporal integration, '
+        'you can use the `temporal` optional group — `pip install "pydantic-ai-slim[temporal]"`'
+    ) from _import_error
+
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
 from pydantic.errors import PydanticUserError
-from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+from temporalio.contrib.pydantic import PydanticPayloadConverter
 from temporalio.converter import DataConverter, DefaultPayloadConverter
 from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig, WorkflowRunner
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
-from ...exceptions import UserError
-from ._agent import TemporalAgent
+from pydantic_graph.exceptions import UnsupportedEventLoopError
+
+from ...agent.abstract import AbstractAgent
+from ...exceptions import AgentRunError, UserError
+from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
+from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
+from ._payload_converter import PydanticAIPayloadConverter
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 from ._workflow import PydanticAIWorkflow
 
 __all__ = [
     'TemporalAgent',
+    'TemporalDurability',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
     'PydanticAIWorkflow',
+    'PydanticAIPayloadConverter',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
@@ -43,22 +58,25 @@ except ImportError:
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:
     if converter is None:
-        return pydantic_data_converter
+        return DataConverter(payload_converter_class=PydanticAIPayloadConverter)
 
-    # If the payload converter class is already a subclass of PydanticPayloadConverter,
-    # the converter is already compatible with Pydantic AI - return it as-is.
-    if issubclass(converter.payload_converter_class, PydanticPayloadConverter):
+    # Preserve genuine subclasses because replacing one could silently discard custom behavior. Authors
+    # can inherit from `PydanticAIPayloadConverter` when they also want memoized adapter construction.
+    if converter.payload_converter_class is not PydanticPayloadConverter and issubclass(
+        converter.payload_converter_class, PydanticPayloadConverter
+    ):
         return converter
 
     # If using a non-Pydantic payload converter, warn and replace just the payload converter class,
     # preserving any custom payload_codec or failure_converter_class.
-    if converter.payload_converter_class is not DefaultPayloadConverter:
+    if converter.payload_converter_class not in (DefaultPayloadConverter, PydanticPayloadConverter):
         warnings.warn(
-            'A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter. '
-            'To suppress this warning, ensure your payload_converter_class inherits from PydanticPayloadConverter.'
+            'A non-Pydantic Temporal payload converter was used which has been replaced with '
+            '`PydanticAIPayloadConverter`. To suppress this warning and retain memoized `TypeAdapter` construction, '
+            'ensure your `payload_converter_class` inherits from `PydanticAIPayloadConverter`.'
         )
 
-    return replace(converter, payload_converter_class=PydanticPayloadConverter)
+    return replace(converter, payload_converter_class=PydanticAIPayloadConverter)
 
 
 def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
@@ -66,14 +84,16 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
         raise ValueError('No WorkflowRunner provided to the Pydantic AI plugin.')  # pragma: no cover
 
     if not isinstance(runner, SandboxedWorkflowRunner):
-        return runner  # pragma: no cover
+        return runner
 
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
             'pydantic_ai',
+            'pydantic_graph',
             'pydantic',
             'pydantic_core',
+            'pydantic_monty',
             'logfire',
             'rich',
             'httpx',
@@ -97,6 +117,12 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # e.g. a `gateway/anthropic:` or `anthropic:` model resolved lazily via `infer_model`.
             # Safe to pass through: a deterministic, read-only config lookup.
             'anthropic',
+            # The OpenAI SDK defers importing its large generated resource tree until a model constructor
+            # accesses `client.chat.completions` or `client.responses`. Without passthrough, Temporal reloads
+            # that tree in every isolated workflow sandbox. Pass through the whole SDK so resource classes and
+            # their base classes come from one coherent module graph. Pydantic AI does not use the SDK's global
+            # client configuration: it creates per-model clients and invokes their request methods in activities.
+            'openai',
             # The `google-genai` SDK lazily imports `google.auth` submodules (e.g.
             # `google.auth.aio.credentials`) while constructing its client, which Temporal flags as
             # "imported after initial workflow load" when a `gateway/google-cloud:` (or `google-*:`)
@@ -109,6 +135,14 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
             'numpy',
             'pandas',
+            # `response.cost()` lazily imports `genai_prices` (and its httpx2 dependencies) on first call.
+            # When cost is calculated or an httpx2-backed model is constructed inside a workflow, the sandbox
+            # re-imports that chain and touches restricted request/lock types unless these modules are passed
+            # through alongside the rest of the HTTP stack.
+            'genai_prices',
+            'httpx2',
+            'httpcore2',
+            'truststore',
         ),
     )
 
@@ -121,7 +155,20 @@ class PydanticAIPlugin(SimplePlugin):
             name='PydanticAIPlugin',
             data_converter=_data_converter,
             workflow_runner=_workflow_runner,
-            workflow_failure_exception_types=[UserError, PydanticUserError],
+            # `AgentRunError` covers deterministic run failures that can now surface in
+            # workflow code, like `UsageLimitExceeded` and the `UnexpectedModelBehavior`
+            # continuation ceilings raised by the workflow-side continuation loop: they
+            # must fail the workflow (preserving the exception type for the caller)
+            # rather than fail the workflow *task*, which Temporal would retry forever.
+            # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
+            # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
+            # would otherwise turn it into a `UserError`; without it those would hang the same way.
+            workflow_failure_exception_types=[
+                UserError,
+                PydanticUserError,
+                AgentRunError,
+                UnsupportedEventLoopError,
+            ],
         )
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
@@ -139,11 +186,23 @@ class PydanticAIPlugin(SimplePlugin):
                     f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
                 )
             for agent in agents:  # type: ignore[reportUnknownVariableType]
-                if not isinstance(agent, TemporalAgent):
+                if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
+                    # Deprecated path: `TemporalAgent` is being phased out in favor of
+                    # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
+                    # working so existing workers keep loading without changes.
+                    activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                elif isinstance(agent, AbstractAgent):
+                    durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
+                    if durability is None:
+                        raise UserError(
+                            f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
+                            '`TemporalDurability` capability; add one to `capabilities=[...]`.'
+                        )
+                    activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                else:
                     raise TypeError(  # pragma: no cover
-                        f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
+                        f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
                     )
-                activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
 
         config['activities'] = activities
 
@@ -151,10 +210,27 @@ class PydanticAIPlugin(SimplePlugin):
 
 
 class AgentPlugin(SimplePlugin):
-    """Temporal worker plugin for a specific Pydantic AI agent."""
+    """Temporal worker plugin for a specific Pydantic AI agent.
 
-    def __init__(self, agent: TemporalAgent[Any, Any]):
+    Accepts either a regular `Agent` carrying a
+    [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]
+    capability (whose chain is walked to find the bound capability), or the
+    deprecated [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]
+    wrapper, and registers the agent's activities on the worker.
+    """
+
+    def __init__(self, agent: AbstractAgent[Any, Any]):
+        if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
+            activities = agent.temporal_activities
+        else:
+            durability = TemporalDurability.from_agent(agent)
+            if durability is None:
+                raise UserError(
+                    f'Agent {agent.name!r} has no `TemporalDurability` capability; '
+                    'add one to `capabilities=[...]` before constructing the plugin.'
+                )
+            activities = durability.temporal_activities
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
-            activities=agent.temporal_activities,
+            activities=activities,
         )

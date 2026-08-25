@@ -6,13 +6,18 @@ enabling streaming event-based communication for interactive AI applications.
 
 from __future__ import annotations
 
-import json
+import warnings
 from collections.abc import AsyncIterator, Iterable
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from uuid import uuid4
 
+from pydantic_core import to_json
+
 from ..._utils import now_utc
+from ..._uuid import uuid7
+from ...exceptions import RunCancelled
 from ...messages import (
+    CompactionPart,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -22,6 +27,7 @@ from ...messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -29,7 +35,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._event_stream import describe_file
+from .._adapter import compaction_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
     RunFinishedInterruptOutcome,
@@ -37,11 +43,16 @@ from ._interrupt import (
     approval_to_interrupt,
 )
 from ._utils import (
+    ACTIVITY_EVENTS_VERSION,
     BUILTIN_TOOL_CALL_ID_PREFIX,
+    COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
+    TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
+    dump_tool_return_content,
     parse_ag_ui_version,
+    tool_kind_encrypted_value,
 )
 
 try:
@@ -78,11 +89,54 @@ __all__ = [
 ]
 
 
+class _GeneratedID(str):
+    """An ID the stream minted for itself, as opposed to one the caller passed in.
+
+    Warning that a caller's ID lost to `run_input` means telling those two apart, and comparing
+    against the run input's ID can't: a generated ID differs from it too. Marking the generated one
+    keeps `thread_id` and `run_id` typed `str` and valid from construction, where an unset sentinel
+    would push a non-`str` into every event that emits them.
+    """
+
+
+def _generate_id() -> str:
+    return _GeneratedID(uuid7())
+
+
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
+
+    _: KW_ONLY
+
+    thread_id: str = field(default_factory=_generate_id)
+    """The AG-UI thread ID to report on `RUN_STARTED` and `RUN_FINISHED`.
+
+    A [`run_input`][pydantic_ai.ui.UIEventStream.run_input] takes precedence: when one is given, its
+    thread ID replaces whatever was passed here, with a `UserWarning`. Without a run input, set it to
+    the ID the conversation already has in your own transport, or leave it to default to a new UUID —
+    but note that the default is minted per stream, so a conversation that spans more than one run
+    needs to pass its own.
+
+    This identifies the conversation to the frontend. It is what
+    [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] maps onto the agent's `conversation_id` on the
+    request path, so passing the conversation ID the agent run itself uses keeps the frontend and
+    the agent's traces correlated.
+    """
+
+    run_id: str = field(default_factory=_generate_id)
+    """The AG-UI run ID to report on `RUN_STARTED` and `RUN_FINISHED`.
+
+    A [`run_input`][pydantic_ai.ui.UIEventStream.run_input] takes precedence: when one is given, its
+    run ID replaces whatever was passed here, with a `UserWarning`. Without a run input, set it to
+    the ID the run already has in your own transport, or leave it to default to a new UUID.
+
+    This is the protocol's run ID, not the agent run ID that
+    [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] takes as `run_id`; the two are
+    never wired together.
+    """
 
     _use_reasoning: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
@@ -90,9 +144,27 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _error: bool = False
+    _cancelled_run: bool = False
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
+        if (run_input := self.run_input) is not None:
+            # A request's own identity wins: the frontend picked these and correlates the run by them,
+            # so they're not something the server gets to substitute.
+            if overridden := [
+                name
+                for name, value in (('thread_id', self.thread_id), ('run_id', self.run_id))
+                if not isinstance(value, _GeneratedID)
+            ]:
+                names = ' and '.join(f'`{name}`' for name in overridden)
+                warnings.warn(
+                    f'{names} {"is" if len(overridden) == 1 else "are"} ignored when a `run_input` is given; '
+                    'the run input carries the identity the frontend correlates the run by.',
+                    UserWarning,
+                    stacklevel=3,
+                )
+            self.thread_id = run_input.thread_id
+            self.run_id = run_input.run_id
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -118,8 +190,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         yield RunStartedEvent(
-            thread_id=self.run_input.thread_id,
-            run_id=self.run_input.run_id,
+            thread_id=self.thread_id,
+            run_id=self.run_id,
             timestamp=self._get_timestamp(),
         )
 
@@ -134,20 +206,31 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
-        # The `outcome` field on `RunFinishedEvent` only exists in ag-ui-protocol >= 0.1.19,
-        # and `ConfiguredBaseModel` forbids extra fields. So we branch instead of passing
-        # `outcome=None` on the old path.
+        if self._cancelled_run:
+            # AG-UI has no cancelled outcome; revisit when the protocol fills this spec gap:
+            # https://github.com/ag-ui-protocol/ag-ui/issues/880
+            yield RunFinishedEvent(
+                thread_id=self.thread_id,
+                run_id=self.run_id,
+                timestamp=self._get_timestamp(),
+            )
+            return
+
+        # `RunFinishedEvent.outcome` only exists in ag-ui-protocol >= 0.1.19. `ConfiguredBaseModel`
+        # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
+        # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
+        # to omit it entirely.
         if HAS_INTERRUPTS:
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 outcome=self._build_outcome(),
                 timestamp=self._get_timestamp(),
             )
         else:
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 timestamp=self._get_timestamp(),
             )
 
@@ -172,6 +255,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         self._error = True
         yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseEvent]:
+        self._cancelled_run = True
+        return
+        yield
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
         if follows_text:
@@ -251,8 +339,23 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield ToolCallStartEvent(
             tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=parent_message_id
         )
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(part.tool_kind)):
+            # Clients echo this back as `ToolCall.encrypted_value`, so `tool_kind` survives
+            # streaming-built histories. The event is 0.1.13+, hence the gated import.
+            from ag_ui.core import ReasoningEncryptedValueEvent
+
+            yield ReasoningEncryptedValueEvent(
+                subtype='tool-call', entity_id=tool_call_id, encrypted_value=encrypted_value
+            )
         if part.args:
-            yield ToolCallArgsEvent(tool_call_id=tool_call_id, delta=part.args_as_json_str())
+            # A `str` is emitted raw: the args this first event carries can be a partial JSON fragment
+            # that only becomes valid once the following deltas are concatenated, and
+            # `args_as_json_str()` would degrade it to the `INVALID_JSON` wrapper. `dict` args always
+            # arrive complete, so the helper is still the right encoder for them.
+            yield ToolCallArgsEvent(
+                tool_call_id=tool_call_id,
+                delta=part.args if isinstance(part.args, str) else part.args_as_json_str(),
+            )
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseEvent]:
         tool_call_id = delta.tool_call_id
@@ -261,7 +364,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             tool_call_id = self._builtin_tool_call_ids[tool_call_id]
         yield ToolCallArgsEvent(
             tool_call_id=tool_call_id,
-            delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
+            delta=delta.args_delta if isinstance(delta.args_delta, str) else to_json(delta.args_delta).decode(),
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
@@ -276,17 +379,45 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # Use a one-off message ID instead of `self.new_message_id()` to avoid
         # mutating `self.message_id`, which is used as `parent_message_id` for
         # subsequent tool calls in the same response.
+        message_id = str(uuid4())
         yield ToolCallResultEvent(
-            message_id=str(uuid4()),
+            message_id=message_id,
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=tool_call_id,
             content=_tool_return_content(part),
         )
+        async for event in self._handle_tool_return_outcome(part, message_id):
+            yield event
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        part = event.part
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
+            content={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
+
+    async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=COMPACTION_ACTIVITY_TYPE,
+            content=compaction_payload(part),
+        )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
@@ -298,8 +429,13 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             output = _tool_return_content(result)
 
+        # Regular tool results arrive after `ToolCallEvent` moved the stream to the request turn.
+        # The next model response starts with `PartStartEvent`, whose request-to-response transition
+        # replaces this ID in `before_response()`. Native tool returns differ: another native call can
+        # follow inside the same response, so that path must use a one-off ID without mutating this one.
+        message_id = self.new_message_id()
         yield ToolCallResultEvent(
-            message_id=self.new_message_id(),
+            message_id=message_id,
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=result.tool_call_id,
@@ -309,6 +445,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # ToolCallResultEvent.content may hold user parts (e.g. text, images) that AG-UI does not currently have events for
 
         if isinstance(result, ToolReturnPart):
+            async for event in self._handle_tool_return_outcome(result, message_id):
+                yield event
+
             # Check for AG-UI events returned by tool calls.
             possible_event = result.metadata or result.content
             if isinstance(possible_event, BaseEvent):
@@ -321,14 +460,25 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
 
+    async def _handle_tool_return_outcome(
+        self, part: NativeToolReturnPart | ToolReturnPart, message_id: str
+    ) -> AsyncIterator[BaseEvent]:
+        # `ToolCallResultEvent` cannot express an outcome. This is the only standard event whose
+        # reducer can attach continuity data to the resulting `ToolMessage`; it must follow the
+        # result event because the reducer does not queue metadata for an entity that does not exist.
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(None, part.outcome)):
+            from ag_ui.core import ReasoningEncryptedValueEvent
+
+            yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)
+
 
 def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:
-    """Return tool output string with file descriptions if present."""
-    output = part.model_response_str()
-    if file_descriptions := [describe_file(f) for f in part.files]:
-        if output:
-            return output + '\n' + '\n'.join(file_descriptions)
-        else:
-            return '\n'.join(file_descriptions)
-    else:
-        return output
+    """Serialize a tool return's full content for a `ToolCallResultEvent`.
+
+    Uses the same serialization as history `dump_messages` (see
+    [`dump_tool_return_content`][pydantic_ai.ui.ag_ui._utils.dump_tool_return_content]), so files a tool
+    returns ride inline in the streamed `ToolCallResultEvent.content` and survive the round-trip: a frontend
+    that echoes the content back on the next request gets `BinaryContent`/`ImageUrl`/... rehydrated on load,
+    so the file can be sent to the model again rather than collapsing to a text placeholder.
+    """
+    return dump_tool_return_content(part.content)

@@ -1,0 +1,106 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the temperature in London? Use the tool."}]}], "system":
+      [{"text": "You are a helpful chatbot. Use tools when helpful."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
+      {"name": "get_temperature", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type":
+      "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current temperature in a city."}}], "toolChoice":
+      {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OGMwMzVjYjgtZGI5Ni00OWQwLTg2YmUtYzY3ZTk3NjA5OTg4
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '503'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/moonshot.kimi-k2-thinking/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '658'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1169
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                text: ' The user is asking for the current temperature in London. They''ve explicitly requested the use of
+                  a tool for this purpose. I have a tool called `get_temperature` that can provide this information. It requires
+                  a single parameter "city" which should be "London" in this case.'
+          - toolUse:
+              input:
+                city: London
+              name: get_temperature
+              toolUseId: functions.get_temperature:0
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 92
+        outputTokens: 75
+        serverToolUsage: {}
+        totalTokens: 167
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the temperature in London? Use the tool."}]}, {"role":
+      "assistant", "content": [{"text": "<think>\n The user is asking for the current temperature in London. They''ve explicitly
+      requested the use of a tool for this purpose. I have a tool called `get_temperature` that can provide this information.
+      It requires a single parameter \"city\" which should be \"London\" in this case.\n</think>"}, {"toolUse": {"toolUseId":
+      "functions.get_temperature:0", "name": "get_temperature", "input": {"city": "London"}}}]}, {"role": "user", "content":
+      [{"toolResult": {"toolUseId": "functions.get_temperature:0", "content": [{"text": "30\u00b0C"}], "status": "success"}}]}],
+      "system": [{"text": "You are a helpful chatbot. Use tools when helpful."}], "inferenceConfig": {}, "toolConfig": {"tools":
+      [{"toolSpec": {"name": "get_temperature", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city":
+      {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current temperature in a city."}}],
+      "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YzdmOTY5NjgtYTYzNC00Zjk1LWE3NWYtYjkwMDc0M2ZkMmE1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1115'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/moonshot.kimi-k2-thinking/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '272'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 534
+      output:
+        message:
+          content:
+          - text: ' <think> The temperature in London is 30°C.'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 188
+        outputTokens: 11
+        serverToolUsage: {}
+        totalTokens: 199
+    status:
+      code: 200
+      message: OK
+version: 1

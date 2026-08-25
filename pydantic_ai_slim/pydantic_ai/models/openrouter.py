@@ -2,13 +2,14 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
-from typing_extensions import TypedDict, assert_never, override
+from typing_extensions import TypedDict, override
 
 from .. import usage
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -19,13 +20,15 @@ from ..messages import (
     UserContent,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool, WebSearchTool
+from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
-from ..settings import ModelSettings, ThinkingLevel
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
+from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
+from ._tool_choice import ResolvedToolChoice
 
 try:
     from openai import APIError, AsyncOpenAI, omit
@@ -346,107 +349,6 @@ class _OpenRouterError(BaseModel):
     message: str
 
 
-class _BaseReasoningDetail(BaseModel, frozen=True):
-    """Common fields shared across all reasoning detail types."""
-
-    id: str | None = None
-    format: (
-        Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1']
-        | str
-        | None
-    ) = None
-    index: int | None = None
-    type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
-
-
-class _ReasoningSummary(_BaseReasoningDetail, frozen=True):
-    """Represents a high-level summary of the reasoning process."""
-
-    type: Literal['reasoning.summary']
-    summary: str = ''
-
-
-class _ReasoningEncrypted(_BaseReasoningDetail, frozen=True):
-    """Represents encrypted reasoning data."""
-
-    type: Literal['reasoning.encrypted']
-    data: str = ''
-
-
-class _ReasoningText(_BaseReasoningDetail, frozen=True):
-    """Represents raw text reasoning."""
-
-    type: Literal['reasoning.text']
-    text: str = ''
-    signature: str | None = None
-
-
-_OpenRouterReasoningDetail = _ReasoningSummary | _ReasoningEncrypted | _ReasoningText
-
-
-def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail) -> ThinkingPart:
-    provider_name = 'openrouter'
-    provider_details = reasoning.model_dump(include={'format', 'index', 'type'})
-    if isinstance(reasoning, _ReasoningText):
-        return ThinkingPart(
-            id=reasoning.id,
-            content=reasoning.text,
-            signature=reasoning.signature,
-            provider_name=provider_name,
-            provider_details=provider_details,
-        )
-    elif isinstance(reasoning, _ReasoningSummary):
-        return ThinkingPart(
-            id=reasoning.id, content=reasoning.summary, provider_name=provider_name, provider_details=provider_details
-        )
-    elif isinstance(reasoning, _ReasoningEncrypted):
-        return ThinkingPart(
-            id=reasoning.id,
-            content='',
-            signature=reasoning.data,
-            provider_name=provider_name,
-            provider_details=provider_details,
-        )
-    else:
-        assert_never(reasoning)
-
-
-def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningDetail | None:
-    if thinking_part.provider_details is None:  # pragma: lax no cover
-        return None
-
-    data = _BaseReasoningDetail.model_validate(thinking_part.provider_details)
-
-    if data.type == 'reasoning.text':
-        return _ReasoningText(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            text=thinking_part.content,
-            signature=thinking_part.signature,
-        )
-    elif data.type == 'reasoning.summary':
-        return _ReasoningSummary(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            summary=thinking_part.content,
-        )
-    elif data.type == 'reasoning.encrypted':
-        assert thinking_part.signature is not None
-        return _ReasoningEncrypted(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            data=thinking_part.signature,
-        )
-    else:
-        assert_never(data.type)
-
-
 class _OpenRouterFileAnnotation(BaseModel, frozen=True):
     """File annotation from OpenRouter.
 
@@ -488,7 +390,7 @@ class _OpenRouterCompletionMessage(chat.ChatCompletionMessage):
     reasoning: str | None = None
     """The reasoning text associated with the message, if any."""
 
-    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[ReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
     tool_calls: list[_OpenRouterChatCompletionMessageToolCallUnion] | None = None  # type: ignore[reportIncompatibleVariableOverride]
@@ -519,9 +421,22 @@ class _OpenRouterCostDetails:
     """OpenRouter specific cost details."""
 
     upstream_inference_cost: float | None = None
+    upstream_inference_prompt_cost: float | None = None
+    upstream_inference_completions_cost: float | None = None
 
-    # TODO rework fields, tests/models/cassettes/test_openrouter/test_openrouter_google_nested_schema.yaml
-    # shows an `upstream_inference_completions_cost` field as well
+
+@dataclass
+class _OpenRouterServerToolUseDetails:
+    """Counts of OpenRouter server-side tool calls.
+
+    OpenRouter reports these aggregate counts in usage, including when individual server-tool
+    calls are not exposed as message parts in the Chat Completions response.
+    """
+
+    tool_calls_requested: int | None = None
+    tool_calls_executed: int | None = None
+
+    web_search_requests: int | None = None
 
 
 class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
@@ -547,6 +462,8 @@ class _OpenRouterUsage(completion_usage.CompletionUsage):
 
     is_byok: bool | None = None
 
+    server_tool_use_details: _OpenRouterServerToolUseDetails | None = None
+
     prompt_tokens_details: _OpenRouterPromptTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
     completion_tokens_details: _OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
@@ -569,14 +486,38 @@ class _OpenRouterChatCompletion(_ChatCompletion):
 
 
 class _OpenRouterErrorResponse(BaseModel, extra='allow'):
-    """OpenRouter error response with null standard fields (see #3994)."""
+    """OpenRouter error response with null standard fields (see https://github.com/pydantic/pydantic-ai/issues/3994)."""
 
     error: _OpenRouterError
     model: str | None = None
 
 
+class _OpenRouterNoCompletionResponse(BaseModel, extra='allow'):
+    """OpenRouter body carrying no completion: null `choices` and no error envelope (see https://github.com/pydantic/pydantic-ai/issues/6900).
+
+    `provider` is typed `str | None` on purpose: a body whose `provider` is a *dict* is a
+    malformed nested-provider response, not this shape, so it fails validation here and
+    stays fatal.
+
+    `choices` cannot be dropped in favour of `extra='allow'` the way `_OpenRouterErrorResponse`'s
+    was: there `error` is the discriminator, whereas here `choices` is the only field that
+    identifies the shape, so without it this model would match almost any body.
+
+    `Literal[None]` rather than a bare `None` annotation: this module uses
+    `from __future__ import annotations`, so annotations are strings, and on Python 3.14
+    (PEP 649) resolving the string `'None'` raises `PydanticUserError` under pydantic
+    below 2.13 — the `3.14 (lowest-versions)` CI job. It resolves fine on 3.13 and on
+    pydantic 2.13+, so a local check on either will not reproduce it.
+    """
+
+    choices: Literal[None]
+    error: Literal[None] = None
+    provider: str | None = None
+    model: str | None = None
+
+
 class _OpenRouterNestedCompletion(_OpenRouterChatCompletion):
-    """Completion nested in the `provider` field where provider name may be null (see #3994)."""
+    """Completion nested in the `provider` field where provider name may be null (see https://github.com/pydantic/pydantic-ai/issues/3994)."""
 
     provider: str = 'unknown'
     created: int = 0
@@ -588,9 +529,29 @@ class _OpenRouterNestedCompletion(_OpenRouterChatCompletion):
 
 
 class _OpenRouterNestedProviderResponse(BaseModel, extra='allow'):
-    """OpenRouter response where the real completion is nested in `provider` (see #3994)."""
+    """OpenRouter response where the real completion is nested in `provider` (see https://github.com/pydantic/pydantic-ai/issues/3994)."""
 
     provider: _OpenRouterNestedCompletion
+
+
+def _raise_for_no_completion(response_dict: dict[str, Any], model_name: str, exc: ValidationError) -> None:
+    """Raise `ModelAPIError` if the body carries no completion and no error envelope.
+
+    Returns normally for any other shape so the caller can keep trying the shapes it knows.
+    Shared by the non-streamed and streamed paths so both classify this body the same way.
+    """
+    try:
+        no_completion = _OpenRouterNoCompletionResponse.model_validate(response_dict)
+    except ValidationError:
+        return
+
+    # A body with no completion and no error envelope is a transient provider hiccup, not a
+    # malformed request, so it belongs in the `ModelAPIError` family rather than surfacing as a
+    # bare `ValidationError` (which reaches callers as `UnexpectedModelBehavior`).
+    raise ModelAPIError(
+        model_name=no_completion.model or model_name,
+        message='OpenRouter returned a response with null `choices` and no error envelope',
+    ) from exc
 
 
 def _map_openrouter_provider_details(
@@ -608,11 +569,29 @@ def _map_openrouter_provider_details(
 
         if cost_details := usage.cost_details:
             provider_details['upstream_inference_cost'] = cost_details.upstream_inference_cost
+            provider_details['upstream_inference_prompt_cost'] = cost_details.upstream_inference_prompt_cost
+            provider_details['upstream_inference_completions_cost'] = cost_details.upstream_inference_completions_cost
 
         if (is_byok := usage.is_byok) is not None:
             provider_details['is_byok'] = is_byok
 
+        server_tool_use: dict[str, int | None] = {}
+        if server_tool_use_details := usage.server_tool_use_details:
+            if (tool_calls_requested := server_tool_use_details.tool_calls_requested) is not None:
+                server_tool_use['tool_calls_requested'] = tool_calls_requested
+            if (tool_calls_executed := server_tool_use_details.tool_calls_executed) is not None:
+                server_tool_use['tool_calls_executed'] = tool_calls_executed
+            if (web_search_requests := server_tool_use_details.web_search_requests) is not None:
+                server_tool_use['web_search_requests'] = web_search_requests
+        if server_tool_use:
+            provider_details['server_tool_use'] = server_tool_use
+
     return provider_details
+
+
+def _dump_openrouter_annotations(annotations: list[_OpenRouterAnnotation]) -> list[dict[str, Any]]:
+    """Dump the `url_citation` search sources and file citations OpenRouter attaches to a message."""
+    return [annotation.model_dump(mode='json') for annotation in annotations]
 
 
 def _map_openrouter_usage(
@@ -642,7 +621,11 @@ def _openrouter_settings_to_openai_settings(
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
+    # Copy so the `openrouter_` pops and `extra_body` updates never mutate the caller's dict:
+    # `merge_model_settings` can return the model's own `settings` by identity, so popping in place
+    # would drop the keys on the next request.
+    model_settings = model_settings.copy()
+    extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models
@@ -661,20 +644,15 @@ def _openrouter_settings_to_openai_settings(
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
-    if reasoning := model_settings.pop('openrouter_reasoning', None):
+    if reasoning := model_settings.get('openrouter_reasoning'):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
-    # Note: openrouter_cache_instructions, openrouter_cache_messages, and
+    # Note: openrouter_reasoning, openrouter_cache_instructions, openrouter_cache_messages, and
     # openrouter_cache_tool_definitions are intentionally NOT popped here - they are consumed
     # by OpenRouterModel._map_messages and ._get_tool_choice via the model_settings dict, not passed
     # to the OpenAI SDK.
-
-    for native_tool in model_request_parameters.native_tools:
-        if isinstance(native_tool, WebSearchTool):
-            extra_body.setdefault('plugins', []).append({'id': 'web'})
-            extra_body['web_search_options'] = {'search_context_size': native_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
 
@@ -705,6 +683,24 @@ class OpenRouterModel(OpenAIChatModel):
     @property
     def _resolved_profile(self) -> OpenRouterModelProfile:
         return cast(OpenRouterModelProfile, self.profile)
+
+    @override
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the longest explicit retention accepted by OpenRouter's downstream model."""
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
+            return None
+        return self._max_prompt_cache_retention(
+            settings.get('openrouter_cache_instructions')
+            if self._resolved_profile.get('openrouter_supports_cache_control', False)
+            else None,
+            settings.get('openrouter_cache_messages')
+            if self._resolved_profile.get('openrouter_supports_cache_control', False)
+            else None,
+            settings.get('openrouter_cache_tool_definitions')
+            if self._resolved_profile.get('openrouter_supports_tool_cache', False)
+            else None,
+        )
 
     def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
         """Build a `cache_control` dict for the downstream provider.
@@ -870,9 +866,9 @@ class OpenRouterModel(OpenAIChatModel):
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle.
 
-        OpenRouter supports web search via its plugins system.
+        OpenRouter supports web search through its server-tool API.
         """
-        return frozenset({WebSearchTool})
+        return frozenset({WebSearchTool, AdvisorTool})
 
     @override
     def prepare_request(
@@ -902,6 +898,48 @@ class OpenRouterModel(OpenAIChatModel):
         return omit
 
     @override
+    def _supports_tool_forcing(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        resolved_tool_choice: ResolvedToolChoice,
+        context: str = 'forcing specific tools',
+    ) -> bool:
+        if self._resolved_profile.get('openrouter_supports_forced_tool_choice_with_thinking', True):
+            return super()._supports_tool_forcing(
+                model_settings, model_request_parameters, resolved_tool_choice, context
+            )
+
+        openrouter_model_settings = cast(OpenRouterModelSettings, model_settings)
+        # OpenRouter-specific reasoning takes precedence over unified thinking. Also check params.thinking
+        # since Model.prepare_request strips unified `thinking` from model_settings into params.thinking.
+        if 'openrouter_reasoning' in openrouter_model_settings:
+            openrouter_reasoning = openrouter_model_settings['openrouter_reasoning']
+            thinking_enabled = (
+                bool(openrouter_reasoning)
+                and openrouter_reasoning.get('enabled', True)
+                and openrouter_reasoning.get('effort') != 'none'
+            )
+        else:
+            thinking_enabled = bool(model_request_parameters.thinking)
+
+        if not thinking_enabled:
+            return super()._supports_tool_forcing(
+                model_settings, model_request_parameters, resolved_tool_choice, context
+            )
+
+        explicit_choice = model_settings.get('tool_choice')
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                f"OpenRouter does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`; "
+                'otherwise OpenRouter silently drops reasoning.'
+            )
+
+        # Thinking is on and the user didn't explicitly ask for forcing, so it was inferred from the output
+        # mode or a tool-returning output. Silently fall back to `'auto'` rather than dropping reasoning.
+        return False
+
+    @override
     def _get_tool_choice(
         self,
         model_settings: OpenAIChatModelSettings,
@@ -916,6 +954,33 @@ class OpenRouterModel(OpenAIChatModel):
         ):
             last_tool = cast(dict[str, Any], tools[-1])
             last_tool['cache_control'] = self._build_cache_control(cache_tool_defs)
+
+        # Append server tools after the cache block so the tool-definitions cache breakpoint stays on the last function tool.
+        advisor = next((t for t in model_request_parameters.native_tools if isinstance(t, AdvisorTool)), None)
+        if advisor is not None:
+            parameters: dict[str, Any] = {
+                'model': advisor.model,
+                # TODO: Allow provider-specific native tool parameters so users can opt into forwarding the transcript.
+                # https://github.com/pydantic/pydantic-ai/pull/6605#discussion_r3640554790
+                'forward_transcript': False,
+                **({'max_completion_tokens': advisor.max_tokens} if advisor.max_tokens is not None else {}),
+            }
+            tools.append(cast(chat.ChatCompletionToolParam, {'type': 'openrouter:advisor', 'parameters': parameters}))
+
+        web_search = next((t for t in model_request_parameters.native_tools if isinstance(t, WebSearchTool)), None)
+        if web_search is not None:
+            parameters: dict[str, Any] = {'search_context_size': web_search.search_context_size}
+            if (user_location := web_search.user_location) is not None:
+                parameters['user_location'] = {'type': 'approximate', **user_location}
+            if (allowed_domains := web_search.allowed_domains) is not None:
+                parameters['allowed_domains'] = allowed_domains
+            if (blocked_domains := web_search.blocked_domains) is not None:
+                parameters['excluded_domains'] = blocked_domains
+            if (max_uses := web_search.max_uses) is not None:
+                parameters['max_uses'] = max_uses
+            tools.append(
+                cast(chat.ChatCompletionToolParam, {'type': 'openrouter:web_search', 'parameters': parameters})
+            )
 
         return tools, tool_choice
 
@@ -949,7 +1014,7 @@ class OpenRouterModel(OpenAIChatModel):
         has_tool_cache_point = bool(
             model_settings
             and model_settings.get('openrouter_cache_tool_definitions')
-            and model_request_parameters.tool_defs
+            and model_request_parameters.declared_tool_defs
             and self._resolved_profile.get('openrouter_supports_tool_cache', False)
         )
         self._limit_cache_points(openai_messages, has_tool_cache_point=has_tool_cache_point)
@@ -958,7 +1023,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
-        """OpenRouter handles web search via plugins in extra_body, not via the OpenAI web_search_options parameter."""
+        """OpenRouter maps web search to its server tool, not the OpenAI `web_search_options` parameter."""
         return None
 
     @override
@@ -968,7 +1033,7 @@ class OpenRouterModel(OpenAIChatModel):
         try:
             validated = _OpenRouterChatCompletion.model_validate(response_dict)
         except ValidationError as exc:
-            # OpenRouter intermittently returns responses with null standard fields (#3994).
+            # OpenRouter intermittently returns responses with null standard fields (https://github.com/pydantic/pydantic-ai/issues/3994).
             # Try known quirky response shapes before giving up.
             try:
                 error_response = _OpenRouterErrorResponse.model_validate(response_dict)
@@ -980,6 +1045,10 @@ class OpenRouterModel(OpenAIChatModel):
                     model_name=error_response.model or self.model_name,
                     body=error_response.error.message,
                 )
+
+            # `ModelAPIError` is `FallbackModel`'s default `fallback_on`, so raising it here lets the
+            # transient reach fallback on this non-streamed path.
+            _raise_for_no_completion(response_dict, self.model_name, exc)
 
             try:
                 nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
@@ -1000,7 +1069,7 @@ class OpenRouterModel(OpenAIChatModel):
         assert isinstance(message, _OpenRouterCompletionMessage)
 
         if reasoning_details := message.reasoning_details:
-            return [_from_reasoning_detail(detail) for detail in reasoning_details]
+            return [from_reasoning_detail(detail, self.system) for detail in reasoning_details]
         else:
             return super()._process_thinking(message)
 
@@ -1010,6 +1079,8 @@ class OpenRouterModel(OpenAIChatModel):
 
         provider_details = super()._process_provider_details(response) or {}
         provider_details.update(_map_openrouter_provider_details(response))
+        if annotations := response.choices[0].message.annotations:
+            provider_details['annotations'] = _dump_openrouter_annotations(annotations)
         return provider_details or None
 
     @override
@@ -1033,7 +1104,7 @@ class OpenRouterModel(OpenAIChatModel):
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
             assert isinstance(self._model, OpenRouterModel)
             if item.provider_name == self._model.system:
-                if reasoning_detail := _into_reasoning_detail(item):  # pragma: lax no cover
+                if reasoning_detail := into_reasoning_detail(item):  # pragma: lax no cover
                     self.reasoning_details.append(reasoning_detail.model_dump())
             else:  # pragma: lax no cover
                 super()._map_response_thinking_part(item)
@@ -1104,7 +1175,7 @@ class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
     reasoning: str | None = None
     """The reasoning text associated with the message, if any."""
 
-    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[ReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
     annotations: list[_OpenRouterAnnotation] | None = None
@@ -1148,11 +1219,32 @@ class _OpenRouterChatCompletionChunk(_ChatCompletionChunk):
 class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     """Implementation of `StreamedResponse` for OpenRouter models."""
 
+    _annotations: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
+
     @override
     async def _validate_response(self):
         try:
             async for chunk in self._response:
-                yield _OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+                chunk_dict = chunk.model_dump()
+                try:
+                    validated = _OpenRouterChatCompletionChunk.model_validate(chunk_dict)
+                except ValidationError as exc:
+                    # Parity with `OpenRouterModel._validate_completion`: the same no-completion body can
+                    # arrive mid-stream. `_OpenRouterChatCompletionChunk.choices` is required and non-null,
+                    # so a null-`choices` chunk has always been terminal here — unlike `OpenAIStreamedResponse`,
+                    # which skips such chunks (https://github.com/pydantic/pydantic-ai/issues/5165). This only
+                    # improves the exception, from a bare `ValidationError` to `ModelAPIError`; it does not
+                    # newly terminate any stream that used to succeed.
+                    # Classification only: `FallbackModel`'s window is `Model.request_stream`'s own
+                    # `__aenter__`, which returns before any chunk is validated, so this never falls back.
+                    # Only the no-completion shape is mapped here: it is the only one of the three shapes
+                    # `_validate_completion` knows that has been reproduced on a stream. An error-envelope
+                    # chunk never reaches this branch — the openai SDK raises `APIError` at SSE decode for
+                    # any body carrying a truthy `error`, handled below — and the nested-provider shape
+                    # carries `message`, not `delta`, so it cannot arrive as a chunk at all.
+                    _raise_for_no_completion(chunk_dict, self._model_name, exc)
+                    raise
+                yield validated
         except APIError as e:
             error = _OpenRouterError.model_validate(e.body)
             raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
@@ -1163,13 +1255,13 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
         if reasoning_details := choice.delta.reasoning_details:
             for i, detail in enumerate(reasoning_details):
-                thinking_part = _from_reasoning_detail(detail)
-                # Use unique vendor_part_id for each reasoning detail type to prevent
-                # different detail types (e.g., reasoning.text, reasoning.encrypted)
-                # from being incorrectly merged into a single ThinkingPart.
-                # This is required for Gemini 3 Pro which returns multiple reasoning
-                # detail types that must be preserved separately for thought_signature handling.
-                vendor_id = f'reasoning_detail_{detail.type}_{i}'
+                thinking_part = from_reasoning_detail(detail, self._provider_name)
+                # OpenRouter's index is stable across chunks, unlike the position in the current
+                # chunk. It distinguishes separate details while merging deltas for one detail.
+                # The type remains part of the identifier because Gemini 3 Pro can emit text and
+                # encrypted details with the same index; those must remain separate ThinkingParts
+                # for thought-signature handling.
+                vendor_id = f'reasoning_detail_{detail.type}_{detail.index if detail.index is not None else i}'
                 yield from self._parts_manager.handle_thinking_delta(
                     vendor_part_id=vendor_id,
                     id=thinking_part.id,
@@ -1187,6 +1279,10 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
         provider_details = super()._map_provider_details(chunk) or {}
         provider_details.update(_map_openrouter_provider_details(chunk))
+        if annotations := chunk.choices[0].delta.annotations:
+            self._annotations.extend(_dump_openrouter_annotations(annotations))
+            # Provider details are shallow-merged across chunks, so publish the running list.
+            provider_details['annotations'] = list(self._annotations)
         return provider_details or None
 
     @override

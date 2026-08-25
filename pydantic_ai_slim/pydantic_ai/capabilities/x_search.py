@@ -42,13 +42,13 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     """
 
     allowed_x_handles: list[str] | None
-    """If provided, only posts from these X handles will be included (max 10).
+    """If provided, only posts from these X handles will be included (max 20).
 
     Honored by the native X search tool, whether used directly on an xAI model or via the `fallback_model` subagent.
     """
 
     excluded_x_handles: list[str] | None
-    """If provided, posts from these X handles will be excluded (max 10).
+    """If provided, posts from these X handles will be excluded (max 20).
 
     Honored by the native X search tool, whether used directly on an xAI model or via the `fallback_model` subagent.
     """

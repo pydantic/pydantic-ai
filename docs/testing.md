@@ -151,6 +151,7 @@ async def test_forecast():
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),
         ),
@@ -180,6 +181,7 @@ async def test_forecast():
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),
         ),
@@ -255,6 +257,8 @@ async def test_forecast_future():
 1. We define a function `call_weather_forecast` that will be called by `FunctionModel` in place of the LLM, this function has access to the list of [`ModelMessage`][pydantic_ai.messages.ModelMessage]s that make up the run, and [`AgentInfo`][pydantic_ai.models.function.AgentInfo] which contains information about the agent and the function tools and return tools.
 2. Our function is slightly intelligent in that it tries to extract a date from the prompt, but just hard codes the location.
 3. We use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to replace the agent's model with our custom function.
+
+If your replacement model needs to carry state between requests, `FunctionModel` also accepts a callable instance with an `async def __call__` in place of a function; see the [`FunctionModel` API docs](api/models/function.md) for an example.
 
 ### Overriding model via pytest fixtures
 

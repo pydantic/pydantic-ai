@@ -1,10 +1,13 @@
 from __future__ import annotations as _annotations
 
+import asyncio
+import inspect
 import json
 import math
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -96,6 +99,37 @@ class TaskOutput(BaseModel):
     confidence: float = 1.0
 
 
+def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`evaluate_sync` must replace a closed thread-current event loop.
+
+    This uses a local task rather than VCR because the failure occurs while scheduling the
+    evaluation coroutine, before any model request could be made.
+    """
+    dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
+    report = dataset.evaluate_sync(lambda value: value, progress=False)
+    replacement_loop = asyncio.get_event_loop()
+
+    assert report.cases[0].output == 'input'
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    dataset.evaluate_sync(lambda value: value, progress=False)
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
+def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
+    """`evaluate_sync` must create and install an event loop when the thread has none."""
+    dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
+    report = dataset.evaluate_sync(lambda value: value, progress=False)
+    replacement_loop = asyncio.get_event_loop()
+
+    assert report.cases[0].output == 'input'
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
+
+
 class TaskMetadata(BaseModel):
     difficulty: str = 'easy'
     category: str = 'general'
@@ -154,7 +188,7 @@ def test_from_file_uses_filename_as_default_name(tmp_path: Path):
     """Test that from_file uses filename stem as name."""
     yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
     yaml_path = tmp_path / 'my_dataset.yaml'
-    yaml_path.write_text(yaml_content)
+    yaml_path.write_text(yaml_content, encoding='utf-8')
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert dataset.name == 'my_dataset'
@@ -364,6 +398,51 @@ async def test_evaluate_sync(
     )
 
 
+async def test_evaluate_async_callable_instance(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """An async callable instance is awaited; this local task dispatch has no provider boundary to record."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    class AsyncCallable:
+        async def __call__(self, inputs: TaskInput) -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+    report = await example_dataset.evaluate(AsyncCallable(), progress=False)
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert inspect.isawaitable(report.cases[0].output) is False
+    assert len(report.failures) == 0
+
+
+async def test_evaluate_sync_callable_returning_awaitable(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """A sync task's awaitable result is awaited; this local dispatch has no provider boundary to record."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    def task(inputs: TaskInput) -> Awaitable[TaskOutput]:
+        async def result() -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+        return result()
+
+    report = await example_dataset.evaluate(task, progress=False)
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert len(report.failures) == 0
+
+
 @pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
 async def test_evaluate_with_retried_task_and_evaluator(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
@@ -502,6 +581,17 @@ async def test_evaluate_with_concurrency(
             'trace_id': _any_trace_id,
         }
     )
+
+
+@pytest.mark.parametrize('max_concurrency', [0, -1])
+async def test_evaluate_with_invalid_max_concurrency(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], max_concurrency: int
+):
+    async def mock_task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.raises(ValueError, match=f'max_concurrency must be >= 1, got {max_concurrency}'):
+        await example_dataset.evaluate(mock_task, max_concurrency=max_concurrency)
 
 
 async def test_evaluate_with_failing_task(
@@ -826,7 +916,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
     async def my_task(inputs: TaskInput) -> TaskOutput:
         with logfire.span(
             'my chat span',
-            **{  # type: ignore
+            **{  # pyright: ignore[reportArgumentType]
                 'gen_ai.operation.name': 'chat',
                 'gen_ai.request.model': 'gpt-5-mini',
                 'gen_ai.usage.input_tokens': 1,
@@ -949,6 +1039,19 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert (tmp_path / schema).exists()
 
 
+def test_serialization_to_json_with_absolute_schema_path(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    json_path = tmp_path / 'test_cases.json'
+    schema_path = tmp_path / 'test_cases_schema.json'
+
+    example_dataset.to_file(json_path, schema_path=schema_path, fmt='json')
+
+    raw = json.loads(json_path.read_text(encoding='utf-8'))
+    assert raw['$schema'] == 'test_cases_schema.json'
+    assert schema_path.exists()
+
+
 def test_serializing_parts_with_discriminators(tmp_path: Path):
     class Foo(BaseModel):
         foo: str
@@ -1057,10 +1160,10 @@ async def test_from_text_failure():
                 '2 error(s) loading evaluators from registry',
                 [
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
                     ),
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
                     ),
                 ],
             )
@@ -1588,7 +1691,7 @@ def test_add_invalid_evaluator():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](name='invalid_evaluator', cases=[])
 
     with pytest.raises(ValueError) as exc_info:
-        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # type: ignore
+        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # pyright: ignore[reportArgumentType]
     assert str(exc_info.value).startswith('All custom evaluator classes must be subclasses of Evaluator')
 
     with pytest.raises(ValueError) as exc_info:
@@ -2068,7 +2171,7 @@ def test_invalid_report_evaluator_type():
     with pytest.raises(ValueError, match='must be subclasses of ReportEvaluator'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
             {'cases': []},
-            custom_report_evaluator_types=(NotAReportEvaluator,),  # type: ignore
+            custom_report_evaluator_types=(NotAReportEvaluator,),  # pyright: ignore[reportArgumentType]
         )
 
     class NotADataclass(ReportEvaluator):
@@ -2091,7 +2194,7 @@ cases:
 report_evaluators:
   - NonExistentEvaluator
 """
-    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+    with pytest.raises(ExceptionGroup, match=r'error.*loading evaluators'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
 
 
@@ -2106,7 +2209,7 @@ report_evaluators:
   - ConfusionMatrixEvaluator:
       nonexistent_param: true
 """
-    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+    with pytest.raises(ExceptionGroup, match=r'error.*loading evaluators'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
 
 
@@ -2346,3 +2449,19 @@ async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown(
     assert len(report.failures) == 1
     assert 'setup failed' in report.failures[0].error_message
     assert teardown_called
+
+
+async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that the lifecycle can be passed as a partial to provide additional configuration."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class ConfigurableLifecycle(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        def __init__(self, case: Case[TaskInput, TaskOutput, TaskMetadata], my_config: int) -> None:
+            super().__init__(case)
+            self.my_config = my_config
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        raise NotImplementedError()
+
+    lifecycle = partial(ConfigurableLifecycle, my_config=123)
+    await example_dataset.evaluate(task, lifecycle=lifecycle)

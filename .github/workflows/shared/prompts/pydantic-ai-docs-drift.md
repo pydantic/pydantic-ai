@@ -11,8 +11,8 @@ reviewed default.
 
 # Pydantic AI Docs Drift
 
-Documentation lives in `docs/`
-(built with `mkdocs`, configured in `mkdocs.yml`), plus `README.md`,
+Documentation lives in `docs/` (published by `pydantic/unified-docs`, with
+`docs/navigation.yml` defining its routes and sidebar), plus `README.md`,
 `CONTRIBUTING.md`, and per-package `AGENTS.md` files. Doc code examples are
 tested by `tests/test_examples.py`.
 
@@ -34,7 +34,7 @@ Do **NOT** file issues for:
 
 1. Run `git log --since="7 days ago" --oneline --stat` for a summary of recent
    commits. If there are no commits in the window, call `mcp__safeoutputs__noop` and stop.
-2. Inventory documentation: scan `docs/`, `mkdocs.yml`, `README.md`,
+2. Inventory documentation: scan `docs/`, `docs/navigation.yml`, `README.md`,
    `CONTRIBUTING.md`, and `AGENTS.md` files. Do not assume a fixed structure.
 
 ### What to Look For
@@ -50,7 +50,7 @@ made **existing documentation factually wrong**:
 3. **Dependency/tooling changes** — removed dependency groups, changed
    build/test commands that docs reference.
 4. **Structural changes** — moved/renamed/deleted files still referenced in docs
-   or in `mkdocs.yml` nav.
+   or in `docs/navigation.yml`.
 5. **Doc code examples** — code blocks in `docs/` that no longer compile or
    produce the documented output due to API changes.
 
@@ -62,12 +62,24 @@ the window, and check whether an open issue/PR already tracks it.
 
 ### Deduplication — mandatory before filing
 
-Before filing, search for existing issues covering the same drift:
+Open issues were prefetched before the sandbox started. Before filing, first
+check this sweep's own prior findings with a local label filter:
 
 ```bash
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[docs-drift]"
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <keywords from your finding>
+jq '.[] | select(any(.labels[]; .name == "docs-drift")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for keywords from your finding:
+
+```bash
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
 
 If a matching issue exists, call `mcp__safeoutputs__noop`. Do NOT file duplicates.
 

@@ -5,6 +5,8 @@
       members:
         - ModelProfile
         - ModelProfileSpec
+        - JsonSchemaTransformer
+        - InlineDefsJsonSchemaTransformer
         - merge_profile
         - DEFAULT_PROFILE
         - DEFAULT_PROMPTED_OUTPUT_TEMPLATE
@@ -27,3 +29,7 @@
 ::: pydantic_ai.profiles.mistral
 
 ::: pydantic_ai.profiles.qwen
+
+::: pydantic_ai.profiles.groq
+
+::: pydantic_ai.profiles.zai

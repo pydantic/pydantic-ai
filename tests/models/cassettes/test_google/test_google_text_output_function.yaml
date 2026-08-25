@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '331'
+      - '468'
       content-type:
       - application/json
       host:
@@ -19,25 +19,31 @@ interactions:
       - parts:
         - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
       tools:
       - functionDeclarations:
         - description: ''
           name: get_user_country
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties: {}
-            type: OBJECT
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '637'
+      - '1289'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=5967
+      - gfet4t7; dur=1953
       transfer-encoding:
       - chunked
       vary:
@@ -51,19 +57,22 @@ interactions:
           - functionCall:
               args: {}
               name: get_user_country
+            thoughtSignature: CrwEARFNMg9kt50r8JWztiQv5EbaHEi9upzlu0Rb1dqVBXKFsp6Vl2LqdQYneurc2UGzFWXwa+lnyMw9Cl4/yeC3Vx+h96Ds2DagCO401yYYBuMZ0yAPLoDyTpJXCkB7e2Gfx8RMTjIA96lx0SC9/npeB+mxnvOBWqwGJsvMKVIsXIE7JcjhCD265+56xbl5zST65buBk4shjbxwVxAFFiSLhKYE6kspbh9F9wOc4peoPdMHtXGquGaAGkaVRQIbTVy2MeCN/LVgWRKSFqWP8OAZ1MXCVloIIL9uhjjREmVTme1kaUESIUvYFlUIXZRSmXDOStZiv1fsIaHe+YV82sEMi6ij8V0lCnCWSBWNcocEe89I43W/2nZLE8lpcWFiHVGMdBTJvbtpeLgTUPTvwi17B60UbQZxYvkDAq5sNUCAvtYXcGOvwMHeilR6VdBOaauqpuVDE+PHEjY0hY6U7YEXy0Gez67Rd7wgr+7Dt3BQdwdBhVJH+CBbs3JjbG0fTrEHICBhQ7m2TqPaiBuTW8v36tkHZhVZjFaZItrvgCywX/Up2KzFsBRLyETXpMpQRlYwQvtH14Z/+HYUJufwiWgMDwe72wIvdyn7AprbOFyts6DFJwDzIjO+g5e+DSvlQht+3xbx54iRbk8kxhOrTGzrd4vGKjsJ+ocbANgzfAS5BEgVcwn8n+/YgbABE8QLlxEthVSzUM4pQLbtxOizw4w6usvjD2968ds0rif+oTwQejfI1yVzTY/lPeBYoe8=
           role: model
+        finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: NVteaJuxIuikkdUP1L_2sAY
+      modelVersion: gemini-2.5-pro
+      responseId: 7UJaaubyNKDXz7IP_9HOUA
       usageMetadata:
         candidatesTokenCount: 12
         promptTokenCount: 49
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 49
-        thoughtsTokenCount: 264
-        totalTokenCount: 325
+        serviceTier: standard
+        thoughtsTokenCount: 136
+        totalTokenCount: 197
     status:
       code: 200
       message: OK
@@ -72,11 +81,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '640'
+      - '1569'
       content-type:
       - application/json
       host:
@@ -90,35 +99,42 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_d6249f6c261544df9841f532be446f03
+            id: pyd_ai_de82f159fb30408c98704a7bbeeb9c43
             name: get_user_country
+          thoughtSignature: CrwEARFNMg9kt50r8JWztiQv5EbaHEi9upzlu0Rb1dqVBXKFsp6Vl2LqdQYneurc2UGzFWXwa-lnyMw9Cl4_yeC3Vx-h96Ds2DagCO401yYYBuMZ0yAPLoDyTpJXCkB7e2Gfx8RMTjIA96lx0SC9_npeB-mxnvOBWqwGJsvMKVIsXIE7JcjhCD265-56xbl5zST65buBk4shjbxwVxAFFiSLhKYE6kspbh9F9wOc4peoPdMHtXGquGaAGkaVRQIbTVy2MeCN_LVgWRKSFqWP8OAZ1MXCVloIIL9uhjjREmVTme1kaUESIUvYFlUIXZRSmXDOStZiv1fsIaHe-YV82sEMi6ij8V0lCnCWSBWNcocEe89I43W_2nZLE8lpcWFiHVGMdBTJvbtpeLgTUPTvwi17B60UbQZxYvkDAq5sNUCAvtYXcGOvwMHeilR6VdBOaauqpuVDE-PHEjY0hY6U7YEXy0Gez67Rd7wgr-7Dt3BQdwdBhVJH-CBbs3JjbG0fTrEHICBhQ7m2TqPaiBuTW8v36tkHZhVZjFaZItrvgCywX_Up2KzFsBRLyETXpMpQRlYwQvtH14Z_-HYUJufwiWgMDwe72wIvdyn7AprbOFyts6DFJwDzIjO-g5e-DSvlQht-3xbx54iRbk8kxhOrTGzrd4vGKjsJ-ocbANgzfAS5BEgVcwn8n-_YgbABE8QLlxEthVSzUM4pQLbtxOizw4w6usvjD2968ds0rif-oTwQejfI1yVzTY_lPeBYoe8=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_d6249f6c261544df9841f532be446f03
+            id: pyd_ai_de82f159fb30408c98704a7bbeeb9c43
             name: get_user_country
             response:
               return_value: Mexico
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
       tools:
       - functionDeclarations:
         - description: ''
           name: get_user_country
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties: {}
-            type: OBJECT
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '590'
+      - '882'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=8049
+      - gfet4t7; dur=1531
       transfer-encoding:
       - chunked
       vary:
@@ -130,19 +146,21 @@ interactions:
       - content:
           parts:
           - text: The largest city in Mexico is Mexico City.
+            thoughtSignature: CrcCARFNMg+cYyWgxFYmMB2VHuVlPCZtnPoBf+LOFe1Ri22ptyBE/KNHpIe0nSTPNDqxhDXzYjH00gV6doJGdEVtseQRvxvZk+wm/Eka3H8vjrld0LriwJ+fUHuUldLRn6EHJmU42p4Vg6VbBd4jIzSNt/EQfxjPVmWi/IptqozGjtXTdfx4EW87xiAS7Ukbng2Ng8w5itar3TqsSSjoJ4MsZ2G1JSXqZWN2ilGTdcESoKw0BUwbNQavfqKKKy+7Y5vouovKP/vA1At4NUHWm7PvsznfEcoxR8Oeq8B3QTmh9dTrCI0iorin2M0FDkb2M+1+UZQE7Sag2cfcyLdBUGIr366FjSUDb88bVzuQKCQqj8mz4ri66uAcAf0B0/QZck2gfbLypq4uCvoNyJaDMgLmXtdtXAuRcM4=
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: PVteaKv3JtK2nsEPq97emQ0
+      modelVersion: gemini-2.5-pro
+      responseId: 70JaaritNpKHz7IPs4SL8Qw
       usageMetadata:
         candidatesTokenCount: 9
         promptTokenCount: 80
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 80
-        thoughtsTokenCount: 150
-        totalTokenCount: 239
+        serviceTier: standard
+        thoughtsTokenCount: 64
+        totalTokenCount: 153
     status:
       code: 200
       message: OK

@@ -4,12 +4,13 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
 
+import httpx
 import pytest
-from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -32,9 +33,8 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -42,7 +42,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, message, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -58,13 +58,11 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutput,
         ChatCompletionStreamOutputChoice,
         ChatCompletionStreamOutputDelta,
-        ChatCompletionStreamOutputDeltaToolCall,
-        ChatCompletionStreamOutputFunction,
         ChatCompletionStreamOutputUsage,
     )
     from huggingface_hub.errors import HfHubHTTPError
 
-    from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceStreamedResponse
+    from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     MockChatCompletion = ChatCompletionOutput | Exception
@@ -75,6 +73,25 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::ResourceWarning'),
 ]
+
+
+def test_huggingface_hidden_tools_stay_off_the_wire():
+    """Guard Hugging Face's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(provider_name='nebius', api_key='x'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tools, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
+    assert [tool['function']['name'] for tool in tools] == ['visible']
 
 
 @dataclass
@@ -138,8 +155,8 @@ def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dic
 def completion_message(
     message: ChatCompletionInputMessage | ChatCompletionOutputMessage, *, usage: ChatCompletionOutputUsage | None = None
 ) -> ChatCompletionOutput:
-    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message)]  # type:ignore
-    return ChatCompletionOutput.parse_obj_as_instance(  # type: ignore
+    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message)]  # pyright: ignore[reportArgumentType]
+    return ChatCompletionOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'id': '123',
             'choices': choices,
@@ -164,7 +181,7 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
     messages = result.all_messages()
     request = messages[0]
     response = messages[1]
-    assert request.parts[0].content == 'hello'  # type: ignore
+    assert request.parts[0].content == 'hello'  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     assert response == snapshot(
         ModelResponse(
             parts=[
@@ -192,7 +209,7 @@ Hello! 👋 How can I help you today?\
 """
                 ),
             ],
-            usage=RequestUsage(input_tokens=4, output_tokens=197),
+            usage=RequestUsage(input_tokens=4, output_tokens=197, cost=Decimal('0.001391')),
             model_name='deepseek-ai/DeepSeek-R1',
             timestamp=IsDatetime(),
             provider_name='huggingface',
@@ -216,7 +233,7 @@ async def test_request_simple_usage(allow_model_requests: None, huggingface_api_
 
     result = await agent.run('Hello')
     assert result.output == IsStr()
-    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1, cost=Decimal('0.001818')))
 
 
 @pytest.mark.vcr()
@@ -250,7 +267,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                         tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
                     )
                 ],
-                usage=RequestUsage(input_tokens=19, output_tokens=29),
+                usage=RequestUsage(input_tokens=19, output_tokens=29, cost=Decimal('0.000260')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -305,9 +322,9 @@ async def test_multiple_stream_calls(allow_model_requests: None):
 
 
 async def test_request_tool_call(allow_model_requests: None):
-    tool_call_1 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
+    tool_call_1 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
+            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'name': 'get_location',
                     'arguments': '{"loc_name": "San Fransisco"}',
@@ -317,16 +334,16 @@ async def test_request_tool_call(allow_model_requests: None):
             'type': 'function',
         }
     )
-    usage_1 = ChatCompletionOutputUsage.parse_obj_as_instance(  # type:ignore
+    usage_1 = ChatCompletionOutputUsage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'prompt_tokens': 1,
             'completion_tokens': 1,
             'total_tokens': 2,
         }
     )
-    tool_call_2 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
+    tool_call_2 = ChatCompletionOutputToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
+            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'name': 'get_location',
                     'arguments': '{"loc_name": "London"}',
@@ -336,7 +353,7 @@ async def test_request_tool_call(allow_model_requests: None):
             'type': 'function',
         }
     )
-    usage_2 = ChatCompletionOutputUsage.parse_obj_as_instance(  # type:ignore
+    usage_2 = ChatCompletionOutputUsage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'prompt_tokens': 2,
             'completion_tokens': 1,
@@ -345,7 +362,7 @@ async def test_request_tool_call(allow_model_requests: None):
     )
     responses = [
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': None,
                     'role': 'assistant',
@@ -355,7 +372,7 @@ async def test_request_tool_call(allow_model_requests: None):
             usage=usage_1,
         ),
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': None,
                     'role': 'assistant',
@@ -365,7 +382,7 @@ async def test_request_tool_call(allow_model_requests: None):
             usage=usage_2,
         ),
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                 {
                     'content': 'final response',
                     'role': 'assistant',
@@ -492,7 +509,7 @@ FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'functi
 def chunk(
     delta: list[ChatCompletionStreamOutputDelta], finish_reason: FinishReason | None = None
 ) -> ChatCompletionStreamOutput:
-    return ChatCompletionStreamOutput.parse_obj_as_instance(  # type: ignore
+    return ChatCompletionStreamOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'id': 'x',
             'choices': [
@@ -538,125 +555,6 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world', 'hello world.']
-        )
-        assert result.is_complete
-
-
-def struc_chunk(
-    tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
-) -> ChatCompletionStreamOutput:
-    return chunk(
-        [
-            ChatCompletionStreamOutputDelta.parse_obj_as_instance(  # type: ignore
-                {
-                    'role': 'assistant',
-                    'tool_calls': [
-                        ChatCompletionStreamOutputDeltaToolCall.parse_obj_as_instance(  # type: ignore
-                            {
-                                'index': 0,
-                                'function': ChatCompletionStreamOutputFunction.parse_obj_as_instance(  # type: ignore
-                                    {
-                                        'name': tool_name,
-                                        'arguments': tool_arguments,
-                                    }
-                                ),
-                            }
-                        )
-                    ],
-                }
-            ),
-        ],
-        finish_reason=finish_reason,
-    )
-
-
-class MyTypedDict(TypedDict, total=False):
-    first: str
-    second: str
-
-
-async def test_stream_structured(allow_model_requests: None):
-    stream = [
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),
-        chunk([ChatCompletionStreamOutputDelta(role='assistant', tool_calls=[])]),
-        chunk(
-            [
-                ChatCompletionStreamOutputDelta(
-                    role='assistant',
-                    tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
-                    ],
-                )
-            ]
-        ),
-        chunk(
-            [
-                ChatCompletionStreamOutputDelta(
-                    role='assistant',
-                    tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
-                    ],
-                )
-            ]
-        ),
-        struc_chunk('final_result', None),
-        chunk(
-            [
-                ChatCompletionStreamOutputDelta(
-                    role='assistant',
-                    tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
-                    ],
-                )
-            ]
-        ),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        chunk([]),
-    ]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
-        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
-        # double check usage matches stream count
-        assert result.usage.output_tokens == len(stream)
-
-
-async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream = [
-        struc_chunk('final_result', None),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        struc_chunk(None, None, finish_reason='stop'),
-    ]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
         )
         assert result.is_complete
 
@@ -716,7 +614,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         content='Hello! How can I assist you with the image of the potato? Do you have any specific questions or need information about it?'
                     )
                 ],
-                usage=RequestUsage(input_tokens=269, output_tokens=27),
+                usage=RequestUsage(input_tokens=269, output_tokens=27, cost=Decimal('0.00008750')),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
@@ -750,13 +648,18 @@ async def test_image_as_binary_content_input(
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    error = HfHubHTTPError(message='test_error', response=Mock(status_code=500, content={'error': 'test error'}))
+    error = HfHubHTTPError(
+        message='test_error',
+        response=Mock(status_code=500, content={'error': 'test error'}, headers=httpx.Headers({'x-request-id': 'abc'})),
+    )
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
-    assert str(exc_info.value) == snapshot("status_code: 500, model_name: not_a_model, body: {'error': 'test error'}")
+    exc = exc_info.value
+    assert str(exc) == snapshot("status_code: 500, model_name: not_a_model, body: {'error': 'test error'}")
+    assert exc.headers == {'x-request-id': 'abc'}
 
 
 @pytest.mark.vcr()
@@ -804,7 +707,7 @@ That's correct! Paris is not only the political center but also the cultural, ec
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=16, output_tokens=216),
+                usage=RequestUsage(input_tokens=16, output_tokens=216, cost=Decimal('0.001560')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -843,9 +746,9 @@ def test_system_property():
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
     c = completion_message(
-        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'response', 'role': 'assistant'}),  # type: ignore
+        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'response', 'role': 'assistant'}),  # pyright: ignore[reportUnknownMemberType]
     )
-    c.created = None  # type: ignore
+    c.created = None  # pyright: ignore[reportAttributeAccessIssue]
 
     mock_client = MockHuggingFace.create_mock(c)
     model = HuggingFaceModel(
@@ -855,18 +758,17 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     agent = Agent(model)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 
 async def test_retry_prompt_without_tool_name(allow_model_requests: None):
     responses = [
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'invalid-response', 'role': 'assistant'})  # type: ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'invalid-response', 'role': 'assistant'})  # pyright: ignore[reportUnknownMemberType]
         ),
         completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'final-response', 'role': 'assistant'})  # type: ignore
+            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'final-response', 'role': 'assistant'})  # pyright: ignore[reportUnknownMemberType]
         ),
     ]
 
@@ -1011,6 +913,62 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
         await agent.run(['hello', content_item])
 
 
+async def test_unsupported_media_type_in_tool_return_is_not_silently_dropped(allow_model_requests: None):
+    model = HuggingFaceModel(
+        'Qwen/Qwen2.5-VL-72B-Instruct',
+        provider=HuggingFaceProvider(api_key='x'),
+    )
+    agent = Agent(model)
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_file', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=['here', DocumentUrl(url='url')],
+                    tool_call_id='call_1',
+                )
+            ]
+        ),
+    ]
+
+    with pytest.raises(NotImplementedError, match='DocumentUrl is not supported for Hugging Face'):
+        await agent.run('continue', message_history=messages)
+
+
+async def test_image_tool_return_is_forwarded_as_user_message():
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(api_key='x'))
+    model_request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_image',
+                content=ImageUrl(url='https://example.com/image.png'),
+                tool_call_id='call_1',
+            )
+        ]
+    )
+
+    mapped_messages = [
+        {k: v for k, v in asdict(mapped_message).items() if v is not None}
+        async for mapped_message in model._map_user_message(model_request)  # pyright: ignore[reportPrivateUsage]
+    ]
+
+    assert mapped_messages == snapshot(
+        [
+            {'role': 'tool', 'content': 'See file 01a7df.', 'tool_call_id': 'call_1'},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
+                    {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
+                ],
+            },
+        ]
+    )
+
+
 @pytest.mark.vcr()
 async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
@@ -1033,7 +991,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=995),
+                usage=RequestUsage(input_tokens=10, output_tokens=995, cost=Decimal('0.006995')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1076,7 +1034,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=32, output_tokens=1425),
+                usage=RequestUsage(input_tokens=32, output_tokens=1425, cost=Decimal('0.010071')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1127,7 +1085,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                     ThinkingPart(content=IsStr()),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=955),
+                usage=RequestUsage(input_tokens=10, output_tokens=955, cost=Decimal('0.006715')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1161,72 +1119,5 @@ async def test_map_user_prompt_with_text_content():
         UserPromptPart(content=['hello', TextContent(content='there', metadata={'id': 'h01'})])
     )
 
-    assert msg.content[0].text == snapshot('hello')  # pyright: ignore
-    assert msg.content[1].text == snapshot('there')  # pyright: ignore
-
-
-async def test_stream_cancel(allow_model_requests: None):
-    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m)
-
-    async with agent.run_stream('') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=2, output_tokens=1),
-                model_name='hf-model',
-                timestamp=IsDatetime(),
-                provider_name='huggingface',
-                provider_url='https://api-inference.huggingface.co',
-                provider_details={'timestamp': IsDatetime()},
-                provider_response_id='x',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-                state='interrupted',
-            ),
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_huggingface_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = HuggingFaceStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='hf-model',
-        _model_profile=cast(Any, object()),
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _provider_name='huggingface',
-        _provider_url='https://api-inference.huggingface.co',
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
+    assert msg.content[0].text == snapshot('hello')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
+    assert msg.content[1].text == snapshot('there')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]

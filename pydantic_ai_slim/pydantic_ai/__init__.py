@@ -1,10 +1,11 @@
 from importlib.metadata import version as _metadata_version
 
-from ._template import TemplateStr
+from ._cancel import CancellationToken
 from .agent import (
     Agent,
     AgentModelSettings,
     AgentRetries,
+    AgentRunEvents,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -13,7 +14,7 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .capabilities import AgentCapability, CapabilityFunc
+from .capabilities import AgentCapability, Capability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -31,14 +32,20 @@ from .exceptions import (
     ApprovalRequired,
     CallDeferred,
     ConcurrencyLimitExceeded,
+    CostCalculationFailedWarning,
+    CostNotFoundWarning,
     FallbackExceptionGroup,
     IncompleteToolCall,
+    MessageHistoryMutatedWarning,
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    PydanticAIDeprecationWarning,
+    RunCancelled,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -52,13 +59,17 @@ from .messages import (
     AudioUrl,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
     CachePoint,
     CompactionPart,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -89,12 +100,16 @@ from .messages import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
+    ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
@@ -108,9 +123,10 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext
+from .models import AbstractModel, ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
+    AdvisorTool,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
@@ -131,6 +147,7 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
+from .template import TemplateStr
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -165,6 +182,7 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'CancellationToken',
     'AgentModelSettings',
     'AgentRetries',
     'AgentSpec',
@@ -191,11 +209,17 @@ __all__ = (
     'CallDeferred',
     'ApprovalRequired',
     'ConcurrencyLimitExceeded',
+    'CostCalculationFailedWarning',
+    'CostNotFoundWarning',
     'ModelRetry',
+    'ToolFailed',
     'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'RunCancelled',
+    'MessageHistoryMutatedWarning',
+    'PydanticAIDeprecationWarning',
     'SkipModelRequest',
     'SkipToolExecution',
     'SkipToolValidation',
@@ -208,8 +232,11 @@ __all__ = (
     'AudioFormat',
     'AudioMediaType',
     'AudioUrl',
+    'SpeechPart',
+    'SpeechPartDelta',
     'BaseToolCallPart',
     'BaseToolReturnPart',
+    'BinaryAudio',
     'BinaryContent',
     'NativeToolCallPart',
     'NativeToolReturnPart',
@@ -218,8 +245,11 @@ __all__ = (
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
+    'EnqueuedMessagesEvent',
     'FileUrl',
     'FilePart',
+    'DeferredToolRequestsEvent',
+    'DeferredToolResultsEvent',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -252,6 +282,8 @@ __all__ = (
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
+    'ToolAvailabilityDeltaEvent',
+    'ToolAvailabilityDeltaPart',
     'ThinkingPartDelta',
     'ToolCallEvent',
     'ToolCallPart',
@@ -298,6 +330,7 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'AdvisorTool',
     'CodeExecutionTool',
     'FileSearchTool',
     'ImageGenerationTool',
@@ -309,6 +342,7 @@ __all__ = (
     'XSearchTool',
     # capabilities
     'AgentCapability',
+    'Capability',
     'CapabilityFunc',
     # output
     'ToolOutput',
@@ -321,7 +355,10 @@ __all__ = (
     # format_prompt
     'format_as_xml',
     # models
+    'AbstractModel',
     'ModelRequestContext',
+    'ModelResolutionContext',
+    'ModelSelectionContext',
     # settings
     'ModelSettings',
     'ToolChoice',
@@ -332,6 +369,7 @@ __all__ = (
     'UsageLimits',
     # run
     'AgentRun',
+    'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
 )

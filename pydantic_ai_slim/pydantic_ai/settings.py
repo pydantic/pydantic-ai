@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from httpx import Timeout
 from typing_extensions import TypedDict
+
+from ._http import legacy_httpx
+
+if TYPE_CHECKING:
+    from httpx import Timeout
+else:
+    # Legacy HTTPX is optional: without it no `Timeout` instance can reach `ModelSettings`, so the
+    # union member collapses onto the numeric one it already allows.
+    Timeout = legacy_httpx.Timeout if legacy_httpx is not None else float
 
 ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
 """The string effort levels for thinking/reasoning configuration."""
@@ -53,7 +61,8 @@ Values:
 - `'default'`: Explicitly request the provider's standard tier — opts out of any server-side
   auto-promotion to premium tiers.
 - `'flex'`: Lower-cost, latency-tolerant tier where the provider offers one. Silently ignored on
-  providers that don't (e.g. Anthropic).
+  providers that don't (e.g. Anthropic) — though a few reject the field outright rather than ignore it,
+  as noted on the [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] entries.
 - `'priority'`: Higher-priority / lower-latency tier where the provider offers one. Silently ignored
   on providers that don't.
 
@@ -84,6 +93,23 @@ class ModelSettings(TypedDict, total=False):
     Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
 
+    Each field's `Supported by:` list names the model classes that put the setting on the wire. A bare
+    name covers every interface that model serves, so `OpenAI` means both
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]; a name qualified with an
+    interface, like `OpenAI Chat Completions`, covers only that one, because the Responses API does
+    not accept the setting at all.
+
+    These lists are parsed and checked against the wire by
+    `tests/models/test_model_settings_support.py`, so keep the `* Name` bullet shape and put any nuance in
+    parentheses after the name.
+
+    Being listed means Pydantic AI sends the setting, not that the service honors it: the
+    OpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual
+    provider behind one of them may ignore a field its own API doesn't define, or reject it. Where we
+    know of such a case it is noted on the entry, but the provider's own API reference is the
+    authority.
+
     All types must be serializable using Pydantic.
     """
 
@@ -92,15 +118,23 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
-    * Anthropic
     * OpenAI
+    * Anthropic
+    * Google
     * Groq
     * Cohere
     * Mistral
     * Bedrock
     * MCP Sampling
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     temperature: float
@@ -113,14 +147,23 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
-    * Anthropic
     * OpenAI
+    * Anthropic
+    * Google
     * Groq
     * Cohere
     * Mistral
     * Bedrock
+    * MCP Sampling
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     top_p: float
@@ -132,14 +175,22 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
-    * Anthropic
     * OpenAI
+    * Anthropic
+    * Google
     * Groq
     * Cohere
     * Mistral
     * Bedrock
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     top_k: int
@@ -149,23 +200,33 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
     * Anthropic
+    * Google
     * Cohere
     * Bedrock (Anthropic and Amazon Nova models only)
     """
 
-    timeout: float | Timeout
+    timeout: int | float | Timeout
     """Override the client-level default timeout for a request, in seconds.
+
+    Numeric seconds work everywhere. A legacy `httpx.Timeout` is also accepted and is converted to an
+    `httpx2.Timeout` on the paths whose SDK expects one. `httpx2.Timeout` is deliberately not part of
+    this contract, because some SDKs behind these settings still reject it.
 
     Supported by:
 
-    * Gemini
-    * Anthropic
     * OpenAI
+    * Anthropic
+    * Google (numeric seconds only, not `httpx.Timeout`)
     * Groq
-    * Mistral
-    * xAI
+    * Mistral (numeric seconds only, not `httpx.Timeout`)
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     parallel_tool_calls: bool
@@ -174,9 +235,17 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
-    * Groq
     * Anthropic
+    * Groq
+    * Mistral
     * xAI
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     tool_choice: ToolChoice
@@ -193,7 +262,7 @@ class ModelSettings(TypedDict, total=False):
     * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
 
     Note: setting `'required'` or `list[str]` *statically* (via the `model_settings` argument
-    of [`Agent.run`][pydantic_ai.Agent.run] or the agent's own `model_settings`) raises a
+    of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or the agent's own `model_settings`) raises a
     `UserError`, because it would force a tool call on every step and prevent the agent from
     producing a final response. To vary `tool_choice` per step (e.g. force a tool on the
     first step only), return a callable from a capability's
@@ -207,10 +276,18 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic (`'required'` and specific tools not supported with thinking enabled)
     * Google
     * Groq
-    * Mistral
-    * HuggingFace
+    * Cohere (a named subset is honored by filtering the tool list, not sent as a parameter)
+    * Mistral (a named subset is honored by filtering the tool list, not sent as a parameter)
     * Bedrock
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama (sent, but Ollama documents `tool_choice` as unsupported)
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     seed: int
@@ -218,12 +295,20 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
+    * Google
     * Groq
     * Cohere
     * Mistral
-    * Gemini
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     presence_penalty: float
@@ -231,12 +316,20 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
+    * Google
     * Groq
     * Cohere
-    * Gemini
     * Mistral
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     frequency_penalty: float
@@ -244,12 +337,20 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
+    * Google
     * Groq
     * Cohere
-    * Gemini
     * Mistral
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     logit_bias: dict[str, int]
@@ -257,8 +358,15 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
     * Groq
+    * HuggingFace
+    * Crusoe
+    * Ollama (sent, but Ollama documents `logit_bias` as unsupported)
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     stop_sequences: list[str]
@@ -266,14 +374,23 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
     * Anthropic
-    * Bedrock
-    * Mistral
+    * Google
     * Groq
     * Cohere
-    * Google
+    * Mistral
+    * Bedrock
+    * MCP Sampling
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     extra_headers: dict[str, str]
@@ -283,9 +400,16 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
-    * Gemini
+    * Google
     * Groq
-    * xAI
+    * Bedrock
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     thinking: ThinkingLevel
@@ -301,16 +425,29 @@ class ModelSettings(TypedDict, total=False):
     Provider-specific thinking settings (e.g., `anthropic_thinking`,
     `openai_reasoning_effort`) take precedence over this unified field.
 
+    Listed below are the model classes that translate this field onto the request. A class whose models
+    always reason and take no thinking parameter is not listed at all (Cohere); where only some of a
+    class's models are always-on it stays listed, and the per-model behavior is on the
+    [Thinking page](../capabilities/thinking.md) (Mistral's `magistral`).
+
     Supported by:
 
-    * Anthropic
     * OpenAI
-    * Gemini
+    * Anthropic
+    * Google
     * Groq
+    * Mistral
     * Bedrock
-    * OpenRouter
-    * Cerebras
     * xAI
+    * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`; the enable levels are not
+      sent because Cerebras models reason by default, and `gpt-oss` ignores the disable too)
+    * Crusoe
+    * Ollama
+    * OpenRouter (as `extra_body['reasoning']`)
+    * Snowflake (as `extra_body['reasoning']` on Claude models, otherwise as `reasoning_effort`)
+    * Z.AI (as `extra_body['thinking']`)
+    * Bedrock Mantle (the Responses interface only; the Chat Completions interface serves only the
+      `gpt-oss-safeguard` models, which take no thinking parameter)
     """
 
     service_tier: ServiceTier
@@ -325,8 +462,19 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
-    * Bedrock
     * Google (Gemini API and Google Cloud)
+    * Bedrock
+    * Cerebras (sent and enum-validated — HTTP 200 on an ordinary key; the tiers are in private
+      preview, so no effect is observable without access)
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake (sent, but Snowflake Cortex rejects `service_tier` with an error)
+    * Z.AI
+    * Bedrock Mantle
+
+    The OpenAI-derived model classes send the OpenAI value unchanged, so the OpenAI column of the
+    mapping table applies to them.
     """
 
     extra_body: object
@@ -337,6 +485,17 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
+
+    On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
+    Z.AI), the model's own derived keys overwrite yours when the keys collide.
     """
 
 

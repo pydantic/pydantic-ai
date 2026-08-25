@@ -14,16 +14,19 @@
 - Use Markdown heading syntax (`##`, `###`, `####`) instead of bold text for sections — preserves semantic structure and document hierarchy — Proper heading levels enable navigation, accessibility, and consistent documentation structure across all `.md` files
 <!-- rule:396 -->
 - Establish one canonical source per topic and link to it — prevents inconsistency and maintenance burden — Documentation that's duplicated across locations becomes outdated differently, creating contradictions and requiring multiple updates for every change
+- When linking to a section of a docs page from anywhere in the repo — a docstring, a skill reference, an example README — use the `{#custom-id}` pinned on that heading in `docs/`, never an id copied out of a rendered page's URL — A copied id is whatever the site's slugifier happened to generate that week, so it goes dead the moment the heading is pinned or the slugifier changes; only files under `docs/`, `examples/`, and the repository root are anchor-checked in CI, so a link written anywhere else has nothing to catch it
 <!-- rule:34 -->
 - Link to official provider/project docs instead of duplicating model lists, features, or setup details — prevents stale documentation and reduces maintenance burden — Exhaustive inline lists become outdated quickly; authoritative external sources stay current and reduce maintenance
 <!-- rule:138 -->
-- Update all related docs in the same PR when changing functionality, APIs, or capabilities — includes docstrings, comments, external docs (e.g., `ai.pydantic.dev`), and API references — Prevents documentation drift that misleads users about actual behavior, limitations, or API contracts
+- Update all related docs in the same PR when changing functionality, APIs, or capabilities — includes docstrings, comments, external docs (e.g., `pydantic.dev/docs/ai`), and API references — Prevents documentation drift that misleads users about actual behavior, limitations, or API contracts
 <!-- rule:107 -->
-- Register new `docs/` files in `mkdocs.yml` nav section — Ensures documentation files are discoverable in the generated site navigation; orphaned files won't appear in the docs site
+- Register new `docs/` files in `docs/navigation.yml` — Keeps the published pydantic.dev/docs/ai navigation complete and prevents orphaned pages or route drift
 <!-- rule:31 -->
 - Use consistent terminology across code, docs, comments, and errors (e.g., `freeform` vs `free-form`, `messages` vs `last message`) — prevents user confusion and makes codebase searchable — Inconsistent terminology fragments documentation searches, confuses users trying to map concepts between docs and code, and signals poor API design quality
 <!-- rule:76 -->
 - Prefix future work with `TODO:` and link workarounds to upstream/internal issues — enables tracking and cleanup when conditions change — Explicit markers with tracking links prevent abandoned workarounds and make technical debt actionable and removable when upstream fixes land
+<!-- rule:611 -->
+- Reference issues and PRs in comments and docstrings with the full URL (`https://github.com/pydantic/pydantic-ai/issues/1234`), not the `#1234` shorthand — The shorthand isn't clickable outside GitHub's own rendering (IDEs, generated API docs, plain-text views), so a full link stays navigable wherever the code is read
 <!-- rule:386 -->
 - Keep docs and implementation in sync — when they conflict, explicitly decide which to update and fix it — Prevents user confusion and wasted debugging time when documented behavior doesn't match actual behavior; applies to params, config options, component characteristics, and especially test docstrings which must describe what's actually validated
 <!-- rule:106 -->
@@ -42,3 +45,5 @@
 - Avoid line numbers in comments/docstrings — use function/class names instead — Line numbers become stale immediately when code changes, breaking the reference and misleading readers
 <!-- rule:656 -->
 - Document new user-facing features in dedicated sections where users naturally encounter them, not just in docstrings — Users discover features through conceptual docs and guides, not API references — ensures feature discoverability and proper context
+<!-- rule:-4 -->
+- Link to a Pydantic AI Harness capability via its docs page at `https://pydantic.dev/docs/ai/harness/<slug>/` (e.g. `https://pydantic.dev/docs/ai/harness/exa-search/`, `https://pydantic.dev/docs/ai/harness/compaction/`), not its GitHub repo/README — the harness has published docs; only fall back to a GitHub link when a capability has no docs page yet — Gives readers rendered, canonical docs instead of raw source, and matches how the rest of the repo references the harness (`https://pydantic.dev/docs/ai/harness/`)

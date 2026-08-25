@@ -2,16 +2,21 @@ import asyncio
 import functools
 import operator
 import re
+import warnings
 from collections.abc import AsyncIterator
-from datetime import timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
+    CostCalculationFailedWarning,
+    CostNotFoundWarning,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -23,6 +28,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
+from pydantic_ai._cost import best_effort_price, calculate_price_for_usage
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -185,6 +191,21 @@ def test_usage_so_far() -> None:
         )
 
 
+def test_usage_has_values_ignores_zero_details() -> None:
+    """`has_values()` must treat an all-zero `details` dict as no values, per its docstring.
+
+    A non-empty `details` dict is truthy, so the previous `any(asdict(...).values())` returned True
+    even when every count was zero. This pins the pure-method behavior directly; no model is involved,
+    so there is no VCR test to write.
+    """
+    assert RunUsage().has_values() is False
+    assert RunUsage(details={'reasoning_tokens': 0}).has_values() is False
+    assert RunUsage(input_tokens=1).has_values() is True
+    assert RunUsage(details={'reasoning_tokens': 3}).has_values() is True
+    # RequestUsage shares the same UsageBase implementation.
+    assert RequestUsage(details={'x': 0}).has_values() is False
+
+
 async def test_multi_agent_usage_no_incr():
     delegate_agent = Agent(TestModel(), output_type=int)
 
@@ -222,6 +243,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -243,6 +265,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -280,6 +303,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -301,6 +325,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -317,6 +342,60 @@ async def test_multi_agent_usage_no_incr():
         'gen_ai.usage.output_tokens': 13,
         'gen_ai.usage.details.custom1': 10,
         'gen_ai.usage.details.custom2': 20,
+        'gen_ai.usage.details.custom3': 0,
+    }
+
+
+def test_usage_opentelemetry_attributes_include_zero_details():
+    """A zero-valued detail is a real measurement and must survive the OTel mapping.
+
+    Providers report `reasoning_tokens=0` when a reasoning model didn't think on a given request;
+    dropping it makes "didn't reason" indistinguishable from "doesn't report reasoning tokens".
+    First-class token names stay excluded from `details.*` even at zero.
+    """
+    usage = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        details={'reasoning_tokens': 0, 'input_tokens': 0, 'output_tokens': 0},
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
+    }
+
+    # Provider data can put a `None` in `details` despite the `dict[str, int]` annotation, and `None` is
+    # not a valid OTel attribute value, so it's the one thing the guard still drops.
+    usage.details = {'reasoning_tokens': 0, 'unreported_tokens': None}  # pyright: ignore[reportAttributeAccessIssue]
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 0,
+    }
+
+
+def test_opentelemetry_attributes_excludes_first_class_token_details():
+    """`details` entries named like a first-class token attribute must never be emitted under `details.*`.
+
+    Adapters stash `input_tokens`/`output_tokens` in `details` for different reasons (Anthropic's
+    streaming carry-forward and pre-compaction raw counts, Cohere's billed units), but the name
+    collides with the first-class `gen_ai.usage.{input,output}_tokens` attributes. Emitting the value
+    under both makes consumers like Langfuse sum them and double-count tokens and cost, regardless of
+    whether the two values happen to match. They stay accessible on `RequestUsage.details`; only the
+    ambiguous OTel emission is dropped. Not reachable through the public API since it depends on an
+    adapter leaving these keys in `details`, so pinned directly on the OTel attribute mapping.
+    """
+    usage = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        # A matching value (Anthropic exact-copy case) and a differing one (Cohere billed-units /
+        # Anthropic compaction case) are both dropped: the colliding name is what makes them ambiguous.
+        details={'input_tokens': 100, 'output_tokens': 42, 'reasoning_tokens': 10},
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 10,
     }
 
 
@@ -352,6 +431,7 @@ async def test_multi_agent_usage_sync():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -373,6 +453,7 @@ async def test_multi_agent_usage_sync():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -384,6 +465,140 @@ def test_request_usage_basics():
     usage = RequestUsage()
     assert usage.output_audio_tokens == 0
     assert usage.requests == 1
+
+
+def test_usage_arbitrary_fields():
+    usage = RequestUsage(future_tokens=1, label='original')
+
+    assert usage == snapshot(RequestUsage(future_tokens=1, label='original'))
+    assert usage == RequestUsage(future_tokens=1, label='original')
+    assert usage != RequestUsage(future_tokens=2, label='original')
+    assert usage != object()
+    assert RunUsage(requests=0, future_tokens=1) == snapshot(RunUsage(future_tokens=1))
+    assert RunUsage(requests=0) == RunUsage()
+
+    result = usage + RequestUsage(future_tokens=2, label='increment')
+    assert result == RequestUsage(future_tokens=3, label='original')
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_arbitrary_fields_pydantic_roundtrip(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    usage = usage_type(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    adapter = TypeAdapter(usage_type)
+
+    loaded = adapter.validate_json(adapter.dump_json(usage))
+    assert loaded == usage
+    assert loaded.__dict__['future_tokens'] == 42
+    assert adapter.validate_python(usage) is usage
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_reserved_fields_not_loaded_as_arbitrary(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'input_tokens': 5, 'cache_hit_ratio': 0.5})
+
+    assert loaded == usage_type(input_tokens=5)
+    assert 'cache_hit_ratio' not in loaded.__dict__
+
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage])
+def test_usage_details_none_deserialization(
+    usage_type: type[RequestUsage] | type[RunUsage],
+):
+    loaded = TypeAdapter(usage_type).validate_python({'details': None})
+
+    assert loaded.details == {}
+
+
+def test_usage_arbitrary_fields_pydantic_serialization_filters():
+    class ArbitraryValue(BaseModel):
+        included: int
+        excluded: int
+
+    adapter = TypeAdapter(RequestUsage)
+    usage = RequestUsage(
+        input_tokens=5,
+        future_tokens=42,
+        label=None,
+        breakdown={'a': 1, 'b': 2},
+        model=ArbitraryValue(included=1, excluded=2),
+        timestamp=datetime(2020, 1, 2),
+        unknown=object(),
+    )
+
+    assert adapter.dump_python(usage, include={'input_tokens'}) == {'input_tokens': 5}
+    assert adapter.dump_python(
+        usage,
+        include={'input_tokens', 'future_tokens', 'label'},
+        exclude_none=True,
+    ) == {'input_tokens': 5, 'future_tokens': 42}
+
+    serialized = adapter.dump_python(usage, exclude={'future_tokens'})
+    assert 'future_tokens' not in serialized
+    assert serialized['label'] is None
+    assert adapter.dump_python(usage, include={'future_tokens': True}) == {'future_tokens': 42}
+    assert 'future_tokens' not in adapter.dump_python(
+        usage,
+        exclude={'future_tokens': ...},  # pyright: ignore[reportArgumentType]
+    )
+
+    assert adapter.dump_python(usage, include={'breakdown': {'a'}}) == {'breakdown': {'a': 1}}
+    assert adapter.dump_python(usage, exclude={'breakdown': {'a'}})['breakdown'] == {'b': 2}
+    assert adapter.dump_python(
+        usage,
+        mode='json',
+        include={'model': {'included'}, 'timestamp': True, 'unknown': True},
+        fallback=lambda _: 'fallback',
+    ) == {
+        'model': {'included': 1},
+        'timestamp': '2020-01-02T00:00:00',
+        'unknown': 'fallback',
+    }
+
+
+def test_usage_pydantic_core_serialization_subclass():
+    @dataclass(repr=False, init=False, eq=False)
+    class CustomUsage(RequestUsage):
+        custom_tokens: int = 7
+
+    usage = CustomUsage(future_tokens=42)
+
+    assert to_jsonable_python(usage) == snapshot(
+        {
+            'input_tokens': 0,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {},
+            'cost': None,
+            'custom_tokens': 7,
+            'future_tokens': 42,
+        }
+    )
+
+
+def test_cache_hit_ratio():
+    """Pure arithmetic on usage fields -- no model request to record."""
+    assert RequestUsage(input_tokens=1000, cache_read_tokens=900).cache_hit_ratio == 0.9
+    assert RequestUsage().cache_hit_ratio == 0.0
+    assert RequestUsage(input_tokens=1000).cache_hit_ratio == 0.0
+
+    run_usage = RunUsage()
+    run_usage.incr(RequestUsage(input_tokens=1000, cache_read_tokens=900))
+    run_usage.incr(RequestUsage(input_tokens=500, cache_read_tokens=300))
+    assert run_usage.cache_hit_ratio == 0.8
 
 
 def test_add_usages():
@@ -545,6 +760,7 @@ async def test_tool_call_limit() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -566,6 +782,7 @@ async def test_tool_call_limit() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -603,6 +820,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -624,6 +842,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -658,6 +877,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -683,6 +903,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -823,6 +1044,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -844,6 +1066,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=62, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -865,6 +1088,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=63, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -953,3 +1177,216 @@ def test_usage_limits_explicit_zero():
 
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
+
+
+# ── per_request_input_tokens_limit ──────────────────────────────────────
+
+
+def test_per_request_input_tokens_limit_post_response() -> None:
+    """When count_tokens_before_request=False (default), the limit is checked
+    against the provider-reported input_tokens after the response."""
+    test_agent = Agent(TestModel())
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5))
+
+
+def test_per_request_input_tokens_limit_not_exceeded() -> None:
+    """When per-request input tokens are below the limit, no error is raised."""
+    test_agent = Agent(TestModel())
+
+    result = test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.output == 'success (no tool calls)'
+
+
+def test_per_request_input_tokens_limit_is_not_cumulative() -> None:
+    """The limit applies to each request's input independently, not the running total.
+
+    A multi-request run whose cumulative input exceeds the limit still succeeds,
+    because no single request's input does. An equivalent cumulative
+    `input_tokens_limit` raises on the same run, which pins the difference.
+    """
+
+    async def tool_a() -> str:
+        return 'done'
+
+    async def tool_b() -> str:
+        return 'done'
+
+    def build_agent() -> Agent[None]:
+        return Agent(TestModel(call_tools=['tool_a', 'tool_b']), tools=[tool_a, tool_b])
+
+    # No single request's input exceeds 100, so the per-request limit does not fire...
+    result = build_agent().run_sync('run tools', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.usage == snapshot(RunUsage(input_tokens=106, output_tokens=14, requests=2, tool_calls=2))
+    assert result.usage.input_tokens > 100  # ...even though the cumulative input does exceed 100
+
+    # An equivalent cumulative limit raises on the same run, proving the checks differ.
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape('Exceeded the input_tokens_limit of 100 (input_tokens=106)')
+    ):
+        build_agent().run_sync('run tools', usage_limits=UsageLimits(input_tokens_limit=100))
+
+
+async def test_per_request_input_tokens_limit_streaming() -> None:
+    """The limit is enforced while streaming, mirroring `input_tokens_limit`.
+
+    `run_stream` fetches the first event on entry, so the limit raises as soon as the
+    request's input token count is known rather than only at the post-response check.
+    Like `input_tokens_limit`, this bites for providers that report input usage at stream
+    start; for those that report it at the end it falls through to the post-response
+    check. `TestModel` reports it up front.
+    """
+    agent = Agent(TestModel(custom_output_text='a longer streamed reply that would be consumed'))
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        # run_stream aborts on entry once the request's input size is known, so the body never runs
+        async with agent.run_stream('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5)):
+            pass  # pragma: no cover
+
+
+# --- Cost pricing helpers and cost limits ---------------------------------------------------------
+#
+# `TestModel`/`FunctionModel` are unknown to genai-prices, so most pricing helpers and cost-limit guards are
+# exercised directly here. Public graph wiring is covered below for the unpriceable-run warning and in
+# `tests/models/test_anthropic.py` against a priceable model.
+
+
+def test_calculate_price_for_usage_provider_name():
+    price = calculate_price_for_usage(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_calculate_price_for_usage_provider_api_url():
+    price = calculate_price_for_usage(
+        RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_api_url='https://api.openai.com/v1'
+    )
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_calculate_price_for_usage_api_url_falls_back_to_provider_name():
+    """An unresolvable `provider_api_url` raises `LookupError` internally and falls back to `provider_name`."""
+    price = calculate_price_for_usage(
+        RequestUsage(input_tokens=1000),
+        model_name='gpt-4o',
+        provider_api_url='https://nope.invalid/v1',
+        provider_name='openai',
+    )
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_best_effort_price_known_model():
+    price = best_effort_price(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
+    assert price is not None
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_best_effort_price_without_model_name_returns_none():
+    """A response with no model name (e.g. synthetic, from a capability) has nothing to look up."""
+    assert best_effort_price(RequestUsage(input_tokens=10), model_name=None) is None
+
+
+def test_best_effort_price_unknown_model_returns_none():
+    """Pricing must never fail a run: an unknown model yields `None` instead of raising `LookupError`."""
+    assert best_effort_price(RequestUsage(input_tokens=10), model_name='function', provider_name='function') is None
+
+
+def test_best_effort_price_unpriceable_usage_returns_none():
+    """genai-prices raises `ValueError` for a breakdown it can't decompose; that must degrade, not warn.
+
+    `cache_read_tokens` is a subset of `input_tokens`, so exceeding it implies a negative uncached
+    remainder. This drives the real `calc_price` rather than a monkeypatched exception, so it also pins
+    that genai-prices still signals this with `ValueError`.
+    """
+    usage = RequestUsage(input_tokens=100, cache_read_tokens=150, output_tokens=10)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CostCalculationFailedWarning)
+        assert best_effort_price(usage, model_name='gpt-4o', provider_name='openai') is None
+
+
+def test_best_effort_price_unexpected_error_warns(monkeypatch: pytest.MonkeyPatch):
+    """An unexpected (non-lookup) pricing error is downgraded to a warning, never raised."""
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError('kaboom')
+
+    monkeypatch.setattr('pydantic_ai._cost.calc_price', boom)
+    with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost: RuntimeError: kaboom'):
+        price = best_effort_price(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
+    assert price is None
+
+
+def test_check_cost_disabled_by_default():
+    """The default `cost_limit` is `None`, so a run with a real cost is not constrained (regression: not 0)."""
+    assert UsageLimits().cost_limit is None
+    UsageLimits().check_cost(RunUsage(cost=Decimal('1.23')))
+
+
+def test_check_cost_warns_when_no_cost_available():
+    with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
+        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage())
+
+
+async def test_completed_run_warns_when_cost_unavailable() -> None:
+    with pytest.warns(CostNotFoundWarning, match='`cost_limit` is set but cannot be enforced'):
+        result = await Agent(TestModel()).run('hello', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+    assert result.usage.cost is None
+
+
+def test_check_cost_can_skip_unavailable_cost_warning(recwarn: pytest.WarningsRecorder):
+    UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(), warn_if_cost_unavailable=False)
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
+
+
+def test_check_cost_within_limit_is_silent(recwarn: pytest.WarningsRecorder):
+    UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(cost=Decimal('0.005')))
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
+
+
+async def test_cost_not_found_warning_waits_until_run_is_complete(recwarn: pytest.WarningsRecorder):
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='call-1')], usage=RequestUsage()
+            )
+        return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(cost=Decimal('0.005')))
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def noop() -> None:
+        pass
+
+    result = await agent.run('go', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+    assert result.usage.cost == Decimal('0.005')
+    assert [w for w in recwarn.list if issubclass(w.category, CostNotFoundWarning)] == []
+
+
+def test_check_cost_exceeded():
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape("Exceeded the `cost_limit` of 0.01 (`usage.cost`=Decimal('0.02'))")
+    ):
+        UsageLimits(cost_limit=Decimal('0.01')).check_cost(RunUsage(cost=Decimal('0.02')))
+
+
+def test_check_before_request_cost_exceeded():
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape("The next request would exceed the `cost_limit` of 0.01 (`cost`=Decimal('0.02'))"),
+    ):
+        UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.02')))
+
+
+def test_check_before_request_cost_within_limit():
+    UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.005')))

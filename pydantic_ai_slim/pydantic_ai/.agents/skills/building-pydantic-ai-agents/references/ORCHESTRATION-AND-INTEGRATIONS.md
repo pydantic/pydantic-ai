@@ -19,6 +19,9 @@ async def research(ctx: RunContext, topic: str) -> str:
     return result.output
 ```
 
+Delegating tools and output functions must be `async def` and use `await delegate.run(...)`; never call
+`run_sync()` or `run_stream_sync()` inside them. The parent may still use `run_sync()` at the application boundary.
+
 Good split:
 
 - delegation via tools when the parent keeps control
@@ -78,11 +81,24 @@ Use the durable execution integrations when the run must survive crashes, retrie
 
 Temporal entry points:
 
-- `TemporalAgent`
+- `Agent(..., capabilities=[TemporalDurability(...)])`
 - `PydanticAIWorkflow`
 - `PydanticAIPlugin`
+- `AgentPlugin`
 
-There are parallel integrations for DBOS and Prefect.
+`TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
+
+A run-time `model=` inside a workflow must be a model-name string or an instance registered in the durability capability's `models=`. An unregistered `Model` instance raises a `UserError`: it can't be serialized into the activity/step/task, and rebuilding it from its `model_id` would build a different model. To build a specific instance inside the durable unit (e.g. per-user credentials from `deps`), pass a string and use a `ResolveModelId` capability.
+
+## Handle MCP Tool Errors
+
+Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:
+
+- `'retry'` asks the model to correct and retry the call. This is the default.
+- `'failed'` reports a completed failed result via `ToolFailed` without consuming retry budget.
+- `'error'` propagates the underlying exception to application code.
+
+Structured server error content is serialized as JSON for both `'retry'` and `'failed'`. Protocol and transport errors (as opposed to completed tool errors) stay retryable even under `'failed'`.
 
 ## Use Embeddings for RAG
 

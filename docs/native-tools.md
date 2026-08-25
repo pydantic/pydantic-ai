@@ -14,6 +14,7 @@ Pydantic AI supports the following native tools:
 - **[`MemoryTool`][pydantic_ai.native_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
+- **[`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]**: Lets a faster executor model consult a stronger advisor model mid-generation (Anthropic, OpenRouter)
 
 These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool], and are executed by the model provider's infrastructure.
 
@@ -23,7 +24,11 @@ These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTo
     If a provider supports a native tool that is not currently supported by Pydantic AI, please file an issue.
 
 !!! tip "Provider-adaptive capabilities"
-    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation, so your agent works across providers without code changes.
+    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation, so your agent works across providers without code changes.
+
+### Google tool combinations
+
+[Gemini 3 models](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) support combining native tools with function tools, including [output tools](output.md#tool-output), and [`NativeOutput`][pydantic_ai.output.NativeOutput]. Earlier Gemini models cannot use these combinations; use [`PromptedOutput`][pydantic_ai.output.PromptedOutput] for structured output alongside native tools.
 
 ## Dynamic Configuration
 
@@ -70,7 +75,7 @@ print(result.output)
 ## Web Search Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](capabilities.md#provider-adaptive-tools).
+    For a model-agnostic approach with automatic local fallback, see the [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] allows your agent to search the web,
 making it ideal for queries that require up-to-date data.
@@ -81,10 +86,10 @@ making it ideal for queries that require up-to-date data.
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agent.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
-| Google | ✅ | No parameter support. No [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] is generated when streaming. Using native tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| xAI | ✅ | Supports `blocked_domains` and `allowed_domains` parameters. |
+| Google | ✅ | No parameter support. No [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] is generated when streaming. See [Google tool combinations](#google-tool-combinations). |
+| xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
-| OpenRouter | ✅ | Web search via [plugins](https://openrouter.ai/docs/features/web-search). Supports `search_context_size`. Uses native search for supported providers (OpenAI, Anthropic, Perplexity, xAI), Exa for others. |
+| OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. Search sources surface in `provider_details['annotations']`, but only when a non-native engine ran the search. |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
@@ -161,10 +166,13 @@ _(This example is complete, it can be run "as is")_
 | Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
 |-----------|--------|-----------|-----|------|------------|
 | `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
-| `user_location` | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
-| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `user_location` | ✅ | ✅ | ✅ | ❌ | ✅ |
+| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ✅ |
+| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
+| `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+* Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
@@ -190,7 +198,7 @@ _(This example is complete, it can be run "as is")_
 ## X Search Tool
 
 !!! tip
-    For a model-agnostic approach with a subagent fallback, see the [`XSearch`][pydantic_ai.capabilities.XSearch] [capability](capabilities.md#provider-adaptive-tools).
+    For a model-agnostic approach with a subagent fallback, see the [`XSearch`][pydantic_ai.capabilities.XSearch] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. Natively supported by xAI models; usable on other models via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with `fallback_model` set. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for more details.
 
@@ -244,7 +252,7 @@ OpenAI announced their latest model updates, while Anthropic shared research on 
 _(This example is complete, it can be run "as is")_
 
 !!! note "Handle Filtering"
-    You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 10 handles maximum.
+    You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 20 handles maximum.
 
 !!! note "Including raw search results"
     By default, xAI only returns the model's text summary of the search. To get programmatic access to the underlying posts, sources, and metadata, set `include_output=True` on [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] (analogous to [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] for OpenAI web search). The raw results are then available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] exposed via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. As an alternative, you can enable it globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](agent.md#model-run-settings). See the [xAI docs](models/xai.md#x-search) for the recommended `XSearch` capability-based approach.
@@ -258,12 +266,13 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
-| Google | ✅ | Using native tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| OpenAI Responses | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
+| Google | ✅ | See [Google tool combinations](#google-tool-combinations). |
 | Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
+| OpenAI Chat Completions | ❌ | Not supported; use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. |
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
@@ -331,10 +340,87 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
+### File Uploads
+
+You can upload files via the provider's Files API and make them available to the code execution container. This allows the agent to process data files, analyze CSVs, work with images, and more.
+Files whose [`UploadedFile.provider_name`][pydantic_ai.messages.UploadedFile.provider_name] does not match the model provider are ignored.
+
+#### Anthropic
+
+```py {title="code_execution_with_files_anthropic.py" test="skip" line_length="120"}
+import asyncio
+
+import anthropic
+
+from pydantic_ai import Agent, CodeExecutionTool, UploadedFile
+from pydantic_ai.capabilities import NativeTool
+
+
+async def main():
+    # Upload a file via the Anthropic Files API
+    client = anthropic.AsyncAnthropic()
+    with open('data.csv', 'rb') as f:
+        file = await client.beta.files.upload(file=('data.csv', f.read(), 'text/csv'), betas=['files-api-2025-04-14'])
+
+    # Create an agent with CodeExecutionTool that has access to the uploaded file
+    agent = Agent(
+        'anthropic:claude-sonnet-4-6',
+        capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='anthropic')]))],
+    )
+
+    result = await agent.run('Analyze the data.csv file and summarize the key statistics.')
+    print(result.output)
+    #> The CSV file contains 1000 rows with columns: name, age, salary...
+
+
+asyncio.run(main())
+```
+
+For details on file management, persistence, and container behavior, see the [Anthropic Files API documentation](https://platform.claude.com/docs/en/build-with-claude/files).
+
+#### OpenAI
+
+```py {title="code_execution_with_files_openai.py" test="skip" line_length="120"}
+import asyncio
+
+from openai import AsyncOpenAI
+
+from pydantic_ai import Agent, CodeExecutionTool, UploadedFile
+from pydantic_ai.capabilities import NativeTool
+
+
+async def main():
+    # Upload a file via the OpenAI Files API
+    client = AsyncOpenAI()
+    with open('data.csv', 'rb') as f:
+        file = await client.files.create(file=f, purpose='assistants')
+
+    # Create an agent with CodeExecutionTool that has access to the uploaded file
+    agent = Agent(
+        'openai-responses:gpt-5.2',
+        capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='openai')]))],
+    )
+
+    result = await agent.run('Analyze the data.csv file and summarize the key statistics.')
+    print(result.output)
+    #> The CSV file contains 1000 rows with columns: name, age, salary...
+
+
+asyncio.run(main())
+```
+
+For details on file management, container lifecycle, and persistence behavior, see the [OpenAI Responses API documentation](https://platform.openai.com/docs/api-reference/responses).
+
+#### Provider Support
+
+| Parameter | Anthropic | OpenAI | Google | xAI |
+|-----------|-----------|--------|--------|-----|
+| `files` | ✅ | ✅ | ❌ | ❌ |
+
 ## Image Generation Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities.md#provider-adaptive-tools).
+    For a model-agnostic approach with automatic local fallback, see the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enables your agent to generate images.
 
@@ -343,7 +429,7 @@ The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enable
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5.2`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. |
-| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-3-pro-image-preview` and `gemini-3-pro-image-preview`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
+| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-3-pro-image` and `gemini-3.1-flash-image`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
 | Anthropic | ❌ | |
 | xAI | ❌ | |
 | Groq | ❌ | |
@@ -378,7 +464,7 @@ Image generation with Google [image generation models](https://ai.google.dev/gem
 ```py {title="image_generation_google.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('google:gemini-3-pro-image-preview')
+agent = Agent('google:gemini-3-pro-image')
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl with an illustration.')
 print(result.output)
@@ -455,7 +541,7 @@ from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'google:gemini-3-pro-image-preview',
+    'google:gemini-3-pro-image',
     capabilities=[NativeTool(ImageGenerationTool(aspect_ratio='16:9'))],
     output_type=BinaryImage,
 )
@@ -473,7 +559,7 @@ from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'google:gemini-3-pro-image-preview',
+    'google:gemini-3-pro-image',
     capabilities=[NativeTool(ImageGenerationTool(aspect_ratio='16:9', size='4K'))],
     output_type=BinaryImage,
 )
@@ -509,7 +595,7 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 ## Web Fetch Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](capabilities.md#provider-adaptive-tools).
+    For a model-agnostic approach with automatic local fallback, see the [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] enables your agent to pull URL contents into its context,
 allowing it to pull up-to-date information from the web.
@@ -519,7 +605,7 @@ allowing it to pull up-to-date information from the web.
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | Anthropic | ✅ | Full feature support. Uses Anthropic's [Web Fetch Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-fetch-tool) internally to retrieve URL contents. |
-| Google | ✅ | No parameter support. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL. Using native tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| Google | ✅ | No parameter support. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ❌ | Web browsing is implemented as part of [`WebSearchTool`](#web-search-tool) with xAI. |
 | OpenAI | ❌ | |
 | Groq | ❌ | |
@@ -692,10 +778,57 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+## Advisor Tool
+
+The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets an executor model consult another model mid-generation. See the [Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool) and [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/advisor) documentation for current model compatibility.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS. |
+| OpenRouter | ✅ | Works with any executor model. |
+| OpenAI | ❌ | |
+| Google | ❌ | |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+
+### Usage
+
+```py {title="advisor_anthropic.py" test="skip"}
+from pydantic_ai import AdvisorTool, Agent
+from pydantic_ai.capabilities import NativeTool
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8'))],
+)
+
+result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
+print(result.output)
+```
+
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. Pydantic AI sends `forward_transcript=false`; `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
+
+With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
+
+### Configuration Options
+
+| Parameter | Anthropic | OpenRouter |
+|-----------|-----------|------------|
+| `model` | ✅ (required — the advisor model to consult) | ✅ (required — an OpenRouter catalog slug) |
+| `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
+| `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
+| `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
+
 ## MCP Server Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`MCP`][pydantic_ai.capabilities.MCP] [capability](capabilities.md#provider-adaptive-tools).
+    For a model-agnostic approach with automatic local fallback, see the [`MCP`][pydantic_ai.capabilities.MCP] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] allows your agent to use remote MCP servers with communication handled by the model provider.
 
@@ -860,7 +993,7 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Requires files to be uploaded to vector stores via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files). To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_file_search_results`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_file_search_results] [model setting](agent.md#model-run-settings). |
-| Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. Using native tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Mapped to xAI collections search. Requires collection IDs. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], enable the [`XaiModelSettings.xai_include_collections_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_collections_search_output] [model setting](agent.md#model-run-settings). |
 || Google Cloud | ❌ | Not supported |
 | Anthropic | ❌ | Not supported |
@@ -967,6 +1100,38 @@ async def main():
     result = await agent.run('What does the collection say about pydantic?')
     print(result.output)
     #> Based on the collection, Pydantic is ...
+
+asyncio.run(main())
+```
+
+xAI's collections search also accepts options to control result count, ranking guidance, and retrieval strategy. These map to the `max_num_results`, `instructions`, and `retrieval_mode` fields on [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]. When omitted, the server applies its own defaults (10 results, hybrid retrieval).
+
+```py {title="file_search_xai_options.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent, FileSearchTool
+from pydantic_ai.capabilities import NativeTool
+
+
+async def main():
+    agent = Agent(
+        'xai:grok-4.3',
+        capabilities=[
+            NativeTool(
+                FileSearchTool(
+                    file_store_ids=['collection_abc123'],
+                    max_num_results=5,
+                    instructions='Focus on up-to-date, highly relevant documents.',
+                    retrieval_mode='semantic',
+                )
+            )
+        ],
+    )
+
+    result = await agent.run('What does the collection say about pydantic?')
+    print(result.output)
+    #> Based on the collection, Pydantic is ...
+
 
 asyncio.run(main())
 ```

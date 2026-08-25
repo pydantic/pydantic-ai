@@ -30,7 +30,7 @@ from typing import (
     overload,
 )
 
-from anyio import BrokenResourceError, CancelScope, create_memory_object_stream, create_task_group
+from anyio import BrokenResourceError, CancelScope, ClosedResourceError, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Never, TypeAliasType, TypeVar, assert_never
@@ -289,7 +289,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     ) -> OutputT:
         """Synchronously execute the graph and return the final output.
 
-        This is a convenience wrapper around [`run`][pydantic_graph.Graph.run] that runs the coroutine on the
+        This is a convenience wrapper around [`run`][pydantic_graph.graph_builder.Graph.run] that runs the coroutine on the
         current event loop via `loop.run_until_complete(...)`. As such, it cannot be called from inside async
         code or when an event loop is already running.
 
@@ -307,9 +307,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             inferred_name = infer_obj_name(self, depth=2)
             if inferred_name is not None:  # pragma: no branch
                 self.name = inferred_name
-        return _utils.get_event_loop().run_until_complete(
-            self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False)
-        )
+        return _utils.run_until_complete(self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False))
 
     @asynccontextmanager
     async def iter(
@@ -345,7 +343,11 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             entered_span: AbstractSpan | None = None
             if span is None:
                 if self.auto_instrument:
-                    entered_span = stack.enter_context(logfire_span('run graph {graph.name}', graph=self))
+                    # Preformat span name so non-Logfire OTel backends show
+                    # 'run graph my_graph' instead of the literal template.
+                    # See https://github.com/pydantic/pydantic-ai/issues/3173.
+                    span_name = f'run graph {self.name}'
+                    entered_span = stack.enter_context(logfire_span(span_name, graph=self))
             else:
                 entered_span = stack.enter_context(span)  # pragma: lax no cover
             traceparent = None if entered_span is None else get_traceparent(entered_span)
@@ -862,7 +864,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 # or ExceptionGroup). This preserves the original exception for the caller.
                 try:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
-                except BrokenResourceError:
+                except (BrokenResourceError, ClosedResourceError):
                     pass  # pragma: no cover
                 return
             try:
@@ -872,8 +874,13 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
                 else:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
-            except BrokenResourceError:
-                # Can happen when an asyncio task is cancelled mid-send.
+            except (BrokenResourceError, ClosedResourceError):
+                # Can happen when an asyncio task is cancelled mid-send: the run's
+                # cleanup closes `iter_stream_sender` in another task while this
+                # task is still in-flight on `send`. Closing the sender raises
+                # `ClosedResourceError` (closing the receiver would raise
+                # `BrokenResourceError`); both are benign here — the result/error
+                # is no longer needed because the run is being torn down.
                 pass
 
     async def _run_task(
@@ -894,7 +901,11 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         elif isinstance(node, Step):
             with ExitStack() as stack:
                 if self.graph.auto_instrument:
-                    stack.enter_context(logfire_span('run node {node_id}', node_id=node.id, node=node))
+                    # Preformat span name so non-Logfire OTel backends show
+                    # 'run node my_step' instead of the literal template.
+                    # See https://github.com/pydantic/pydantic-ai/issues/3173.
+                    span_name = f'run node {node.id}'
+                    stack.enter_context(logfire_span(span_name, node_id=node.id, node=node))
 
                 step_context = StepContext[StateT, DepsT, Any](state=state, deps=deps, inputs=inputs)
                 output = await node.call(step_context)

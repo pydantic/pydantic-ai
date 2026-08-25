@@ -119,13 +119,7 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
 
 
 def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
-    if isinstance(e, ValidationError):
-        content: list[Any] | str = e.errors(include_url=False, include_context=False)
-    else:
-        content = e.message
-    m = _messages.RetryPromptPart(content=content, tool_name=run_context.tool_name)
-    if run_context.tool_call_id:
-        m.tool_call_id = run_context.tool_call_id
+    m = _messages.RetryPromptPart.from_error(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
     return ToolRetryError(m)
 
 
@@ -393,12 +387,9 @@ async def execute_output_function(
         return await function_schema.call(args, run_context)
     except ModelRetry as r:
         if wrap_validation_errors:
-            m = _messages.RetryPromptPart(
-                content=r.message,
-                tool_name=run_context.tool_name,
+            m = _messages.RetryPromptPart.from_error(
+                r, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id
             )
-            if run_context.tool_call_id:
-                m.tool_call_id = run_context.tool_call_id  # pragma: no cover
             raise ToolRetryError(m) from r
         else:
             raise
@@ -433,8 +424,9 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         if self._is_async:
             function = cast(Callable[[Any], Awaitable[T]], self.function)
             return await function(*args)
-        function = cast(Callable[[Any], T], self.function)
-        return await _utils.run_in_executor(function, *args)
+        # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+        function = cast(Callable[[Any], T | Awaitable[T]], self.function)
+        return await _utils.await_maybe(await _utils.run_in_executor(function, *args))
 
 
 @dataclass(kw_only=True)
@@ -485,16 +477,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
-                raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
+                raise UserError('`NativeOutput` must be the only output type.')
 
             flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
                 )
 
@@ -512,16 +504,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
-                raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
+                raise UserError('`PromptedOutput` must be the only output type.')
 
             flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`PromptedOutput` cannot contain `BinaryImage`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), BinaryImage]`'
                 )
 
@@ -1122,7 +1114,9 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         discriminated_json_schemas: list[ObjectJsonSchema] = []
         for object_key, json_schema in zip(self._processors.keys(), json_schemas):
             title = json_schema.pop('title', None)
-            description = json_schema.pop('description', None)
+            # Don't shadow the outer `description` parameter: it carries the union's own
+            # description (e.g. from `NativeOutput(..., description=...)`) into `super().__init__()` below.
+            json_schema_description = json_schema.pop('description', None)
 
             discriminated_json_schema = {
                 'type': 'object',
@@ -1138,8 +1132,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             }
             if title:  # pragma: no branch
                 discriminated_json_schema['title'] = title
-            if description:
-                discriminated_json_schema['description'] = description
+            if json_schema_description:
+                discriminated_json_schema['description'] = json_schema_description
 
             discriminated_json_schemas.append(discriminated_json_schema)
 
@@ -1508,7 +1502,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return '<output>'  # pragma: no cover
+        return '<output>'
 
     @property
     def label(self) -> str:

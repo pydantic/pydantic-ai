@@ -30,6 +30,7 @@ from typing import Any, Literal, TypeAlias, cast
 # Populated by FunctionSignature.render(), consulted by TypeSignature.display_name.
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
 
+
 # =============================================================================
 # Type expression tree
 # =============================================================================
@@ -92,12 +93,22 @@ TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | Generi
 # =============================================================================
 
 
+# One level of nesting inside a rendered docstring (Google style: four spaces).
+_DOC_INDENT = '    '
+
+# Keeps arbitrary description text from breaking the generated `"""..."""` literal:
+# backslashes would start escape sequences, null bytes are rejected by compile(),
+# and quotes could terminate the delimiter.
+_DESCRIPTION_ESCAPES = str.maketrans({'\\': '\\\\', '\0': '\\x00', '"': '\\"'})
+
+
 def _render_description(text: str, indent: str = '') -> list[str]:
     """Render a description as a list of indented docstring lines."""
-    text = text.strip()
-    if '\n' in text:
+    text = text.strip().translate(_DESCRIPTION_ESCAPES)
+    description_lines = text.splitlines()
+    if len(description_lines) > 1:
         lines = [f'{indent}"""']
-        for line in text.split('\n'):
+        for line in description_lines:
             lines.append(f'{indent}{line}' if line.strip() else '')
         lines.append(f'{indent}"""')
         return lines
@@ -199,6 +210,7 @@ class FunctionParam:
     name: str
     type: TypeExpr
     default: str | None = None
+    description: str | None = None
     kind: Literal['param'] = 'param'
 
     def __str__(self) -> str:
@@ -220,7 +232,6 @@ class FunctionSignature:
 
     name: str
     description: str | None = None
-
     params: dict[str, FunctionParam] = field(default_factory=dict[str, FunctionParam])
     """Function parameters, all rendered as keyword-only (JSON schema doesn't distinguish positional/keyword)."""
 
@@ -283,6 +294,21 @@ class FunctionSignature:
             parts = [f'{prefix} {name}(*, {params_str}) -> {return_str}:']
         else:
             parts = [f'{prefix} {name}() -> {return_str}:']
+
+        description_sections = [description] if description else []
+
+        args_lines: list[str] = []
+        for param in self.params.values():
+            description_lines = (param.description or '').strip().splitlines()
+            if not description_lines:
+                continue
+            first_line, *continuation = description_lines
+            args_lines.append(f'{_DOC_INDENT}{param.name}: {first_line}')
+            # Continuation lines nest one level past the parameter name
+            args_lines.extend(f'{_DOC_INDENT * 2}{line}' for line in continuation)
+        if args_lines:
+            description_sections.append('\n'.join(['Args:', *args_lines]))
+        description = '\n\n'.join(description_sections)
 
         if description:
             parts.extend(_render_description(description, indent='    '))
@@ -479,13 +505,31 @@ def _path_to_typename(tool_name: str, path: str) -> str:
     return ''.join(_to_pascal_case(p) for p in parts)
 
 
+def _normalize_schema_node(node: dict[str, Any] | bool) -> dict[str, Any]:
+    """Normalize a JSON Schema node to a dict.
+
+    Per the JSON Schema spec, `True` and `False` are valid schemas anywhere a schema may
+    appear (most commonly as `additionalProperties`, but also as a property value or an
+    `allOf`/`anyOf`/`oneOf`/`items`/`$defs` member). `True` (equivalent to `{}`) permits any
+    value; `False` permits none and is *not* equivalent to `{}`. Neither the "anything" nor
+    the "nothing" case maps to a precise Python type here, so we deliberately collapse both to
+    an empty schema, which the walker renders as `Any` — the practical fallback for the model.
+    Non-bool nodes are returned unchanged.
+
+    Called at every point where a nested node may be a raw schema, so no walker has to
+    special-case the boolean form.
+    """
+    return {} if isinstance(node, bool) else node
+
+
 def _process_schema_defs(
     defs: dict[str, dict[str, Any]],
     referenced_types: dict[str, TypeSignature],
     tool_name: str,
 ) -> None:
     """Process $defs from a JSON schema, adding TypeSignatures for object-type definitions."""
-    for def_name, def_schema in defs.items():
+    for def_name, def_schema_raw in defs.items():
+        def_schema = _normalize_schema_node(def_schema_raw)
         if def_schema.get('type') == 'object' and 'properties' in def_schema:
             if def_name not in referenced_types:
                 _build_and_register_type(def_name, def_schema, defs, referenced_types, tool_name, def_name)
@@ -504,21 +548,31 @@ def _build_params_from_schema(
     required_params: dict[str, FunctionParam] = {}
     optional_params: dict[str, FunctionParam] = {}
 
-    for prop_name, prop_schema in properties.items():
+    for prop_name, prop_schema_raw in properties.items():
+        prop_schema = _normalize_schema_node(prop_schema_raw)
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
+        description = prop_schema.get('description', '') or None
 
         if 'default' in prop_schema:
             default_str = repr(prop_schema['default'])
-            optional_params[prop_name] = FunctionParam(name=prop_name, type=type_expr, default=default_str)
+            optional_params[prop_name] = FunctionParam(
+                name=prop_name, type=type_expr, default=default_str, description=description
+            )
         elif prop_name in required:
-            required_params[prop_name] = FunctionParam(name=prop_name, type=type_expr, default=None)
+            required_params[prop_name] = FunctionParam(
+                name=prop_name, type=type_expr, default=None, description=description
+            )
         else:
             # Optional without default — add | None
             if _schema_allows_null(prop_schema):
-                optional_params[prop_name] = FunctionParam(name=prop_name, type=type_expr, default='None')
+                optional_params[prop_name] = FunctionParam(
+                    name=prop_name, type=type_expr, default='None', description=description
+                )
             else:
                 nullable_expr = UnionTypeExpr(members=[type_expr, _NONE])
-                optional_params[prop_name] = FunctionParam(name=prop_name, type=nullable_expr, default='None')
+                optional_params[prop_name] = FunctionParam(
+                    name=prop_name, type=nullable_expr, default='None', description=description
+                )
 
     return {**required_params, **optional_params}
 
@@ -529,29 +583,35 @@ def _schema_allows_null(schema: dict[str, Any]) -> bool:
     if isinstance(schema_type, list) and 'null' in schema_type:
         return True
     if 'anyOf' in schema:
-        return any(s.get('type') == 'null' for s in schema['anyOf'])
+        return any(_normalize_schema_node(s).get('type') == 'null' for s in schema['anyOf'])
     if 'oneOf' in schema:
-        return any(s.get('type') == 'null' for s in schema['oneOf'])
+        return any(_normalize_schema_node(s).get('type') == 'null' for s in schema['oneOf'])
     return False
 
 
 def _schema_to_type_expr(
-    schema: dict[str, Any],
+    schema: dict[str, Any] | bool,
     defs: dict[str, dict[str, Any]],
     referenced_types: dict[str, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
     """Convert a JSON schema to a TypeExpr."""
+    schema = _normalize_schema_node(schema)
+
     # Handle $ref
     if '$ref' in schema:
         ref = schema['$ref']
         ref_name = ref.split('/')[-1]
         # Ensure referenced def generates TypeSignature if needed
         if ref_name in defs and ref_name not in referenced_types:
-            ref_schema = defs[ref_name]
+            ref_schema = _normalize_schema_node(defs[ref_name])
             if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
                 _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
+            elif 'enum' in ref_schema and ref_schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf')):
+                # Pydantic emits enum classes as non-object defs. Resolve terminal enum defs
+                # inline as `Literal[...]`; a bare class name would never be defined.
+                return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
         # Return the TypeSignature object if available, otherwise the name
         if ref_name in referenced_types:
             return referenced_types[ref_name]
@@ -667,7 +727,7 @@ def _type_list_to_expr(
 
 
 def _handle_union_schema(
-    schemas: list[dict[str, Any]],
+    schemas: list[dict[str, Any] | bool],
     defs: dict[str, dict[str, Any]],
     referenced_types: dict[str, TypeSignature],
     tool_name: str,
@@ -677,7 +737,8 @@ def _handle_union_schema(
     type_exprs: list[TypeExpr] = []
     has_null = False
 
-    for s in schemas:
+    for s_raw in schemas:
+        s = _normalize_schema_node(s_raw)
         if s.get('type') == 'null':
             has_null = True
         else:
@@ -737,7 +798,8 @@ def _build_type_signature(
 
     fields: dict[str, TypeFieldSignature] = {}
 
-    for prop_name, prop_schema in properties.items():
+    for prop_name, prop_schema_raw in properties.items():
+        prop_schema = _normalize_schema_node(prop_schema_raw)
         prop_path = f'{path}.{prop_name}' if path else prop_name
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_path)
         is_required = prop_name in required

@@ -52,7 +52,7 @@ class TransformFunction(Protocol[StateT, DepsT, InputT, OutputT]):
             ctx: The step context containing state, dependencies, and inputs
 
         Returns:
-            An awaitable that resolves to the step's output
+            The step's output
         """
         raise NotImplementedError
 

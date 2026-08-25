@@ -18,6 +18,7 @@ def run_web_command(
     instructions: str | None = None,
     default_model: str = 'openai:gpt-5',
     html_source: str | None = None,
+    allowed_hosts: list[str] = [],
 ) -> int:
     """Run the web command to serve an agent via web UI.
 
@@ -33,6 +34,10 @@ def run_web_command(
         instructions: System instructions passed as extra instructions to each agent run.
         default_model: Default model to use when no agent or models are specified.
         html_source: URL or file path for the chat UI HTML.
+        allowed_hosts: Hostnames to answer to in addition to IP addresses and localhost.
+
+    Returns:
+        Exit code: 0 for success, 1 for failure.
     """
     console = Console()
 
@@ -67,6 +72,10 @@ def run_web_command(
         native_tools=tool_instances,
         instructions=instructions,
         html_source=html_source,
+        # `--host` is both where we bind and the URL printed below, so answering to it is implied —
+        # making the user repeat it in `--allowed-host` would have the CLI advertise a URL it then
+        # refuses. Only meaningful when binding to a name; an IP address is always allowed anyway.
+        allowed_hosts=[*allowed_hosts, host],
     )
 
     agent_desc = agent_path or 'generic agent'

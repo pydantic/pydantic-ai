@@ -10,7 +10,11 @@ from typing_extensions import assert_never
 from pydantic_ai.exceptions import ModelAPIError
 
 from .. import ModelHTTPError, usage
-from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
+from .._utils import (
+    generate_tool_call_id as _generate_tool_call_id,
+    guard_tool_call_id as _guard_tool_call_id,
+    is_str_dict as _is_str_dict,
+)
 from ..messages import (
     CachePoint,
     CompactionPart,
@@ -23,10 +27,12 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -35,7 +41,13 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, check_allow_model_requests
+from . import (
+    Model,
+    ModelRequestParameters,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    check_allow_model_requests,
+)
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -146,7 +158,7 @@ class CohereModel(Model[AsyncClientV2]):
 
     @property
     def base_url(self) -> str:
-        client_wrapper = self.client._client_wrapper  # type: ignore
+        client_wrapper = self.client._client_wrapper  # pyright: ignore[reportPrivateUsage]
         return str(client_wrapper.get_base_url())
 
     @property
@@ -200,7 +212,9 @@ class CohereModel(Model[AsyncClientV2]):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
     def _get_tool_choice(
@@ -216,7 +230,7 @@ class CohereModel(Model[AsyncClientV2]):
         via `tool_choice`, mirroring `MistralModel`.
         """
         resolved = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         if isinstance(resolved, tuple):
             # Cohere can't target a tool by name, so restrict the tools to the chosen subset
@@ -251,7 +265,7 @@ class CohereModel(Model[AsyncClientV2]):
                 elif content.type == 'thinking':  # pragma: no branch
                     parts.append(ThinkingPart(content=content.thinking))
         for c in response.message.tool_calls or []:
-            if c.function and c.function.name and c.function.arguments:  # pragma: no branch
+            if c.function and c.function.name:
                 parts.append(
                     ToolCallPart(
                         tool_name=c.function.name,
@@ -264,17 +278,18 @@ class CohereModel(Model[AsyncClientV2]):
         provider_details = {'finish_reason': raw_finish_reason}
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
+        provider_url = self.base_url
         return ModelResponse(
             parts=parts,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, provider_url, self._model_name),
             model_name=self._model_name,
             provider_name=self._provider.name,
-            provider_url=self.base_url,
+            provider_url=provider_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
 
-    def _map_messages(
+    def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
@@ -297,9 +312,17 @@ class CohereModel(Model[AsyncClientV2]):
                         item, NativeToolCallPart | NativeToolReturnPart | FilePart | CompactionPart
                     ):  # pragma: no cover
                         pass
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
 
+                if not texts and not thinking and not tool_calls:
+                    # Cohere rejects an assistant message with neither content nor tool calls
+                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+                    # the OpenAI and Anthropic adapters.
+                    continue
                 message_param = AssistantChatMessageV2(role='assistant')
                 if texts or thinking:
                     contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
@@ -370,18 +393,23 @@ class CohereModel(Model[AsyncClientV2]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())  # pragma: no cover
+                    yield UserChatMessageV2(role='user', content=part.model_response())
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
 
 
-def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
+def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
     u = response.usage
     if u is None:
         return usage.RequestUsage()
@@ -397,12 +425,20 @@ def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
             if u.billed_units.classifications:  # pragma: no cover
                 details['classifications'] = int(u.billed_units.classifications)
 
-        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
-        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
-        cache_read_tokens = int(u.cached_tokens) if u.cached_tokens else 0
-        return usage.RequestUsage(
-            input_tokens=request_tokens,
-            output_tokens=response_tokens,
-            cache_read_tokens=cache_read_tokens,
-            details=details,
+        usage_data: dict[str, object] = u.model_dump(exclude_none=True)
+        # Cohere SDK usage counts are typed as floats, while genai-prices extracts integer token fields.
+        if _is_str_dict(tokens := usage_data.get('tokens')):
+            for key in ('input_tokens', 'output_tokens'):
+                if isinstance(value := tokens.get(key), int | float):
+                    tokens[key] = int(value)
+        if isinstance(cached_tokens := usage_data.get('cached_tokens'), int | float):
+            usage_data['cached_tokens'] = int(cached_tokens)
+
+        return usage.RequestUsage.extract(
+            dict(model=model, usage=usage_data),
+            provider=provider,
+            provider_url=provider_url,
+            provider_fallback='cohere',
+            api_flavor='tokens',
+            details=details or None,
         )

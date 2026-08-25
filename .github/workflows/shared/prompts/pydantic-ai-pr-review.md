@@ -10,9 +10,10 @@ is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI PR Review
 
-You are reviewing PR **#${{ github.event.pull_request.number }}** in
-[${{ github.repository }}](https://github.com/${{ github.repository }}) —
-*${{ github.event.pull_request.title }}*.
+You are reviewing the pull request identified in "The pull request under review"
+above — that section is resolved before you start and is authoritative. This
+workflow is started by `CI` completing, not by the pull request event, so nothing
+here can name the PR itself.
 
 **Pydantic AI** ([ai.pydantic.dev](https://ai.pydantic.dev/)) is a
 provider-agnostic GenAI agent framework for Python. It is an open-source
@@ -40,7 +41,7 @@ The severity scale (CRITICAL / HIGH / MEDIUM / LOW / NITPICK), the
 the sub-agent finding format all live in a single file written by the
 pre-agent step:
 
-**`/tmp/gh-aw/.review-context/review-instructions.md`** — read this
+**`.review-context/review-instructions.md`** — read this
 once before reviewing. It is the source of truth; do not re-derive
 severity bands or false-positive rules from your own priors.
 
@@ -50,14 +51,27 @@ No findings → `APPROVE`. **Cap inline comments at 30 per run** — if
 more findings survive, keep the highest-severity 30 inline and list
 the rest briefly in the review body.
 
+## Targeted checks
+
+Beyond free-form review, run this check proactively on every model-touching PR:
+
+- **Profile-flag test pinning.** When the diff adds or modifies a
+  `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
+  the tests and cassettes added by the same diff exercise a model on *each*
+  side of that flag, not just one. The mechanical trigger, how to evaluate the
+  flag per pinned model, and the "flag this / do not flag this" calibration
+  pair are in `.review-context/review-instructions.md` (Example 4).
+  Cap this finding at **MEDIUM**: it is advisory and must never drive
+  `REQUEST_CHANGES`.
+
 ## Review process
 
 ### Step 1 — Orient
 
-1. Read `/tmp/gh-aw/.review-context/review-instructions.md` —
+1. Read `.review-context/review-instructions.md` —
    severity scale, false-positive catalog, calibration examples, and
    sub-agent finding format. Treat it as binding.
-2. Read `/tmp/gh-aw/.review-context/pr-details.json` and `pr-size.txt`.
+2. Read `.review-context/pr-details.json` and `pr-size.txt`.
 3. Read `pr-comments.txt`, `related-issues.txt`, and the relevant
    `agents-md.txt` sections.
 4. Skim `review-comments.txt` for prior threads (note the most recent
@@ -95,17 +109,17 @@ For each sub-agent, include in its prompt:
    - PR title and one-paragraph description (from `pr-details.json`).
    - The relevant `AGENTS.md` excerpts (from `agents-md.txt`).
    - An explicit instruction to **`Read`
-     `/tmp/gh-aw/.review-context/review-instructions.md` first** —
+     `.review-context/review-instructions.md` first** —
      that file holds the severity scale, false-positive catalog,
      calibration examples, and finding format. **Do not copy those
      sections into the sub-agent prompt** (the file is the single
      source of truth; copying drifts and bloats every prompt).
 3. The **assigned file list** (in the assigned ordering) and instructions
    to:
-   - Read each `/tmp/gh-aw/.review-context/diff/<path>.diff` for changes.
+   - Read each `.review-context/diff/<path>.diff` for changes.
    - Read the **full file** from the workspace for surrounding context
      (full files are checked out — use `Read`).
-   - Check `/tmp/gh-aw/.review-context/review-comments.txt` for existing
+   - Check `.review-context/review-comments.txt` for existing
      threads on these files; skip duplicates per the rules above.
 
 Keep sub-agent prompts focused: the assigned files + PR context + the
@@ -125,12 +139,12 @@ Before posting **any** inline comment:
 2. **Construct a concrete trigger** — what specific input or state makes
    it fail? If you can't describe one, drop it.
 3. **Apply the false-positive catalog** from
-   `/tmp/gh-aw/.review-context/review-instructions.md`. If the finding
+   `.review-context/review-instructions.md`. If the finding
    matches a "what NOT to flag" pattern, drop it.
 4. **Check existing threads** for the same `path:line` and apply the
    thread-handling rules above.
 5. **Confirm the line is commentable** — open
-   `/tmp/gh-aw/.review-context/diff/<file>.diff` and check the target line
+   `.review-context/diff/<file>.diff` and check the target line
    has an `NL:<n>` prefix. If not, move the finding into the review body.
 
 ### Step 5 — Comment and submit
@@ -149,8 +163,8 @@ After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_rev
 
 - **type:** `REQUEST_CHANGES` if any HIGH or CRITICAL finding survived,
   else `APPROVE`.
-- **body:** If you are approving, you should most often provide an empty
-  body. For `REQUEST_CHANGES`,
+- **body:** Always opens with the `Reviewed at` line. If you are approving,
+  that line is most often the whole body. For `REQUEST_CHANGES`,
   include only the verdict + any cross-cutting feedback that can't be
   expressed inline (e.g. "the new module duplicates logic in `agent.py`
   — consider unifying"). Do not summarise the PR, list reviewed files,
@@ -174,6 +188,9 @@ bot reviewing another bot's PR. If the PR author is a bot, submit a
   it.
 - Don't post speculative "this might break" findings without a concrete
   trigger.
+- Don't flag coverage-gate or `# pragma: no cover` outcomes — the
+  `fail_under = 100` CI job reports uncovered lines (and wrongly-placed
+  pragmas) deterministically; predicting them is noise.
 - Don't comment on lines without an `NL:` prefix in the per-file diff.
 - Don't write to the workspace — every output is a safe-output call.
 - Don't exceed 30 inline comments — pick the top-severity 30 and put the
