@@ -3,13 +3,9 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-from openai import AsyncOpenAI
-
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
@@ -23,15 +19,19 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenRouter provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
 class OpenRouterModelProfile(OpenAIModelProfile, total=False):
@@ -121,7 +121,7 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
-class OpenRouterProvider(Provider[AsyncOpenAI]):
+class OpenRouterProvider(_OpenAICompatibleProvider):
     """Provider for OpenRouter API."""
 
     @property
@@ -230,7 +230,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -240,7 +240,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Configure the provider with either an API key or prebuilt client.
 
@@ -253,7 +253,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 `OPENROUTER_APP_TITLE` when omitted.
             openai_client: Existing `AsyncOpenAI` client to reuse instead of
                 creating one internally.
-            http_client: Custom `httpx.AsyncClient` to pass into the
+            http_client: Custom `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to pass into the
                 `AsyncOpenAI` constructor when building a client.
 
         Raises:
@@ -275,17 +275,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
-            )
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(
+            self._client = self._create_openai_client(
                 base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
             )
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

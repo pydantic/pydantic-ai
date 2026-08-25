@@ -114,7 +114,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
 (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs (except for [Bedrock](models/bedrock.md)) use the [HTTPX](https://www.python-httpx.org/) library internally:
+To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/). Provider SDKs use either `httpx` or [`httpx2`](https://httpx2.pydantic.dev/) internally, except for [Bedrock](models/bedrock.md), which uses boto3:
 
 
 ```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
@@ -132,7 +132,9 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
+1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] for more details. `capture_all=True` means both headers and body are captured for both the request and response.
+
+    `httpx2` instrumentation requires `opentelemetry-instrumentation-httpx>=0.65b0`, which the [`logfire` extra](install.md#slim-install) installs for you. If you pin OpenTelemetry yourself and end up below that version, `logfire.instrument_httpx()` reports the missing requirement and emits no `httpx2` spans.
 
 ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
 
@@ -295,6 +297,8 @@ Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI sy
 
 Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these versions to [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; use version 5 unless you are temporarily preserving an older telemetry pipeline.
 
+Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
+
 #### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
@@ -338,6 +342,15 @@ Note: The `modality` field is only included for image, audio, and video content 
 Builds on version 4 with improved handling of deferred tool calls:
 
 - [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions no longer record an exception event or set the span status to ERROR — the span is left as UNSET, since deferrals are control flow, not errors.
+
+#### Version 6 (opt-in)
+
+Builds on version 5 by giving tool results the message role the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/model/gen-ai/gen-ai-input-messages.json) pair with the `tool_call_response` parts they carry:
+
+- Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
+- New (v6): it moves to a `{"role": "tool"}` message
+
+This applies to tool returns and to retries that answer a tool call. A retry that answers nothing — output validation, a `ModelRetry` from a validator — stays on `user`, which is the role it reaches the model as. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
 
 ---
 

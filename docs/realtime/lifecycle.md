@@ -67,6 +67,14 @@ forever.
 Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
+On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) the same policy applies to an
+unexpected drop, but a *clean* close is treated as the browser hanging up: the sideband is a control
+channel, so a normal close ends iteration without a session error or reconnect attempt even when a
+`reconnect` policy is set. The close frame alone can't distinguish a hangup from a
+WebSocket-terminating proxy closing the sideband cleanly mid-call (a restart or graceful rotation),
+which would end the agent side while the browser keeps talking to the provider — drain such
+connections at the infrastructure layer rather than relying on the `reconnect` policy to cover them.
+
 ### State restoration
 
 OpenAI and Azure OpenAI have no cross-connection server state, so Pydantic AI replays local message

@@ -17,6 +17,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
     from pydantic_ai.models.cohere import CohereModelName
+    from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
@@ -34,6 +35,7 @@ if not imports_successful():  # pragma: lax no cover
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
+    CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
 
 pytestmark = [
@@ -67,6 +69,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'bedrock': BedrockModelName,
     'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
+    'crusoe': CrusoeModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
     'google-cloud': GoogleModelName,

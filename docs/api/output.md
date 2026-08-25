@@ -11,3 +11,4 @@
             - TextOutput
             - StructuredDict
             - DeferredToolRequests
+            - OutputObjectDefinition
