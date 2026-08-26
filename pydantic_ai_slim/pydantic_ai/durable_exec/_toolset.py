@@ -43,6 +43,13 @@ wording is available (e.g. Temporal requires async tools and forbids inline MCP 
 ValidationContextResolver: TypeAlias = Callable[[RunContext[Any]], Any]
 
 
+class _ToolArgsValidationError(Exception):
+    """Marks a `ValidationError` caught while the framework is validating tool arguments."""
+
+    def __init__(self, error: ValidationError) -> None:
+        self.error = error
+
+
 def live_validation_context(ctx: RunContext[Any]) -> Any:
     """Return the run's live validation context for in-process durable units."""
     return object.__getattribute__(ctx, 'validation_context')
@@ -146,7 +153,10 @@ async def call_dynamic_tool(
         run_toolset = await run_toolset.for_run_step(ctx)
         tools = await run_toolset.get_tools(ctx)
         tool = _dynamic_tool(toolset, tools, name, tool_def)
-        args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
+        try:
+            args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
+        except ValidationError as exc:
+            raise _ToolArgsValidationError(exc) from exc
         return await run_toolset.call_tool(name, args, ctx, tool)
 
 
@@ -176,7 +186,10 @@ async def validate_tool_args(
     validation_context: ValidationContextResolver = live_validation_context,
 ) -> None:
     """Schema-validate arguments and run the tool's validator inside a durable unit."""
-    args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
+    try:
+        args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
+    except ValidationError as exc:
+        raise _ToolArgsValidationError(exc) from exc
     await run_args_validator(tool, args, ctx)
 
 
@@ -188,9 +201,12 @@ async def run_args_validator(tool: ToolsetTool[AgentDepsT], args: dict[str, Any]
             f'Tool {tool.tool_def.name!r} has no `args_validator`. '
             'The dynamic toolset function may have returned a different toolset than expected.'
         )
-    result = args_validator_func(ctx, **args)
-    if inspect.isawaitable(result):
-        await result
+    try:
+        result = args_validator_func(ctx, **args)
+        if inspect.isawaitable(result):
+            await result
+    except ValidationError as exc:
+        raise _ToolArgsValidationError(exc) from exc
 
 
 @dataclass
@@ -281,6 +297,20 @@ async def _wrap_tool_result(coro: Awaitable[Any]) -> CallToolResult:
         return _ModelRetry(message=exc.message)
     except ToolFailed as exc:
         return _ToolFailed(message=exc.message)
+    except _ToolArgsValidationError as exc:
+        error = exc.error
+        return _ValidationError(
+            title=error.title,
+            errors=[
+                _ValidationErrorDetail(
+                    type=detail['type'],
+                    loc=list(detail['loc']),
+                    msg=detail['msg'],
+                    input=detail.get('input'),
+                )
+                for detail in error.errors(include_url=False, include_context=False)
+            ],
+        )
 
 
 async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
@@ -292,22 +322,8 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
 
 
 async def wrap_tool_validation_result(coro: Awaitable[Any]) -> CallToolResult:
-    """Wrap argument-validation results, including model-visible validation details."""
-    try:
-        return await _wrap_tool_result(coro)
-    except ValidationError as exc:
-        return _ValidationError(
-            title=exc.title,
-            errors=[
-                _ValidationErrorDetail(
-                    type=error['type'],
-                    loc=list(error['loc']),
-                    msg=error['msg'],
-                    input=error.get('input'),
-                )
-                for error in exc.errors(include_url=False, include_context=False)
-            ],
-        )
+    """Wrap results from a framework tool-argument-validation path."""
+    return await wrap_tool_call_result(coro)
 
 
 def unwrap_tool_call_result(result: CallToolResult) -> Any:

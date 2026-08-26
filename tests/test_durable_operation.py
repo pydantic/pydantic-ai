@@ -65,12 +65,15 @@ from pydantic_ai.durable_exec._toolset import (
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
     _ToolFailed,  # pyright: ignore[reportPrivateUsage]
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    call_dynamic_tool,
     get_dynamic_tools,
     run_args_validator,
+    unwrap_tool_call_result,
+    wrap_tool_call_result,
 )
 from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import RetryPromptPart, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1288,6 +1291,53 @@ async def test_tool_body_validation_error_is_not_sent_to_model() -> None:
     assert result.output == 'done'
     assert len(model_messages) == 2
     assert secret not in str(model_messages)
+
+
+async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry() -> None:
+    tool_calls: list[int] = []
+    retries = 0
+
+    async def double(x: int) -> str:
+        tool_calls.append(x)
+        return f'got {x}'
+
+    inner = FunctionToolset(tools=[double], id='inner')
+    dynamic = DynamicToolset(lambda _: inner, id='dynamic')
+
+    async def call_tool(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+        config: Mapping[str, Any],
+    ) -> Any:
+        del config
+        payload = await wrap_tool_call_result(call_dynamic_tool(dynamic, name, tool_args, ctx, tool_def=tool.tool_def))
+        return unwrap_tool_call_result(payload)
+
+    durable = DurableDynamicToolset(
+        dynamic,
+        in_durable_context=lambda: True,
+        get_tools_operation=lambda ctx: get_dynamic_tools(dynamic, ctx),
+        call_tool_operation=call_tool,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle='enter-never',
+    )
+
+    def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
+        nonlocal retries
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+            retries += 1
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 5})])
+        return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-a-number'})])
+
+    result = await Agent(FunctionModel(model), toolsets=[durable]).run('double it')
+
+    assert result.output == 'done'
+    assert retries == 1
+    assert tool_calls == [5]
 
 
 async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:

@@ -6,7 +6,7 @@ from typing import Any, ClassVar, cast
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart
+from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart, Tool
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._capability_operation import (
@@ -26,8 +26,10 @@ from pydantic_ai.durable_exec._toolset import (
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
     _ValidationError,  # pyright: ignore[reportPrivateUsage]
     _ValidationErrorDetail,  # pyright: ignore[reportPrivateUsage]
+    run_args_validator,
     unwrap_recorded_tool_call_result,
     unwrap_tool_call_result,
+    validate_tool_args,
     wrap_tool_validation_result,
 )
 from pydantic_ai.models.test import TestModel
@@ -475,9 +477,21 @@ def test_pre_wrapper_tool_result_upgrade_paths() -> None:
 
 
 async def test_validation_error_crosses_call_tool_result_boundary() -> None:
-    async def invalid() -> None:
-        TypeAdapter(int).validate_python('not-an-int')
+    async def typed(value: int) -> None:
+        pass
 
-    payload = await wrap_tool_validation_result(invalid())
+    toolset = FunctionToolset(tools=[typed])
+    tool = (await toolset.get_tools(RunContext(deps=None, model=TestModel(), usage=RunUsage())))['typed']
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    payload = await wrap_tool_validation_result(validate_tool_args(tool, {'value': 'not-an-int'}, ctx))
+    with pytest.raises(ValidationError, match='valid integer'):
+        unwrap_tool_call_result(payload)
+
+    def invalid_args_validator(ctx: RunContext[None], value: int) -> None:
+        TypeAdapter(int).validate_python('invalid-from-args-validator')
+
+    validated_toolset = FunctionToolset(tools=[Tool(typed, args_validator=invalid_args_validator)])
+    validated_tool = (await validated_toolset.get_tools(ctx))['typed']
+    payload = await wrap_tool_validation_result(run_args_validator(validated_tool, {'value': 1}, ctx))
     with pytest.raises(ValidationError, match='valid integer'):
         unwrap_tool_call_result(payload)
