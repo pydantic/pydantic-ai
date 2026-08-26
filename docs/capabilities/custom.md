@@ -438,60 +438,6 @@ If `for_run()` returns the original capability, the bootstrap model selection is
 
 ## Hooking into the lifecycle
 
-## Durable capability operations {#durable-capability-operations}
-
-A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.
-
-```python
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.models.test import TestModel
-
-
-class Summaries(AbstractCapability[None]):
-    id = 'summaries'
-
-    async def before_run(self, ctx: RunContext[None]) -> None:
-        summary = await self.summarize(ctx, ['one', 'two'])
-        assert summary == '2 messages'
-
-    @durable_operation(name='summarize')
-    async def summarize(self, ctx: RunContext[None], messages: list[str]) -> str:
-        return f'{len(messages)} messages'
-
-
-agent = Agent(TestModel(), capabilities=[Summaries()])
-```
-
-The decorator is the recommended form for methods with a fixed name. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
-
-Capability implementations that build their operation table dynamically can override [`get_durable_operations()`][pydantic_ai.capabilities.AbstractCapability.get_durable_operations]. Use [`RunContext.durable_operation()`][pydantic_ai.tools.RunContext.durable_operation] to retain the handler's parameter and return types:
-
-```python
-from collections.abc import Awaitable, Callable, Mapping
-
-from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability
-
-
-class DynamicSummary(AbstractCapability[None]):
-    id = 'dynamic-summary'
-
-    async def before_run(self, ctx: RunContext[None]) -> None:
-        summarize = ctx.durable_operation(self, 'summarize', self.summarize)
-        await summarize(['one', 'two'])
-
-    async def summarize(self, messages: list[str]) -> str:
-        return f'{len(messages)} messages'
-
-    def get_durable_operations(self) -> Mapping[str, Callable[[list[str]], Awaitable[str]]]:
-        return {'summarize': self.summarize}
-```
-
-Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
-
-The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
-
 Capabilities can hook into five lifecycle points, each with up to four variants:
 
 * **`before_*`** — fires before the action, can modify inputs
@@ -885,6 +831,60 @@ Capabilities can resolve [deferred tool calls](../deferred-tools.md) — calls t
 Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output for the caller to handle.
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
+
+## Durable capability operations {#durable-capability-operations}
+
+A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.models.test import TestModel
+
+
+class Summaries(AbstractCapability[None]):
+    id = 'summaries'
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        summary = await self.summarize(ctx, ['one', 'two'])
+        assert summary == '2 messages'
+
+    @durable_operation(name='summarize')
+    async def summarize(self, ctx: RunContext[None], messages: list[str]) -> str:
+        return f'{len(messages)} messages'
+
+
+agent = Agent(TestModel(), capabilities=[Summaries()])
+```
+
+The decorator is the recommended form for methods with a fixed name. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
+
+Capability implementations that build their operation table dynamically can override [`get_durable_operations()`][pydantic_ai.capabilities.AbstractCapability.get_durable_operations]. Use [`RunContext.durable_operation()`][pydantic_ai.tools.RunContext.durable_operation] to retain the handler's parameter and return types:
+
+```python
+from collections.abc import Awaitable, Callable, Mapping
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+
+
+class DynamicSummary(AbstractCapability[None]):
+    id = 'dynamic-summary'
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        summarize = ctx.durable_operation(self, 'summarize', self.summarize)
+        await summarize(['one', 'two'])
+
+    async def summarize(self, messages: list[str]) -> str:
+        return f'{len(messages)} messages'
+
+    def get_durable_operations(self) -> Mapping[str, Callable[[list[str]], Awaitable[str]]]:
+        return {'summarize': self.summarize}
+```
+
+Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
+
+The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
 
 ## Wrapping capabilities
 
