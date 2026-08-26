@@ -98,8 +98,15 @@ def test_heroku_model_profile_routes_thinking_capable_families():
     assert fallback.get('supports_thinking') is None
 
 
-@pytest.mark.parametrize('model_name', ['glm-4-7', 'glm-4-7-flash'])
+@pytest.mark.parametrize('model_name', ['glm-4-7', 'glm-4-7-flash', 'GLM-4-7'])
 def test_heroku_glm_routes_to_zai_profile(model_name: str):
+    """GLM is a Z.AI family, so it must not inherit MoonshotAI's Kimi-only whitespace quirk.
+
+    Heroku spells the minor version with a hyphen, which `zai_model_profile`'s dotted prefixes don't
+    match, so `HerokuProvider.model_profile` normalizes it first. The uppercase case pins that the
+    normalization still applies to a mixed-case id, which only holds while `model_profile` lowercases
+    before dispatching.
+    """
     provider = HerokuProvider(api_key='api-key')
 
     profile = provider.model_profile(model_name)
