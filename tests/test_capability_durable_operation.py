@@ -824,6 +824,17 @@ def test_usage_delta_ignores_non_numeric_extension_values() -> None:
     assert 'opaque' not in delta.details
 
 
+def test_usage_delta_preserves_numeric_extension_fields() -> None:
+    before = RunUsage()
+    after = RunUsage()
+    before.__dict__['custom_units'] = 2
+    after.__dict__['custom_units'] = 9
+
+    delta = _delta(before, after)
+
+    assert delta.__dict__['custom_units'] == 7
+
+
 async def test_usage_snapshot_copies_details_before_in_place_handler_mutation() -> None:
     """`RunUsage.__copy__` isolates its only mutable field before worker-side accounting."""
     usage = RunUsage(details={'existing': 2})
