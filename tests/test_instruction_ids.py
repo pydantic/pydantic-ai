@@ -833,6 +833,69 @@ async def test_an_instruction_part_between_literals_keeps_each_block_independent
     ]
 
 
+def test_an_overriding_container_cannot_share_a_key_with_a_sibling():
+    """A retained container is an instruction source, so its `id` competes for the same key.
+
+    A `CombinedCapability` subclass that overrides `get_instructions` contributes as a source in its
+    own right and is kept out of the flattened capability list so its override survives. That put it
+    outside the uniqueness check that walks the flattened list: its leaves could be distinct while
+    the container itself shared an id with a sibling, and `capability:<id>` then addressed both --
+    rewriting that key would have replaced text from two unrelated owners.
+    """
+
+    class Group(CombinedCapability[Any]):
+        def get_instructions(self) -> str:
+            return 'Group override.'  # pragma: no cover -- construction raises before it is asked
+
+    with pytest.raises(UserError, match="Capability id 'dup' is used by multiple capabilities that contribute"):
+        Agent(
+            capabilities=[
+                Group(capabilities=[Capability[Any](instructions='Leaf.', id='leaf')], id='dup'),
+                Capability[Any](instructions='Sibling.', id='dup'),
+            ]
+        )
+
+
+async def test_a_run_capability_cannot_share_a_key_with_an_overriding_container():
+    """The same collision is reachable from `run(capabilities=...)`, not just at construction."""
+
+    class Group(CombinedCapability[Any]):
+        def get_instructions(self) -> str:
+            return 'Group override.'
+
+    agent = Agent(capabilities=[Group(capabilities=[Capability[Any](instructions='Leaf.', id='leaf')], id='dup')])
+
+    with pytest.raises(UserError, match="Capability id 'dup' is used by multiple capabilities that contribute"):
+        await run_and_capture(agent, capabilities=[Capability[Any](instructions='Run-level.', id='dup')])
+
+
+async def test_for_run_cannot_rebind_onto_a_container_key():
+    """`for_run` can hand back an id construction never saw, so the resolved tree is checked too.
+
+    Construction validates the capabilities it was given. A capability whose `for_run` returns a
+    different instance can introduce a collision after that point -- here against a retained
+    overriding container -- and no further layer is composed, so nothing else would notice.
+    """
+
+    class Group(CombinedCapability[Any]):
+        def get_instructions(self) -> str:
+            return 'Group override.'
+
+    class Mutant(Capability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return Capability[Any](instructions='Mutated.', id='dup')
+
+    agent = Agent(
+        capabilities=[
+            Group(capabilities=[Capability[Any](instructions='Leaf.', id='leaf')], id='dup'),
+            Mutant(instructions='Original.', id='mutant'),
+        ]
+    )
+
+    with pytest.raises(UserError, match="Capability id 'dup' is used by multiple capabilities that contribute"):
+        await run_and_capture(agent)
+
+
 async def test_resuming_does_not_stamp_instructions_onto_a_mock_request():
     """The rewrite lands on the message the echoed instructions came from, not on the trailing request.
 
