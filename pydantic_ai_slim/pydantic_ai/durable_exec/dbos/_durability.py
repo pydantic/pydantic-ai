@@ -160,15 +160,18 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._bound_model_operations = self._bind_model_operations(
             self._operation_backend, model_id=None, model_name='default'
         )
-        request, request_stream, cancel = self._bound_model_operations
+        request, request_stream, compact_messages, cancel = self._bound_model_operations
         assert isinstance(request, DBOSBoundOperation)
         assert isinstance(request_stream, DBOSBoundOperation)
         assert isinstance(cancel, DBOSBoundOperation)
+        assert isinstance(compact_messages, DBOSBoundOperation)
         self._request_step = request.step
         self._request_stream_step = request_stream.step
+        self._compact_messages_step = compact_messages.step
         self._cancel_suspended_response_step = cancel.step
         request.use_step_getter(lambda: self._request_step)
         request_stream.use_step_getter(lambda: self._request_stream_step)
+        compact_messages.use_step_getter(lambda: self._compact_messages_step)
         cancel.use_step_getter(lambda: self._cancel_suspended_response_step)
 
         if self._event_stream_handler is not None:

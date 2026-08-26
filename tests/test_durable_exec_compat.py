@@ -34,6 +34,8 @@ JOURNAL_OPERATION_NAMES = {
     'compat__model.request_stream.registered',
     'compat__model.cancel_suspended_response',
     'compat__model.cancel_suspended_response.registered',
+    'compat__model.compact_messages',
+    'compat__model.compact_messages.registered',
     'compat__event_stream_handler',
     'compat__function_toolset__functions.call_tool:function_tool',
     'compat__function_toolset__functions.validate_args',
@@ -49,6 +51,7 @@ PREFECT_OPERATION_NAMES = {
     'Model Request: test',
     'Model Request (Streaming): test',
     'Cancel Suspended Response: test',
+    'Compact Messages: test',
     'Handle Stream Event',
     'Call Tool: function_tool',
     'Validate Tool Args: function_tool',
@@ -61,6 +64,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__model_request',
     'agent__compat__model_request_stream',
     'agent__compat__model_cancel_suspended_response',
+    'agent__compat__model_compact_messages',
     'agent__compat__event_stream_handler',
     'agent__compat__toolset__<agent>__call_tool',
     'agent__compat__toolset__<agent>__validate_args',
@@ -78,6 +82,7 @@ DBOS_OPERATION_NAMES = {
     'compat__model.request',
     'compat__model.request_stream',
     'compat__model.cancel_suspended_response',
+    'compat__model.compact_messages',
     'compat__event_stream_handler',
     'compat__mcp_server__mcp.get_tools',
     'compat__mcp_server__mcp.get_instructions',
@@ -160,6 +165,8 @@ def test_default_journal_operation_name_matrix() -> None:
         durability._unit_name('model.request_stream'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('model.request_stream', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('model.cancel_suspended_response'),  # pyright: ignore[reportPrivateUsage]
+        durability._unit_name('model.compact_messages'),  # pyright: ignore[reportPrivateUsage]
+        durability._unit_name('model.compact_messages', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name(  # pyright: ignore[reportPrivateUsage]
             'model.cancel_suspended_response', suffix='.registered'
         ),
@@ -197,6 +204,7 @@ def test_prefect_operation_name_matrix() -> None:
         durability._unit_name(  # pyright: ignore[reportPrivateUsage]
             'model.cancel_suspended_response', label='Cancel Suspended Response', model_name='test'
         ),
+        durability._unit_name('model.compact_messages', label='Compact Messages', model_name='test'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
@@ -233,6 +241,7 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         durability._unit_name(  # pyright: ignore[reportPrivateUsage]
             'model.cancel_suspended_response', label='Cancel Suspended Response', model_name='test'
         ),
+        durability._unit_name('model.compact_messages', label='Compact Messages', model_name='test'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]

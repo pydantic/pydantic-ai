@@ -8,6 +8,7 @@ from pydantic import ConfigDict, with_config
 from pydantic_ai import messages as _messages
 from pydantic_ai.durable_exec._base import (
     CancelSuspendedResponseOperationParams,
+    CompactMessagesOperationParams,
     EventStreamHandlerOperationParams as _SemanticEventStreamHandlerParams,
     ModelRequestOperationParams,
     _CallToolParams,  # pyright: ignore[reportPrivateUsage]
@@ -18,7 +19,7 @@ from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 __all__ = (
     '_CancelParams',
     '_CancelTransport',
+    '_CompactMessagesTransport',
     '_DynamicCallTransport',
     '_DynamicGetToolsTransport',
     '_EventStreamHandlerParams',
@@ -184,6 +186,15 @@ class _CancelParams:
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
+class _CompactMessagesParams:
+    request_context: ModelRequestContext
+    instructions: str | None
+    serialized_run_context: Any
+    model_id: str | None = None
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
     event: AgentStreamEvent
     serialized_run_context: Any
@@ -225,6 +236,31 @@ class _ModelRequestTransport:
             request.model_request_parameters,
             ctx,
         )
+
+
+class _CompactMessagesTransport:
+    wire_type = _CompactMessagesParams
+    result_type = ModelResponse
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
+        self._durability = durability
+
+    def dump(self, params: CompactMessagesOperationParams) -> tuple[_CompactMessagesParams, Any]:
+        ctx = params.run_context
+        return (
+            _CompactMessagesParams(
+                request_context=params.request_context,
+                instructions=params.instructions,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
+                model_id=params.model_id,
+            ),
+            ctx.deps,
+        )
+
+    def load(self, payload: tuple[_CompactMessagesParams, Any], *, runtime: object) -> CompactMessagesOperationParams:
+        params, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+        return CompactMessagesOperationParams(params.model_id, params.request_context, params.instructions, ctx)
 
 
 class _CancelTransport:

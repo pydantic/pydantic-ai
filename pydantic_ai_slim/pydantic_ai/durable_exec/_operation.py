@@ -32,6 +32,12 @@ class CancelSuspendedResponseId:
 
 
 @dataclass(frozen=True)
+class CompactMessagesId:
+    model_id: str | None
+    model_name: str
+
+
+@dataclass(frozen=True)
 class EventStreamHandlerId:
     pass
 
@@ -61,6 +67,7 @@ class CallToolId:
 
 DurableOperationId: TypeAlias = (
     ModelRequestId
+    | CompactMessagesId
     | CancelSuspendedResponseId
     | EventStreamHandlerId
     | GetToolsId

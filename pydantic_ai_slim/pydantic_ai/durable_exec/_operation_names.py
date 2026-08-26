@@ -8,6 +8,7 @@ from typing_extensions import assert_never
 from ._operation import (
     CallToolId,
     CancelSuspendedResponseId,
+    CompactMessagesId,
     DurableOperationId,
     EventStreamHandlerId,
     GetInstructionsId,
@@ -60,6 +61,8 @@ class JournalOperationNamer:
                 return f'{self._agent_name}__{operation}{self._model_suffix(model_id)}'
             case CancelSuspendedResponseId(model_id=model_id):
                 return f'{self._agent_name}__model.cancel_suspended_response{self._model_suffix(model_id)}'
+            case CompactMessagesId(model_id=model_id):
+                return f'{self._agent_name}__model.compact_messages{self._model_suffix(model_id)}'
             case EventStreamHandlerId():
                 return f'{self._agent_name}__event_stream_handler'
             case GetToolsId(toolset_kind=kind, toolset_id=toolset_id):
@@ -88,6 +91,8 @@ class PrefectOperationNamer:
                 return f'Model Request: {model_name}'
             case CancelSuspendedResponseId(model_name=model_name):
                 return f'Cancel Suspended Response: {model_name}'
+            case CompactMessagesId(model_name=model_name):
+                return f'Compact Messages: {model_name}'
             case EventStreamHandlerId():
                 return 'Handle Stream Event'
             case GetToolsId() | GetInstructionsId():
@@ -129,6 +134,8 @@ class TemporalOperationNamer:
                 return f'{self._prefix}__model_request'
             case CancelSuspendedResponseId():
                 return f'{self._prefix}__model_cancel_suspended_response'
+            case CompactMessagesId():
+                return f'{self._prefix}__model_compact_messages'
             case EventStreamHandlerId():
                 return f'{self._prefix}__event_stream_handler'
             case GetToolsId(toolset_kind=kind, toolset_id=toolset_id):

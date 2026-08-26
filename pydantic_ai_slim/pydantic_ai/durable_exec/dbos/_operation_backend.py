@@ -8,6 +8,7 @@ from dbos import DBOS
 from pydantic_ai import ToolsetTool, messages as _messages
 from pydantic_ai.durable_exec._base import (
     CancelSuspendedResponseOperationParams,
+    CompactMessagesOperationParams,
     EventStreamHandlerOperationParams,
     ModelRequestOperationParams,
     _CallToolParams,  # pyright: ignore[reportPrivateUsage]
@@ -17,6 +18,7 @@ from pydantic_ai.durable_exec._base import (
 from pydantic_ai.durable_exec._operation import (
     CallToolId,
     CancelSuspendedResponseId,
+    CompactMessagesId,
     DurableOperation,
     DurableOperationId,
     EventStreamHandlerId,
@@ -29,7 +31,7 @@ from pydantic_ai.durable_exec._operation import (
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.durable_exec._operation_names import DBOSOperationNamer
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 
@@ -99,7 +101,9 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
         name: str,
         config: StepConfig,
     ) -> tuple[BoundDurableOperation[P, W, R], Sequence[Callable[..., object]]]:
-        if isinstance(operation.operation_id, (ModelRequestId, CancelSuspendedResponseId, EventStreamHandlerId)):
+        if isinstance(
+            operation.operation_id, (ModelRequestId, CompactMessagesId, CancelSuspendedResponseId, EventStreamHandlerId)
+        ):
             step, dispatch = self._bind_model_or_event(operation, name, config)
         else:
             step, dispatch = self._bind_toolset(operation, name, config)
@@ -157,6 +161,31 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     return operation.result_codec.load(payload)
 
                 dispatch = dispatch_cancel
+
+            case CompactMessagesId():
+
+                async def compact_step(
+                    model_id: str | None,
+                    request_context: ModelRequestContext,
+                    instructions: str | None,
+                    run_context: RunContext[Any],
+                ) -> object:
+                    params = CompactMessagesOperationParams(model_id, request_context, instructions, run_context)
+                    return operation.result_codec.dump(await operation.handler(cast(P, params)))
+
+                step = DBOS.step(name=name, **step_config)(compact_step)
+
+                async def dispatch_compact(step: Callable[..., Any], params: P) -> R:
+                    compact_params = cast(CompactMessagesOperationParams, params)
+                    payload = await step(
+                        compact_params.model_id,
+                        compact_params.request_context,
+                        compact_params.instructions,
+                        compact_params.run_context,
+                    )
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_compact
 
             case EventStreamHandlerId():
 

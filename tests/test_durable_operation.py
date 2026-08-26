@@ -20,12 +20,17 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._base import (
+    BaseDurabilityCapability,
+    CompactMessagesOperationParams,
+    ToolsetKind,
+)
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
     CacheIdentity,
     CallToolId,
     CancelSuspendedResponseId,
+    CompactMessagesId,
     DurableOperation,
     DurableOperationId,
     EventStreamHandlerId,
@@ -62,8 +67,10 @@ from pydantic_ai.durable_exec._toolset import (
     get_dynamic_tools,
     run_args_validator,
 )
+from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import RetryPromptPart, ToolCallPart, UserPromptPart
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
@@ -79,6 +86,8 @@ JOURNAL_OPERATION_NAMES = {
     'compat__model.request_stream.registered',
     'compat__model.cancel_suspended_response',
     'compat__model.cancel_suspended_response.registered',
+    'compat__model.compact_messages',
+    'compat__model.compact_messages.registered',
     'compat__event_stream_handler',
     'compat__function_toolset__functions.call_tool:function_tool',
     'compat__function_toolset__functions.validate_args',
@@ -93,6 +102,7 @@ PREFECT_OPERATION_NAMES = {
     'Model Request: test',
     'Model Request (Streaming): test',
     'Cancel Suspended Response: test',
+    'Compact Messages: test',
     'Handle Stream Event',
     'Call Tool: function_tool',
     'Validate Tool Args: function_tool',
@@ -104,6 +114,7 @@ DBOS_OPERATION_NAMES = {
     'compat__model.request',
     'compat__model.request_stream',
     'compat__model.cancel_suspended_response',
+    'compat__model.compact_messages',
     'compat__event_stream_handler',
     'compat__mcp_server__mcp.get_tools',
     'compat__mcp_server__mcp.get_instructions',
@@ -116,6 +127,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__model_request',
     'agent__compat__model_request_stream',
     'agent__compat__model_cancel_suspended_response',
+    'agent__compat__model_compact_messages',
     'agent__compat__event_stream_handler',
     'agent__compat__toolset__<agent>__call_tool',
     'agent__compat__toolset__<agent>__validate_args',
@@ -223,6 +235,8 @@ def _ids() -> list[DurableOperationId]:
         GetToolsId('dynamic', 'dynamic'),
         CallToolId('dynamic', 'dynamic'),
         ValidateToolArgumentsId('dynamic', 'dynamic'),
+        CompactMessagesId(None, 'test'),
+        CompactMessagesId('registered', 'test'),
     ]
 
 
@@ -255,6 +269,8 @@ def test_journal_name_parity_with_live_old_implementation_and_table() -> None:
             'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
         ),
         'compat__dynamic_toolset__dynamic.validate_args',
+        old._unit_name('model.compact_messages'),  # pyright: ignore[reportPrivateUsage]
+        old._unit_name('model.compact_messages', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
     ]
     namer = JournalOperationNamer('compat')
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in _ids()]
@@ -267,7 +283,18 @@ def test_prefect_name_parity_with_live_old_implementation_and_table() -> None:
     from pydantic_ai.durable_exec.prefect import PrefectDurability
 
     old = PrefectDurability(name='compat')
-    ids = [*_ids()[:1], _ids()[2], _ids()[4], _ids()[6], _ids()[9], _ids()[10], _ids()[11], _ids()[13], _ids()[14]]
+    ids = [
+        *_ids()[:1],
+        _ids()[2],
+        _ids()[4],
+        _ids()[6],
+        _ids()[9],
+        _ids()[10],
+        _ids()[11],
+        _ids()[13],
+        _ids()[14],
+        _ids()[15],
+    ]
     live = [
         old._unit_name('model.request', label='Model Request', model_name='test'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name(  # pyright: ignore[reportPrivateUsage]
@@ -282,6 +309,7 @@ def test_prefect_name_parity_with_live_old_implementation_and_table() -> None:
         old._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
         old._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
+        old._unit_name('model.compact_messages', label='Compact Messages', model_name='test'),  # pyright: ignore[reportPrivateUsage]
     ]
     namer = PrefectOperationNamer()
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
@@ -317,6 +345,7 @@ def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
         _ids()[12],
         _ids()[13],
         _ids()[14],
+        _ids()[15],
     ]
     namer = DBOSOperationNamer('compat')
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
@@ -347,6 +376,7 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
         ModelRequestId(None, False, 'test'),
         ModelRequestId(None, True, 'test'),
         CancelSuspendedResponseId(None, 'test'),
+        CompactMessagesId(None, 'test'),
         EventStreamHandlerId(),
         CallToolId('function', '<agent>'),
         ValidateToolArgumentsId('function', '<agent>'),
@@ -377,6 +407,9 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._toolset import toolset_temporal_activities
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+    )
 
     agent = Agent(
         TestModel(),
@@ -394,6 +427,7 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     legacy_registrations = [
         durability.request_activity,
         durability.request_stream_activity,
+        durability.compact_messages_activity,
         durability.event_stream_handler_activity,
         durability.cancel_suspended_response_activity,
     ]
@@ -413,6 +447,7 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     expected_signatures = {
         durability.request_activity: (_RequestParams, ModelResponse),
         durability.request_stream_activity: (_RequestParams, _StreamedActivityPayload),
+        durability.compact_messages_activity: (_CompactMessagesParams, ModelResponse),
         durability.event_stream_handler_activity: (_EventStreamHandlerParams, type(None)),
         durability.cancel_suspended_response_activity: (_CancelParams, type(None)),
     }
@@ -447,7 +482,7 @@ async def test_temporal_backend_dispatches_cancel_with_legacy_contextless_payloa
     )
     operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
     assert operations is not None
-    cancel_operation = operations[2]
+    cancel_operation = operations[3]
     assert cancel_operation.operation.operation_id == CancelSuspendedResponseId(None, 'test:test')
     response = ModelResponse(parts=[TextPart('cancel')])
     await cancel_operation(CancelSuspendedResponseOperationParams(None, response, None))
@@ -464,6 +499,50 @@ async def test_temporal_backend_dispatches_cancel_with_legacy_contextless_payloa
         await JournalDurability()._cancel_suspended_response_operation(  # pyright: ignore[reportPrivateUsage]
             CancelSuspendedResponseOperationParams(None, response, None)
         )
+
+
+async def test_temporal_backend_dispatches_compact_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    agent = Agent(TestModel(), name='compact-dispatch', capabilities=[TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    expected = ModelResponse(parts=[TextPart('compacted')])
+    dispatched: list[tuple[Callable[..., object], Sequence[object], object]] = []
+
+    async def execute_activity(
+        activity: Callable[..., object], *, args: Sequence[object], **config: object
+    ) -> ModelResponse:
+        dispatched.append((activity, args, config['summary']))
+        return expected
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    model = TestModel()
+    ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
+    request_context = ModelRequestContext(
+        model=model,
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
+    assert operations is not None
+    operation = operations[2]
+    result = cast(
+        ModelResponse,
+        await operation(CompactMessagesOperationParams(None, request_context, 'Keep decisions', ctx)),
+    )
+
+    assert result == expected
+    activity, args, summary = dispatched[0]
+    assert activity is durability.compact_messages_activity
+    assert isinstance(args[0], _CompactMessagesParams)
+    assert args[0].instructions == 'Keep decisions'
+    assert summary == 'compact messages: test:test'
 
 
 async def test_temporal_backend_labels_validation_activity(
@@ -508,6 +587,8 @@ def _exhaustive_identity(operation_id: DurableOperationId) -> str:
             return 'model'
         case CancelSuspendedResponseId():
             return 'cancel'
+        case CompactMessagesId():
+            return 'compact'
         case EventStreamHandlerId():
             return 'event'
         case GetToolsId():
@@ -525,6 +606,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
     identities: list[DurableOperationId] = [
         ModelRequestId(None, False, 'model'),
         CancelSuspendedResponseId(None, 'model'),
+        CompactMessagesId(None, 'model'),
         EventStreamHandlerId(),
         GetToolsId('function', 'tools'),
         GetInstructionsId('mcp'),
@@ -534,6 +616,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
     assert [_exhaustive_identity(operation_id) for operation_id in identities] == [
         'model',
         'cancel',
+        'compact',
         'event',
         'tools',
         'instructions',
@@ -553,6 +636,139 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
 )
 def test_validation_operation_names(namer: DurableOperationNamer, expected: str) -> None:
     assert namer.operation_name(ValidateToolArgumentsId('function', 'tools')) == expected
+
+
+@pytest.mark.parametrize(
+    ('namer', 'expected_name'),
+    [
+        (PrefectOperationNamer(), 'Compact Messages: test'),
+        (DBOSOperationNamer('agent'), 'agent__model.compact_messages'),
+        (TemporalOperationNamer('agent'), 'agent__agent__model_compact_messages'),
+    ],
+)
+async def test_durable_model_compact_messages_dispatches_operation(
+    namer: DurableOperationNamer, expected_name: str
+) -> None:
+    config = _Config()
+    backend = _RecordingBackend(config, namer=namer)
+    response = ModelResponse(parts=[TextPart('compacted')])
+
+    async def handler(params: CompactMessagesOperationParams) -> ModelResponse:
+        assert params.instructions == 'Keep decisions'
+        return response
+
+    operation = backend.bind(
+        DurableOperation(
+            operation_id=CompactMessagesId(None, 'test'),
+            handler=handler,
+            parameter_transport=IdentityParameterTransport[CompactMessagesOperationParams](),
+            cache_identity=NoCacheIdentity(),
+            result_codec=TypedResultCodec[ModelResponse](ModelResponse),
+            config_role=OperationConfigRole.MODEL,
+        )
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def compact_messages_segment(request_context: ModelRequestContext, instructions: str | None) -> ModelResponse:
+        return await operation(CompactMessagesOperationParams(None, request_context, instructions, ctx))
+
+    async def unused_request(request_context: ModelRequestContext) -> ModelResponse:
+        raise AssertionError('not called')
+
+    async def unused_stream(request_context: ModelRequestContext) -> StreamedActivityResult:
+        raise AssertionError('not called')
+
+    async def unused_cancel(response: ModelResponse) -> None:
+        raise AssertionError('not called')
+
+    model = DurableModel(
+        TestModel(),
+        request_segment=unused_request,
+        request_stream_segment=unused_stream,
+        compact_messages_segment=compact_messages_segment,
+        cancel_suspended_response_segment=unused_cancel,
+    )
+    request_context = ModelRequestContext(
+        model=model,
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert await model.compact_messages(request_context, instructions='Keep decisions') == response
+    assert backend.calls[0][0] == expected_name
+
+
+async def test_base_durable_model_compact_messages_dispatches_bound_operation() -> None:
+    response = ModelResponse(parts=[TextPart('compacted')])
+
+    class CompactModel(TestModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            assert instructions == 'Keep decisions'
+            return response
+
+    model = CompactModel()
+    agent = Agent(model, name='compact', capabilities=[JournalDurability()])
+    durability = JournalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
+    request_context = ModelRequestContext(
+        model=model,
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    async def handler(context: ModelRequestContext) -> ModelResponse:
+        assert isinstance(context.model, DurableModel)
+        return await context.model.compact_messages(context, instructions='Keep decisions')
+
+    assert await durability.wrap_model_request(ctx, request_context=request_context, handler=handler) == response
+    assert durability.calls[0][0] == 'compact__model.compact_messages'
+
+
+async def test_dbos_compact_messages_operation_dispatches_step() -> None:
+    pytest.importorskip('dbos')
+    from pydantic_ai.durable_exec.dbos import DBOSDurability
+    from pydantic_ai.durable_exec.dbos._operation_backend import DBOSBoundOperation
+
+    expected = ModelResponse(parts=[TextPart('compacted')])
+
+    class CompactModel(TestModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            assert instructions == 'Keep decisions'
+            return expected
+
+    model = CompactModel()
+    agent = Agent(model, name='compact-dbos', capabilities=[DBOSDurability()])
+    durability = DBOSDurability.from_agent(agent)
+    assert durability is not None
+    operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
+    assert operations is not None
+    operation = operations[2]
+    assert isinstance(operation, DBOSBoundOperation)
+    step_body = cast(Callable[..., Awaitable[object]], cast(Any, operation.step).__wrapped__)
+
+    async def step(*args: object) -> object:
+        return await step_body(*args)
+
+    operation.use_step_getter(lambda: step)
+    ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
+    request_context = ModelRequestContext(
+        model=model,
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    result = cast(
+        ModelResponse,
+        await operation(CompactMessagesOperationParams(None, request_context, 'Keep decisions', ctx)),
+    )
+    assert result == expected
 
 
 def test_namer_error_paths_and_unrepresented_formats() -> None:
@@ -617,8 +833,8 @@ class _CacheIdentity(CacheIdentity[int]):
 
 
 class _RecordingBackend(CallableOperationBackend[dict[str, str]]):
-    def __init__(self, config: _Config) -> None:
-        super().__init__(namer=JournalOperationNamer('agent'), config=config)
+    def __init__(self, config: _Config, *, namer: DurableOperationNamer | None = None) -> None:
+        super().__init__(namer=namer or JournalOperationNamer('agent'), config=config)
         self.calls: list[tuple[str, object, object]] = []
 
     async def _execute(

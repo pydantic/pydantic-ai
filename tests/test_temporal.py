@@ -200,6 +200,9 @@ try:
         resolve_tool_activity_config,
         toolset_temporal_activities,
     )
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+    )
 
     from .temporal_sandbox_workflow import PydanticAIPluginSandboxWorkflow
 except ImportError:  # pragma: lax no cover
@@ -7245,8 +7248,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + call/validation activities for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 5
+    # 4 base activities + call/validation activities for the agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 6
 
 
 def test_durability_temporal_activities_with_toolsets():
@@ -7259,8 +7262,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + call/validation activities for both function toolsets
-    assert len(bound.temporal_activities) == 7
+    # 4 base activities + call/validation activities for both function toolsets
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_duplicate_toolset_id_rejected():
@@ -7293,8 +7296,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + call/validation activities for <agent> and the shared toolset (once)
-    assert len(bound.temporal_activities) == 7
+    # 4 base activities + call/validation activities for <agent> and the shared toolset (once)
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_activity_config_not_mutated():
@@ -11569,6 +11572,12 @@ class _HeartbeatProbeModel(FunctionModel):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await asyncio.sleep(0.01)
 
+    async def compact_messages(
+        self, request_context: ModelRequestContext, *, instructions: str | None = None
+    ) -> ModelResponse:
+        await asyncio.sleep(0.01)
+        return ModelResponse(parts=[TextPart('compacted')])
+
 
 _heartbeat_agent = Agent(
     _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
@@ -11645,6 +11654,19 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             ],
             f'{prefix}__model_request': [request_params, None],
             f'{prefix}__model_request_stream': [request_params, None],
+            f'{prefix}__model_compact_messages': [
+                _CompactMessagesParams(
+                    request_context=ModelRequestContext(
+                        model=cast(Model[Any], ctx.model),
+                        messages=request_params.messages,
+                        model_settings=None,
+                        model_request_parameters=request_params.model_request_parameters,
+                    ),
+                    instructions='Keep decisions',
+                    serialized_run_context=serialized_run_context,
+                ),
+                None,
+            ],
             f'{prefix}__model_cancel_suspended_response': [
                 _CancelParams(
                     response=ModelResponse(parts=[TextPart('suspended')]),

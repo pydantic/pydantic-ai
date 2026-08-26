@@ -10,6 +10,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai.durable_exec._operation import (
     CallToolId,
     CancelSuspendedResponseId,
+    CompactMessagesId,
     DurableOperation,
     DurableOperationId,
     EventStreamHandlerId,
@@ -107,6 +108,9 @@ class TemporalBoundOperation(Generic[P, W, R]):
         elif isinstance(operation_id, CancelSuspendedResponseId):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
             activity_config['summary'] = f'cancel suspended response: {model_name}'
+        elif isinstance(operation_id, CompactMessagesId):
+            model_name = cast(_ModelParams, params).model_id or operation_id.model_name
+            activity_config['summary'] = f'compact messages: {model_name}'
         elif isinstance(operation_id, CallToolId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'call tool: {operation_id.toolset_id}:{tool_name}'
@@ -122,7 +126,7 @@ class TemporalBoundOperation(Generic[P, W, R]):
             event = cast(_EventParams, params).event
             activity_config['summary'] = f'handle event: {event.event_kind}'
 
-        if isinstance(operation_id, ModelRequestId):
+        if isinstance(operation_id, ModelRequestId | CompactMessagesId):
             with model_response_payload_errors(model_name):
                 return await execute_activity(
                     activity=self.registration, args=cast(Sequence[Any], payload), **activity_config

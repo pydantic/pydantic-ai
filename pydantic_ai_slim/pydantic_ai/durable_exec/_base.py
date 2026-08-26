@@ -47,6 +47,7 @@ from ._operation import (
     CacheIdentity,
     CallToolId,
     CancelSuspendedResponseId,
+    CompactMessagesId,
     DurableOperation,
     DurableOperationConfig,
     DurableOperationId,
@@ -114,6 +115,14 @@ class CancelSuspendedResponseOperationParams:
 
 
 @dataclass(frozen=True)
+class CompactMessagesOperationParams:
+    model_id: str | None
+    request_context: ModelRequestContext
+    instructions: str | None
+    run_context: RunContext[Any]
+
+
+@dataclass(frozen=True)
 class EventStreamHandlerOperationParams:
     event: AgentStreamEvent
     run_context: RunContext[Any]
@@ -154,6 +163,11 @@ class _ModelRequestCacheIdentity(CacheIdentity[ModelRequestOperationParams]):
 class _CancelSuspendedResponseCacheIdentity(CacheIdentity[CancelSuspendedResponseOperationParams]):
     def project(self, params: CancelSuspendedResponseOperationParams) -> tuple[object, ...]:
         return (params.model_id, params.response, params.run_context)
+
+
+class _CompactMessagesCacheIdentity(CacheIdentity[CompactMessagesOperationParams]):
+    def project(self, params: CompactMessagesOperationParams) -> tuple[object, ...]:
+        return (params.model_id, params.request_context, params.instructions, params.run_context)
 
 
 class _EventStreamHandlerCacheIdentity(CacheIdentity[EventStreamHandlerOperationParams]):
@@ -314,7 +328,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
         self._toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
-        self._bound_model_operations: tuple[Any, Any, Any] | None = None
+        self._bound_model_operations: tuple[Any, Any, Any, Any] | None = None
         self._bound_event_operation: Any = None
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
@@ -617,6 +631,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     suffix=self._model_id_suffix(model_id),
                     model_name=model_name,
                     label='Cancel Suspended Response',
+                )
+            case CompactMessagesId(model_id=model_id, model_name=model_name):
+                return self._unit_name(
+                    'model.compact_messages',
+                    suffix=self._model_id_suffix(model_id),
+                    model_name=model_name,
+                    label='Compact Messages',
                 )
             case EventStreamHandlerId():
                 return self._unit_name('event_stream_handler', label='Handle Stream Event')
@@ -1249,7 +1270,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Base-owned: assemble a `DurableModel` from three segment executors when in-context.
+        """Base-owned: assemble a `DurableModel` from four segment executors when in-context.
 
         Each segment runs its model call in a durable unit via `_durable_operation`; the model is
         rebuilt worker-side from `model_id` (`_resolve_model_for_request`). Identical for every
@@ -1262,7 +1283,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         model_id = self._model_id_for_request(ctx, request_context)
         model_name = request_context.model.model_name
         backend = self._build_operation_backend()
-        request_operation, request_stream_operation, cancel_suspended_response_operation = (
+        request_operation, request_stream_operation, compact_messages_operation, cancel_suspended_response_operation = (
             self._bound_model_operations
             or self._bind_model_operations(backend, model_id=model_id, model_name=model_name)
         )
@@ -1293,10 +1314,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             await cancel_suspended_response_operation(CancelSuspendedResponseOperationParams(model_id, response, ctx))
 
+        async def compact_messages_segment(
+            compact_context: ModelRequestContext, instructions: str | None
+        ) -> ModelResponse:
+            return await compact_messages_operation(
+                CompactMessagesOperationParams(model_id, compact_context, instructions, ctx)
+            )
+
         request_context.model = DurableModel(
             request_context.model,
             request_segment=request_segment,
             request_stream_segment=request_stream_segment,
+            compact_messages_segment=compact_messages_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
         return await handler(request_context)
@@ -1306,7 +1335,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     ) -> StreamedActivityResult:
         return cast(StreamedActivityResult, result)
 
-    def _bind_model_operations(self, backend: Any, *, model_id: str | None, model_name: str) -> tuple[Any, Any, Any]:
+    def _bind_model_operations(
+        self, backend: Any, *, model_id: str | None, model_name: str
+    ) -> tuple[Any, Any, Any, Any]:
         request_operation = backend.bind(
             DurableOperation(
                 operation_id=ModelRequestId(model_id, False, model_name),
@@ -1327,6 +1358,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 config_role=OperationConfigRole.MODEL,
             )
         )
+        compact_messages_operation = backend.bind(
+            DurableOperation(
+                operation_id=CompactMessagesId(model_id, model_name),
+                handler=self._compact_messages_operation,
+                parameter_transport=self._compact_messages_parameter_transport(),
+                cache_identity=_CompactMessagesCacheIdentity(),
+                result_codec=self._legacy_result_codec(ModelResponse),
+                config_role=OperationConfigRole.MODEL,
+            )
+        )
         cancel_suspended_response_operation = backend.bind(
             DurableOperation(
                 operation_id=CancelSuspendedResponseId(model_id, model_name),
@@ -1338,13 +1379,21 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
         )
 
-        return request_operation, request_stream_operation, cancel_suspended_response_operation
+        return (
+            request_operation,
+            request_stream_operation,
+            compact_messages_operation,
+            cancel_suspended_response_operation,
+        )
 
     def _model_request_parameter_transport(self, result_type: object) -> Any:
         return IdentityParameterTransport[ModelRequestOperationParams]()
 
     def _cancel_suspended_response_parameter_transport(self) -> Any:
         return IdentityParameterTransport[CancelSuspendedResponseOperationParams]()
+
+    def _compact_messages_parameter_transport(self) -> Any:
+        return IdentityParameterTransport[CompactMessagesOperationParams]()
 
     async def _model_request_operation(self, params: ModelRequestOperationParams) -> ModelResponse:
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
@@ -1372,6 +1421,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
             await model.cancel_suspended_response(params.response)
+
+    async def _compact_messages_operation(self, params: CompactMessagesOperationParams) -> ModelResponse:
+        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
+            return await model.compact_messages(params.request_context, instructions=params.instructions)
 
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse

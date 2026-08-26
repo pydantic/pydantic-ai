@@ -49,6 +49,7 @@ from ._toolset import (
 from ._transports import (
     _CancelParams as _CancelParams,
     _CancelTransport,
+    _CompactMessagesTransport,
     _DynamicCallTransport,
     _DynamicGetToolsTransport,
     _EventStreamHandlerParams as _EventStreamHandlerParams,
@@ -299,7 +300,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self._bound_model_operations = self._bind_model_operations(backend, model_id=None, model_name=model_name)
         self.request_activity = self._bound_model_operations[0].registration
         self.request_stream_activity = self._bound_model_operations[1].registration
-        self.cancel_suspended_response_activity = self._bound_model_operations[2].registration
+        self.compact_messages_activity = self._bound_model_operations[2].registration
+        self.cancel_suspended_response_activity = self._bound_model_operations[3].registration
 
         if self._event_stream_handler is not None:
             self._bound_event_operation = self._bind_event_operation(backend)
@@ -495,6 +497,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _cancel_suspended_response_parameter_transport(self) -> _CancelTransport:
         return _CancelTransport(self)
+
+    def _compact_messages_parameter_transport(self) -> _CompactMessagesTransport:
+        return _CompactMessagesTransport(self)
 
     def _event_stream_handler_parameter_transport(self) -> _EventStreamHandlerTransport:
         return _EventStreamHandlerTransport(self)
