@@ -46,6 +46,10 @@ Then running `clai` will start an interactive session where you can chat with th
 - `/cp`: Copy the last response to clipboard
 - `/usage`: Show cumulative token usage for the session (turns, input, output, requests, tool calls); add `--json` for a single-line JSON object
 
+When streaming (the default), any tool the agent calls is shown as it runs and marked done once its
+result arrives, so you can follow a tool-using agent without leaving the terminal. Pass `--no-stream`
+to print only the final answer.
+
 ### CLI Options
 
 | Option | Description |

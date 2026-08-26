@@ -314,7 +314,9 @@ def _run_chat_command(
             ) from e
         try:
             toolsets = load_mcp_toolsets(args.mcp_config)
-        except (FileNotFoundError, ValidationError, ValueError) as e:
+        # `OSError` rather than `FileNotFoundError`: a path that exists but can't be read as a file
+        # (a directory, or one without read permission) raises a sibling `OSError` subclass.
+        except (OSError, ValidationError, ValueError) as e:
             console.print(f'[red]Error: Could not load MCP config from {args.mcp_config}:\n{e}[/red]')
             return 1
 
@@ -475,20 +477,24 @@ async def ask_agent(
             ) as agent_run:
                 live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
                 content_pieces: list[str] = []
+                # Tool calls run concurrently and can return out of order, so in-flight calls are
+                # keyed by call id — rendering only the latest would erase the others' indicators.
+                pending_calls: dict[str, str] = {}
                 updated_content = ''
                 live_started = False
 
                 async for node in agent_run:
                     if Agent.is_model_request_node(node):
-                        # The first model request node always precedes any tool call, so starting the
-                        # live display here keeps the spinner up until streamed content is about to
-                        # appear, and enters the `Live` context exactly once.
-                        if not live_started:
-                            status.stop()
-                            stack.enter_context(live)
-                            live_started = True
-
                         async with node.stream(agent_run.ctx) as handle_stream:
+                            # Inside the `async with`, so the spinner survives request preparation
+                            # and time-to-first-byte rather than handing the user a blank display.
+                            # The first node is always a model request, so `live` is entered before
+                            # any tool-call node needs it — and the flag enters it exactly once.
+                            if not live_started:
+                                status.stop()
+                                stack.enter_context(live)
+                                live_started = True
+
                             async for content in handle_stream.stream_output(debounce_by=None):
                                 updated_content = str(content)
                                 display = '\n\n'.join([*content_pieces, updated_content])
@@ -504,15 +510,16 @@ async def ask_agent(
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
-                                    display = '\n\n'.join(
-                                        [*content_pieces, f'> _Calling tool `{event.part.tool_name}`…_']
-                                    )
-                                    live.update(Markdown(display, code_theme=code_theme))
-                                elif isinstance(event, FunctionToolResultEvent) and isinstance(  # pragma: no branch
-                                    event.part, ToolReturnPart
-                                ):
-                                    content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
-                                    live.update(Markdown('\n\n'.join(content_pieces), code_theme=code_theme))
+                                    pending_calls[event.tool_call_id] = event.part.tool_name
+                                elif isinstance(event, FunctionToolResultEvent):
+                                    # Pop on any result, not just a `ToolReturnPart`: a call that
+                                    # comes back as a `RetryPromptPart` would otherwise stay pending
+                                    # and pin its indicator for the rest of the run.
+                                    pending_calls.pop(event.tool_call_id, None)
+                                    if isinstance(event.part, ToolReturnPart):
+                                        content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
+                                calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
+                                live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))
 
             assert agent_run.result is not None
             return agent_run.result.all_messages()

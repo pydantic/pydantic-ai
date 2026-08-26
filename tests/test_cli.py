@@ -8,15 +8,18 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 import sniffio
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
+from rich.live import Live
+from rich.markdown import Markdown
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -189,6 +192,10 @@ def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path):
     assert 'Called tool temp_get_weather_forecast' in capfd.readouterr().out
 
 
+# Sentinel for the case where `--mcp-config` is handed an existing path that isn't a readable file.
+DIRECTORY_CONFIG = 'directory-instead-of-file'
+
+
 @pytest.mark.parametrize(
     'config,expected',
     [
@@ -209,6 +216,11 @@ def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path):
             'to be an object',
             id='non-object-server-entry',
         ),
+        pytest.param(
+            DIRECTORY_CONFIG,
+            'Is a directory',
+            id='directory-not-a-file',
+        ),
     ],
 )
 def test_mcp_config_errors(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, config: str | None, expected: str):
@@ -217,6 +229,8 @@ def test_mcp_config_errors(capfd: CaptureFixture[str], env: TestEnv, tmp_path: P
     config_file = tmp_path / 'mcp_servers.json'
     if config is None:
         target = tmp_path / 'does_not_exist.json'
+    elif config == DIRECTORY_CONFIG:
+        target = tmp_path
     else:
         config_file.write_text(config)
         target = config_file
@@ -313,6 +327,134 @@ It is sunny in Mexico City.                                                     
 """)
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].parts[-1] == TextPart(content='It is sunny in Mexico City.')
+
+
+async def _two_city_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Stream narration then two tool calls at once, so both are in flight together."""
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        yield 'Both cities checked.'
+    else:
+        yield 'Checking two cities.'
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"city": "Lisbon"}', tool_call_id='call_1'),
+            1: DeltaToolCall(name='get_temp', json_args='{"city": "Porto"}', tool_call_id='call_2'),
+        }
+
+
+@pytest.mark.anyio
+async def test_streaming_with_concurrent_tool_calls(monkeypatch: pytest.MonkeyPatch):
+    """Every in-flight tool call keeps its own indicator until its own result arrives.
+
+    Two tools called in one response run concurrently, so the render loop keys them by
+    `tool_call_id`. Rendering only the most recent call erased the earlier one's indicator, leaving
+    a still-running tool with no line at all. The final console output can't show that — the
+    regression lives in the intermediate `Live` frames, so those are captured here.
+
+    Asserted as order-independent invariants rather than a frame snapshot: the two results are
+    emitted by concurrent tasks, so their order is not stable and a snapshot of the sequence would
+    flake. `get_temp` waits on `get_weather` only to guarantee the two calls overlap.
+    """
+    frames: list[str] = []
+    original_update = Live.update
+
+    def capture_update(self: Live, renderable: Any, **kwargs: Any) -> None:
+        if isinstance(renderable, Markdown):
+            frames.append(renderable.markup)
+        return original_update(self, renderable, **kwargs)
+
+    monkeypatch.setattr(Live, 'update', capture_update)
+
+    weather_returned = anyio.Event()
+    agent = Agent(FunctionModel(stream_function=_two_city_stream))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        weather_returned.set()
+        return f'sunny in {city}'
+
+    @agent.tool_plain
+    async def get_temp(city: str) -> str:
+        await weather_returned.wait()
+        return f'20C in {city}'
+
+    console = Console(file=StringIO(), force_terminal=False, width=80)
+    await ask_agent(agent, 'weather?', stream=True, console=console, code_theme='monokai')
+
+    # Consecutive duplicates carry no information — the same frame re-rendered.
+    distinct = [frame for i, frame in enumerate(frames) if i == 0 or frame != frames[i - 1]]
+
+    # The regression: the second call's indicator replaced the first's, so this frame never existed.
+    assert any('_Calling tool `get_weather`…_' in frame and '_Calling tool `get_temp`…_' in frame for frame in distinct)
+    # And once one call finished, the other was left with no indicator at all.
+    assert any('Called tool `' in frame and '_Calling tool `' in frame for frame in distinct)
+
+    # The final frame holds both completions; their order follows task completion, so assert
+    # membership rather than a sequence.
+    final = distinct[-1]
+    assert final.startswith('Checking two cities.')
+    assert '> Called tool `get_weather`.' in final
+    assert '> Called tool `get_temp`.' in final
+    assert '_Calling tool' not in final
+    assert final.endswith('Both cities checked.')
+
+
+async def _retrying_tool_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Call a tool that asks to be retried, then answer without calling it again."""
+    if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+        yield 'Recovered without the tool.'
+    else:
+        yield 'Trying a tool.'
+        yield {0: DeltaToolCall(name='flaky', json_args='{}', tool_call_id='call_1')}
+
+
+@pytest.mark.anyio
+async def test_streaming_clears_indicator_for_retried_tool(monkeypatch: pytest.MonkeyPatch):
+    """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
+
+    `pending_calls` is popped for any `FunctionToolResultEvent`, not only a `ToolReturnPart`.
+    Popping on success alone left `> _Calling tool ...` on screen for the rest of the run. A retry
+    still renders no `Called tool` line — surfacing retries is a separate feature.
+    """
+    frames: list[str] = []
+    original_update = Live.update
+
+    def capture_update(self: Live, renderable: Any, **kwargs: Any) -> None:
+        if isinstance(renderable, Markdown):
+            frames.append(renderable.markup)
+        return original_update(self, renderable, **kwargs)
+
+    monkeypatch.setattr(Live, 'update', capture_update)
+
+    agent = Agent(FunctionModel(stream_function=_retrying_tool_stream))
+
+    @agent.tool_plain
+    def flaky() -> str:
+        raise ModelRetry('not this time')
+
+    console = Console(file=StringIO(), force_terminal=False, width=80)
+    await ask_agent(agent, 'go', stream=True, console=console, code_theme='monokai')
+
+    distinct = [frame for i, frame in enumerate(frames) if i == 0 or frame != frames[i - 1]]
+    assert distinct == snapshot(
+        [
+            'Trying a tool.',
+            """\
+Trying a tool.
+
+> _Calling tool `flaky`…_\
+""",
+            'Trying a tool.',
+            """\
+Trying a tool.
+
+Recovered without the tool.\
+""",
+        ]
+    )
+    # The indicator appears while the call is in flight, then is gone for good.
+    assert any('_Calling tool `flaky`…_' in frame for frame in distinct)
+    assert '_Calling tool' not in distinct[-1]
+    assert 'Called tool' not in distinct[-1]
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):

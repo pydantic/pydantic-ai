@@ -1938,10 +1938,11 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         A list of toolsets, one per server in the config file, each prefixed with the server name.
 
     Raises:
-        FileNotFoundError: If the configuration file does not exist.
+        OSError: If the configuration file does not exist (`FileNotFoundError`), or exists but
+            cannot be read — a directory, or a file without read permission.
         ValidationError: If the configuration file does not match the schema.
-        ValueError: If an environment variable referenced in the configuration is not defined and
-            no default is provided.
+        ValueError: If the configuration is malformed, or an environment variable referenced in it
+            is not defined and no default is provided.
     """
     config_path = Path(config_path)
     if not config_path.exists():
