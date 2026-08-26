@@ -4,13 +4,9 @@ import copy
 import uuid
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from decimal import Decimal
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
-from dbos import DBOS, DBOSConfig, SetWorkflowID
-from prefect import flow
-from prefect.context import TaskRunContext
-from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
@@ -29,10 +25,6 @@ from pydantic_ai.durable_exec._capability_operation import (
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._toolset import Lifecycle
-from pydantic_ai.durable_exec.dbos import DBOSDurability
-from pydantic_ai.durable_exec.prefect import PrefectDurability
-from pydantic_ai.durable_exec.temporal import TemporalDurability
-from pydantic_ai.durable_exec.temporal._transports import _CapabilityOperationParams, _CapabilityOperationTransport
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -40,7 +32,59 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
+if TYPE_CHECKING:
+    from dbos import DBOS, DBOSConfig, SetWorkflowID
+    from prefect import flow
+    from prefect.context import TaskRunContext
+    from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+
+    from pydantic_ai.durable_exec.dbos import DBOSDurability
+    from pydantic_ai.durable_exec.prefect import PrefectDurability
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._transports import _CapabilityOperationParams, _CapabilityOperationTransport
+
+    dbos_available = prefect_available = temporal_available = False
+else:
+    try:
+        from dbos import DBOS, DBOSConfig, SetWorkflowID
+
+        from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+        dbos_available = True
+    except ImportError:  # pragma: lax no cover
+        DBOS = DBOSConfig = SetWorkflowID = DBOSDurability = cast(Any, None)
+        dbos_available = False
+
+    try:
+        from prefect import flow
+        from prefect.context import TaskRunContext
+
+        from pydantic_ai.durable_exec.prefect import PrefectDurability
+
+        prefect_available = True
+    except ImportError:  # pragma: lax no cover
+        flow = TaskRunContext = PrefectDurability = cast(Any, None)
+        prefect_available = False
+
+    try:
+        from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+
+        from pydantic_ai.durable_exec.temporal import TemporalDurability
+        from pydantic_ai.durable_exec.temporal._transports import (  # pyright: ignore[reportPrivateUsage]
+            _CapabilityOperationParams,
+            _CapabilityOperationTransport,
+        )
+
+        temporal_available = True
+    except ImportError:  # pragma: lax no cover
+        ActivityDefinition = TemporalDurability = cast(Any, None)
+        temporal_available = False
+
 pytestmark = pytest.mark.anyio
+
+requires_dbos = pytest.mark.skipif(not dbos_available, reason='DBOS is not installed')
+requires_prefect = pytest.mark.skipif(not prefect_available, reason='Prefect is not installed')
+requires_temporal = pytest.mark.skipif(not temporal_available, reason='Temporal is not installed')
 
 
 @pytest.fixture(autouse=True)
@@ -395,6 +439,7 @@ async def test_wrapped_durability_dispatches_capability_operation() -> None:
     assert any(name == 'wrapped_durability__capability__operations.calculate' for name, _ in durability.calls)
 
 
+@requires_temporal
 def test_wrapped_temporal_durability_registers_capability_operation() -> None:
     agent = Agent(
         TestModel(),
@@ -558,6 +603,7 @@ async def test_inherited_tier_one_hook_is_not_registered_or_dispatched() -> None
     assert not any('__capability__' in name for name, _ in durability.calls)
 
 
+@requires_temporal
 def test_temporal_registration_has_stable_name_and_types() -> None:
     agent = Agent(TestModel(), name='temporal_operations', capabilities=[Operations(), TemporalDurability()])
     durability = TemporalDurability.from_agent(agent)
@@ -607,6 +653,7 @@ async def test_decorated_model_request_hook_round_trips_mutation() -> None:
     assert any(name == 'before_model__capability__before_model.before_model_request' for name, _ in durability.calls)
 
 
+@requires_prefect
 async def test_dynamic_hook_dispatches_through_public_run_context_lookup() -> None:
     class Dynamic(AbstractCapability[Any]):
         id = 'dynamic'
@@ -887,6 +934,7 @@ async def test_usage_snapshot_copies_details_before_in_place_handler_mutation() 
     assert _usage_delta(before, usage).details == {'existing': 3}
 
 
+@requires_temporal
 async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='temporal_transport', capabilities=[capability, TemporalDurability()])
@@ -914,6 +962,7 @@ async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.Mon
     assert summaries == ['capability: operations.calculate']
 
 
+@requires_temporal
 async def test_temporal_capability_operation_resolves_ctx_model_worker_side() -> None:
     model = TestModel()
     capability = ModelReadingOperation(model)
@@ -934,6 +983,7 @@ async def test_temporal_capability_operation_resolves_ctx_model_worker_side() ->
     assert await registration(wire, deps)
 
 
+@requires_temporal
 async def test_temporal_capability_operation_rederives_for_run_instance_worker_side() -> None:
     capability = TenantScopedOperation()
     agent = Agent(
@@ -978,6 +1028,7 @@ def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
         DBOS.destroy()
 
 
+@requires_dbos
 async def test_dbos_capability_operation_end_to_end(dbos: DBOS) -> None:
     model = TestModel()
     capability = Operations()
@@ -999,6 +1050,7 @@ async def test_dbos_capability_operation_end_to_end(dbos: DBOS) -> None:
     assert 'dbos_operations__capability__operations.calculate' in [step['function_name'] for step in steps]
 
 
+@requires_dbos
 async def test_dbos_capability_operation_uses_for_run_instance_in_registered_step(dbos: DBOS) -> None:
     observations: list[str] = []
     capability = TenantScopedOperation(observations=observations)
@@ -1021,6 +1073,7 @@ async def test_dbos_capability_operation_uses_for_run_instance_in_registered_ste
     assert capability.tenant == 'unrestricted'
 
 
+@requires_dbos
 async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> None:
     capability = UsageOperation()
     agent = Agent(TestModel(), name='dbos_usage', capabilities=[capability, DBOSDurability()])
@@ -1041,6 +1094,7 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
     assert capability.calls == 1
 
 
+@requires_prefect
 async def test_prefect_capability_operation_end_to_end() -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='prefect_operations', capabilities=[capability, PrefectDurability()])
@@ -1054,6 +1108,7 @@ async def test_prefect_capability_operation_end_to_end() -> None:
     assert await run() == 2
 
 
+@requires_prefect
 async def test_prefect_capability_operation_cache_identity_includes_context_and_model() -> None:
     class CacheIdentityOperation(AbstractCapability[str]):
         id = 'cache_identity'
