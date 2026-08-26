@@ -210,6 +210,73 @@ async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
     assert capability.calls[0][0].agent is agent
 
 
+async def test_run_context_durable_operation_is_direct_without_durability() -> None:
+    capability = Operations()
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    async def handler(value: int) -> int:
+        return value * 2
+
+    operation = ctx.durable_operation(capability, 'any-name', handler)
+
+    assert await operation(3) == 6
+
+
+async def test_run_context_durable_operation_rejects_unknown_bound_name() -> None:
+    class Dynamic(AbstractCapability[Any]):
+        id = 'dynamic'
+
+        async def alpha(self) -> str:
+            return 'alpha'
+
+        async def zeta(self) -> str:
+            return 'zeta'
+
+        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
+            return {'zeta': self.zeta, 'alpha': self.alpha}
+
+    capability = Dynamic()
+    model = TestModel()
+    agent = Agent(model, name='unknown_operation', capabilities=[capability, RecordingDurability()])
+    ctx = RunContext(deps=None, model=model, usage=RunUsage(), agent=agent)
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(UserError) as exc_info:
+        ctx.durable_operation(capability, 'alpah', capability.alpha)
+
+    assert str(exc_info.value) == (
+        "Unknown durable operation 'alpah' for capability 'dynamic'. "
+        "Known durable operations for this capability: 'alpha', 'zeta'. "
+        'Check the operation name passed to `RunContext.durable_operation()`.'
+    )
+
+
+async def test_run_context_durable_operation_dispatches_bound_name() -> None:
+    class Dynamic(AbstractCapability[Any]):
+        id = 'dynamic'
+
+        async def operation(self) -> str:
+            return 'dispatched'
+
+        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
+            return {'operation': self.operation}
+
+    capability = Dynamic()
+    model = TestModel()
+    agent = Agent(model, name='known_operation', capabilities=[capability, RecordingDurability()])
+    ctx = RunContext(deps=None, model=model, usage=RunUsage(), agent=agent)
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
+
+    operation = ctx.durable_operation(capability, 'operation', capability.operation)
+
+    assert await operation() == 'dispatched'
+    assert any(name == 'known_operation__capability__dynamic.operation' for name, _ in durability.calls)
+
+
 async def test_no_context_operation_is_direct_outside_a_run() -> None:
     assert await ContextPositions().no_ctx('outside') == 'outside'
 
