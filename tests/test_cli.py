@@ -4,6 +4,7 @@ import json
 import sys
 import types
 from collections.abc import AsyncIterator, Callable, Iterator
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -396,6 +397,30 @@ async def test_streaming_with_concurrent_tool_calls(monkeypatch: pytest.MonkeyPa
     assert '> Called tool `get_temp`.' in final
     assert '_Calling tool' not in final
     assert final.endswith('Both cities checked.')
+
+
+@dataclass
+class _City:
+    name: str
+
+
+@pytest.mark.anyio
+async def test_streaming_ignores_output_tool_calls():
+    """The internal output tool is not reported as a tool call.
+
+    A structured `output_type` makes the agent call an output tool, which streams
+    `OutputToolCallEvent` / `OutputToolResultEvent` through the same node as function tools. Those
+    are the model producing its answer rather than the agent using a tool, so they get no indicator.
+    """
+    agent = Agent(TestModel(), output_type=_City)
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=80)
+    await ask_agent(agent, 'name a city', stream=True, console=console, code_theme='monokai')
+
+    rendered = output.getvalue()
+    assert 'Calling tool' not in rendered
+    assert 'Called tool' not in rendered
 
 
 async def _retrying_tool_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
