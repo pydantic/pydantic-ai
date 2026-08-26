@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, cast
 
-import httpx
+from pydantic_ai._http import AsyncHTTPClient
 
 try:
     from google.auth import credentials as google_auth_credentials
@@ -34,7 +34,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
         project: str | None = None,
         location: GoogleCloudLocation | Literal['global', 'us', 'eu'] | str | None = None,
         client: Client | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
     ) -> None:
@@ -61,7 +61,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
                 [Vertex AI locations docs](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions).
                 Can be obtained from the `GOOGLE_CLOUD_LOCATION` environment variable.
             client: A pre-initialized client to use.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google Cloud API.
             retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
                 See `google.genai.types.HttpRetryOptions` for available fields.

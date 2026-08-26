@@ -86,7 +86,7 @@ Perform the following steps, waiting for the response of each step before contin
 4. Report how long the background set took by diffing the two times
 ```
 
-#### Agentic Chat - Code
+#### Agentic Chat - Code {#agentic-chat-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/agentic_chat.py"}```
 
@@ -103,7 +103,7 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 Create a plan for breakfast and execute it
 ```
 
-#### Agentic Generative UI - Code
+#### Agentic Generative UI - Code {#agentic-generative-ui-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/agentic_generative_ui.py"}```
 
@@ -122,7 +122,7 @@ plan and the user can approve it using checkboxes.
 Generate a list of steps for cleaning a car for me to review
 ```
 
-#### Human in the Loop - Code
+#### Human in the Loop - Code {#human-in-the-loop-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/human_in_the_loop.py"}```
 
@@ -156,7 +156,7 @@ Agent prompt
 Help me complete my story about bruce the dog, is should be no longer than a sentence.
 ```
 
-#### Predictive State Updates - Code
+#### Predictive State Updates - Code {#predictive-state-updates-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/predictive_state_updates.py"}```
 
@@ -179,7 +179,7 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 1. Customise the basic settings of your recipe
 2. Click `Improve with AI`
 
-#### Shared State - Code
+#### Shared State - Code {#shared-state-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/shared_state.py"}```
 
@@ -199,6 +199,6 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 Generate a haiku about formula 1
 ```
 
-#### Tool Based Generative UI - Code
+#### Tool Based Generative UI - Code {#tool-based-generative-ui-code}
 
 ```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/tool_based_generative_ui.py"}```

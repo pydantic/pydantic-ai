@@ -47,6 +47,7 @@ from ._cost import best_effort_price, fill_response_cost
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
+    registered_loaded_capability_ids,
 )
 from ._instructions import normalize_toolset_instructions
 from ._run_context import AnchoredEvidence, set_current_run_context
@@ -826,7 +827,6 @@ async def _prepare_request_parameters(
         function_tools=function_tools,
         native_tools=native_tools,
         deferred_capability_ids=deferred_capability_ids,
-        # Preserve discovered names that aren't in the current definitions.
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
@@ -1907,11 +1907,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
 
             is_empty = not self.model_response.parts
-            is_thinking_only = not is_empty and all(
-                isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
+            # A `TextPart` with empty content carries no text output; adapters preserve such parts
+            # (e.g. when a gateway returns a text item with `text: null`) so their IDs round-trip.
+            is_blank_text_only = not is_empty and all(
+                isinstance(p, _messages.TextPart) and not p.content for p in self.model_response.parts
+            )
+            is_thinking_only = (
+                not is_empty
+                and not is_blank_text_only
+                and all(
+                    isinstance(p, _messages.ThinkingPart) or (isinstance(p, _messages.TextPart) and not p.content)
+                    for p in self.model_response.parts
+                )
             )
 
-            if is_empty or is_thinking_only:
+            if is_empty or is_blank_text_only or is_thinking_only:
                 # No actionable output was returned by the model.
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.
@@ -1920,8 +1930,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
-                # Check for content filter on empty response
-                if is_empty and self.model_response.finish_reason == 'content_filter':
+                # Check for content filter on a response with no content
+                if (is_empty or is_blank_text_only) and self.model_response.finish_reason == 'content_filter':
                     details = self.model_response.provider_details or {}
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
 
@@ -1936,9 +1946,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                     raise exceptions.ContentFilterError(message, body=body)
 
-                # If the output type allows `None`, an empty or thinking-only response is a valid result:
-                # both signal that the model has no text output to give. Some models emit only thinking
-                # after completing the task via a tool call, and forcing a retry just makes them produce
+                # If the output type allows `None`, a response with no text output is a valid result:
+                # it signals that the model has nothing to say. Some models emit only thinking after
+                # completing the task via a tool call, and forcing a retry just makes them produce
                 # unnecessary follow-up text.
                 if output_schema.allows_none:
                     run_context = _build_output_run_context(ctx)
@@ -1959,7 +1969,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         )
                     return
 
-                # For empty or thinking-only responses, fall through to the normal retry prompt
+                # For responses with no text output, fall through to the normal retry prompt
                 # below. That prompt is built from the output schema and available tools, so it
                 # tells the model which kinds of output are actually valid (text, tool call,
                 # and/or image) rather than assuming text is always an option.
@@ -2394,7 +2404,7 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
     if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
         return
 
-    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
+    loaded_capability_ids = registered_loaded_capability_ids(ctx.state.message_history, ctx.deps.capabilities.keys())
 
     # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`
     # copies made via `replace(ctx, ...)`, so clear + update keeps them all in sync.
@@ -2418,7 +2428,13 @@ def _revealed_tool_names(
     deferred_capability_ids: set[str],
     loaded_capability_ids: set[str],
 ) -> set[str]:
-    """Drop reveals whose owning capability is not available yet.
+    """Drop reveals for tools this run doesn't define, and those whose owning capability isn't active yet.
+
+    History outlives configuration, so it can name a tool the current run has no definition for. Such
+    a name can't be revealed — there is no schema to show — and every consumer already guards on
+    membership in the definitions, so dropping it here changes nothing observable; what it buys is
+    that `revealed_tool_names` is a subset of `function_tools`' names by construction, and a future
+    consumer can't be caught out by an entry that resolves to nothing.
 
     The ordering a run holds to is load, then reveal, then call: a capability's instructions and
     hooks come as a bundle, and its tools should not reach the model ahead of the runbook for using
@@ -2435,15 +2451,13 @@ def _revealed_tool_names(
     tool is revealed by discovery alone, which is why this needs `deferred_capability_ids` read from
     the capability instances rather than a guess from the tool definitions.
     """
-    owner_by_name = {
-        tool_def.name: tool_def.capability_id for tool_def in function_tools if tool_def.capability_id is not None
-    }
-    # The complement of `RunContext.available_capability_ids` over the run's capabilities: available
-    # is "not deferred, or loaded", so unavailable is "deferred and not loaded". Spelled from the
+    owner_by_name = {tool_def.name: tool_def.capability_id for tool_def in function_tools}
+    # The complement of `RunContext.active_capability_ids` over the run's capabilities: active
+    # is "not deferred, or loaded", so inactive is "deferred and not loaded". Spelled from the
     # two history-derived sets because this also runs against a bare message list, with no
     # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
-    unavailable_capability_ids = deferred_capability_ids - loaded_capability_ids
-    return {name for name in discovered if owner_by_name.get(name) not in unavailable_capability_ids}
+    inactive_capability_ids = deferred_capability_ids - loaded_capability_ids
+    return {name for name in discovered if name in owner_by_name and owner_by_name[name] not in inactive_capability_ids}
 
 
 def _with_outgoing_reveal_state(
@@ -2919,10 +2933,7 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                 # turn -- a real regression -- just to preserve fields the model request node never reads.
             ):
                 parts = [*last_message.parts, *message.parts]
-                parts.sort(
-                    # Tool return parts always need to be at the start
-                    key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
-                )
+                parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
