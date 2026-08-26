@@ -342,8 +342,26 @@ async def _two_city_stream(messages: list[ModelMessage], info: AgentInfo) -> Asy
         }
 
 
+@pytest.fixture
+def live_frames(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the markdown of every `Live.update`, so intermediate render frames can be asserted.
+
+    `ask_agent` only ever updates the display with a `Markdown`, and the final console output shows
+    just the last frame — these tests are about what the display showed along the way.
+    """
+    frames: list[str] = []
+    original_update = Live.update
+
+    def capture_update(self: Live, renderable: Markdown, **kwargs: Any) -> None:
+        frames.append(renderable.markup)
+        return original_update(self, renderable, **kwargs)
+
+    monkeypatch.setattr(Live, 'update', capture_update)
+    return frames
+
+
 @pytest.mark.anyio
-async def test_streaming_with_concurrent_tool_calls(monkeypatch: pytest.MonkeyPatch):
+async def test_streaming_with_concurrent_tool_calls(live_frames: list[str]):
     """Every in-flight tool call keeps its own indicator until its own result arrives.
 
     Two tools called in one response run concurrently, so the render loop keys them by
@@ -355,16 +373,6 @@ async def test_streaming_with_concurrent_tool_calls(monkeypatch: pytest.MonkeyPa
     emitted by concurrent tasks, so their order is not stable and a snapshot of the sequence would
     flake. `get_temp` waits on `get_weather` only to guarantee the two calls overlap.
     """
-    frames: list[str] = []
-    original_update = Live.update
-
-    def capture_update(self: Live, renderable: Any, **kwargs: Any) -> None:
-        if isinstance(renderable, Markdown):
-            frames.append(renderable.markup)
-        return original_update(self, renderable, **kwargs)
-
-    monkeypatch.setattr(Live, 'update', capture_update)
-
     weather_returned = anyio.Event()
     agent = Agent(FunctionModel(stream_function=_two_city_stream))
 
@@ -382,7 +390,7 @@ async def test_streaming_with_concurrent_tool_calls(monkeypatch: pytest.MonkeyPa
     await ask_agent(agent, 'weather?', stream=True, console=console, code_theme='monokai')
 
     # Consecutive duplicates carry no information — the same frame re-rendered.
-    distinct = [frame for i, frame in enumerate(frames) if i == 0 or frame != frames[i - 1]]
+    distinct = [frame for i, frame in enumerate(live_frames) if i == 0 or frame != live_frames[i - 1]]
 
     # The regression: the second call's indicator replaced the first's, so this frame never existed.
     assert any('_Calling tool `get_weather`…_' in frame and '_Calling tool `get_temp`…_' in frame for frame in distinct)
@@ -433,23 +441,13 @@ async def _retrying_tool_stream(messages: list[ModelMessage], info: AgentInfo) -
 
 
 @pytest.mark.anyio
-async def test_streaming_clears_indicator_for_retried_tool(monkeypatch: pytest.MonkeyPatch):
+async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
 
     `pending_calls` is popped for any `FunctionToolResultEvent`, not only a `ToolReturnPart`.
     Popping on success alone left `> _Calling tool ...` on screen for the rest of the run. A retry
     still renders no `Called tool` line — surfacing retries is a separate feature.
     """
-    frames: list[str] = []
-    original_update = Live.update
-
-    def capture_update(self: Live, renderable: Any, **kwargs: Any) -> None:
-        if isinstance(renderable, Markdown):
-            frames.append(renderable.markup)
-        return original_update(self, renderable, **kwargs)
-
-    monkeypatch.setattr(Live, 'update', capture_update)
-
     agent = Agent(FunctionModel(stream_function=_retrying_tool_stream))
 
     @agent.tool_plain
@@ -459,7 +457,7 @@ async def test_streaming_clears_indicator_for_retried_tool(monkeypatch: pytest.M
     console = Console(file=StringIO(), force_terminal=False, width=80)
     await ask_agent(agent, 'go', stream=True, console=console, code_theme='monokai')
 
-    distinct = [frame for i, frame in enumerate(frames) if i == 0 or frame != frames[i - 1]]
+    distinct = [frame for i, frame in enumerate(live_frames) if i == 0 or frame != live_frames[i - 1]]
     assert distinct == snapshot(
         [
             'Trying a tool.',
