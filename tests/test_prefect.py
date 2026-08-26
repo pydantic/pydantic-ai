@@ -234,6 +234,9 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
     class FunctionOnlyDurability(PrefectDurability):
         _wrapped_toolset_kinds = frozenset({'function'})
 
+    class MCPRejectingDurability(PrefectDurability):
+        _allow_inline_mcp_in_durable_context = False
+
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         events.extend([event async for event in stream])
 
@@ -295,6 +298,12 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
         args_validator=TOOL_SCHEMA_VALIDATOR,
     )
     assert resolve_tool_config(mcp_tool, 'mcp_inline') is False
+    rejecting_base = cast(BaseDurabilityCapability[Any], MCPRejectingDurability())
+    rejecting_resolve = BaseDurabilityCapability._build_resolve_tool_config(  # pyright: ignore[reportPrivateUsage]
+        rejecting_base, {}
+    )
+    with pytest.raises(UserError, match='MCP tools perform I/O'):
+        rejecting_resolve(mcp_tool, 'mcp_inline')
 
     assert BaseDurabilityCapability._model_id_suffix(base, 'model') == '.model'  # pyright: ignore[reportPrivateUsage]
     base._default_model_id = 'model'  # pyright: ignore[reportPrivateUsage]
