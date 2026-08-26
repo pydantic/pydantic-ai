@@ -512,12 +512,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._graph_run.state.pending_messages
 
     @overload
-    def emit_event(self, name: str, data: Any = None, /) -> _messages.CustomEvent: ...
+    async def emit_event(self, name: str, data: Any = None, /) -> _messages.CustomEvent: ...
 
     @overload
-    def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
+    async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
 
-    def emit_event(self, event: str | _messages.CustomEvent, data: Any = None, /) -> _messages.CustomEvent:
+    async def emit_event(self, event: str | _messages.CustomEvent, data: Any = None, /) -> _messages.CustomEvent:
         """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into this run's event stream.
 
         Pass a name and an optional payload, or a constructed event object -- see
@@ -529,8 +529,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         The event surfaces on the next pull from the run's node stream.
 
         Designed to be called from the same event loop driving `agent.iter()`. If you're forwarding events
-        from a different thread, marshal the call back onto the agent's loop first
-        (e.g. `loop.call_soon_threadsafe(agent_run.emit_event, event)`).
+        from a different thread, submit the coroutine to the agent's loop
+        (e.g. `asyncio.run_coroutine_threadsafe(agent_run.emit_event(event), loop)`).
 
         Args:
             event: The event name, or a constructed [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.

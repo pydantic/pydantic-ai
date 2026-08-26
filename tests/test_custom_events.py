@@ -56,8 +56,8 @@ async def test_emit_from_tool_auto_stamps_tool_call_id():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
-    def progress(ctx: RunContext[Any]) -> str:
-        ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
         return 'ok'
 
     events = await _collect_events(agent)
@@ -72,8 +72,8 @@ async def test_explicit_tool_call_id_preserved():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
-    def progress(ctx: RunContext[Any]) -> str:
-        ctx.emit_event(CustomEvent(name='progress', data=None, tool_call_id='explicit'))
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(CustomEvent(name='progress', data=None, tool_call_id='explicit'))
         return 'ok'
 
     events = await _collect_events(agent)
@@ -92,7 +92,7 @@ async def test_emit_from_capability_hook():
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            ctx.emit_event(CustomEvent(name='starting', data='before request'))
+            await ctx.emit_event(CustomEvent(name='starting', data='before request'))
             return request_context
 
     agent = Agent(FunctionModel(stream_function=only_text), capabilities=[EmitCapability()])
@@ -112,7 +112,7 @@ async def test_agent_run_emit_event():
 
     collected: list[AgentStreamEvent] = []
     async with agent.iter('go') as run:
-        run.emit_event(CustomEvent(name='external', data={'source': 'bus'}))
+        await run.emit_event(CustomEvent(name='external', data={'source': 'bus'}))
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
@@ -139,7 +139,7 @@ async def test_agent_run_emit_event_before_call_tools_stream():
                     async for _ in request_stream:
                         pass
             elif Agent.is_call_tools_node(node):
-                run.emit_event(CustomEvent(name='before-tools'))
+                await run.emit_event(CustomEvent(name='before-tools'))
                 async with node.stream(run.ctx) as stream:
                     async for event in stream:
                         collected.append(event)
@@ -157,8 +157,8 @@ async def test_emit_from_output_validator():
     agent = Agent(FunctionModel(stream_function=only_text))
 
     @agent.output_validator
-    def validate(ctx: RunContext[Any], output: str) -> str:
-        ctx.emit_event(CustomEvent(name='validated'))
+    async def validate(ctx: RunContext[Any], output: str) -> str:
+        await ctx.emit_event(CustomEvent(name='validated'))
         return output
 
     events = await _collect_events(agent)
@@ -171,13 +171,13 @@ async def test_custom_events_excluded_from_stream_output():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
-    def progress(ctx: RunContext[Any]) -> str:
-        ctx.emit_event(CustomEvent(name='progress'))
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(CustomEvent(name='progress'))
         return 'ok'
 
     outputs: list[str] = []
     async with agent.iter('go') as run:
-        run.emit_event(CustomEvent(name='external'))
+        await run.emit_event(CustomEvent(name='external'))
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
@@ -192,8 +192,8 @@ async def test_surfaced_via_run_stream_events():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
-    def progress(ctx: RunContext[Any]) -> str:
-        ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
         return 'ok'
 
     events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
@@ -218,8 +218,8 @@ async def test_surfaced_via_run_stream():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
-    def progress(ctx: RunContext[Any]) -> str:
-        ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
         return 'ok'
 
     async with agent.run_stream('go', event_stream_handler=event_stream_handler) as result:
@@ -231,11 +231,11 @@ async def test_surfaced_via_run_stream():
     )
 
 
-def test_emit_without_buffer_raises():
+async def test_emit_without_buffer_raises():
     """A `RunContext` not backed by a running agent has nowhere to emit to."""
     ctx = RunContext[Any](deps=None, model=FunctionModel(stream_function=_tool_then_text), usage=None)  # type: ignore[arg-type]
     with pytest.raises(UserError, match='`emit_event` is only available during an agent run'):
-        ctx.emit_event(CustomEvent(name='progress'))
+        await ctx.emit_event(CustomEvent(name='progress'))
 
 
 def test_serialization_round_trip():
@@ -260,8 +260,8 @@ async def test_emit_event_name_data_shorthand():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
-    def progress(ctx: RunContext[Any]) -> str:
-        emitted = ctx.emit_event('progress', {'pct': 50})
+    async def progress(ctx: RunContext[Any]) -> str:
+        emitted = await ctx.emit_event('progress', {'pct': 50})
         assert emitted == CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')
         return 'ok'
 
@@ -282,7 +282,7 @@ async def test_agent_run_emit_event_shorthand():
 
     collected: list[AgentStreamEvent] = []
     async with agent.iter('go') as run:
-        emitted = run.emit_event('external', {'source': 'bus'})
+        emitted = await run.emit_event('external', {'source': 'bus'})
         assert emitted == CustomEvent(name='external', data={'source': 'bus'})
         async for node in run:
             if Agent.is_model_request_node(node):
@@ -366,8 +366,8 @@ async def test_typed_subclass_emitted_from_tool():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
-    def progress(ctx: RunContext[Any]) -> str:
-        ctx.emit_event(SyncProgressEvent(done=1, total=2))
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(SyncProgressEvent(done=1, total=2))
         return 'ok'
 
     events = await _collect_events(agent)

@@ -472,22 +472,22 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
     @overload
-    def emit_event(self, name: str, data: Any = None, /) -> _messages.CustomEvent: ...
+    async def emit_event(self, name: str, data: Any = None, /) -> _messages.CustomEvent: ...
 
     @overload
-    def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
+    async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
 
-    def emit_event(self, event: str | _messages.CustomEvent, data: Any = None, /) -> _messages.CustomEvent:
+    async def emit_event(self, event: str | _messages.CustomEvent, data: Any = None, /) -> _messages.CustomEvent:
         """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into the current run's event stream.
 
-        Pass a name and an optional payload -- `ctx.emit_event('sync_progress', {'done': 3})` -- to emit
+        Pass a name and an optional payload -- `await ctx.emit_event('sync_progress', {'done': 3})` -- to emit
         a plain [`CustomEvent`][pydantic_ai.messages.CustomEvent], or a constructed event object, typically
         an instance of an application-defined
         [`CustomEvent` subclass](../agent.md#typed-custom-events) with typed payload fields.
 
-        Safe to call from anywhere a `RunContext` is available during a run — async tools, sync tools
-        (auto-wrapped in a thread executor by Pydantic AI), history processors, and
-        output validators. The event reaches the run's `event_stream_handler`,
+        This method must be awaited, so it's available from async tools, capability hooks, history
+        processors, and async output validators. Sync tools cannot emit events; write async tools instead.
+        The event reaches the run's `event_stream_handler`,
         [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events],
         [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, and the UI adapters.
 

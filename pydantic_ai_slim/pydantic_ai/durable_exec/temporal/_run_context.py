@@ -154,7 +154,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             return snapshot
         return super()._deferred_capability_ids
 
-    def emit_event(self, event: CustomEvent) -> None:
+    async def emit_event(self, event: str | CustomEvent, data: Any = None, /) -> CustomEvent:
         """Reject `emit_event` from inside a Temporal activity.
 
         Tools run inside activities where the run's event stream isn't reachable, so custom events emitted
