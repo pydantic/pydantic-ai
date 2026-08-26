@@ -143,6 +143,10 @@ class BeforeModelRequestHookFunc(Protocol):
     """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], request_context: ModelRequestContext, /) -> ModelRequestContext | Awaitable[ModelRequestContext]: ...
 
+class PrepareModelRequestHookFunc(Protocol):
+    """Protocol for [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hook functions."""
+    def __call__(self, ctx: RunContext[Any], request_context: ModelRequestContext, /) -> ModelRequestContext | Awaitable[ModelRequestContext]: ...
+
 class AfterModelRequestHookFunc(Protocol):
     """Protocol for [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, response: ModelResponse) -> ModelResponse | Awaitable[ModelResponse]: ...
@@ -432,6 +436,17 @@ class _HookRegistration(Generic[AgentDepsT]):
         self, func: BeforeModelRequestHookFunc | None = None, *, timeout: float | None = None
     ) -> Any:
         return _bare_or_parameterized(self._r, 'before_model_request', func, timeout=timeout)
+
+    @overload
+    def prepare_model_request(self, func: PrepareModelRequestHookFunc, /) -> PrepareModelRequestHookFunc: ...
+    @overload
+    def prepare_model_request(
+        self, *, timeout: float | None = None
+    ) -> Callable[[PrepareModelRequestHookFunc], PrepareModelRequestHookFunc]: ...
+    def prepare_model_request(
+        self, func: PrepareModelRequestHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'prepare_model_request', func, timeout=timeout)
 
     @overload
     def after_model_request(self, func: AfterModelRequestHookFunc, /) -> AfterModelRequestHookFunc: ...
@@ -766,6 +781,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         event: OnEventHookFunc | None = None,
         # Model request
         before_model_request: BeforeModelRequestHookFunc | None = None,
+        prepare_model_request: PrepareModelRequestHookFunc | None = None,
         after_model_request: AfterModelRequestHookFunc | None = None,
         model_request: WrapModelRequestHookFunc | None = None,
         model_request_error: OnModelRequestErrorHookFunc | None = None,
@@ -818,6 +834,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'wrap_run_event_stream': run_event_stream,
             '_on_event': event,
             'before_model_request': before_model_request,
+            'prepare_model_request': prepare_model_request,
             'after_model_request': after_model_request,
             'wrap_model_request': model_request,
             'on_model_request_error': model_request_error,
@@ -968,6 +985,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         for entry in self._get('before_model_request'):
             request_context = await _call_entry(entry, 'before_model_request', ctx, request_context)
+        return request_context
+
+    async def prepare_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        for entry in self._get('prepare_model_request'):
+            request_context = await _call_entry(entry, 'prepare_model_request', ctx, request_context)
         return request_context
 
     async def after_model_request(

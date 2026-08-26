@@ -267,6 +267,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         return await self.wrapped.before_model_request(ctx, request_context)
 
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        return await self.wrapped.prepare_model_request(ctx, request_context)
+
     async def after_model_request(
         self,
         ctx: RunContext[AgentDepsT],

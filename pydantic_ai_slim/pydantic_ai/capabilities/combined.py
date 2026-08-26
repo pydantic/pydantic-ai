@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -421,6 +421,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 request_context = await capability.before_model_request(cap_ctx, request_context)
         return request_context
 
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        for capability in self.capabilities:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+                request_context = await capability.prepare_model_request(cap_ctx, request_context)
+        return request_context
+
     async def after_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -461,6 +471,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 continue
             try:
                 return await capability.on_model_request_error(cap_ctx, request_context=request_context, error=error)
+            except (ModelRetry, RetryModelRequest):
+                # Control flow, not a replacement error: a capability asking for a prompted retry or
+                # another attempt has answered for the whole chain. Handing it to the next capability
+                # as `error` would let an outer one recover from — or re-wrap — the request to retry.
+                raise
             except Exception as new_error:
                 error = new_error
         raise error
