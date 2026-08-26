@@ -1548,6 +1548,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             agent=self,
             model=model_used,
+            _model_id=model_id,
             usage=usage,
             usage_limits=usage_limits,
             prompt=user_prompt,

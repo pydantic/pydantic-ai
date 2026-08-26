@@ -67,6 +67,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The active model, which is a `RealtimeModel` during a realtime session."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    _model_id: str | None = field(default=None, repr=False)
+    """The model selection token used to resolve `model`, for internal durable transport."""
     usage_limits: UsageLimits | None = None
     """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run.
 

@@ -390,26 +390,29 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 ) -> Any:
                     arguments = self._codec.load(dict[str, Any], self._codec.dump(dict[str, Any], params.arguments))
                     validated = cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
-                    semantic_params = CapabilityOperationParams(params.run_context, validated)
+                    semantic_params = CapabilityOperationParams(params.run_context, validated, params.model_id)
                     recovered = recover_capability(params.run_context, capability_id)
-                    with self._durable_run_context_scope(params.run_context) as durable_ctx:
-                        semantic_params = CapabilityOperationParams(durable_ctx, semantic_params.arguments)
-                        if declaration.model_request_hook:
-                            projection = cast(
-                                ModelRequestContextProjection, semantic_params.arguments['request_context']
+                    if declaration.model_request_hook:
+                        projection = cast(ModelRequestContextProjection, semantic_params.arguments['request_context'])
+                        async with self._durable_model_scope(projection.model_id, params.run_context) as (
+                            model,
+                            durable_ctx,
+                        ):
+                            request_context = ModelRequestContext(
+                                model=model,
+                                messages=projection.messages,
+                                model_settings=cast(ModelSettings | None, projection.model_settings),
+                                model_request_parameters=projection.model_request_parameters,
                             )
-                            async with self._durable_model_scope(projection.model_id, durable_ctx) as (model, _):
-                                request_context = ModelRequestContext(
-                                    model=model,
-                                    messages=projection.messages,
-                                    model_settings=cast(ModelSettings | None, projection.model_settings),
-                                    model_request_parameters=projection.model_request_parameters,
-                                )
-                                request_context.model_id = projection.model_id
-                                request_context.streaming = projection.streaming
-                                bound_handler = declaration.function.__get__(recovered, type(recovered))
-                                result = await bound_handler(durable_ctx, request_context)
-                            return ModelRequestContextProjection.from_context(result)
+                            request_context.model_id = projection.model_id
+                            request_context.streaming = projection.streaming
+                            bound_handler = declaration.function.__get__(recovered, type(recovered))
+                            result = await bound_handler(durable_ctx, request_context)
+                        return ModelRequestContextProjection.from_context(result)
+                    async with self._durable_model_scope(params.model_id, params.run_context) as (_, durable_ctx):
+                        semantic_params = CapabilityOperationParams(
+                            durable_ctx, semantic_params.arguments, params.model_id
+                        )
                         return await call_declaration(declaration, recovered, semantic_params)
 
                 operation = DurableOperation(
@@ -439,7 +442,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
         arguments = bind_arguments(declaration, ctx, args, kwargs)
-        return await self._bound_capability_operations[key](CapabilityOperationParams(ctx, arguments))
+        model = ctx.model
+        if not isinstance(model, Model):
+            raise UserError('Durable capability operations require a non-realtime `Model` on `RunContext`.')
+        model_id = (
+            ctx._model_id  # pyright: ignore[reportPrivateUsage]
+            if ctx._model_id is not None  # pyright: ignore[reportPrivateUsage]
+            else self._find_model_id(cast('Model[Any]', model))
+        )
+        return await self._bound_capability_operations[key](CapabilityOperationParams(ctx, arguments, model_id))
 
     def _capability_operation_parameter_transport(self, declaration: CapabilityMethodDeclaration) -> Any:
         return IdentityParameterTransport[CapabilityOperationParams]()
@@ -861,7 +872,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         `deserialize_run_context`, so it doesn't use this).
         """
         with self._durable_run_context_scope(run_context) as ctx:
-            yield await self._resolve_model_for_request(model_id, ctx), ctx
+            model = await self._resolve_model_for_request(model_id, ctx)
+            ctx.model = model
+            if isinstance(instance_fields := ctx.__dict__.get('__dataclass_fields__'), dict):
+                ctx.__dict__['__dataclass_fields__'] = {
+                    **instance_fields,
+                    'model': RunContext.__dataclass_fields__['model'],
+                }
+            yield model, ctx
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""

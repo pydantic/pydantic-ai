@@ -145,6 +145,21 @@ class ContextPositions(AbstractCapability[Any]):
         return f'{previous_summary}:{len(messages)}:{ctx.model.model_name}'
 
 
+class ModelReadingOperation(AbstractCapability[Any]):
+    id = 'model_reader'
+
+    def __init__(self, expected: TestModel) -> None:
+        self.expected = expected
+        self.result = False
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        self.result = await self.read_model(ctx)
+
+    @durable_operation
+    async def read_model(self, ctx: RunContext[Any]) -> bool:
+        return ctx.model is self.expected
+
+
 async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
     capability = Operations()
     agent = Agent(TestModel(), capabilities=[capability])
@@ -479,6 +494,22 @@ async def test_bound_dispatch_defensively_rejects_missing_capability_id() -> Non
         )
 
 
+async def test_capability_operation_rejects_unregistered_context_model() -> None:
+    capability = Operations()
+    agent = Agent(TestModel(), name='unregistered_context_model', capabilities=[capability, RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext(deps=None, agent=agent, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(
+        UserError,
+        match=r'was not registered with `RecordingDurability`.*cannot be used inside a journal',
+    ):
+        await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+            capability, 'calculate', ctx, (ctx,), {}
+        )
+
+
 async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='temporal_transport', capabilities=[capability, TemporalDurability()])
@@ -506,6 +537,26 @@ async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.Mon
     assert summaries == ['capability: operations.calculate']
 
 
+async def test_temporal_capability_operation_resolves_ctx_model_worker_side() -> None:
+    model = TestModel()
+    capability = ModelReadingOperation(model)
+    agent = Agent(model, name='temporal_model_reader', capabilities=[capability, TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    declaration = durability._capability_declarations[('model_reader', 'read_model')]  # pyright: ignore[reportPrivateUsage]
+    transport = _CapabilityOperationTransport(durability, declaration)
+    ctx = RunContext(deps=None, agent=agent, model=model, usage=RunUsage())
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, {}, None))
+    registration = next(
+        activity
+        for activity in durability.temporal_activities
+        if ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        == 'agent__temporal_model_reader__capability__model_reader__read_model'
+    )
+
+    assert await registration(wire, deps)
+
+
 @pytest.fixture
 def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
@@ -522,8 +573,10 @@ def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
 
 
 async def test_dbos_capability_operation_end_to_end(dbos: DBOS) -> None:
+    model = TestModel()
     capability = Operations()
-    agent = Agent(TestModel(), name='dbos_operations', capabilities=[capability, DBOSDurability()])
+    model_reader = ModelReadingOperation(model)
+    agent = Agent(model, name='dbos_operations', capabilities=[capability, model_reader, DBOSDurability()])
     workflow_id = str(uuid.uuid4())
 
     @DBOS.workflow(name=f'capability_operations_{workflow_id}')
@@ -534,6 +587,7 @@ async def test_dbos_capability_operation_end_to_end(dbos: DBOS) -> None:
 
     with SetWorkflowID(workflow_id):
         assert await workflow() == 2
+    assert model_reader.result
 
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert 'dbos_operations__capability__operations.calculate' in [step['function_name'] for step in steps]

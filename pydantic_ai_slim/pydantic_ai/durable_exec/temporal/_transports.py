@@ -187,6 +187,7 @@ class _RequestParams:
 class _CapabilityOperationParams:
     arguments: dict[str, Any]
     serialized_run_context: Any
+    model_id: str | None = None
 
 
 class _CapabilityOperationTransport:
@@ -201,6 +202,7 @@ class _CapabilityOperationTransport:
             _CapabilityOperationParams(
                 arguments=params.arguments,
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(params.run_context),
+                model_id=params.model_id,
             ),
             params.run_context.deps,
         )
@@ -208,7 +210,7 @@ class _CapabilityOperationTransport:
     def load(self, payload: tuple[_CapabilityOperationParams, Any], *, runtime: object) -> CapabilityOperationParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
-        return CapabilityOperationParams(ctx, params.arguments)
+        return CapabilityOperationParams(ctx, params.arguments, params.model_id)
 
 
 @dataclass

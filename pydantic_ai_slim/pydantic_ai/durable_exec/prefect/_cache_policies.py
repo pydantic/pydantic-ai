@@ -87,6 +87,7 @@ def _replace_run_context(
                 'deps': _cacheable_value(value.deps),
                 'agent': value.agent.name if value.agent is not None else None,
                 'model': value.model.model_id,
+                '_model_id': value._model_id,  # pyright: ignore[reportPrivateUsage]
                 'retries': value.retries,
                 # Keyed verbatim, unlike the framework-generated tool call IDs inside `messages`:
                 # those are normalized so an identical history hashes the same across runs, but the

@@ -31,6 +31,7 @@ A = TypeVar('A', bound=Awaitable[Any])
 class CapabilityOperationParams:
     run_context: RunContext[Any]
     arguments: dict[str, Any]
+    model_id: str | None = None
 
 
 @dataclass

@@ -2341,6 +2341,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         deps=ctx.deps.user_deps,
         agent=ctx.deps.agent,
         model=ctx.deps.model,
+        _model_id=ctx.deps.model_id,
         usage=ctx.state.usage,
         usage_limits=ctx.deps.usage_limits,
         prompt=ctx.deps.prompt,
