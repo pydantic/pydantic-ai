@@ -50,19 +50,6 @@ def toolset_instruction_id(toolset_id: str) -> str:
     return f'{TOOLSET_INSTRUCTION_NAMESPACE}:{toolset_id}'
 
 
-def optional_toolset_instruction_id(toolset_id: str | None) -> str | None:
-    """The source key a toolset already has, or `None` where it can't have one.
-
-    Asking what key a toolset owns is not the same as minting one for it: an id is only rejected
-    where it is actually turned into a key (see `toolset_instruction_id`), so a toolset that carries
-    a colon in its id but says nothing to the model keeps working. Reading the tree must not be what
-    breaks that.
-    """
-    if toolset_id is None or ':' in toolset_id:
-        return None
-    return toolset_instruction_id(toolset_id)
-
-
 def capability_instruction_id(capability_id: str) -> str:
     """The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] source key for a capability."""
     validate_instruction_id_segment(capability_id, kind='Capability id')

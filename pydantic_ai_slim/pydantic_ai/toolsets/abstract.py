@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
-from .._instructions import normalize_toolset_instructions, optional_toolset_instruction_id
+from .._instructions import normalize_toolset_instructions, toolset_instruction_id
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
@@ -188,9 +188,15 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         segment its own author declared, and that is a fact about the tree rather than about the
         text. Mirrors `_collect_instruction_contributions`: a leaf answers for itself, a wrapper adds
         what it wraps, a combined toolset unions its children.
+
+        Asking what key a toolset owns is not the same as minting one for it, so this reads the id
+        rather than passing it to `toolset_instruction_id`, which rejects a colon. An id is only
+        rejected where it actually becomes a key, which is what lets a toolset carrying one say
+        nothing to the model and keep working; being read must not be what breaks that.
         """
-        source_id = optional_toolset_instruction_id(self.id)
-        return {source_id} if source_id is not None else set()
+        if self.id is None or ':' in self.id:
+            return set()
+        return {toolset_instruction_id(self.id)}
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
