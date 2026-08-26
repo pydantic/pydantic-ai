@@ -27,10 +27,12 @@ class PrefectOperationConfig:
         *,
         model: TaskConfig,
         event: TaskConfig,
+        capability: TaskConfig,
         tool: Callable[[ToolsetKind, object | None, str], TaskConfig | Literal[False]],
     ) -> None:
         self._model = model
         self._event = event
+        self._capability = capability
         self._tool = tool
 
     def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> TaskConfig:
@@ -40,7 +42,7 @@ class PrefectOperationConfig:
             return self._event
         if role is OperationConfigRole.CAPABILITY:
             assert isinstance(operation_id, CapabilityOperationId)
-            return {}
+            return self._capability
         assert isinstance(operation_id, CallToolId | ValidateToolArgumentsId)
         config = self._tool(operation_id.toolset_kind, None, '')
         assert config is not False

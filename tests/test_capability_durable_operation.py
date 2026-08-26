@@ -212,7 +212,7 @@ async def test_no_context_operation_is_direct_outside_a_run() -> None:
     assert await ContextPositions().no_ctx('outside') == 'outside'
 
 
-async def test_arguments_are_bound_validated_and_used_as_cache_identity() -> None:
+async def test_capability_operation_cache_identity_includes_context_and_model() -> None:
     capability = Operations()
     capability.arguments = ((3, 4), {'scale': 2, 'bonus': 5})
     agent = Agent(TestModel(), name='binding', capabilities=[capability, RecordingDurability()])
@@ -222,12 +222,10 @@ async def test_arguments_are_bound_validated_and_used_as_cache_identity() -> Non
     assert capability.result == 24
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
-    assert [call for call in durability.calls if '__capability__' in call[0]] == [
-        (
-            'binding__capability__operations.calculate',
-            ({'value': 3, 'extra': [4], 'scale': 2, 'bonus': 5},),
-        )
-    ]
+    [(name, inputs)] = [call for call in durability.calls if '__capability__' in call[0]]
+    assert name == 'binding__capability__operations.calculate'
+    assert inputs[:2] == (None, {'value': 3, 'extra': [4], 'scale': 2, 'bonus': 5})
+    assert isinstance(inputs[2], RunContext)
 
 
 async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
@@ -710,3 +708,42 @@ async def test_prefect_capability_operation_end_to_end() -> None:
         return capability.result
 
     assert await run() == 2
+
+
+async def test_prefect_capability_operation_cache_identity_includes_context_and_model() -> None:
+    class CacheIdentityOperation(AbstractCapability[str]):
+        id = 'cache_identity'
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        async def before_run(self, ctx: RunContext[str]) -> None:
+            await self.read_context(ctx, 1)
+
+        @durable_operation
+        async def read_context(self, ctx: RunContext[str], value: int) -> None:
+            self.calls.append((ctx.deps, ctx.model.model_name))
+
+    capability = CacheIdentityOperation()
+    alternative_model = TestModel(custom_output_text='alternative', model_name='alternative')
+    agent = Agent[str, str](
+        TestModel(),
+        name='prefect_capability_cache_identity',
+        deps_type=str,
+        capabilities=[capability, PrefectDurability(models={'alternative': alternative_model})],
+    )
+
+    @flow
+    async def run() -> None:
+        await agent.run('same', deps='tenant-a')
+        await agent.run('same', deps='tenant-a')
+        await agent.run('same', deps='tenant-b')
+        await agent.run('same', deps='tenant-b', model='alternative')
+
+    await run()
+
+    assert capability.calls == [
+        ('tenant-a', 'test'),
+        ('tenant-b', 'test'),
+        ('tenant-b', 'alternative'),
+    ]

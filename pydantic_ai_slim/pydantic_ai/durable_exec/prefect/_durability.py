@@ -118,6 +118,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             config=PrefectOperationConfig(
                 model=self._model_task_config,
                 event=self._event_stream_handler_task_config,
+                capability=default_task_config,
                 tool=tool_config,
             ),
             event_sequence_key=f'pydantic_ai_event_sequence:{self.name}',

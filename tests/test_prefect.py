@@ -65,7 +65,12 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
-from pydantic_ai.durable_exec._operation import CallToolId, ModelRequestId, OperationConfigRole
+from pydantic_ai.durable_exec._operation import (
+    CallToolId,
+    CapabilityOperationId,
+    ModelRequestId,
+    OperationConfigRole,
+)
 from pydantic_ai.durable_exec._toolset import (
     DurableDynamicToolset,
     DurableFunctionToolset,
@@ -381,12 +386,16 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
     config = PrefectOperationConfig(
         model=TaskConfig(timeout_seconds=1),
         event=TaskConfig(timeout_seconds=2),
+        capability=TaskConfig(timeout_seconds=4),
         tool=tool_config,
     )
     model_id = ModelRequestId(None, False, 'test')
     call_id = CallToolId('function', 'tools')
     assert config.base(OperationConfigRole.MODEL, model_id) == {'timeout_seconds': 1}
     assert config.base(OperationConfigRole.EVENT, model_id) == {'timeout_seconds': 2}
+    assert config.base(OperationConfigRole.CAPABILITY, CapabilityOperationId('capability', 'operation')) == {
+        'timeout_seconds': 4
+    }
     assert config.base(OperationConfigRole.TOOL_CALL, call_id) == {'timeout_seconds': 3}
     marker = object()
     assert config.for_tool(OperationConfigRole.TOOL_CALL, call_id, marker, 'tool') == {'timeout_seconds': 3}

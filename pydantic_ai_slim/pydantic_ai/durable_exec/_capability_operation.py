@@ -105,7 +105,7 @@ class CapabilityCacheIdentity:
     """Use every validated parameter as the Prefect cache identity."""
 
     def project(self, params: CapabilityOperationParams) -> tuple[object, ...]:
-        return (params.arguments,)
+        return (params.model_id, params.arguments, params.run_context)
 
 
 @dataclass(frozen=True)
