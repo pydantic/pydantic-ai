@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import wraps
 from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints, overload
 
@@ -291,7 +291,7 @@ def collect_capability_operations(  # noqa: C901
                     f'Error generating schema for {function.__qualname__}:\n'
                     f'  Parameter {parameter.name!r} must have a type annotation'
                 )
-        schema = function_schema(schema_target, GenerateToolJsonSchema)
+        schema = _capability_operation_schema(schema_target, signature, ctx_parameters[0] if ctx_parameters else None)
         declarations[operation_name] = CapabilityMethodDeclaration(
             operation_name,
             function,
@@ -304,6 +304,34 @@ def collect_capability_operations(  # noqa: C901
             model_request_hook,
         )
     return declarations
+
+
+def _capability_operation_schema(
+    function: Callable[..., Awaitable[Any]], signature: inspect.Signature, ctx_parameter: str | None
+) -> FunctionSchema:
+    if ctx_parameter is None:
+        return function_schema(function, GenerateToolJsonSchema)
+
+    context = signature.parameters[ctx_parameter]
+    if context.kind is inspect.Parameter.VAR_POSITIONAL:
+        raise UserError('RunContext cannot be used as a variadic positional parameter (`*args`)')
+
+    type_hints = get_type_hints(function, include_extras=True)
+
+    async def schema_target(**kwargs: Any) -> Any:  # pragma: no cover
+        return kwargs
+
+    schema_target.__name__ = function.__name__
+    schema_target.__qualname__ = function.__qualname__
+    schema_target.__doc__ = function.__doc__
+    schema_target.__annotations__ = {
+        name: annotation for name, annotation in type_hints.items() if name != ctx_parameter
+    }
+    schema_signature = signature.replace(
+        parameters=[p for p in signature.parameters.values() if p.name != ctx_parameter]
+    )
+    cast(Any, schema_target).__signature__ = schema_signature
+    return function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False)
 
 
 def bind_arguments(
@@ -333,7 +361,28 @@ async def call_declaration(
     if declaration.model_request_hook:
         raise RuntimeError('Model-request hook declarations require the durability model scope')
     bound = declaration.function.__get__(capability, type(capability))
-    return await replace(declaration.schema, function=bound).call(params.arguments, params.run_context)
+    arguments = dict(params.arguments)
+    args: list[Any] = []
+    kwargs: dict[str, Any] = {}
+    for name, parameter in declaration.signature.parameters.items():
+        if name == declaration.ctx_parameter:
+            if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+                kwargs[name] = params.run_context
+            else:
+                args.append(params.run_context)
+            continue
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            kwargs.update(arguments)
+            continue
+        value = arguments.pop(name)
+
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            args.append(value)
+        elif parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            args.extend(value)
+        else:
+            kwargs[name] = value
+    return await bound(*args, **kwargs)
 
 
 def recover_capability(ctx: RunContext[Any], capability_id: str) -> AbstractCapability[Any]:

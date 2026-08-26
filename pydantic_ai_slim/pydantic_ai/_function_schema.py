@@ -52,7 +52,6 @@ class FunctionSchema:
     json_schema: ObjectJsonSchema
     # if not None, the function takes a single by that name (besides potentially `info`)
     takes_ctx: bool
-    ctx_arg_name: str | None
     is_async: bool
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
@@ -94,20 +93,16 @@ class FunctionSchema:
         args_dict: dict[str, Any],
         ctx: RunContext[Any],
     ) -> tuple[list[Any], dict[str, Any]]:
-        args: list[Any] = []
+        args = [ctx] if self.takes_ctx else []
         if self.positional_fields or self.var_positional_field:
             # Copy before popping so we never mutate the caller's dict. The same validated-args
             # dict is later handed to tool-execute hooks (e.g. `after_tool_execute`), which must
             # still observe the full set of arguments.
             args_dict = dict(args_dict)
         for positional_field in self.positional_fields:
-            args.append(ctx if positional_field == self.ctx_arg_name else args_dict.pop(positional_field))
+            args.append(args_dict.pop(positional_field))
         if self.var_positional_field:
             args.extend(args_dict.pop(self.var_positional_field))
-
-        if self.ctx_arg_name is not None and self.ctx_arg_name not in self.positional_fields:
-            args_dict = dict(args_dict)
-            args_dict[self.ctx_arg_name] = ctx
 
         return args, args_dict
 
@@ -149,15 +144,6 @@ def function_schema(  # noqa: C901
 
     type_hints = get_type_hints(original_func, include_extras=True)
 
-    context_parameters = [name for name in sig.parameters if _is_call_ctx(type_hints.get(name))]
-    if takes_ctx is None:
-        takes_ctx = bool(context_parameters)
-        ctx_arg_name = context_parameters[0] if len(context_parameters) == 1 else None
-        if len(context_parameters) > 1:
-            errors.append('Functions can take at most one RunContext parameter')
-    else:
-        ctx_arg_name = next(iter(sig.parameters), None) if takes_ctx else None
-
     var_kwargs_schema: core_schema.CoreSchema | None = None
     fields: dict[str, core_schema.TypedDictField] = {}
     positional_fields: list[str] = []
@@ -172,9 +158,12 @@ def function_schema(  # noqa: C901
     # there's no `*args`, such parameters keep being passed as keywords (the historical behavior).
     has_var_positional = any(p.kind is Parameter.VAR_POSITIONAL for p in sig.parameters.values())
 
-    for name, p in sig.parameters.items():
+    for index, (name, p) in enumerate(sig.parameters.items()):
+        if index == 0 and takes_ctx is None:
+            takes_ctx = p.annotation is not sig.empty and _is_call_ctx(type_hints[name])
+
         if p.annotation is sig.empty:
-            if name == ctx_arg_name:
+            if takes_ctx and index == 0:
                 # should be the `context` argument, skip
                 continue
             # TODO warn?
@@ -182,20 +171,14 @@ def function_schema(  # noqa: C901
         else:
             annotation = type_hints[name]
 
-            if name == ctx_arg_name:
+            if index == 0 and takes_ctx:
                 if not _is_call_ctx(annotation):
                     errors.append('First parameter of tools that take context must be annotated with RunContext[...]')
-                if p.kind == Parameter.VAR_POSITIONAL:
-                    errors.append('RunContext cannot be used as a variadic positional parameter (`*args`)')
-                if p.kind == Parameter.POSITIONAL_ONLY or (
-                    has_var_positional and p.kind == Parameter.POSITIONAL_OR_KEYWORD
-                ):
-                    positional_fields.append(name)
                 continue
             elif not takes_ctx and _is_call_ctx(annotation):
                 errors.append('RunContext annotations can only be used with tools that take context')
                 continue
-            elif _is_call_ctx(annotation):
+            elif index != 0 and _is_call_ctx(annotation):
                 errors.append('RunContext annotations can only be used as the first argument')
                 continue
 
@@ -306,7 +289,6 @@ def function_schema(  # noqa: C901
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
         takes_ctx=bool(takes_ctx),
-        ctx_arg_name=ctx_arg_name,
         is_async=is_async_callable(function),
         function=function,
         return_schema=return_schema,

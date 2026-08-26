@@ -124,6 +124,24 @@ Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:
     )
 
 
+def test_tool_ctx_last():
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError) as exc_info:
+
+        @agent.tool  # pyright: ignore[reportArgumentType]
+        def invalid_tool(first: int, last: str, ctx: RunContext) -> str:  # pragma: no cover
+            return f'{first} {last}'
+
+    assert str(exc_info.value) == snapshot(
+        """\
+Error generating schema for test_tool_ctx_last.<locals>.invalid_tool:
+  First parameter of tools that take context must be annotated with RunContext[...]
+  RunContext annotations can only be used as the first argument\
+"""
+    )
+
+
 async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     """Do foobar stuff, a lot.
 
@@ -5082,11 +5100,3 @@ def test_tool_return_part_serializes_with_serialization_alias():
     # The wire output keys agree with the advertised return schema properties.
     assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
-
-
-def test_variadic_run_context_is_rejected() -> None:
-    async def tool(*ctx: RunContext[None]) -> None:
-        pass
-
-    with pytest.raises(UserError, match=r'RunContext cannot be used as a variadic positional parameter'):
-        Tool(tool)

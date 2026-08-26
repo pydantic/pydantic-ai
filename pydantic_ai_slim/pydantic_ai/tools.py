@@ -478,7 +478,6 @@ class Tool(Generic[ToolAgentDepsT]):
             validator=SchemaValidator(schema=core_schema.any_schema()),
             json_schema=json_schema,
             takes_ctx=takes_ctx,
-            ctx_arg_name=next(iter(inspect.signature(function).parameters), None) if takes_ctx else None,
             is_async=_utils.is_async_callable(function),
         )
 
