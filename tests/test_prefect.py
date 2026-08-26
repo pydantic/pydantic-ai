@@ -1285,6 +1285,7 @@ RUNTIME_TOOLSET_REJECTION_CASES = [
 async def test_prefect_agent_run_rejection_identifies_every_runtime_toolset(
     case: RuntimeToolsetRejectionCase,
 ) -> None:
+    """The guard raises before any model request, so a VCR test cannot exercise it."""
     prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_identity_{case.id}'))  # pyright: ignore[reportDeprecated]
 
     with pytest.raises(UserError) as exc_info:
