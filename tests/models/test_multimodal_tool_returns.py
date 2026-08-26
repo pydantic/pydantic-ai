@@ -953,7 +953,7 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
 async def test_uploaded_file_validation_error_in_tool_return(
     case: UploadedFileErrorCase,
     bedrock_provider: Any,
-    vertex_client_google_provider: Any,
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that invalid UploadedFile in a tool return raises UserError before the API call."""
     provider = case.provider
@@ -989,7 +989,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
 
 
 @pytest.mark.skipif(not google_available(), reason='google dependencies not installed')
-async def test_uploaded_file_vertex_valid_gcs_uri(vertex_client_google_provider: Any) -> None:
+async def test_uploaded_file_vertex_valid_gcs_uri(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that a valid Vertex UploadedFile with gs:// URI maps correctly.
 
     The model is Vertex-backed via the client transport (not the provider name), matching #6792.

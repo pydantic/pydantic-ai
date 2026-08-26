@@ -548,7 +548,7 @@ class GoogleModel(Model[Client]):
         # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
         # This holds the accepted *names* still for such a provider; the transport branches above
         # still follow its client, which is what makes them agree with each other for the first time.
-        return frozenset({self.system})  # pragma: no cover
+        return frozenset({self.system})
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
