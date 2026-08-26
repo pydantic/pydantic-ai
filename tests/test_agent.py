@@ -10325,10 +10325,12 @@ async def test_wrapper_agent():
 
 
 def test_wrapper_agent_validation_context_defaults_to_none():
-    wrapper = WrapperAgent(Agent('test'))
+    class CustomAgent(WrapperAgent[object, str]):
+        def _get_validation_context(self) -> Any | Callable[[RunContext[object]], Any]: return AbstractAgent._get_validation_context(self)  # fmt: skip  # pragma: no branch
+
+    wrapper = WrapperAgent(WrapperAgent(CustomAgent(Agent('test', deps_type=object))))
 
     assert wrapper.validation_context is None
-    assert wrapper._get_validation_context() is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_abstract_agent_system_prompt_parts_default_is_empty():

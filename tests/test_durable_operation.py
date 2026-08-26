@@ -203,7 +203,7 @@ def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], An
     from pydantic_ai.mcp import MCPToolset
 
     # Assembly inspects this tool's definition but never executes its body.
-    async def function_tool() -> str: ...
+    async def function_tool() -> str: ...  # pragma: no branch
 
     function_toolset = FunctionToolset(id='functions')
     function_toolset.add_function(function_tool)
@@ -561,7 +561,7 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     )
 
     # Converter round-tripping inspects these callables but cannot dispatch them.
-    async def request_segment(request: ModelRequestContext) -> ModelResponse: ...
+    async def request_segment(request: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
 
     async def stream_segment(request: ModelRequestContext) -> StreamedActivityResult: ...
 
@@ -603,9 +603,9 @@ async def test_temporal_backend_labels_validation_activity(
     from pydantic_ai.durable_exec.temporal._operation_backend import TemporalBoundOperation
 
     # The workflow dispatcher receives these callables as identities and must not invoke them.
-    async def handler(params: _ToolParams) -> None: ...
+    async def handler(params: _ToolParams) -> None: ...  # pragma: no branch
 
-    async def registration(params: _ToolParams) -> None: ...
+    async def registration(params: _ToolParams) -> None: ...  # pragma: no branch
 
     operation = DurableOperation(
         operation_id=ValidateToolArgumentsId('dynamic', 'tools'),
@@ -727,11 +727,11 @@ async def test_durable_model_compact_messages_dispatches_operation(
         return await operation(CompactMessagesOperationParams(None, request_context, instructions, ctx))
 
     # Compact-message dispatch must not enter the other model segment callables.
-    async def unused_request(request_context: ModelRequestContext) -> ModelResponse: ...
+    async def unused_request(request_context: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
 
-    async def unused_stream(request_context: ModelRequestContext) -> StreamedActivityResult: ...
+    async def unused_stream(request_context: ModelRequestContext) -> StreamedActivityResult: ...  # pragma: no branch
 
-    async def unused_cancel(response: ModelResponse) -> None: ...
+    async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
 
     model = DurableModel(
         TestModel(),
@@ -1207,7 +1207,8 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
     pytest.importorskip('dbos')
     from pydantic_ai.durable_exec.dbos._operation_backend import DBOSOperationBackend, DBOSOperationConfig
 
-    async def handler(params: _DispatchParams) -> None: ...
+    # Registration is inspected without dispatching this operation.
+    async def handler(params: _DispatchParams) -> None: ...  # pragma: no branch
 
     backend = DBOSOperationBackend(
         agent_name='registered',
@@ -1395,7 +1396,7 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
         )
 
     # Missing validation is rejected before tool execution can be dispatched.
-    async def never_called(*args: Any) -> Any: ...
+    async def never_called(*args: Any) -> Any: ...  # pragma: no branch
 
     durable = DurableDynamicToolset(
         DynamicToolset(lambda _: None, id='missing_validation'),

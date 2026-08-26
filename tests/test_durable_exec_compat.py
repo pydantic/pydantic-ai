@@ -350,7 +350,7 @@ def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], An
     from pydantic_ai.mcp import MCPToolset
 
     # Assembly inspects this tool's definition but never executes its body.
-    async def function_tool() -> str: ...
+    async def function_tool() -> None: """Declaration used only for toolset assembly."""  # fmt: skip  # pragma: no branch
 
     function_toolset = FunctionToolset(id='functions')
     function_toolset.add_function(function_tool)

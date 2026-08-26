@@ -335,7 +335,7 @@ async def test_run_context_durable_operation_rejects_unknown_bound_name() -> Non
         id = 'dynamic'
 
         # These handlers are registered only to test unknown-name rejection before dispatch.
-        async def alpha(self) -> str: ...
+        async def alpha(self) -> str: ...  # pragma: no branch
 
         async def zeta(self) -> str: ...
 
@@ -577,12 +577,13 @@ def test_tier_one_override_is_automatically_registered() -> None:
     class TierOneBase(AbstractCapability[Any]):
         # Registration, not execution, is the behavior under test.
         @tier_one_durable_operation
-        async def provision(self, ctx: RunContext[Any]) -> str: ...
+        async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
     class TierOne(TierOneBase):
         id = 'tier_one'
 
-        async def provision(self, ctx: RunContext[Any]) -> str: ...
+        # Automatic registration inspects this override without dispatching it.
+        async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
     agent = Agent(TestModel(), name='tier_one', capabilities=[TierOne(), RecordingDurability()])
     durability = RecordingDurability.from_agent(agent)
@@ -800,21 +801,23 @@ def test_tier_one_base_and_duplicate_override_paths() -> None:
     class Base(AbstractCapability[Any]):
         # Collection behavior is tested without dispatching any of these declarations.
         @tier_one_durable_operation
-        async def operation(self, ctx: RunContext[Any]) -> str: ...
+        async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
         sentinel = True
 
     assert collect_capability_operations(Base()) == {}
 
     class Override(Base):
-        async def operation(self, ctx: RunContext[Any]) -> str: ...
+        # Collection inspects this override without dispatching it.
+        async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
     assert set(collect_capability_operations(Override())) == {'operation'}
 
     class Duplicate(Base):
         id = 'duplicate'
 
-        async def operation(self, ctx: RunContext[Any]) -> str: ...
+        # Duplicate detection happens before this override can be dispatched.
+        async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
         def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
             return {'operation': self.operation}
