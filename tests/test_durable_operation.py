@@ -30,6 +30,7 @@ from pydantic_ai.durable_exec._operation import (
     CacheIdentity,
     CallToolId,
     CancelSuspendedResponseId,
+    CapabilityOperationId,
     CompactMessagesId,
     DurableOperation,
     DurableOperationId,
@@ -589,6 +590,8 @@ def _exhaustive_identity(operation_id: DurableOperationId) -> str:
             return 'cancel'
         case CompactMessagesId():
             return 'compact'
+        case CapabilityOperationId():
+            return 'capability'
         case EventStreamHandlerId():
             return 'event'
         case GetToolsId():
@@ -607,6 +610,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         ModelRequestId(None, False, 'model'),
         CancelSuspendedResponseId(None, 'model'),
         CompactMessagesId(None, 'model'),
+        CapabilityOperationId('capability', 'operation'),
         EventStreamHandlerId(),
         GetToolsId('function', 'tools'),
         GetInstructionsId('mcp'),
@@ -617,6 +621,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         'model',
         'cancel',
         'compact',
+        'capability',
         'event',
         'tools',
         'instructions',
