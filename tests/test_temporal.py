@@ -16,7 +16,7 @@ from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import anyio
 import httpx
@@ -191,6 +191,7 @@ try:
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import (
         TemporalModel,
+        _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import (
@@ -5961,6 +5962,117 @@ async def test_temporal_model_cancel_suspended_response_outside_workflow():
     assert cancelled == [response]
 
 
+@dataclass
+class CancelTenantDeps:
+    tenant_id: str
+
+
+factory_cancel_calls: list[tuple[CancelTenantDeps, str]] = []
+factory_cancelled_responses: list[ModelResponse] = []
+
+
+def cancel_provider_factory(ctx: RunContext[object], provider_name: str) -> Any:
+    assert isinstance(ctx.deps, CancelTenantDeps)
+    factory_cancel_calls.append((ctx.deps, provider_name))
+    return object()
+
+
+class FactoryCancelRecordingModel(TestModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        factory_cancelled_responses.append(response)
+
+
+factory_cancel_temporal_model = TemporalModel(
+    TestModel(),
+    activity_name_prefix='test__factory_cancel',
+    activity_config=BASE_ACTIVITY_CONFIG,
+    deps_type=CancelTenantDeps,
+    provider_factory=cancel_provider_factory,
+)
+
+
+@workflow.defn
+class FactoryCancelWorkflow:
+    @workflow.run
+    async def run(self, response: ModelResponse) -> None:
+        deps = CancelTenantDeps(tenant_id='tenant-a')
+        ctx = RunContext[CancelTenantDeps](deps=deps, model=TestModel(), usage=RunUsage(), run_id='factory-cancel')
+        await execute_temporal_activity(
+            activity=factory_cancel_temporal_model.cancel_suspended_response_activity,
+            args=[
+                _ModelCancelParams(
+                    response=response,
+                    model_id='runtime-provider:model',
+                    serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+                    deps=deps,
+                )
+            ],
+            **BASE_ACTIVITY_CONFIG,
+        )
+
+
+async def test_temporal_model_cancel_suspended_response_uses_provider_factory(client: Client) -> None:
+    """A real worker preserves structured deps used to select the cancellation client."""
+    factory_cancel_calls.clear()
+    factory_cancelled_responses.clear()
+    factory_model = FactoryCancelRecordingModel()
+
+    def infer_runtime_model(model_id: str, provider_factory: Callable[[str], object] | None = None):
+        assert provider_factory is not None
+        provider_factory('runtime-provider')
+        return factory_model
+
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', side_effect=infer_runtime_model):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[FactoryCancelWorkflow],
+            activities=factory_cancel_temporal_model.temporal_activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            await client.execute_workflow(
+                FactoryCancelWorkflow.run,
+                args=[response],
+                id=f'{FactoryCancelWorkflow.__name__}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+
+    assert factory_cancel_calls == [(CancelTenantDeps(tenant_id='tenant-a'), 'runtime-provider')]
+    assert factory_cancelled_responses == [response]
+
+
+async def test_temporal_model_cancel_suspended_response_accepts_legacy_payload() -> None:
+    """An old cancel payload keeps the environment-inference behavior."""
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    params = TypeAdapter(_ModelCancelParams).validate_python(
+        {'response': response, 'model_id': 'runtime-provider:model'}
+    )
+    assert params.serialized_run_context is None
+    assert params.deps is None
+
+    cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response)
+
+    environment_model = RecordingModel()
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__legacy_cancel',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        deps_type=str,
+        provider_factory=Mock(),
+    )
+    with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', return_value=environment_model) as infer:
+        await ActivityEnvironment().run(temporal_model.cancel_suspended_response_activity, params)
+
+    infer.assert_called_once_with('runtime-provider:model')
+    assert cancelled == [response]
+
+
 # Module-level so the `@workflow.defn` below can bind to it (mirrors `simple_temporal_agent`). The
 # activity records into this list; since activities always run outside the workflow sandbox in the
 # worker process, the workflow can dispatch the teardown while the assertion still observes it here.
@@ -5989,6 +6101,25 @@ class CancelSuspendedResponseWorkflow:
         await cancel_temporal_model.cancel_suspended_response(response)
 
 
+replay_legacy_cancel_payload = True
+
+
+@workflow.defn
+class CancelSuspendedResponseReplayWorkflow:
+    @workflow.run
+    async def run(self, response: ModelResponse) -> None:
+        params = _ModelCancelParams(response=response)
+        if not replay_legacy_cancel_payload:
+            ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='cancel-replay')
+            params.serialized_run_context = TemporalRunContext.serialize_run_context(ctx)
+            params.deps = ctx.deps
+        await execute_temporal_activity(
+            activity=cancel_temporal_model.cancel_suspended_response_activity,
+            args=[params],
+            **BASE_ACTIVITY_CONFIG,
+        )
+
+
 async def test_temporal_model_cancel_suspended_response_in_workflow(client: Client):
     """Inside a workflow, `cancel_suspended_response` tears the server-side job down via an activity.
 
@@ -6015,6 +6146,39 @@ async def test_temporal_model_cancel_suspended_response_in_workflow(client: Clie
     # The teardown ran in the activity worker against the wrapped model, with the response faithfully
     # round-tripped through both serialization boundaries.
     assert model_cancel_calls == [response]
+
+
+async def test_temporal_model_cancel_suspended_response_replays_legacy_history(client: Client) -> None:
+    """A history recorded with the old cancel payload replays with the one-argument command intact."""
+    global replay_legacy_cancel_payload
+
+    replay_legacy_cancel_payload = True
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    workflow_id = f'{CancelSuspendedResponseReplayWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancelSuspendedResponseReplayWorkflow],
+        activities=cancel_temporal_model.temporal_activities,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        await client.execute_workflow(
+            CancelSuspendedResponseReplayWorkflow.run,
+            args=[response],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+
+    replay_legacy_cancel_payload = False
+    try:
+        await Replayer(
+            workflows=[CancelSuspendedResponseReplayWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        ).replay_workflow(history)
+    finally:
+        replay_legacy_cancel_payload = True
 
 
 async def test_temporal_model_request_stream_outside_workflow():
