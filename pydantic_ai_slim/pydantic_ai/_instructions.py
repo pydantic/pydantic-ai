@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import Generic
 
@@ -167,7 +167,7 @@ def normalize_toolset_instructions(
     result: str | InstructionPart | Sequence[str | InstructionPart] | None,
     toolset_id: str | None = None,
     *,
-    already_keyed: bool = False,
+    passthrough_source_ids: Collection[str] = (),
 ) -> list[InstructionPart]:
     """Normalize a toolset `get_instructions` result into non-empty `InstructionPart`s.
 
@@ -186,11 +186,14 @@ def normalize_toolset_instructions(
     source key to hang a declared segment off, and letting the raw value stand would let it claim a
     key belonging to somebody else — `'agent'`, or a `'toolset:<id>'` naming a toolset it isn't.
 
-    `already_keyed` marks the one caller whose input may legitimately carry keys the framework
-    issued: a `WrapperToolset` subclass overriding `get_instructions` typically returns what the
-    wrapped toolset produced, and the wrapper has no `id` of its own to resolve against. There the
-    framework's own namespaces pass through, so a capability-contributed toolset stays addressable
-    rather than arriving anonymous through `CapabilityOwnedToolset`.
+    `passthrough_source_ids` names the source keys whose blocks may arrive already keyed. A
+    `WrapperToolset` subclass overriding `get_instructions` typically returns what the toolsets it
+    wraps produced, so those keys have to survive the trip out — that's what keeps a
+    capability-contributed toolset addressable rather than anonymous behind `CapabilityOwnedToolset`.
+    Only keys the wrapped subtree actually owns pass through, and they pass through whether or not
+    the wrapper has an `id`: a key belongs to the toolset it names, so neither a wrapper inventing a
+    key for a toolset it doesn't wrap nor one re-resolving a wrapped toolset's key beneath its own is
+    something to honour. Anything else is read as a segment the wrapper declared.
     """
     if not result:
         return []
@@ -201,12 +204,15 @@ def normalize_toolset_instructions(
         part = item if isinstance(item, InstructionPart) else InstructionPart(content=item, dynamic=True)
         if not part.content.strip():
             continue
-        if source_id is not None:
-            resolved_id = resolve_declared_id(source_id, part.id)
-        elif part.id is not None and not (already_keyed and part.id.startswith(f'{TOOLSET_INSTRUCTION_NAMESPACE}:')):
-            resolved_id = None
-        else:
+        if part.id is not None and any(
+            part.id == passthrough_id or part.id.startswith(f'{passthrough_id}:')
+            for passthrough_id in passthrough_source_ids
+        ):
             resolved_id = part.id
+        elif source_id is not None:
+            resolved_id = resolve_declared_id(source_id, part.id)
+        else:
+            resolved_id = None
         if resolved_id != part.id:
             part = replace(part, id=resolved_id)
         parts.append(part)

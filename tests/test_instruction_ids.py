@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 
 from .conftest import try_import
 
@@ -204,6 +204,75 @@ async def test_wrapped_toolset_instructions_keep_their_id():
 
     assert await run_and_capture(agent) == [
         InstructionPart(content='Weather instructions.', dynamic=True, id='toolset:weather')
+    ]
+
+
+class RelayingWrapper(WrapperToolset[Any]):
+    """A wrapper that passes what it wraps back out, the usual reason to override `get_instructions`."""
+
+    def __init__(self, wrapped: AbstractToolset[Any], id: str | None = None):
+        super().__init__(wrapped)
+        self._id = id
+
+    @property
+    def id(self) -> str | None:
+        return self._id
+
+    async def get_instructions(
+        self, ctx: RunContext[Any]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        return await super().get_instructions(ctx)
+
+
+class RelayingWrapperReturning(WrapperToolset[Any]):
+    """A wrapper returning instructions of its own choosing rather than what it wraps."""
+
+    def __init__(self, wrapped: AbstractToolset[Any], instructions: Sequence[str | InstructionPart]):
+        super().__init__(wrapped)
+        self.instructions = instructions
+
+    async def get_instructions(
+        self, ctx: RunContext[Any]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        return self.instructions
+
+
+async def test_a_named_wrapper_relays_the_wrapped_key_rather_than_nesting_it():
+    """A wrapper with an `id` must not re-resolve what it wraps beneath its own key.
+
+    A key belongs to the toolset it names, so a wrapper handing one back out is relaying, not
+    declaring. Reading the wrapped key as a declared segment would qualify it to
+    `'toolset:wrapper:toolset:leaf'` — which the colon rule rejects outright, so the toolset stops
+    working rather than merely being misfiled.
+    """
+    agent = Agent(toolsets=[RelayingWrapper(InstructionsToolset('Leaf instructions.', id='leaf'), id='wrapper')])
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Leaf instructions.', dynamic=True, id='toolset:leaf')
+    ]
+
+
+async def test_a_wrapper_cannot_relay_a_key_for_a_toolset_it_does_not_wrap():
+    """Only the keys below a wrapper survive it, so it cannot speak in another toolset's name.
+
+    A wrapper is trusted to relay because the keys it returns come from the toolsets it wraps.
+    Trusting the shape of the key instead would let any wrapper write `'toolset:<someone else>'` —
+    or a segment beneath it, which the duplicate check compares whole ids and so never catches —
+    and an application addressing that key would reach a block the named toolset never wrote.
+    """
+    agent = Agent(
+        toolsets=[
+            RelayingWrapperReturning(
+                InstructionsToolset(id='wrapped'),
+                [InstructionPart(content='Forged.', id='toolset:victim:limits')],
+            ),
+            InstructionsToolset('Genuine.', id='victim'),
+        ]
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Forged.'),
+        InstructionPart(content='Genuine.', dynamic=True, id='toolset:victim'),
     ]
 
 
