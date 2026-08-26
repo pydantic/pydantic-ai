@@ -6,15 +6,28 @@ from typing import Any, ClassVar, cast
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart, Tool
+from pydantic_ai import (
+    Agent,
+    AgentStreamEvent,
+    FunctionToolset,
+    ModelResponse,
+    RunContext,
+    TextPart,
+    Tool,
+    durable_exec,
+)
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec import (
+    IDENTITY_CODEC,
+    JSON_CODEC,
+    BaseDurabilityCapability,
+    CapabilityOperationId,
+    ToolsetKind,
+)
 from pydantic_ai.durable_exec._capability_operation import (
     _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
     _operation_result_type,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
-from pydantic_ai.durable_exec._operation import CapabilityOperationId
 from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
@@ -36,6 +49,34 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
+
+
+def test_public_engine_builder_exports() -> None:
+    assert durable_exec.__all__ == [
+        'BaseDurabilityCapability',
+        'CallToolId',
+        'CallableOperationBackend',
+        'CancelSuspendedResponseId',
+        'CapabilityOperationId',
+        'CompactMessagesId',
+        'DurabilityCodec',
+        'DurableOperationBackend',
+        'DurableOperationId',
+        'DurableOperationNamer',
+        'EventStreamHandlerId',
+        'GetInstructionsId',
+        'GetToolsId',
+        'IDENTITY_CODEC',
+        'JSON_CODEC',
+        'JournalOperationNamer',
+        'ModelRequestId',
+        'OperationConfigRole',
+        'RegisteredOperationBackend',
+        'ToolsetKind',
+        'ValidateToolArgumentsId',
+    ]
+    assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
+
 
 JOURNAL_OPERATION_NAMES = {
     'compat__model.request',
