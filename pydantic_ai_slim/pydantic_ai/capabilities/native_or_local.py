@@ -17,6 +17,31 @@ from .abstract import AbstractCapability
 NativeToolT = TypeVar('NativeToolT', bound=AbstractNativeTool)
 
 
+async def resolve_native_tool(
+    native_tool: NativeToolT
+    | Callable[[RunContext[AgentDepsT]], Awaitable[NativeToolT | None] | NativeToolT | None]
+    | None,
+    ctx: RunContext[AgentDepsT],
+    tool_cls: type[NativeToolT],
+) -> NativeToolT:
+    """Resolve a native tool instance or per-run factory, raising if the factory omits the tool.
+
+    A factory returning `None` means "omit this tool" on the native path
+    ([`NativeToolFunc`][pydantic_ai.tools.NativeToolFunc]). The fallback subagent cannot omit
+    once it has already been invoked, so it raises [`UserError`][pydantic_ai.exceptions.UserError]
+    rather than enabling the default tool.
+    """
+    if callable(native_tool) and not isinstance(native_tool, tool_cls):
+        native_tool = await await_maybe(native_tool(ctx))
+    if native_tool is None:
+        raise UserError(
+            f'Native tool factory returned `None`; `{tool_cls.__name__}` will not be enabled '
+            'with default settings. Return a tool instance to allow this request.'
+        )
+    assert isinstance(native_tool, tool_cls)
+    return native_tool
+
+
 @dataclass(init=False)
 class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     """Capability that pairs a provider-native tool with a local fallback.
@@ -47,6 +72,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     - `False`: disable the native tool; always use the local tool.
     - An `AbstractNativeTool` instance: use this specific configuration.
     - A callable (`NativeToolFunc`): dynamically create the native tool per-run via `RunContext`.
+      Returning `None` omits the native tool; a `fallback_model` subagent raises `UserError`
+      rather than substituting a default instance.
     """
 
     local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None
@@ -199,12 +226,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
     def _resolve_native_with_overrides(
         self, tool_cls: type[NativeToolT], overrides: dict[str, Any]
-    ) -> NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[NativeToolT | None] | NativeToolT | None]:
+    ) -> NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[NativeToolT] | NativeToolT]:
         """Resolve the native tool for the fallback subagent, with capability-level overrides applied.
 
         Handles all three `native` shapes: an instance (overridden via `dataclasses.replace`),
         `False` (a default instance with overrides), or a factory (wrapped so its per-run result
-        is overridden the same way, with a default instance substituted when it returns `None`).
+        is overridden the same way). A factory that returns `None` raises `UserError` rather than
+        substituting a default instance.
         """
         if isinstance(self.native, tool_cls):
             return replace(self.native, **overrides) if overrides else self.native
@@ -215,12 +243,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         native_factory = self.native
         assert callable(native_factory)
 
-        async def resolve_native(ctx: RunContext[AgentDepsT]) -> NativeToolT | None:
-            native_tool = await await_maybe(native_factory(ctx))
-            if native_tool is None:
-                native_tool = tool_cls()
-            else:
-                assert isinstance(native_tool, tool_cls)
-            return replace(native_tool, **overrides) if overrides else native_tool
+        async def resolve_native(ctx: RunContext[AgentDepsT]) -> NativeToolT:
+            native_tool = await resolve_native_tool(native_factory, ctx, tool_cls)
+            assert isinstance(native_tool, tool_cls)
+            if not overrides:
+                return native_tool
+            updated = replace(native_tool, **overrides)
+            assert isinstance(updated, tool_cls)
+            return updated
 
         return resolve_native

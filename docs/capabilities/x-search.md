@@ -13,3 +13,5 @@ agent = Agent(
     capabilities=[XSearch(fallback_model='xai:grok-4.3')],
 )
 ```
+
+`native=` can be a per-run factory: a callable taking [`RunContext`][pydantic_ai.tools.RunContext] that returns [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] or `None`. Capability-level fields such as `include_output` override the factory result, including when the request is delegated through `fallback_model`. Returning `None` omits the native tool; if the request would go through `fallback_model`, that raises [`UserError`][pydantic_ai.exceptions.UserError] rather than searching X with default settings. See [Dynamic Configuration](../native-tools.md#dynamic-configuration).

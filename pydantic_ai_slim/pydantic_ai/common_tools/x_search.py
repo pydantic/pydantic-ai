@@ -7,6 +7,7 @@ from typing import Any, TypeAlias
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities.native_or_local import resolve_native_tool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
@@ -29,7 +30,11 @@ XSearchNativeToolFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
     Awaitable[XSearchTool | None] | XSearchTool | None,
 ]
-"""Callable that resolves the native X search tool dynamically per-run."""
+"""Callable that resolves the native X search tool dynamically per-run.
+
+Returning `None` omits the tool on the native path. The fallback subagent raises
+[`UserError`][pydantic_ai.exceptions.UserError] rather than enabling a default `XSearchTool`.
+"""
 
 XSearchNativeTool: TypeAlias = XSearchTool | XSearchNativeToolFunc[AgentDepsT]
 """Type for the native tool: an `XSearchTool` instance or a factory callable."""
@@ -73,11 +78,7 @@ class XSearchSubagentTool:
         if callable(model):
             model = await await_maybe(model(ctx))
 
-        native_tool = self.native_tool
-        if callable(native_tool):
-            native_tool = await await_maybe(native_tool(ctx))
-        if native_tool is None:
-            native_tool = XSearchTool()
+        native_tool = await resolve_native_tool(self.native_tool, ctx, XSearchTool)
 
         agent = Agent(
             model,

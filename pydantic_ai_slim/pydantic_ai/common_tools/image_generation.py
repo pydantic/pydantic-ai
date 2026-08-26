@@ -7,6 +7,7 @@ from typing import Any, TypeAlias
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities.native_or_local import resolve_native_tool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
@@ -30,7 +31,11 @@ ImageGenerationNativeToolFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
     Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None,
 ]
-"""Callable that resolves the native image generation tool dynamically per-run."""
+"""Callable that resolves the native image generation tool dynamically per-run.
+
+Returning `None` omits the tool on the native path. The fallback subagent raises
+[`UserError`][pydantic_ai.exceptions.UserError] rather than enabling a default `ImageGenerationTool`.
+"""
 
 ImageGenerationNativeTool: TypeAlias = ImageGenerationTool | ImageGenerationNativeToolFunc[AgentDepsT]
 """Type for the native tool: an `ImageGenerationTool` instance or a factory callable."""
@@ -103,11 +108,7 @@ class ImageGenerationSubagentTool:
             # static strings are already validated at factory time
             _check_image_only_model(model)
 
-        native_tool = self.native_tool
-        if callable(native_tool):
-            native_tool = await await_maybe(native_tool(ctx))
-        if native_tool is None:
-            native_tool = ImageGenerationTool()
+        native_tool = await resolve_native_tool(self.native_tool, ctx, ImageGenerationTool)
 
         agent = Agent(
             model,

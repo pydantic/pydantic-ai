@@ -157,6 +157,6 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
 
     def _resolved_native(
         self,
-    ) -> XSearchTool | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]:
+    ) -> XSearchTool | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool] | XSearchTool]:
         """Get the XSearchTool for the fallback, with capability-level overrides applied."""
         return self._resolve_native_with_overrides(XSearchTool, self._xsearch_kwargs())

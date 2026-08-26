@@ -191,10 +191,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def _resolved_native(
         self,
-    ) -> (
-        ImageGenerationTool
-        | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
-    ):
+    ) -> ImageGenerationTool | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool] | ImageGenerationTool]:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
         return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 
