@@ -167,10 +167,6 @@ def test_provider_outside_both_name_families_matches_only_itself(vertexai: bool)
         def client(self) -> Client:
             return self._client
 
-        @staticmethod
-        def model_profile(model_name: str) -> None:
-            return None
-
     client = (
         Client(vertexai=True, project='test-project', location='us-central1')
         if vertexai
@@ -178,5 +174,7 @@ def test_provider_outside_both_name_families_matches_only_itself(vertexai: bool)
     )
     m = GoogleModel('gemini-2.5-flash', provider=MyProxyProvider(client))
 
+    assert m.system == 'my-google-proxy'
+    assert m.base_url == 'https://proxy.example.invalid'
     assert m._matching_provider_names == frozenset({'my-google-proxy'})  # pyright: ignore[reportPrivateUsage]
     assert m._is_google_cloud is vertexai  # pyright: ignore[reportPrivateUsage]
