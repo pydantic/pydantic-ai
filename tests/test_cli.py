@@ -10,7 +10,7 @@ from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart, _display
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -1019,3 +1019,105 @@ def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
         default_model='openai:gpt-5',
         html_source=custom_url,
     )
+
+
+@pytest.fixture
+def terminal_clai(env: TestEnv) -> Iterator[None]:
+    """A `clai` session that believes it owns a terminal, and starts with the banner unclaimed."""
+    env.set('FORCE_COLOR', '1')
+    env.remove('CI')
+    env.remove('PYDANTIC_AI_NO_BANNER')
+    _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+    try:
+        yield
+    finally:
+        _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None):
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['hello']) == 0
+
+    output = capfd.readouterr().out
+    assert '·.______|______.·' in output
+    assert 'clai - Pydantic AI CLI' in output
+    assert 'model: openai:gpt-5 • tools: 0' in output
+    # The banner carries the observability pointer, so clai doesn't repeat its own header line.
+    assert 'observability: not configured' in output
+    assert 'with openai:gpt-5' not in output
+
+
+def test_clai_intro_names_the_agent_the_user_asked_for(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+    terminal_clai: None,
+):
+    env.set('OPENAI_API_KEY', 'test')
+    create_test_module(custom_agent=Agent(TestModel()))
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    # The loaded agent has no name of its own, so the banner falls back to the path the user gave.
+    assert 'agent: test_module:custom_agent' in capfd.readouterr().out
+
+
+def test_clai_intro_drops_observability_for_an_instrumented_agent(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+    terminal_clai: None,
+):
+    env.set('OPENAI_API_KEY', 'test')
+    instrumented = Agent(TestModel(), name='observed')
+    instrumented.instrument = True
+    create_test_module(custom_agent=instrumented)
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    output = capfd.readouterr().out
+    assert 'agent: observed' in output
+    assert 'observability' not in output
+
+
+def test_clai_intro_falls_back_to_one_line_when_banner_is_suppressed(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None
+):
+    env.set('PYDANTIC_AI_NO_BANNER', '1')
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['hello']) == 0
+
+    # The one-liner clai has always printed, styled per-segment, so ANSI codes sit between the words.
+    output = capfd.readouterr().out
+    assert '·.______|______.·' not in output
+    assert 'observability' not in output
+    assert 'clai - Pydantic AI CLI' in output
+    assert 'openai:gpt-5' in output
+
+
+def test_clai_run_does_not_print_a_second_banner(capfd: CaptureFixture[str], env: TestEnv, terminal_clai: None):
+    """The banner belongs at startup, not in the middle of the answer to the first prompt."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    assert cli(['--model', 'test', 'hello']) == 0
+
+    # `ask_agent` claims the banner, so the run inside it has nothing left to print.
+    assert capfd.readouterr().out.count('·.______|______.·') == 1
+
+
+def test_clai_web_does_not_print_a_banner(mocker: MockerFixture, env: TestEnv, terminal_clai: None):
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    assert cli(['web']) == 0
+
+    # A server's first chat request would otherwise print the banner into its log, long after start.
+    assert _display.claim_banner() is False

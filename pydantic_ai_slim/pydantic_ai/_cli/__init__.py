@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import argparse
 import json
+import platform
 import sys
 from collections.abc import Sequence
 from contextlib import ExitStack
@@ -12,7 +13,7 @@ from typing import Any
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 
-from .. import __version__, models, usage as _usage
+from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
@@ -137,6 +138,36 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
+def _print_intro(
+    console: Console, agent: Agent[Any, Any], prog_name: str, model_name: str, agent_path: str | None
+) -> None:
+    """Print the intro a chat session opens with, and claim the banner so no run prints another one.
+
+    Left to itself, the first run would print the banner into the middle of the answer to the first
+    prompt. clai knows what the agent is before then, so it shows the same banner up front instead.
+    """
+    from ..agent import _registered_counts  # pyright: ignore[reportPrivateUsage]
+
+    registered = _registered_counts(agent, agent.root_capability)
+    banner = _display.render_banner(
+        heading=f'{prog_name} - Pydantic AI CLI v{__version__} • Python {platform.python_version()}',
+        # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
+        name=agent.name or agent_path,
+        model=model_name,
+        output_type=agent.output_type,
+        tools=registered.tools,
+        capabilities=registered.capabilities,
+        observability=not agent.instrument,
+    )
+    # The banner is plain text laid out in columns, so rich must not re-highlight or re-wrap it, and
+    # an output type like `list[str]` must not be read as markup.
+    text = Text()
+    for line in banner.splitlines():
+        text.append(line[: _display.LOGO_WIDTH], style='green')
+        text.append(f'{line[_display.LOGO_WIDTH :]}\n')
+    console.print(text, end='', soft_wrap=True)
+
+
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
@@ -198,6 +229,10 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     args = parser.parse_args(args_list)
 
     from .web import run_web_command
+
+    # The web UI prints its own startup lines; a banner would arrive later, in the server log,
+    # triggered by whenever someone first sends a message in the browser.
+    _display.claim_banner()
 
     return run_web_command(
         agent_path=args.agent,
@@ -297,7 +332,11 @@ def _run_chat_command(
             return 1
 
     model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
-    if args.agent and model_arg_set:
+    # Claiming the banner here is what stops the first run from printing a second one, so it has to
+    # happen whether or not this session is one that shows it.
+    if _display.claim_banner() and not _display.banner_suppressed() and console.is_terminal:
+        _print_intro(console, agent, prog_name, model_name, args.agent)
+    elif args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
             highlight=False,
@@ -407,6 +446,10 @@ async def ask_agent(
     *,
     usage: _usage.RunUsage | None = None,
 ) -> list[ModelMessage]:
+    # A chat session owns the terminal: it has already printed whatever intro it wanted, and a
+    # banner from the run itself would land in the middle of the answer to this prompt.
+    _display.claim_banner()
+
     status = Status('[dim]Working on it…[/dim]', console=console)
 
     # Count this turn into a fresh `RunUsage` so `usage_limits` stays per-run, then merge it into the

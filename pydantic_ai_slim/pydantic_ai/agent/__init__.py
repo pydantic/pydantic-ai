@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -415,7 +415,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _name: str | None
     _description: TemplateStr[AgentDepsT] | str | None
-    _constructor_capability_names: tuple[str, ...]
     end_strategy: EndStrategy
     """The strategy for handling function tool calls the model requests alongside a result that ends the run.
 
@@ -625,7 +624,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = name
         self._description = description
         self.end_strategy = end_strategy
-        self._constructor_capability_names = tuple(type(capability).__name__ for capability in capabilities or ())
 
         capabilities = wrap_capability_funcs(capabilities)
 
@@ -1532,12 +1530,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         from .._display import display_agent_banner
 
+        registered = _registered_counts(self, bootstrap_capability)
         display_agent_banner(
             name=self.name,
             model=model_id or model_used.model_id,
+            # A run-level `output_type=` overrides what the agent was built with.
             output_type=output_type_,
-            tools=len(self._function_toolset.tools),
-            capabilities=self._constructor_capability_names,
+            tools=registered.tools,
+            capabilities=registered.capabilities,
             instrumented=instrumentation_settings is not None,
         )
 
@@ -3907,6 +3907,25 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     PendingMessageDrainCapability,
 )
 """Infrastructure capabilities auto-injected when not already present."""
+
+
+class _RegisteredCounts(NamedTuple):
+    """How much the user gave an agent to work with, as summarized by `pydantic_ai._display`."""
+
+    tools: int
+    capabilities: int
+
+
+def _registered_counts(agent: Agent[Any, Any], capability: AbstractCapability[Any]) -> _RegisteredCounts:
+    """Count what the user registered on `agent`, for a run rooted at `capability`.
+
+    Infrastructure capabilities are injected for every agent, so counting those would say nothing
+    about the agent the user actually wrote.
+    """
+    return _RegisteredCounts(
+        tools=len(agent._function_toolset.tools),  # pyright: ignore[reportPrivateUsage]
+        capabilities=sum(not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES) for leaf in leaf_capabilities(capability)),
+    )
 
 
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
