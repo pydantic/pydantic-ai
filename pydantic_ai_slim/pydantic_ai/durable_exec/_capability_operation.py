@@ -41,11 +41,8 @@ class _CapabilityOperationResult(Generic[R]):
     usage_delta: RunUsage
 
 
-def _make_operation_result_type(result_type: object) -> object:
+def _operation_result_type(result_type: object) -> object:  # pyright: ignore[reportUnusedFunction]
     return cast(Any, _CapabilityOperationResult)[result_type]
-
-
-_operation_result_type = _make_operation_result_type
 
 
 @dataclass
@@ -86,7 +83,11 @@ class CapabilityMethodDeclaration:
 
 
 class CapabilityCacheIdentity:
-    """Use every validated parameter as the Prefect cache identity."""
+    """Project the model, validated arguments, and run context into Prefect's cache identity.
+
+    The model separates registered model targets, the arguments identify the operation input,
+    and the run context contributes durable run and step identity through Prefect's policy.
+    """
 
     def project(self, params: CapabilityOperationParams) -> tuple[object, ...]:
         return (params.model_id, params.arguments, params.run_context)
