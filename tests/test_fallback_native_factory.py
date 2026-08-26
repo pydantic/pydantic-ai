@@ -83,17 +83,27 @@ async def test_xsearch_callable_native_pass_through_without_overrides():
     assert await await_maybe(resolved(_run_context())) is factory_tool
 
 
-async def test_xsearch_callable_native_none_raises():
+async def test_xsearch_callable_native_none_raises(allow_model_requests: None):
     """A callable native factory returning None raises rather than enabling default X search."""
 
-    async def native_factory(ctx: RunContext[None]) -> None:
+    def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('fallback model should not run when the native factory returns None')
+
+    inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})))
+
+    def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
+
+    def native_factory(ctx: RunContext[Any]) -> None:
         return None
 
-    cap = XSearch(native=native_factory, fallback_model='xai:grok-4-1-fast-non-reasoning', include_output=True)
-    native = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-    assert callable(native)
+    outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+    agent = Agent(
+        outer_model,
+        capabilities=[XSearch(native=native_factory, fallback_model=inner_model, include_output=True)],
+    )
     with pytest.raises(UserError, match='returned `None`'):
-        await await_maybe(native(_run_context()))
+        await agent.run('What is happening on X?')
 
 
 def test_xsearch_native_false_keeps_fallback_overrides():
@@ -164,21 +174,30 @@ async def test_image_generation_callable_native_pass_through_without_overrides()
     assert await await_maybe(resolved(_run_context())) is factory_tool
 
 
-async def test_image_generation_callable_native_none_raises():
+async def test_image_generation_callable_native_none_raises(allow_model_requests: None):
     """A callable native factory returning None raises rather than enabling default image generation."""
 
-    async def native_factory(ctx: RunContext[None]) -> None:
+    def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('fallback model should not run when the native factory returns None')
+
+    inner_model = FunctionModel(
+        inner_model_fn,
+        profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}), supports_image_output=True),
+    )
+
+    def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+
+    def native_factory(ctx: RunContext[Any]) -> None:
         return None
 
-    cap = ImageGeneration(
-        native=native_factory,
-        fallback_model='openai-responses:gpt-5.4',
-        output_format='jpeg',
+    outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+    agent = Agent(
+        outer_model,
+        capabilities=[ImageGeneration(native=native_factory, fallback_model=inner_model, output_format='jpeg')],
     )
-    native = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-    assert callable(native)
     with pytest.raises(UserError, match='returned `None`'):
-        await await_maybe(native(_run_context()))
+        await agent.run('Generate an image')
 
 
 def test_image_generation_native_false_keeps_fallback_overrides():

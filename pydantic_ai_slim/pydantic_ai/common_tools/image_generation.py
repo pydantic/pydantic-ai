@@ -7,7 +7,7 @@ from typing import Any, TypeAlias
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.capabilities.native_or_local import resolve_native_tool
+from pydantic_ai.capabilities.native_or_local import _resolve_native_tool  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
@@ -108,7 +108,7 @@ class ImageGenerationSubagentTool:
             # static strings are already validated at factory time
             _check_image_only_model(model)
 
-        native_tool = await resolve_native_tool(self.native_tool, ctx, ImageGenerationTool)
+        native_tool = await _resolve_native_tool(self.native_tool, ctx, ImageGenerationTool)
 
         agent = Agent(
             model,

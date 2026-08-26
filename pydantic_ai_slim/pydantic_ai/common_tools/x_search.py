@@ -7,7 +7,7 @@ from typing import Any, TypeAlias
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.capabilities.native_or_local import resolve_native_tool
+from pydantic_ai.capabilities.native_or_local import _resolve_native_tool  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
@@ -78,7 +78,7 @@ class XSearchSubagentTool:
         if callable(model):
             model = await await_maybe(model(ctx))
 
-        native_tool = await resolve_native_tool(self.native_tool, ctx, XSearchTool)
+        native_tool = await _resolve_native_tool(self.native_tool, ctx, XSearchTool)
 
         agent = Agent(
             model,

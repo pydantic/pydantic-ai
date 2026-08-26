@@ -17,7 +17,7 @@ from .abstract import AbstractCapability
 NativeToolT = TypeVar('NativeToolT', bound=AbstractNativeTool)
 
 
-async def resolve_native_tool(
+async def _resolve_native_tool(
     native_tool: NativeToolT
     | Callable[[RunContext[AgentDepsT]], Awaitable[NativeToolT | None] | NativeToolT | None]
     | None,
@@ -72,8 +72,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     - `False`: disable the native tool; always use the local tool.
     - An `AbstractNativeTool` instance: use this specific configuration.
     - A callable (`NativeToolFunc`): dynamically create the native tool per-run via `RunContext`.
-      Returning `None` omits the native tool; a `fallback_model` subagent raises `UserError`
-      rather than substituting a default instance.
+      Returning `None` omits the native tool.
     """
 
     local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None
@@ -244,7 +243,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         assert callable(native_factory)
 
         async def resolve_native(ctx: RunContext[AgentDepsT]) -> NativeToolT:
-            native_tool = await resolve_native_tool(native_factory, ctx, tool_cls)
+            native_tool = await _resolve_native_tool(native_factory, ctx, tool_cls)
             assert isinstance(native_tool, tool_cls)
             if not overrides:
                 return native_tool
