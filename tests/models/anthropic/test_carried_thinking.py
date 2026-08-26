@@ -209,13 +209,20 @@ async def test_carried_thinking_accepted_with_thinking_enabled(
 
 @pytest.fixture
 def anthropic_bedrock_client() -> AsyncAnthropicBedrock:
-    """An `AsyncAnthropicBedrock` client, SigV4-signed from the ambient AWS credentials on replay too.
+    """An `AsyncAnthropicBedrock` client that needs no AWS credentials to replay.
 
-    `botocore` only ships under the `bedrock` extra, and the SDK imports it at request-prep time.
+    The SDK signs with SigV4 whenever botocore can resolve credentials, and refuses a bearer token
+    alongside them — so recording goes through `run-bedrock-tests.sh`, which exports static keys, and
+    replay falls back to a placeholder bearer token. Without that fallback botocore reaches for the
+    instance metadata endpoint on a runner that has no credentials at all, and the request never gets
+    as far as the cassette. `botocore` itself only ships under the `bedrock` extra.
     """
     pytest.importorskip('botocore')
 
-    return AsyncAnthropicBedrock(aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'))
+    return AsyncAnthropicBedrock(
+        api_key=None if os.environ.get('AWS_ACCESS_KEY_ID') else 'test-bedrock-token',
+        aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+    )
 
 
 async def test_carried_thinking_accepted_on_bedrock_transport(
