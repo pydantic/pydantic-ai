@@ -158,8 +158,13 @@ def test_history_from_the_other_transport_does_not_replay_its_signature(
 
     `ThinkingPart.provider_name` documents that signatures are only sent back to the same provider,
     and a signature minted by the Gemini Developer API is not valid on Google Cloud or vice versa.
-    The positive cases above pin which alias replays; this pins that the opposite one does not, so
-    widening the accepted set back out can't silently start forwarding foreign signatures.
+    The positive cases above pin which alias replays; this pins that the other transport's alias
+    does not, so re-widening the set back to both families can't go unnoticed.
+
+    What this cannot pin: the v2 names carry no transport, so a `'google'`-stamped history minted on
+    the Gemini Developer API still replays on a Vertex-backed `GoogleProvider` (and the mirror for
+    `'google-cloud'`). That ambiguity is inherent to the v2 names, not introduced by keying on the
+    transport — the pre-v2 aliases are the only part of the stamp that identifies one.
     """
     model = model_factory()
     assert model.system == current_provider_name

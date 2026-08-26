@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from tests.cassette_utils import CassetteContext
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
@@ -192,3 +193,21 @@ def vertex_client_google_provider() -> GoogleProvider:
         pytest.skip('google is not installed')
 
     return GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1'))
+
+
+@pytest.fixture
+def gla_client_google_cloud_provider() -> GoogleCloudProvider:
+    """A Gemini-Developer-API `genai.Client` wrapped in `GoogleCloudProvider`, the mirror of #6792.
+
+    `system` stays `'google-cloud'` while the transport is the Gemini Developer API. `__init__`
+    short-circuits on `client=` before it would force `vertexai=True`, so the two disagree in this
+    direction too and every transport branch has to follow the client rather than the name.
+    """
+    try:
+        from google.genai import Client
+
+        from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    return GoogleCloudProvider(client=Client(vertexai=False, api_key='mock-api-key'))

@@ -74,6 +74,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     InstructionPart,
+    UploadedFileProviderName,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.native_tools import (
@@ -4082,28 +4083,85 @@ async def test_google_vertex_client_in_google_provider_uses_cloud_service_tier_h
     assert config_dict['http_options']['headers']['X-Vertex-AI-LLM-Request-Type'] == 'dedicated'
 
 
-def test_google_vertex_client_in_google_provider_validates_uploaded_files_as_cloud(
-    vertex_client_google_provider: GoogleProvider,
+async def test_google_cloud_service_tier_is_dropped_on_a_gemini_api_transport(
+    allow_model_requests: None, gla_client_google_cloud_provider: GoogleCloudProvider
 ) -> None:
-    """`UploadedFile` handling for a Vertex-backed `GoogleProvider` follows the Google Cloud rules:
-    GCS URIs are required, and files recorded against the provider's own name or the Google Cloud
-    provider names are accepted (#6792).
+    """`google_cloud_service_tier` has no Gemini API equivalent, so it is dropped on that transport.
+
+    Newly reachable: a Gemini-API client in `GoogleCloudProvider` keeps `system == 'google-cloud'`,
+    which used to send Vertex routing headers. Pins the current behaviour — the setting is ignored
+    silently rather than raising, and it does not leak into the GLA `service_tier` config field.
+
+    Not a VCR test: the cassette matchers don't inspect request headers, so a recording would stay
+    green either way.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=gla_client_google_cloud_provider)
+    assert m.system == 'google-cloud'
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=GoogleModelSettings(google_cloud_service_tier='pt_only'),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert not any(header.startswith('X-Vertex-AI') for header in config_dict['http_options']['headers'])
+    assert 'service_tier' not in config_dict
+
+
+GCS_URI = 'gs://bucket/doc.pdf'
+FILES_API_URI = 'https://generativelanguage.googleapis.com/v1beta/files/abc'
+
+
+@pytest.mark.parametrize(
+    ('provider_fixture', 'accepted_names', 'valid_file_id', 'rejected_file_id', 'rejection_match'),
+    [
+        pytest.param(
+            'vertex_client_google_provider',
+            ('google-cloud', 'google'),
+            GCS_URI,
+            FILES_API_URI,
+            'must use a GCS URI',
+            id='vertex_client_in_google_provider',
+        ),
+        pytest.param(
+            'gla_client_google_cloud_provider',
+            ('google', 'google-cloud'),
+            FILES_API_URI,
+            GCS_URI,
+            'must use a file URI from the Google Files API',
+            id='gla_client_in_google_cloud_provider',
+        ),
+    ],
+)
+def test_uploaded_file_validation_follows_the_client_transport(
+    request: pytest.FixtureRequest,
+    provider_fixture: str,
+    accepted_names: tuple[UploadedFileProviderName, ...],
+    valid_file_id: str,
+    rejected_file_id: str,
+    rejection_match: str,
+) -> None:
+    """`UploadedFile` validation follows the client's transport, not the provider name (#6792).
+
+    Both constructions where the two disagree are parametrized together so the pair can't drift:
+    a Vertex client in `GoogleProvider` takes the Google Cloud rules while `system` stays `'google'`,
+    and a Gemini-API client in `GoogleCloudProvider` takes the Gemini API rules while `system` stays
+    `'google-cloud'`. Each accepts the file id its transport can actually serve and rejects the other.
 
     Not a VCR test: validation raises before any request is sent.
     """
-    m = GoogleModel('gemini-2.5-flash', provider=vertex_client_google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=request.getfixturevalue(provider_fixture))
 
-    for provider_name in ('google-cloud', 'google'):
-        file = UploadedFile(file_id='gs://bucket/doc.pdf', provider_name=provider_name)
-        assert m._validate_uploaded_file(file) == ('gs://bucket/doc.pdf', 'application/pdf')  # pyright: ignore[reportPrivateUsage]
+    for provider_name in accepted_names:
+        file = UploadedFile(file_id=valid_file_id, provider_name=provider_name, media_type='application/pdf')
+        assert m._validate_uploaded_file(file) == (valid_file_id, 'application/pdf')  # pyright: ignore[reportPrivateUsage]
 
-    files_api_file = UploadedFile(
-        file_id='https://generativelanguage.googleapis.com/v1beta/files/abc',
-        provider_name='google',
-        media_type='application/pdf',
+    wrong_transport_file = UploadedFile(
+        file_id=rejected_file_id, provider_name=accepted_names[0], media_type='application/pdf'
     )
-    with pytest.raises(UserError, match='must use a GCS URI'):
-        m._validate_uploaded_file(files_api_file)  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match=rejection_match):
+        m._validate_uploaded_file(wrong_transport_file)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.vcr()
