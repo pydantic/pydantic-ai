@@ -5082,3 +5082,11 @@ def test_tool_return_part_serializes_with_serialization_alias():
     # The wire output keys agree with the advertised return schema properties.
     assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
+
+
+def test_variadic_run_context_is_rejected() -> None:
+    async def tool(*ctx: RunContext[None]) -> None:
+        pass
+
+    with pytest.raises(UserError, match=r'RunContext cannot be used as a variadic positional parameter'):
+        Tool(tool)

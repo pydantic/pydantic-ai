@@ -185,6 +185,8 @@ def function_schema(  # noqa: C901
             if name == ctx_arg_name:
                 if not _is_call_ctx(annotation):
                     errors.append('First parameter of tools that take context must be annotated with RunContext[...]')
+                if p.kind == Parameter.VAR_POSITIONAL:
+                    errors.append('RunContext cannot be used as a variadic positional parameter (`*args`)')
                 if p.kind == Parameter.POSITIONAL_ONLY or (
                     has_var_positional and p.kind == Parameter.POSITIONAL_OR_KEYWORD
                 ):
