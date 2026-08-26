@@ -13,7 +13,7 @@ from prefect.context import TaskRunContext
 from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
@@ -326,6 +326,38 @@ async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:
     assert first_durability is not None and second_durability is not None
     assert any(name == 'first_agent__capability__operations.calculate' for name, _ in first_durability.calls)
     assert any(name == 'second_agent__capability__operations.calculate' for name, _ in second_durability.calls)
+
+
+async def test_wrapped_durability_dispatches_capability_operation() -> None:
+    capability = Operations()
+    agent = Agent(
+        TestModel(),
+        name='wrapped_durability',
+        capabilities=[capability, WrapperCapability(wrapped=RecordingDurability())],
+    )
+
+    await agent.run('test')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert any(name == 'wrapped_durability__capability__operations.calculate' for name, _ in durability.calls)
+
+
+def test_wrapped_temporal_durability_registers_capability_operation() -> None:
+    agent = Agent(
+        TestModel(),
+        name='wrapped_temporal',
+        capabilities=[Operations(), WrapperCapability(wrapped=TemporalDurability())],
+    )
+
+    durability = TemporalDurability.from_agent(agent)
+
+    assert durability is not None
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in durability.temporal_activities
+    }
+    assert 'agent__wrapped_temporal__capability__operations__calculate' in activity_names
 
 
 async def test_no_context_operation_is_direct_outside_a_run() -> None:

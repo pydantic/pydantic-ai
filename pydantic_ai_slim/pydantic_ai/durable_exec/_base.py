@@ -24,6 +24,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapRunHandler,
     leaf_capabilities,
 )
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import (
@@ -559,7 +560,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         are registered with the worker. Walks the agent's capability chain and returns the single
         match or `None`, raising a `UserError` if multiple instances are attached.
         """
-        found = [cap for cap in leaf_capabilities(agent.root_capability) if isinstance(cap, cls)]
+        found: list[Self] = []
+        for capability in leaf_capabilities(agent.root_capability):
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, cls):
+                found.append(capability)
         if len(found) > 1:
             raise UserError(f'Multiple {cls.__name__} capabilities are attached to this agent; attach at most one.')
         return found[0] if found else None
