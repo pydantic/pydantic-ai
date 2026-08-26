@@ -390,7 +390,7 @@ class RunUsage(UsageBase):
         return new_usage
 
 
-def _delta(before: RunUsage, after: RunUsage) -> RunUsage:  # pyright: ignore[reportUnusedFunction]
+def _delta(before: RunUsage, after: RunUsage) -> RunUsage:
     """Calculate the usage added between two snapshots."""
     details: dict[str, int] = {}
     for name in before.details.keys() | after.details.keys():
@@ -420,6 +420,10 @@ def _delta(before: RunUsage, after: RunUsage) -> RunUsage:  # pyright: ignore[re
         if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
             delta.__dict__[name] = after_value - before_value
     return delta
+
+
+# Keep the cross-module entry point separate so Pyright sees `_delta` referenced in this module.
+_durable_exec_delta = _delta
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:

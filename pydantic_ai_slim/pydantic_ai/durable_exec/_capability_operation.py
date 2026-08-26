@@ -41,8 +41,12 @@ class _CapabilityOperationResult(Generic[R]):
     usage_delta: RunUsage
 
 
-def _operation_result_type(result_type: object) -> object:  # pyright: ignore[reportUnusedFunction]
+def _operation_result_type(result_type: object) -> object:
     return cast(Any, _CapabilityOperationResult)[result_type]
+
+
+# Keep the cross-module entry point separate so Pyright sees `_operation_result_type` referenced here.
+_durable_operation_result_type = _operation_result_type
 
 
 @dataclass

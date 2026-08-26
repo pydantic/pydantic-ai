@@ -97,6 +97,11 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @property
     def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        """The Pydantic validation context used to validate tool arguments and outputs.
+
+        Set this when validators need values from [`ValidationInfo.context`][pydantic.ValidationInfo.context].
+        A callable can build the context from the current [`RunContext`][pydantic_ai.tools.RunContext].
+        """
         return self.wrapped._get_validation_context()
 
     def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
