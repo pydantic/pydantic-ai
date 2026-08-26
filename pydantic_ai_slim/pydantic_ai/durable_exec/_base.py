@@ -421,6 +421,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                             usage_before = copy.copy(durable_ctx.usage)
                             result = await bound_handler(durable_ctx, request_context)
                             operation_result = ModelRequestContextProjection.from_context(result)
+                            if result.model is not model:
+                                operation_result.model_id = self._find_registered_model_id_for_hook(result.model)
                         return _CapabilityOperationResult(
                             operation_result, _usage_delta(usage_before, durable_ctx.usage)
                         )
@@ -516,6 +518,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             _CapabilityOperationResult[Any],
             await self._bound_capability_operations[key](CapabilityOperationParams(ctx, arguments, model_id)),
         )
+        if declaration.model_request_hook:
+            projection = cast(ModelRequestContextProjection, result.value)
+            inbound = cast(ModelRequestContextProjection, arguments['request_context'])
+            if projection.model_id != inbound.model_id:
+                projection.__dict__['_resolved_model'] = await self._resolve_model_for_request(projection.model_id, ctx)
         if not _usage_delta(usage_before, ctx.usage).has_values():
             ctx.usage.incr(result.usage_delta)
         return result.value
@@ -1803,9 +1810,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         candidate: Model | None = model
         while candidate is not None:
-            for model_id, registered in self._models_by_id.items():
-                if registered is candidate:
-                    return None if model_id == 'default' else model_id
+            registered, model_id = self._registered_model_id(candidate)
+            if registered:
+                return model_id
             candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
         raise UserError(
             f'The model instance {model.model_id!r} was not registered with `{type(self).__name__}`, so it '
@@ -1814,6 +1821,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             'a different model — the same model name on the provider the worker environment implies — so the '
             f'request would go to another endpoint with other credentials. {self._model_rebuild_escape_hatches()}'
         )
+
+    def _find_registered_model_id_for_hook(self, model: Model) -> str | None:
+        registered, model_id = self._registered_model_id(model)
+        if registered:
+            return model_id
+        raise UserError(
+            'A durable `before_model_request` hook replaced `request_context.model` with the unregistered model '
+            f'instance {model.model_id!r}. A live `Model` instance cannot be transported across the '
+            f'{self._durable_unit_noun} boundary. Register it in `models=` on `{type(self).__name__}` and select '
+            'that registered model by ID.'
+        )
+
+    def _registered_model_id(self, model: Model) -> tuple[bool, str | None]:
+        for model_id, registered in self._models_by_id.items():
+            if registered is model:
+                return True, None if model_id == 'default' else model_id
+        return False, None
 
     async def _resolve_model_for_request(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
         """Rebuild the `Model` for a request inside the activity/step/task, deps-aware.

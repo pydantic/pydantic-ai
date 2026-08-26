@@ -25,6 +25,7 @@ from pydantic_ai.durable_exec import (
     ToolsetKind,
 )
 from pydantic_ai.durable_exec._capability_operation import (
+    ModelRequestContextProjection,
     _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
     _operation_result_type,  # pyright: ignore[reportPrivateUsage]
 )
@@ -45,6 +46,7 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_validation_result,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -508,6 +510,32 @@ def test_capability_operation_result_payload_golden() -> None:
         },
     }
     assert IDENTITY_CODEC.dump(result_type, result) is result
+
+
+def test_model_request_context_projection_payload_golden() -> None:
+    projection = ModelRequestContextProjection([], None, ModelRequestParameters(), 'restricted', False)
+
+    assert JSON_CODEC.dump(ModelRequestContextProjection, projection) == {
+        'messages': [],
+        'model_settings': None,
+        'model_request_parameters': {
+            'function_tools': [],
+            'native_tools': [],
+            'tool_visibility': None,
+            'revealed_tool_names': [],
+            'deferred_capability_ids': [],
+            'output_mode': 'text',
+            'output_object': None,
+            'output_tools': [],
+            'prompted_output_template': None,
+            'allow_text_output': True,
+            'allow_image_output': False,
+            'instruction_parts': None,
+            'thinking': None,
+        },
+        'model_id': 'restricted',
+        'streaming': False,
+    }
 
 
 def test_pre_wrapper_tool_result_upgrade_paths() -> None:

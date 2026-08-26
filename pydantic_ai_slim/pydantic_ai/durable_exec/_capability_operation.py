@@ -17,7 +17,7 @@ from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import GenerateToolJsonSchema, RunContext
 from pydantic_ai.usage import RunUsage
@@ -96,6 +96,9 @@ class ModelRequestContextProjection:
         )
 
     def apply(self, context: ModelRequestContext) -> None:
+        resolved_model = cast(Model | None, self.__dict__.pop('_resolved_model', None))
+        if resolved_model is not None:
+            context.model = resolved_model
         context.messages = self.messages
         context.model_settings = cast(ModelSettings | None, self.model_settings)
         context.model_request_parameters = self.model_request_parameters

@@ -105,8 +105,8 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
         'dynamic': 'enter-never',
     }
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
+        super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
 
     @property
@@ -121,8 +121,8 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
 
 
 class ReplayingDurability(RecordingDurability):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
+        super().__init__(models=models)
         self.recorded_results: dict[str, Any] = {}
 
     async def run_durable_unit(
@@ -169,6 +169,22 @@ class DurableBeforeModelRequest(AbstractCapability[Any]):
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         request_context.messages = [ModelRequest(parts=[UserPromptPart('replaced')])]
+        return request_context
+
+
+class ModelReplacingBeforeModelRequest(AbstractCapability[Any]):
+    id = 'model_replacing_before_model'
+
+    def __init__(self, model: TestModel, *, model_id: str | None = None) -> None:
+        self.model = model
+        self.model_id = model_id
+
+    @durable_operation
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.model = self.model
+        request_context.model_id = self.model_id
         return request_context
 
 
@@ -653,6 +669,98 @@ async def test_decorated_model_request_hook_round_trips_mutation() -> None:
     assert any(name == 'before_model__capability__before_model.before_model_request' for name, _ in durability.calls)
 
 
+async def test_decorated_model_request_hook_round_trips_registered_model_replacement() -> None:
+    original = TestModel(custom_output_text='original')
+    restricted = TestModel(custom_output_text='restricted', model_name='restricted')
+    agent = Agent(
+        original,
+        name='model_replacement',
+        capabilities=[
+            ModelReplacingBeforeModelRequest(restricted),
+            RecordingDurability(models={'restricted': restricted}),
+        ],
+    )
+
+    result = await agent.run('test')
+
+    assert result.output == 'restricted'
+
+
+async def test_decorated_model_request_hook_keeps_unchanged_model_resolution_cheap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = TestModel(custom_output_text='unchanged')
+    agent = Agent(model, name='unchanged_model', capabilities=[DurableBeforeModelRequest(), RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    resolutions = 0
+    resolve = durability._resolve_model_for_request  # pyright: ignore[reportPrivateUsage]
+
+    async def count_resolutions(model_id: str | None, ctx: RunContext[Any]) -> Any:
+        nonlocal resolutions
+        resolutions += 1
+        return await resolve(model_id, ctx)
+
+    monkeypatch.setattr(durability, '_resolve_model_for_request', count_resolutions)
+
+    result = await agent.run('test')
+
+    assert result.output == 'unchanged'
+    assert resolutions == 2
+
+
+async def test_decorated_model_request_hook_rejects_unregistered_model_replacement() -> None:
+    replacement = TestModel(model_name='unregistered')
+    agent = Agent(
+        TestModel(),
+        name='unregistered_model_replacement',
+        capabilities=[ModelReplacingBeforeModelRequest(replacement), RecordingDurability()],
+    )
+
+    with pytest.raises(
+        UserError,
+        match=(
+            r'A durable `before_model_request` hook replaced `request_context.model` with the unregistered model '
+            r"instance 'test:unregistered'\. A live `Model` instance cannot be transported across the unit boundary\. "
+            r'Register it in `models=` on `RecordingDurability` and select that registered model by ID\.'
+        ),
+    ):
+        await agent.run('test')
+
+
+async def test_decorated_model_request_hook_rejects_unknown_replacement_model_id() -> None:
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='unknown_model_replacement',
+        capabilities=[ModelReplacingBeforeModelRequest(model, model_id='restricted'), RecordingDurability()],
+    )
+
+    with pytest.raises(
+        UserError,
+        match=(
+            r"The model 'restricted' could not be rebuilt on the recording worker: it is not a model name "
+            r'`infer_model` can build, and no `resolve_model_id` capability claimed it\.'
+        ),
+    ):
+        await agent.run('test')
+
+
+async def test_registered_model_replacement_is_stable_on_journal_replay() -> None:
+    restricted = TestModel(custom_output_text='restricted', model_name='restricted')
+    capability = ModelReplacingBeforeModelRequest(restricted)
+    durability = ReplayingDurability(models={'restricted': restricted})
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='replayed_model_replacement',
+        capabilities=[capability, durability],
+    )
+
+    results = [await agent.run('test'), await agent.run('test')]
+
+    assert [result.output for result in results] == ['restricted', 'restricted']
+
+
 @requires_prefect
 async def test_dynamic_hook_dispatches_through_public_run_context_lookup() -> None:
     class Dynamic(AbstractCapability[Any]):
@@ -1011,6 +1119,37 @@ async def test_temporal_capability_operation_rederives_for_run_instance_worker_s
 
     assert result.value == 'tenant-a'
     assert capability.tenant == 'unrestricted'
+
+
+@requires_temporal
+async def test_temporal_capability_operation_projects_registered_model_replacement() -> None:
+    original = TestModel(model_name='original')
+    restricted = TestModel(model_name='restricted')
+    capability = ModelReplacingBeforeModelRequest(restricted)
+    agent = Agent(
+        original,
+        name='temporal_model_replacement',
+        capabilities=[capability, TemporalDurability(models={'restricted': restricted})],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    declaration = durability._capability_declarations[  # pyright: ignore[reportPrivateUsage]
+        ('model_replacing_before_model', 'before_model_request')
+    ]
+    transport = _CapabilityOperationTransport(durability, declaration)
+    ctx = RunContext(deps=None, agent=agent, model=original, usage=RunUsage())
+    projection = ModelRequestContextProjection([], None, ModelRequestParameters(), None, False)
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, {'request_context': projection}))
+    registration = next(
+        activity
+        for activity in durability.temporal_activities
+        if ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        == 'agent__temporal_model_replacement__capability__model_replacing_before_model__before_model_request'
+    )
+
+    result = await registration(wire, deps)
+
+    assert result.value.model_id == 'restricted'
 
 
 @pytest.fixture
