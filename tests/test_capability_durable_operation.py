@@ -37,7 +37,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RunUsage, _delta
+from pydantic_ai.usage import RunUsage, _delta  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.anyio
 
