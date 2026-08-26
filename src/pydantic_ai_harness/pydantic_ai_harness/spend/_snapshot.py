@@ -2,14 +2,39 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pydantic_ai.usage import RequestUsage
 
     from pydantic_ai_harness.spend._budget import Budget
+
+MONEY_PRECISION = 40
+"""Significant digits every arithmetic step on `Spent.usd` is pinned to.
+
+`Decimal` reads its precision from the thread's context, so an application that lowered
+`getcontext().prec` for its own arithmetic would round money here. A counter Redis holds
+exactly as billionths would come back with the application's significant digits, and the
+in-process store would write the rounded number back and drift from it on every response.
+Wide enough for the signed 64-bit range of billionths a counter can reach.
+"""
+
+
+@contextmanager
+def money_precision() -> Generator[None]:
+    """Run `Decimal` arithmetic at `MONEY_PRECISION` rather than at whatever the caller set.
+
+    Wraps the operation rather than replacing it, so one guard covers a sum, a difference
+    and a product instead of one helper per operator. Copies the caller's context and moves
+    only `prec`, so rounding and traps are left as the application chose them.
+    """
+    with localcontext() as context:
+        context.prec = MONEY_PRECISION
+        yield
 
 
 @dataclass(frozen=True, kw_only=True)

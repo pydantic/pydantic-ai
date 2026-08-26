@@ -6,7 +6,7 @@ import json
 import warnings
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
 
 import pytest
@@ -25,10 +25,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.spend import (
     Budget,
     InMemorySpendStore,
     RedisSpendStore,
+    SpendEntry,
     SpendLimitExceeded,
     SpendLimits,
     SpendSnapshot,
@@ -95,12 +97,14 @@ def _response(
     output_tokens: int = 100,
     model_name: str | None = 'gpt-4.1',
     provider_name: str | None = 'openai',
+    provider_response_id: str | None = None,
 ) -> ModelResponse:
     return ModelResponse(
         parts=[TextPart(content='ok')],
         usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
         model_name=model_name,
         provider_name=provider_name,
+        provider_response_id=provider_response_id,
     )
 
 
@@ -339,12 +343,12 @@ class TestKeyCollisions:
 
     async def test_a_shared_counter_is_read_once_per_request(self):
         """Two ceilings on one window are one round trip, which matters against a network store."""
-        reads: list[str] = []
+        reads: list[Sequence[str]] = []
 
         class Counting(InMemorySpendStore):
-            async def get(self, key: str) -> Spent:
-                reads.append(key)
-                return await super().get(key)
+            async def get_many(self, keys: Sequence[str]) -> Mapping[str, Spent]:
+                reads.append(list(keys))
+                return await super().get_many(keys)
 
         guard = SpendLimits(
             budgets=[Budget(usd=Decimal('10'), window='day'), Budget(tokens=99_999, window='day')],
@@ -352,7 +356,7 @@ class TestKeyCollisions:
         )
         await _gate(guard)
 
-        assert len(reads) == 1
+        assert [len(keys) for keys in reads] == [1]
 
     async def test_a_run_id_cannot_impersonate_another_window(self):
         """Bucket values are not drawn from disjoint sets, so the window is part of the key."""
@@ -464,13 +468,27 @@ class TestEnforcement:
 
         assert (await guard.status())[0].spent.requests == 2
 
-    async def test_no_budgets_means_no_store_access(self):
+    async def test_no_budgets_means_the_store_is_not_called_at_all(self):
+        """Not "called with nothing": a store may treat an empty batch as a caller error.
+
+        A `SpendLimits` with no budgets has no key to read and no entry to apply, so the
+        round trip buys nothing on a store that answers it and fails outright on one that
+        does not.
+        """
+
         class Exploding(InMemorySpendStore):
-            async def get(self, key: str) -> Spent:  # pragma: no cover - must never be reached
-                raise AssertionError('the gate read the store with no budgets configured')
+            async def get_many(self, keys: Sequence[str]) -> Mapping[str, Spent]:
+                raise AssertionError('the gate read with no budgets configured')  # pragma: no cover
+
+            async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
+                raise AssertionError('the gate wrote with no budgets configured')  # pragma: no cover
 
         guard = SpendLimits[None](store=Exploding())
+
         await _gate(guard)
+        await _record(guard)
+
+        assert await guard.status() == ()
 
     async def test_budgets_survive_across_runs(self):
         guard = SpendLimits(budgets=[Budget(usd=Decimal('0.01'), window='day')], price=lambda r: Decimal('0.01'))
@@ -964,52 +982,187 @@ class TestInMemoryStore:
 
         assert corrected == Spent(usd=Decimal('3'), tokens=10, requests=1, unpriced_requests=0)
 
+    async def test_every_entry_of_a_response_lands_together(self):
+        store = InMemorySpendStore()
+
+        totals = await store.add_many(
+            [
+                SpendEntry(key='day', usd=Decimal('1'), tokens=5, requests=1),
+                SpendEntry(key='month', usd=Decimal('1'), tokens=5, requests=1),
+            ]
+        )
+
+        assert totals == {
+            'day': Spent(usd=Decimal('1'), tokens=5, requests=1),
+            'month': Spent(usd=Decimal('1'), tokens=5, requests=1),
+        }
+        assert await store.get_many(['day', 'month']) == totals
+
+    async def test_a_repeated_token_is_applied_once(self):
+        """The in-process equivalent of the marker `RedisSpendStore` claims."""
+        store = InMemorySpendStore()
+        entry = SpendEntry(key='k', usd=Decimal('1'), requests=1, token='resp-1')
+
+        await store.add_many([entry])
+        totals = await store.add_many([entry])
+
+        assert totals == {'k': Spent(usd=Decimal('1'), requests=1)}
+
+    async def test_dedup_can_be_turned_off(self):
+        store = InMemorySpendStore(dedup_retain=None)
+        entry = SpendEntry(key='k', usd=Decimal('1'), requests=1, token='resp-1')
+
+        await store.add_many([entry])
+        totals = await store.add_many([entry])
+
+        assert totals == {'k': Spent(usd=Decimal('2'), requests=2)}
+
+    async def test_a_call_that_fails_does_not_consume_the_token(self):
+        """The token is recorded once the counter has moved, not before it.
+
+        Recorded first, a call that then failed left the token consumed and the retry
+        that could have recorded the response was skipped as a replay of it. Two
+        infinities are the smallest way to make the addition itself fail; any failure
+        between the two writes has the same shape.
+        """
+        store = InMemorySpendStore()
+        await store.add_many([SpendEntry(key='k', usd=Decimal('Infinity'))])
+
+        with pytest.raises(InvalidOperation):
+            await store.add_many([SpendEntry(key='k', usd=Decimal('-Infinity'), requests=1, token='resp-1')])
+
+        retried = await store.add_many([SpendEntry(key='k', requests=1, token='resp-1')])
+
+        assert retried['k'].requests == 1
+
+    async def test_a_failing_entry_leaves_the_whole_response_unapplied(self):
+        """The split write `add_many` exists to prevent, inside one process rather than across a network.
+
+        Two infinities are the smallest way to make one entry's arithmetic raise; any
+        failure part-way through a response has the same shape.
+        """
+        store = InMemorySpendStore()
+        await store.add_many([SpendEntry(key='month', usd=Decimal('Infinity'))])
+
+        with pytest.raises(InvalidOperation):
+            await store.add_many(
+                [
+                    SpendEntry(key='day', usd=Decimal('1'), requests=1),
+                    SpendEntry(key='month', usd=Decimal('-Infinity'), requests=1),
+                ]
+            )
+
+        assert (await store.get_many(['day']))['day'] == Spent()
+
+    async def test_a_token_is_remembered_no_longer_than_its_counter(self):
+        """A marker outliving its window would skip a replay against a counter that rolled over."""
+        clock = Clock()
+        store = InMemorySpendStore(clock=clock, dedup_retain=timedelta(hours=24))
+        entry = SpendEntry(key='k', usd=Decimal('1'), requests=1, ttl=timedelta(hours=1), token='resp-1')
+        await store.add_many([entry])
+
+        clock.advance(timedelta(hours=2))
+
+        assert await store.add_many([entry]) == {'k': Spent(usd=Decimal('1'), requests=1)}
+
+    async def test_one_token_twice_in_a_call_is_applied_once(self):
+        store = InMemorySpendStore()
+        entry = SpendEntry(key='k', usd=Decimal('1'), requests=1, token='resp-1')
+
+        assert await store.add_many([entry, entry]) == {'k': Spent(usd=Decimal('1'), requests=1)}
+
+    async def test_an_application_s_own_decimal_precision_does_not_round_the_counter(self):
+        """A store that took the caller's context would round the counter and then drift from it.
+
+        The rounded total is what the next response is added to, so the error compounds rather
+        than showing up once. `_snapshot.summed` pins the arithmetic for both stores.
+        """
+        store = InMemorySpendStore()
+        entry = SpendEntry(key='k', usd=Decimal('0.000123456'), requests=1)
+
+        with localcontext() as context:
+            context.prec = 3
+            first = await store.add_many([entry])
+            second = await store.add_many([entry])
+
+        assert first['k'].usd == Decimal('0.000123456')
+        assert second['k'].usd == Decimal('0.000246912')
+
+    async def test_a_token_past_its_horizon_is_forgotten(self):
+        """`dedup_retain` is the window a replay is recognised in, not the counter's lifetime.
+
+        The counter here never expires, so it is the marker's own horizon that decides:
+        past it the response counts again. Remembering every token instead would grow with
+        traffic, which is the price the bound buys.
+        """
+        clock = Clock()
+        store = InMemorySpendStore(clock=clock, sweep_every=2, dedup_retain=timedelta(hours=1))
+        entry = SpendEntry(key='k', usd=Decimal('1'), requests=1, token='resp-1')
+        await store.add_many([entry])
+
+        clock.advance(timedelta(hours=2))
+        await store.add_many([SpendEntry(key='other', requests=1)])
+        totals = await store.add_many([entry])
+
+        assert totals == {'k': Spent(usd=Decimal('2'), requests=2)}
+
 
 class FakeRedis:
     """The two coroutines `RedisSpendStore` uses, over a dict.
 
-    `eval` stands in for the server running the script: the same four increments
-    and the same expiry, applied as one step, which is what Redis guarantees. It
-    reproduces the *result* the script is meant to produce and does not run the Lua,
-    so what it pins is the store's contract rather than the script's correctness --
-    `integration_tests/redis/` is where the script itself is executed.
+    `eval` stands in for the server running the script: the same increments, the same
+    per-entry markers and the same expiry, applied as one step, which is what Redis
+    guarantees. It reproduces the *result* the script is meant to produce and does not
+    run the Lua, so what it pins is the store's contract rather than the script's
+    correctness -- `integration_tests/redis/` is where the script itself is executed.
+
+    Totals come back as strings, because that is what keeps a counter past `2**53`
+    exact once a real server has put it through Lua.
 
     `HINCRBY` leaves an existing expiry alone, which is why a zero `ttl` has to clear
     one rather than skip the call: modelled here so a `retain='forever'` budget that
     kept a stale horizon shows up as a failure.
     """
 
+    _FIELDS = ('usd_nanos', 'tokens', 'requests', 'unpriced')
+
     def __init__(self, *, bytes_keys: bool = False) -> None:
         self.hashes: dict[str, dict[str, int]] = {}
         self.expiries: dict[str, int] = {}
+        self.markers: dict[str, int] = {}
         self.calls: list[str] = []
         self._bytes_keys = bytes_keys
 
-    async def hgetall(self, name: str) -> Mapping[str | bytes, str | bytes]:
-        fields = self.hashes.get(name, {})
-        if self._bytes_keys:
-            return {k.encode(): str(v).encode() for k, v in fields.items()}
-        return {k: str(v) for k, v in fields.items()}
+    def _out(self, value: str) -> str | bytes:
+        return value.encode() if self._bytes_keys else value
 
-    async def eval(self, script: str, numkeys: int, *keys_and_args: str | int) -> Sequence[int]:
+    async def hgetall(self, name: str) -> Mapping[str | bytes, str | bytes]:
+        return {self._out(field): self._out(str(value)) for field, value in self.hashes.get(name, {}).items()}
+
+    async def eval(self, script: str, numkeys: int, *keys_and_args: str | int) -> Sequence[Sequence[str | bytes]]:
         self.calls.append(script)
-        name = str(keys_and_args[0])
-        usd, tokens, requests, unpriced, ttl = (int(argument) for argument in keys_and_args[1:])
-        fields = self.hashes.setdefault(name, {})
-        if fields.get('usd_nanos', 0) + usd >= 2**53:
-            raise RuntimeError('spend usd counter would pass the exact-integer range')
-        for field, amount in (
-            ('usd_nanos', usd),
-            ('tokens', tokens),
-            ('requests', requests),
-            ('unpriced', unpriced),
-        ):
-            fields[field] = fields.get(field, 0) + amount
-        if ttl > 0:
-            self.expiries[name] = ttl
-        else:
-            self.expiries.pop(name, None)
-        return [fields['usd_nanos'], fields['tokens'], fields['requests'], fields['unpriced']]
+        keys = [str(key) for key in keys_and_args[:numkeys]]
+        arguments = [int(argument) for argument in keys_and_args[numkeys:]]
+        count = arguments[0]
+        rows: list[Sequence[str | bytes]] = []
+        for index in range(count):
+            key, marker = keys[index], keys[count + index]
+            usd, tokens, requests, unpriced, ttl, marker_ttl = arguments[1 + index * 6 : 7 + index * 6]
+            if marker_ttl <= 0 or marker not in self.markers:
+                fields = self.hashes.setdefault(key, {})
+                for field, amount in zip(self._FIELDS, (usd, tokens, requests, unpriced)):
+                    fields[field] = fields.get(field, 0) + amount
+                if ttl > 0:
+                    self.expiries[key] = ttl
+                else:
+                    self.expiries.pop(key, None)
+                # Written after the increments, not claimed before them: an increment that
+                # errors must not leave a marker that would skip the retry.
+                if marker_ttl > 0:
+                    self.markers[marker] = marker_ttl
+            totals = self.hashes.get(key, {})
+            rows.append([self._out(str(totals.get(field, 0))) for field in self._FIELDS])
+        return rows
 
 
 class TestRedisStore:
@@ -1041,7 +1194,35 @@ class TestRedisStore:
         store = RedisSpendStore(client, prefix='acme')
         await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=timedelta(hours=2))
 
-        assert client.expiries == {'acme:k': 7200}
+        assert client.expiries == {'{acme}:k': 7200}
+
+    async def test_every_key_carries_the_prefix_as_a_hash_tag(self):
+        """A cluster hashes a tagged key by the tag alone, which is what puts a store's keys in one slot.
+
+        Untagged, a day and a month window land in different slots and the script that
+        applies them together is refused with `CROSSSLOT`.
+        """
+        client = FakeRedis()
+        store = RedisSpendStore(client, prefix='acme')
+        await store.add_many(
+            [
+                SpendEntry(key='b|day|*|2026-08-04', requests=1, token='r1'),
+                SpendEntry(key='b|month|*|2026-08', requests=1, token='r1'),
+            ]
+        )
+
+        assert set(client.hashes) == {'{acme}:b|day|*|2026-08-04', '{acme}:b|month|*|2026-08'}
+        assert all(marker.startswith('{acme}:|dedup|') for marker in client.markers)
+
+    @pytest.mark.parametrize('prefix', ['{acme}', ''])
+    def test_a_prefix_that_would_break_the_hash_tag_is_refused(self, prefix: str):
+        """A brace moves the tag; an empty prefix leaves `{}`, which is not a tag at all.
+
+        Redis Cluster reads `{}` as no tag and hashes the whole key, so two windows land in
+        different slots and the script that applies them together is refused.
+        """
+        with pytest.raises(UserError, match='must be non-empty and must not contain braces'):
+            RedisSpendStore(FakeRedis(), prefix=prefix)
 
     async def test_a_response_is_one_round_trip_and_one_unit_of_work(self):
         """Split across commands, a failure between them leaves a window holding part of a response."""
@@ -1052,14 +1233,180 @@ class TestRedisStore:
         assert 'HINCRBY' in client.calls[0]
         assert 'EXPIRE' in client.calls[0]
 
-    async def test_a_total_past_lua_s_exact_integer_range_is_refused(self):
-        """Checked against the running total, not the increment: small adds reach it too."""
-        store = RedisSpendStore(FakeRedis())
-        half = Decimal('4600000')
-        await store.add('k', usd=half, tokens=0, requests=1, unpriced=0, ttl=None)
+    async def test_every_window_of_a_response_is_one_script(self):
+        """The point of `add_many`: a failure cannot leave the day counted and the month not."""
+        client = FakeRedis()
+        totals = await RedisSpendStore(client).add_many(
+            [
+                SpendEntry(key='day', usd=Decimal('1'), tokens=5, requests=1, ttl=timedelta(hours=48)),
+                SpendEntry(key='month', usd=Decimal('1'), tokens=5, requests=1, ttl=timedelta(days=62)),
+            ]
+        )
 
-        with pytest.raises(RuntimeError, match='exact-integer range'):
-            await store.add('k', usd=half, tokens=0, requests=1, unpriced=0, ttl=None)
+        assert len(client.calls) == 1
+        assert totals == {
+            'day': Spent(usd=Decimal('1'), tokens=5, requests=1),
+            'month': Spent(usd=Decimal('1'), tokens=5, requests=1),
+        }
+        assert client.expiries == {
+            '{pydantic-ai-harness:spend}:day': 172_800,
+            '{pydantic-ai-harness:spend}:month': 5_356_800,
+        }
+
+    async def test_nothing_to_apply_is_not_a_round_trip(self):
+        client = FakeRedis()
+
+        assert await RedisSpendStore(client).add_many([]) == {}
+        assert client.calls == []
+
+    async def test_a_total_past_lua_s_exact_integer_range_stays_exact(self):
+        """The counters are read back as strings, so nothing in the path is a double.
+
+        Redis stores them exactly whatever happens: `HINCRBY` is 64-bit integer
+        arithmetic and the increment arrives as a string. It is the *reply* that would
+        round, once a Lua number holds it.
+        """
+        client = FakeRedis()
+        client.hashes['{pydantic-ai-harness:spend}:k'] = {'usd_nanos': 2**53, 'tokens': 0, 'requests': 0, 'unpriced': 0}
+        store = RedisSpendStore(client)
+
+        added = await store.add('k', usd=Decimal('0.000000001'), tokens=0, requests=1, unpriced=0, ttl=None)
+
+        assert added.usd == Decimal('9007199.254740993')
+        assert (await store.get('k')).usd == Decimal('9007199.254740993')
+
+    async def test_a_repeated_token_is_applied_once(self):
+        """A durable engine re-executing the accrual hands back the same response."""
+        store = RedisSpendStore(FakeRedis())
+        entry = SpendEntry(key='k', usd=Decimal('1'), tokens=5, requests=1, token='resp-1')
+
+        first = await store.add_many([entry])
+        second = await store.add_many([entry])
+
+        assert first == second == {'k': Spent(usd=Decimal('1'), tokens=5, requests=1)}
+
+    async def test_a_different_token_is_applied(self):
+        """The marker is per response, not a lock on the key."""
+        store = RedisSpendStore(FakeRedis())
+
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1, token='resp-1')])
+        totals = await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1, token='resp-2')])
+
+        assert totals == {'k': Spent(usd=Decimal('2'), requests=2)}
+
+    async def test_a_token_is_scoped_to_its_window(self):
+        """One response reaches several windows, so a marker one window claimed cannot cover another."""
+        store = RedisSpendStore(FakeRedis())
+
+        await store.add_many([SpendEntry(key='day', usd=Decimal('1'), requests=1, token='resp-1')])
+        totals = await store.add_many([SpendEntry(key='month', usd=Decimal('1'), requests=1, token='resp-1')])
+
+        assert totals == {'month': Spent(usd=Decimal('1'), requests=1)}
+
+    async def test_a_marker_is_held_no_longer_than_its_counter(self):
+        """A marker outliving its window would skip a replay against a counter that rolled over,
+        and the window would read as zero rather than as the response it should hold."""
+        client = FakeRedis()
+        store = RedisSpendStore(client, dedup_retain=timedelta(hours=24))
+
+        await store.add_many([SpendEntry(key='k', requests=1, ttl=timedelta(hours=1), token='resp-1')])
+
+        assert set(client.markers.values()) == {3600}
+        assert client.expiries == {'{pydantic-ai-harness:spend}:k': 3600}
+
+    async def test_dedup_can_be_turned_off(self):
+        """A deployment that would rather not hold a marker per response can say so."""
+        store = RedisSpendStore(FakeRedis(), dedup_retain=None)
+        entry = SpendEntry(key='k', usd=Decimal('1'), requests=1, token='resp-1')
+
+        await store.add_many([entry])
+        totals = await store.add_many([entry])
+
+        assert totals == {'k': Spent(usd=Decimal('2'), requests=2)}
+
+    async def test_an_entry_with_no_token_is_always_applied(self):
+        """A reconciler posting the same correction twice means it twice."""
+        store = RedisSpendStore(FakeRedis())
+        entry = SpendEntry(key='k', usd=Decimal('-1'))
+
+        await store.add_many([entry])
+        totals = await store.add_many([entry])
+
+        assert totals == {'k': Spent(usd=Decimal('-2'))}
+
+    async def test_a_counter_written_before_the_hash_tag_is_still_read(self):
+        """Nothing an upgrade strands: the old key is read when the tagged one is absent."""
+        client = FakeRedis()
+        client.hashes['pydantic-ai-harness:spend:k'] = {'usd_nanos': 3_000_000_000, 'tokens': 8, 'requests': 2}
+
+        assert await RedisSpendStore(client).get('k') == Spent(usd=Decimal('3'), tokens=8, requests=2)
+
+    async def test_a_counter_written_before_the_hash_tag_is_added_to_the_one_after_it(self):
+        """The old name is read alongside the new one, so an upgrade counts both."""
+        client = FakeRedis()
+        client.hashes['pydantic-ai-harness:spend:k'] = {'usd_nanos': 3_000_000_000, 'tokens': 8, 'requests': 2}
+        store = RedisSpendStore(client)
+
+        totals = await store.add_many([SpendEntry(key='k', usd=Decimal('1'), tokens=1, requests=1)])
+
+        assert totals == {'k': Spent(usd=Decimal('4'), tokens=9, requests=3)}
+        assert await store.get('k') == Spent(usd=Decimal('4'), tokens=9, requests=3)
+
+    async def test_the_old_counter_is_never_added_twice(self):
+        """Summed rather than moved, so repeating the read cannot repeat the amount."""
+        client = FakeRedis()
+        client.hashes['pydantic-ai-harness:spend:k'] = {'usd_nanos': 3_000_000_000, 'requests': 1}
+        store = RedisSpendStore(client)
+
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1)])
+        totals = await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1)])
+
+        assert totals == {'k': Spent(usd=Decimal('5'), requests=3)}
+
+    async def test_a_write_to_the_old_name_after_the_new_one_exists_still_counts(self):
+        """A rolling deploy leaves workers on an earlier release writing the old name for a while.
+
+        Moving the old counter once would have read it before that write and never looked
+        again, so the spend a still-running old worker recorded would be enforced against
+        nothing.
+        """
+        client = FakeRedis()
+        store = RedisSpendStore(client)
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1)])
+
+        client.hashes['pydantic-ai-harness:spend:k'] = {'usd_nanos': 2_000_000_000, 'requests': 1}
+
+        assert await store.get('k') == Spent(usd=Decimal('3'), requests=2)
+        totals = await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1)])
+        assert totals == {'k': Spent(usd=Decimal('4'), requests=3)}
+
+    async def test_one_key_twice_in_a_call_keeps_the_old_counter(self):
+        """Two entries on one key report the running total, and neither loses the old name."""
+        client = FakeRedis()
+        client.hashes['pydantic-ai-harness:spend:k'] = {'usd_nanos': 3_000_000_000, 'requests': 1}
+        store = RedisSpendStore(client)
+
+        totals = await store.add_many(
+            [
+                SpendEntry(key='k', usd=Decimal('1'), requests=1),
+                SpendEntry(key='k', usd=Decimal('1'), requests=1),
+            ]
+        )
+
+        assert totals == {'k': Spent(usd=Decimal('5'), requests=3)}
+
+    async def test_two_keys_that_would_share_a_marker_are_both_applied(self):
+        """A key and a token joined on a separator collide; length-prefixed they cannot.
+
+        `key='a|b'` with `token='c'` and `key='a'` with `token='b|c'` are different
+        responses against different windows, and the second was dropped as a replay.
+        """
+        store = RedisSpendStore(FakeRedis())
+
+        await store.add_many([SpendEntry(key='a|b', usd=Decimal('1'), requests=1, token='c')])
+        totals = await store.add_many([SpendEntry(key='a', usd=Decimal('1'), requests=1, token='b|c')])
+
+        assert totals == {'a': Spent(usd=Decimal('1'), requests=1)}
 
     @pytest.mark.parametrize(
         ('retain', 'expected'),
@@ -1078,7 +1425,7 @@ class TestRedisStore:
         client = FakeRedis()
         await RedisSpendStore(client).add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=retain)
 
-        assert client.expiries == {'pydantic-ai-harness:spend:k': expected}
+        assert client.expiries == {'{pydantic-ai-harness:spend}:k': expected}
 
     async def test_moving_a_budget_to_forever_clears_the_old_horizon(self):
         """`HINCRBY` leaves an expiry in place, so skipping `EXPIRE` is not the same as no expiry.
@@ -1091,7 +1438,7 @@ class TestRedisStore:
         client = FakeRedis()
         store = RedisSpendStore(client)
         await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=timedelta(hours=1))
-        assert client.expiries == {'pydantic-ai-harness:spend:k': 3600}
+        assert client.expiries == {'{pydantic-ai-harness:spend}:k': 3600}
 
         await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=None)
 
@@ -1110,6 +1457,364 @@ class TestRedisStore:
         await agent.run('hi')
         with pytest.raises(SpendLimitExceeded):
             await agent.run('hi')
+
+    async def test_a_budget_named_for_the_marker_sentinel_still_counts(self):
+        """A marker's name starts with the separator, which no budget key can.
+
+        `store_key` is `name|window|scope|bucket` and `Budget.name` is refused empty, so a
+        budget key never begins with one. That is what keeps counters and markers from naming
+        each other in the namespace they share, and it means no configuration is off limits.
+        """
+        guard = SpendLimits(
+            budgets=[Budget(usd=Decimal('10'), window='day', name='dedup')],
+            store=RedisSpendStore(FakeRedis()),
+            price=lambda r: Decimal('1'),
+        )
+
+        await _record(guard)
+
+        spent = (await guard.status())[0].spent
+        assert (spent.usd, spent.requests) == (Decimal('1'), 1)
+
+    async def test_a_marker_cannot_be_named_by_a_budget_key(self):
+        """The separator prefix, asserted on the names themselves rather than on a symptom."""
+        client = FakeRedis()
+        store = RedisSpendStore(client)
+
+        await store.add_many([SpendEntry(key='dedup|1:a|1:b', usd=Decimal('1'), requests=1, token='t')])
+
+        counters = [name for name in client.hashes]
+        markers = list(client.markers)
+        assert counters == ['{pydantic-ai-harness:spend}:dedup|1:a|1:b']
+        assert markers == ['{pydantic-ai-harness:spend}:|dedup|13:dedup|1:a|1:b|1:t']
+        assert not set(counters) & set(markers)
+
+    async def test_an_application_s_own_decimal_precision_does_not_round_the_total(self):
+        """The counter comes back exact, and merging the pre-hash-tag one must keep it that way."""
+        client = FakeRedis()
+        store = RedisSpendStore(client)
+        client.hashes[f'{store.prefix}:k'] = {'usd_nanos': 1, 'requests': 1}
+
+        with localcontext() as context:
+            context.prec = 3
+            added = await store.add_many([SpendEntry(key='k', usd=Decimal('0.000123456'), requests=1)])
+            read = await store.get_many(['k'])
+
+        assert added['k'].usd == Decimal('0.000123457')
+        assert read['k'].usd == Decimal('0.000123457')
+
+
+class _LegacyStore:
+    """A store written against the released `SpendStore`: one key per call, and no token."""
+
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+        self._counters = InMemorySpendStore()
+
+    async def get(self, key: str) -> Spent:
+        return await self._counters.get(key)
+
+    async def add(
+        self,
+        key: str,
+        *,
+        usd: Decimal,
+        tokens: int,
+        requests: int,
+        unpriced: int,
+        ttl: timedelta | None,
+    ) -> Spent:
+        self.writes.append(key)
+        return await self._counters.add(key, usd=usd, tokens=tokens, requests=requests, unpriced=unpriced, ttl=ttl)
+
+
+class TestBatchAccrual:
+    """One response reaches every window it counts against as one unit of work."""
+
+    async def test_every_window_is_one_call(self):
+        """Applied one at a time, a failure between them left the day counted and the month not."""
+        calls: list[Sequence[str]] = []
+
+        class Counting(InMemorySpendStore):
+            async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
+                calls.append([entry.key for entry in entries])
+                return await super().add_many(entries)
+
+        guard = SpendLimits(
+            budgets=[Budget(usd=Decimal('100'), window='day'), Budget(usd=Decimal('500'), window='month')],
+            store=Counting(),
+            price=lambda r: Decimal('1'),
+        )
+        await _record(guard)
+
+        assert [len(keys) for keys in calls] == [2]
+        assert [status.spent.usd for status in await guard.status()] == [Decimal('1'), Decimal('1')]
+
+    async def test_windows_sharing_a_counter_are_one_entry(self):
+        """A USD and a token ceiling on one window still add the response once."""
+        calls: list[Sequence[str]] = []
+
+        class Counting(InMemorySpendStore):
+            async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
+                calls.append([entry.key for entry in entries])
+                return await super().add_many(entries)
+
+        guard = SpendLimits(
+            budgets=[Budget(usd=Decimal('10'), window='day'), Budget(tokens=99_999, window='day')],
+            store=Counting(),
+            price=lambda r: Decimal('1'),
+        )
+        await _record(guard)
+
+        assert [len(keys) for keys in calls] == [1]
+        assert (await guard.status())[0].spent.usd == Decimal('1')
+
+
+class TestIdempotentAccrual:
+    """A durable engine re-executes the hooks around a response it already holds."""
+
+    async def test_a_response_the_provider_identified_survives_a_new_run_id(self):
+        """DBOS recovery and a Prefect flow retry replay the response under a fresh `run_id`."""
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        response = _response(provider_response_id='resp-1')
+
+        await _record(guard, ctx=_run_ctx(run_id='first'), response=response)
+        await _record(guard, ctx=_run_ctx(run_id='second'), response=response)
+
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('1'), tokens=1100, requests=1)
+
+    async def test_a_response_with_no_provider_id_needs_a_stable_run_id(self):
+        """The documented limit: without a response id the token falls back to the run's own.
+
+        `_agent_graph.resolve_run_id` honours a `run_id` the caller passes, which is how a
+        replayed accrual stays idempotent for a provider that reports none. A fresh id is a
+        different response as far as the token can tell.
+        """
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        response = _response()
+
+        await _record(guard, ctx=_run_ctx(run_id='same'), response=response)
+        await _record(guard, ctx=_run_ctx(run_id='same'), response=response)
+        await _record(guard, ctx=_run_ctx(run_id='other'), response=response)
+
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('2'), tokens=2200, requests=2)
+
+    async def test_an_empty_provider_response_id_is_not_an_identity(self):
+        """`ChatCompletion.id` is a plain required `str`, so a server can answer `""`.
+
+        Read for presence rather than truth, every response from that provider names the
+        same token and everything after the first is dropped as a replay of it -- the brake
+        releasing late, which is the direction this capability exists to avoid. Core reads
+        the same field for truth (`models/_continuation.py`, `models/openai.py`).
+        """
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+
+        for _ in range(3):
+            await _record(guard, response=_response(provider_response_id=''))
+
+        assert (await guard.status())[0].spent.requests == 3
+
+    async def test_a_provider_that_repeats_one_id_does_not_collapse_its_responses(self):
+        """The response timestamp joins the id, so a broken id does not stand alone.
+
+        A server returning a constant `id` would otherwise have everything after the first
+        response dropped as a replay of it, which is spend the ceiling never sees. A genuine
+        replay hands back the response object it checkpointed, so its timestamp is unchanged
+        and `test_a_response_the_provider_identified_survives_a_new_run_id` still holds.
+        """
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+
+        for _ in range(3):
+            await _record(guard, response=_response(provider_response_id='resp-const'))
+
+        assert (await guard.status())[0].spent.requests == 3
+
+    async def test_two_responses_of_one_run_both_count(self):
+        """The marker identifies a response, so it must not swallow the next one."""
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+
+        await _record(guard, response=_response(provider_response_id='resp-1'))
+        await _record(guard, response=_response(provider_response_id='resp-2'))
+
+        assert (await guard.status())[0].spent.requests == 2
+
+    async def test_two_responses_that_would_share_a_token_both_count(self):
+        """A provider name and a response id joined on a separator can collide.
+
+        `provider_name='a|b'` with id `'c'` and `provider_name='a'` with id `'b|c'` named
+        the same response, so the second one's spend was dropped as a replay of the first.
+        """
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+
+        await _record(guard, response=_response(provider_name='a|b', provider_response_id='c'))
+        await _record(guard, response=_response(provider_name='a', provider_response_id='b|c'))
+
+        assert (await guard.status())[0].spent.requests == 2
+
+    async def test_the_same_id_from_two_providers_is_two_responses(self):
+        """Nothing makes a provider's request id unique across providers."""
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+
+        await _record(guard, response=_response(provider_name='openai', provider_response_id='1'))
+        await _record(guard, response=_response(provider_name='anthropic', provider_response_id='1'))
+
+        assert (await guard.status())[0].spent.requests == 2
+
+
+class TestDeprecatedStore:
+    """A store written against the released `SpendStore` keeps working, and says what it costs."""
+
+    def test_it_warns_once_naming_what_is_lost(self):
+        """`HarnessDeprecationWarning` rather than `DeprecationWarning`, which is the whole warning.
+
+        Python filters `DeprecationWarning` out by default unless it is triggered from
+        `__main__`, and this one is raised inside the package, so a library caller would
+        see nothing at all. `HarnessDeprecationWarning` derives from `UserWarning`, which
+        is shown by default and which the docs give one recipe for silencing.
+        """
+        with pytest.warns(HarnessDeprecationWarning) as warned:
+            SpendLimits[None](budgets=[Budget(window='total')], store=_LegacyStore())
+
+        assert len(warned) == 1
+        message = str(warned[0].message)
+        assert 'one window at a time' in message
+        assert 'removed in 0.28.0' in message
+
+    def test_a_batch_store_is_not_warned_about(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            SpendLimits[None](budgets=[Budget(window='total')], store=InMemorySpendStore())
+
+    async def test_it_still_accrues_and_gates(self):
+        with pytest.warns(HarnessDeprecationWarning):
+            guard = SpendLimits(
+                budgets=[Budget(usd=Decimal('0.02'), window='day')],
+                store=_LegacyStore(),
+                price=lambda r: Decimal('0.01'),
+            )
+        agent = _agent(guard)
+
+        await agent.run('hi')
+        await agent.run('hi')
+        with pytest.raises(SpendLimitExceeded):
+            await agent.run('hi')
+
+    async def test_it_is_driven_one_window_per_call(self):
+        """Which is what it is warned about: two windows are two writes, not one."""
+        store = _LegacyStore()
+        with pytest.warns(HarnessDeprecationWarning):
+            guard = SpendLimits(
+                budgets=[Budget(window='day'), Budget(window='month')],
+                store=store,
+                price=lambda r: Decimal('1'),
+            )
+        await _record(guard)
+
+        assert len(store.writes) == 2
+
+    async def test_a_replayed_response_counts_twice(self):
+        """`SpendEntry.token` has nowhere to go on a store that never sees it."""
+        with pytest.warns(HarnessDeprecationWarning):
+            guard = SpendLimits(budgets=[Budget(window='total')], store=_LegacyStore(), price=lambda r: Decimal('1'))
+        response = _response(provider_response_id='resp-1')
+
+        await _record(guard, response=response)
+        await _record(guard, response=response)
+
+        assert (await guard.status())[0].spent.requests == 2
+
+
+class TestUnreachableOverrides:
+    """A subclass that overrode the single-key pair is told it is no longer on the path."""
+
+    def test_a_single_key_override_is_reported(self):
+        """`SpendLimits` drives `add_many`, so an audit bolted onto `add` stops running.
+
+        Before the batch pair existed that override *was* the path, so a subclass upgrading
+        into this loses whatever it added and gets nothing back saying so.
+        """
+
+        class Audited(InMemorySpendStore):
+            async def add(
+                self,
+                key: str,
+                *,
+                usd: Decimal,
+                tokens: int,
+                requests: int,
+                unpriced: int,
+                ttl: timedelta | None,
+            ) -> Spent:
+                raise AssertionError('never reached, which is what the warning is about')  # pragma: no cover
+
+        with pytest.warns(HarnessDeprecationWarning, match='never called'):
+            Audited()
+
+    async def test_a_subclass_that_moved_to_the_batch_pair_is_silent(self):
+        """And its batch override really is driven, which is what makes the move the fix."""
+        applied: list[int] = []
+
+        class Moved(InMemorySpendStore):
+            async def add(
+                self,
+                key: str,
+                *,
+                usd: Decimal,
+                tokens: int,
+                requests: int,
+                unpriced: int,
+                ttl: timedelta | None,
+            ) -> Spent:
+                raise AssertionError('never reached, and no longer claimed to be')  # pragma: no cover
+
+            async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
+                applied.append(len(entries))
+                return await super().add_many(entries)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            store = Moved()
+
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1)])
+
+        assert applied == [1]
+
+    def test_the_stores_themselves_are_silent(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            InMemorySpendStore()
+            RedisSpendStore(FakeRedis())
+
+    def test_the_redis_store_reports_it_too(self):
+        class Mirrored(RedisSpendStore):
+            async def get(self, key: str) -> Spent:
+                raise AssertionError('never reached, which is what the warning is about')  # pragma: no cover
+
+        with pytest.warns(HarnessDeprecationWarning, match='never called'):
+            Mirrored(FakeRedis())
+
+
+class TestReportedPrecision:
+    """What a caller is told stays exact whatever precision the application set."""
+
+    async def test_a_lowered_precision_does_not_round_what_status_reports(self):
+        """`Spent.usd` and the two numbers derived from it are pinned together.
+
+        Rounded, a `warn_at` crossing reports the wrong side of itself and `remaining_usd`
+        contradicts the `spent` on the same dataclass. Enforcement is unaffected -- `_check`
+        compares directly and rounding cannot cross zero -- but the reading ships wrong.
+        """
+        store = InMemorySpendStore()
+        guard = SpendLimits[None](budgets=[Budget(usd=Decimal('1234.56789'), window='total', warn_at=0.8)], store=store)
+        await store.add_many([SpendEntry(key=(await guard.status())[0].key, usd=Decimal('987.654321'), requests=1)])
+
+        with localcontext() as context:
+            context.prec = 4
+            status = (await guard.status())[0]
+
+        assert status.spent.usd == Decimal('987.654321')
+        assert status.remaining_usd == Decimal('246.913569')
+        assert status.warning is True
 
 
 class TestToolset:

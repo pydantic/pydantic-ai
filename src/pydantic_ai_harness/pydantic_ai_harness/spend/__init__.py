@@ -5,9 +5,10 @@ from pydantic_ai_harness.spend._capability import PriceFunc, SpendCallback, Spen
 from pydantic_ai_harness.spend._exceptions import SpendLimitExceeded, UnpricedModelError, UnpricedModelWarning
 from pydantic_ai_harness.spend._redis import RedisClient, RedisSpendStore
 from pydantic_ai_harness.spend._snapshot import BudgetStatus, SpendSnapshot, Spent
-from pydantic_ai_harness.spend._store import InMemorySpendStore, SpendStore
+from pydantic_ai_harness.spend._store import BatchSpendStore, InMemorySpendStore, SpendEntry, SpendStore
 
 __all__ = [
+    'BatchSpendStore',
     'Budget',
     'BudgetSpec',
     'BudgetStatus',
@@ -16,6 +17,7 @@ __all__ = [
     'RedisClient',
     'RedisSpendStore',
     'SpendCallback',
+    'SpendEntry',
     'SpendLimits',
     'SpendLimitExceeded',
     'SpendSnapshot',

@@ -134,17 +134,29 @@ limits = SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')], store=s
 
 It adds no dependency: `RedisClient` is a protocol of the two coroutines used, so any compatible client satisfies it. Amounts are stored as integer billionths of a dollar rather than through `INCRBYFLOAT`, which accumulates rounding error over the tens of thousands of requests a busy day produces. Billionths rather than millionths because the residue does not average out: an agent repeats requests of near-identical shape, so the same fraction rounds the same way every time.
 
-Each window is applied as one Lua script, in one round trip, so no other client sees a window holding part of a response and the exact-integer ceiling is checked before anything is written. That guarantee is per window, not across them: a response counting against a day budget and a month budget is two scripts, so a failure between the two leaves the day counted and the month not. Widening it needs a store operation that takes every window at once, tracked in [#536](https://github.com/pydantic/pydantic-ai-harness/issues/536).
+Every window a response counts against is applied as one Lua script, so no other client sees the response part-applied: not across the four counters of one window, and not across the windows themselves. A response counting against a day budget and a month budget is one script rather than two, so there is no failure between them to leave the day counted and the month not. The one exception is the overflow below: it aborts the script where it happens and leaves the windows already applied, which takes a counter near $9.22 billion to reach. Each key also costs a second read for as long as the compatibility fallback below is in place.
 
-A failure *after* the server has run a script does not say whether it committed -- the connection can drop once `EVAL` has landed -- so an `add` that errors leaves the outcome unknown rather than untried. Nothing retries it: counting a billed response twice is a direction the brake survives, and counting it zero times is not.
+A failure *after* the server has run a script does not say whether it committed -- the connection can drop once `EVAL` has landed -- so a write that errors leaves the outcome unknown rather than untried. Nothing retries it: counting a billed response twice is a direction the brake survives, and counting it zero times is not.
 
-The cost of doing it server-side is a ceiling -- the counters pass through Lua, whose numbers stop being exact integers above `2**53` billionths, about **$9,007,199** against a single key. Past that the store raises rather than rounding silently. Settling a protocol without that ceiling is [#532](https://github.com/pydantic/pydantic-ai-harness/issues/532).
+The counters do not round. `HINCRBY` is 64-bit integer arithmetic and takes its increment as a string, so what Redis holds is exact, and the totals come back as bulk strings read with `HMGET` rather than as the integer replies `HINCRBY` returns -- those become Lua numbers, which are doubles, and would round a total past `2**53` billionths on the way out. What is left is `HINCRBY`'s own range: a counter passing the signed 64-bit range, around **$9.22 billion** against a single key, which Redis refuses before writing that field.
+
+Keys are `{prefix}:budget-key`, with the braces around the prefix literal. That is a Redis Cluster hash tag, so the slot comes from the prefix alone and every key of one store lands in the same slot, which is what lets one script take several of them. The cost is that a cluster cannot spread a store's keys across its nodes, and that a `prefix` of your own is refused at construction if it is empty or carries a brace of its own, either of which stops the tag being read as one. `BudgetStatus.key` reports the budget key without the prefix, so what it shows is unchanged. The dedup markers below share that namespace, so a key beginning `dedup|` is refused: it would name a marker, which holds a string, and the counter would fail with `WRONGTYPE` rather than accumulate. No budget produces such a key -- the second segment of one is always a window -- so this only reaches a caller driving the store itself.
+
+A counter written by an earlier release, under the untagged name, is read alongside the tagged one and added to it, so an upgrade needs no migration step. Added rather than moved: a move would have to decide when it is complete, and nothing here can know that, since a worker still on the old release can write to the old name at any point in a rolling deploy and a move that already ran would never pick that up. The cost is one extra read per key, on reads and writes alike.
+
+The compatibility only runs one way, which is worth planning around on three counts. A **rolling deploy** under-counts while it lasts: an upgraded worker sees both names, but one still on the old release reads only the untagged one and cannot see what the upgraded workers have written, so it admits requests against a total that is missing them. A **downgrade** loses the tagged counter outright for the same reason, and this release never writes the old name, so nothing carries back. And the old key's **expiry is frozen** at whatever the last old-release write set: nothing here refreshes it, so it goes when it goes and the total drops by what it held. Keep the deploy short, and treat a downgrade as a reset rather than a rollback.
+
+The fallback goes away in 0.28.0. A counter still living under the old name stops being counted at that point, so a window set to `retain='forever'`, or one whose horizon outlasts the gap between the two releases, is worth moving by hand before then.
+
+`add_many` carries a token identifying the response, and `RedisSpendStore` reads a marker for it before the increments and writes it after them, inside the same script. `InMemorySpendStore` remembers the same tokens under its lock, so the default store behaves the same way. A durable engine that re-executes the accrual around a response it already holds -- DBOS recovering a workflow, a Prefect flow retry -- therefore adds it once rather than twice. The token is the provider's own response id where the provider reports one; without one it falls back to the run id, the step, and the response timestamp, which survives a replay only for a `run_id` the caller chose rather than the generated default. Markers are held for `dedup_retain`, a field on both stores, an hour by default, or for the window's own horizon where that is shorter, and cost one small key per response per window. That horizon is the window a replay is recognised in, not the counter's lifetime: a response replayed later than it is counted again, which is the direction to err in, since a brake that trips early survives and one that releases late does not. Set `dedup_retain=None` to hold no markers and apply every entry, which also gives up the guarantee. Recognition starts at the upgrade either way: a response an earlier release counted left no marker behind, so a replay of that one is counted again.
 
 The default store is built per capability, so two `SpendLimits` instances do not quietly share one counter. Pass the same store object to both when you want them to.
 
 A store that fails does not fail quietly. An error reading the counter refuses the request, which is the safe direction. An error writing it propagates out of the run after the model has already answered and been charged. That is deliberate: a swallowed write would drift the counter down and weaken the gate, which is worse than a visible failure. If your deployment would rather keep the answer than the count, wrap the store and decide there.
 
-Any object with `get` and `add` works, so a Postgres or DynamoDB counter is a small class rather than a fork.
+Any object with `get_many` and `add_many` works, so a Postgres or DynamoDB counter is a small class rather than a fork. Four obligations come with writing one. Return a total for every key you were handed, keyed by `SpendEntry.key`, including one you skipped as a replay: `SpendLimits` indexes the result by key, so a missing one is a `KeyError` part-way through a run. Read a key that was never written as zero rather than leaving it out. Skip an entry whose `token` has already been applied to that key, or an accrual a durable engine re-executes is counted twice. And apply the whole call or none of it -- the guarantee at the top of this section is only as good as the backend behind it, and a store that commits each entry as it goes puts back the split write this seam exists to remove. Neither method is ever handed an empty sequence, so there is no such case to answer for.
+
+`SpendStore`, the single-key `get` and `add` pair released in 0.17.0, is deprecated and removed in 0.28.0: a store of that shape still works, driven one window per call, and emits one `HarnessDeprecationWarning` when the `SpendLimits` holding it is constructed, naming what that costs -- windows applied one at a time, and no token to recognise a repeat by. The single-key `get` and `add` on `InMemorySpendStore` and `RedisSpendStore` go at that release too. A direct call to either does not warn, so this is the notice; reach for `get_many` and `add_many` instead. A subclass that *overrode* one of them without also overriding the batch pair is warned when the store itself is constructed, because that case loses behavior rather than just naming a deprecated method: `SpendLimits` drives `get_many` and `add_many`, so an override on `get` or `add` is never called and whatever it added -- an audit, a mirrored write -- stops happening. Move it onto `get_many` or `add_many`, which is also what makes the warning stop.
 
 ## Pricing
 
@@ -199,10 +211,12 @@ inspected nothing -- which is exactly what a `SpendLimits` whose budgets are all
 the scope is missing. `exhausted` raises there instead, naming the budgets that need a
 `scope` or a run context. Use `status` for a reading, `exhausted` for a decision.
 
-Making the accrual replay-safe needs the store write to happen inside an activity, which the
-capability cannot arrange without depending on `temporalio` and detecting the engine -- so it
-belongs in Pydantic AI core rather than here. Tracked in
-[#531](https://github.com/pydantic/pydantic-ai-harness/issues/531).
+A replay on another engine is already handled: `SpendEntry.token` identifies the response, so DBOS
+recovery and a Prefect flow retry apply it once rather than twice. Temporal is not that case. The run
+stops before any accrual, on the clock `SpendLimits` reads to pick the window, so closing it needs a
+deterministic clock as well as a store write the capability can make durable without depending on
+`temporalio` and detecting the engine -- which is why it belongs in Pydantic AI core rather than here.
+Tracked in [#531](https://github.com/pydantic/pydantic-ai-harness/issues/531).
 
 For a per-run token ceiling and nothing else, Pydantic AI's own
 [`UsageLimits(total_tokens_limit=...)`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits)
@@ -243,6 +257,10 @@ Source: [`pydantic_ai_harness/spend/`](https://github.com/pydantic/pydantic-ai-h
 ::: pydantic_ai_harness.spend.BudgetStatus
 
 ::: pydantic_ai_harness.spend.Spent
+
+::: pydantic_ai_harness.spend.BatchSpendStore
+
+::: pydantic_ai_harness.spend.SpendEntry
 
 ::: pydantic_ai_harness.spend.SpendStore
 
