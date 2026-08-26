@@ -28,6 +28,8 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
 
+* [`pydantic-ai-deepkeep`](https://github.com/Deepkeepai/pydantic-ai-deepkeep) - DeepKeep AI Firewall guardrails for Pydantic AI. Provides `DeepKeepGuardrail`, a custom capability that runs DeepKeep pre-moderation before model requests and post-moderation after model responses. Supports allow, block, redact, modify, and alert workflows for prompt injection, jailbreaks, sensitive data leakage, unsafe content, and other AI risks.
+
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships sandboxed [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) and [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) capabilities, plus [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) for running tool calls as sandboxed Python. As a community alternative:
