@@ -23,6 +23,8 @@ from pydantic_ai.usage import RunUsage
 
 from ._operation_backend import BoundDurableOperation
 
+__all__ = ('_operation_result_type',)
+
 R = TypeVar('R')
 P = ParamSpec('P')
 A = TypeVar('A', bound=Awaitable[Any])
@@ -41,7 +43,7 @@ class _CapabilityOperationResult(Generic[R]):
     usage_delta: RunUsage
 
 
-def _operation_result_type(result_type: object) -> object:  # pyright: ignore[reportUnusedFunction]
+def _operation_result_type(result_type: object) -> object:
     return cast(Any, _CapabilityOperationResult)[result_type]
 
 

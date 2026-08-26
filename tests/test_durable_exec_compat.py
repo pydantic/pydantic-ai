@@ -11,7 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._capability_operation import (
     _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
-    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
+    _operation_result_type,
 )
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
 from pydantic_ai.durable_exec._operation import CapabilityOperationId

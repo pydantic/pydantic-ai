@@ -18,7 +18,7 @@ from pydantic_ai.durable_exec._base import (
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
     CapabilityOperationParams,
-    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
+    _operation_result_type,
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult

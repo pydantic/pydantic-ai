@@ -98,58 +98,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
 
-    def durable_operation(
-        self,
-        capability: AbstractCapability[object],
-        name: str,
-        handler: Callable[P, Awaitable[R]],
-    ) -> DurableOperationHandle[P, R]:
-        """Look up a typed capability operation, falling back to its original handler."""
-        operations = cast(
-            dict[tuple[str, str], Callable[..., Awaitable[object]]] | None,
-            self.__dict__.get('_durable_operations'),
-        )
-        capability_id = capability.id
-        capability_operations = {
-            operation_name
-            for bound_capability_id, operation_name in operations or {}
-            if bound_capability_id == capability_id
-        }
-        operation = (
-            operations.get((capability_id, name)) if operations is not None and capability_id is not None else None
-        )
-        if self.agent is not None:
-            bindings = capability._get_durable_operation_bindings().get(id(self.agent), {})  # pyright: ignore[reportPrivateUsage]
-            capability_operations.update(bindings)
-        else:
-            bindings = {}
-        if operation is None:
-            dispatcher = bindings.get(name)
-            if dispatcher is not None:
-
-                async def bound_operation(*args: object, **kwargs: object) -> object:
-                    return await dispatcher(cast(RunContext[object], self), args, kwargs)
-
-                operation = bound_operation
-        if operation is None:
-            if self.__dict__.get('_durability_bound', False):
-                if capability_operations:
-                    known_operations = ', '.join(
-                        repr(operation_name) for operation_name in sorted(capability_operations)
-                    )
-                    detail = (
-                        f'Known durable operations for this capability: {known_operations}. '
-                        'Check the operation name passed to `RunContext.durable_operation()`.'
-                    )
-                else:
-                    detail = (
-                        'This capability declares no durable operations. Implement `get_durable_operations()` or '
-                        'mark a method with `@durable_operation`.'
-                    )
-                raise UserError(f'Unknown durable operation {name!r} for capability {capability.id!r}. {detail}')
-            return DurableOperationHandle(handler)
-        return DurableOperationHandle(cast(Callable[P, Awaitable[R]], operation))
-
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
@@ -326,6 +274,58 @@ class RunContext(Generic[RunContextAgentDepsT]):
     stay the answer for everything that feeds a *future* request, whose provider isn't knowable yet;
     this one is the answer for a call the model has already made, where it is. See `AnchoredEvidence`.
     """
+
+    def durable_operation(
+        self,
+        capability: AbstractCapability[object],
+        name: str,
+        handler: Callable[P, Awaitable[R]],
+    ) -> DurableOperationHandle[P, R]:
+        """Look up a typed capability operation, falling back to its original handler."""
+        operations = cast(
+            dict[tuple[str, str], Callable[..., Awaitable[object]]] | None,
+            self.__dict__.get('_durable_operations'),
+        )
+        capability_id = capability.id
+        capability_operations = {
+            operation_name
+            for bound_capability_id, operation_name in operations or {}
+            if bound_capability_id == capability_id
+        }
+        operation = (
+            operations.get((capability_id, name)) if operations is not None and capability_id is not None else None
+        )
+        if self.agent is not None:
+            bindings = capability._get_durable_operation_bindings().get(id(self.agent), {})  # pyright: ignore[reportPrivateUsage]
+            capability_operations.update(bindings)
+        else:
+            bindings = {}
+        if operation is None:
+            dispatcher = bindings.get(name)
+            if dispatcher is not None:
+
+                async def bound_operation(*args: object, **kwargs: object) -> object:
+                    return await dispatcher(cast(RunContext[object], self), args, kwargs)
+
+                operation = bound_operation
+        if operation is None:
+            if self.__dict__.get('_durability_bound', False):
+                if capability_operations:
+                    known_operations = ', '.join(
+                        repr(operation_name) for operation_name in sorted(capability_operations)
+                    )
+                    detail = (
+                        f'Known durable operations for this capability: {known_operations}. '
+                        'Check the operation name passed to `RunContext.durable_operation()`.'
+                    )
+                else:
+                    detail = (
+                        'This capability declares no durable operations. Implement `get_durable_operations()` or '
+                        'mark a method with `@durable_operation`.'
+                    )
+                raise UserError(f'Unknown durable operation {name!r} for capability {capability.id!r}. {detail}')
+            return DurableOperationHandle(handler)
+        return DurableOperationHandle(cast(Callable[P, Awaitable[R]], operation))
 
     @property
     def realtime(self) -> bool:

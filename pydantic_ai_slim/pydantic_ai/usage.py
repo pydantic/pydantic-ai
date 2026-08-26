@@ -16,7 +16,7 @@ from . import _utils
 from ._warnings import CostNotFoundWarning
 from .exceptions import UsageLimitExceeded
 
-__all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
+__all__ = 'RequestUsage', 'RunUsage', 'UsageLimits', '_delta'
 
 _FIRST_CLASS_TOKEN_DETAIL_KEYS = frozenset({'input_tokens', 'output_tokens'})
 """`details` keys whose names collide with the first-class `gen_ai.usage.{input,output}_tokens`
@@ -390,7 +390,7 @@ class RunUsage(UsageBase):
         return new_usage
 
 
-def _calculate_delta(before: RunUsage, after: RunUsage) -> RunUsage:
+def _delta(before: RunUsage, after: RunUsage) -> RunUsage:
     """Calculate the usage added between two snapshots."""
     details: dict[str, int] = {}
     for name in before.details.keys() | after.details.keys():
@@ -420,9 +420,6 @@ def _calculate_delta(before: RunUsage, after: RunUsage) -> RunUsage:
         if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
             delta.__dict__[name] = after_value - before_value
     return delta
-
-
-_delta = _calculate_delta
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
