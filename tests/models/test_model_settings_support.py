@@ -17,7 +17,7 @@ This is not a VCR test, and can't be one: a cassette is a frozen recording, so i
 code stops sending a field — the very drift this file exists to catch. Nothing is recorded either, since
 every probe aborts before a response. For the same reason it doesn't use the `request_capture` fixture:
 that records only path, body and headers on a live transport, while `timeout` is observable only in
-`httpx.Request.extensions` and the probe needs a `MockTransport` to fail the call without a network.
+`Request.extensions` and the probe needs a `MockTransport` to fail the call without a network.
 
 `tool_choice` and `thinking` are excluded and stay hand-maintained, for different reasons:
 
@@ -46,11 +46,12 @@ import pkgutil
 import re
 import textwrap
 import types
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import models
@@ -293,11 +294,60 @@ Probe = Callable[[ModelSettings], Awaitable[str | None]]
 """Takes the settings to probe with, returns the canonical payload the model sent (or `None`)."""
 
 
-def http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
-    """Probe any model whose provider accepts an `http_client`, recording the whole request.
+def _request_payload(
+    content: bytes, headers: Iterable[tuple[str, str]], timeout_extension: object
+) -> dict[str, object]:
+    """What one outgoing request contributes to the diff, read the same way for either client family.
 
-    Body alone is not enough: `timeout` rides in `httpx.Request.extensions` and `extra_headers` in
-    the headers, so neither would ever show up in a body-only diff.
+    Body alone is not enough: `timeout` rides in `Request.extensions` and `extra_headers` in the
+    headers, so neither would ever show up in a body-only diff.
+    """
+    # A `Timeout` rides in `extensions`, which is where `ModelSettings['timeout']` is observable at
+    # all. Pull only the four numbers out: the mapping can also hold objects whose `repr` carries a
+    # memory address, which would make every probe differ from the baseline and so make every field
+    # look forwarded.
+    timeout: str | None = (
+        f'{sorted(timeout_extension.items())}'  # pyright: ignore[reportUnknownArgumentType]
+        if isinstance(timeout_extension, dict)
+        else None
+    )
+    return {
+        # Parsed, so an SDK's key ordering can't read as a difference. Every model class probed
+        # through this path posts JSON, so a decode error here is a real surprise.
+        'body': json.loads(content),
+        'headers': sorted(f'{k}:{v}' for k, v in headers if k not in HTTP_VOLATILE),
+        'timeout': timeout,
+    }
+
+
+def http_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
+    """Probe any model whose provider takes the preferred HTTPX2 `http_client`, recording the whole request."""
+
+    async def probe(settings: ModelSettings) -> str | None:
+        recorder = Recorder()
+
+        def handle(request: httpx2.Request) -> httpx2.Response:
+            request.read()
+            recorder.record(
+                _request_payload(request.content, request.headers.items(), request.extensions.get('timeout'))
+            )
+            return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+        try:
+            await run_probe_request(build(client), settings)
+        finally:
+            await client.aclose()
+        return recorder.first
+
+    return probe
+
+
+def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
+    """Probe a model whose SDK still rejects HTTPX2, so its provider takes a legacy `httpx.AsyncClient`.
+
+    For these providers a legacy client is the supported input rather than a deprecated one, so none of
+    the migration warnings the migrated providers raise applies here.
     """
 
     async def probe(settings: ModelSettings) -> str | None:
@@ -305,24 +355,8 @@ def http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
 
         def handle(request: httpx.Request) -> httpx.Response:
             request.read()
-            # `httpx.Timeout` rides in `extensions`, which is where `ModelSettings['timeout']` is
-            # observable at all. Pull only the four numbers out: the mapping can also hold objects whose
-            # `repr` carries a memory address, which would make every probe differ from the baseline and
-            # so make every field look forwarded.
-            extension = request.extensions.get('timeout')
-            timeout: str | None = (
-                f'{sorted(extension.items())}'  # pyright: ignore[reportUnknownArgumentType]
-                if isinstance(extension, dict)
-                else None
-            )
             recorder.record(
-                {
-                    # Parsed, so an SDK's key ordering can't read as a difference. Every model class
-                    # probed through this path posts JSON, so a decode error here is a real surprise.
-                    'body': json.loads(request.content),
-                    'headers': sorted(f'{k}:{v}' for k, v in request.headers.items() if k not in HTTP_VOLATILE),
-                    'timeout': timeout,
-                }
+                _request_payload(request.content, request.headers.items(), request.extensions.get('timeout'))
             )
             return httpx.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
 
@@ -413,43 +447,43 @@ class Case:
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
-def _openai_chat(client: httpx.AsyncClient) -> Model:
+def _openai_chat(client: httpx2.AsyncClient) -> Model:
     return OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _openai_responses(client: httpx.AsyncClient) -> Model:
+def _openai_responses(client: httpx2.AsyncClient) -> Model:
     return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _cerebras(client: httpx.AsyncClient) -> Model:
+def _cerebras(client: httpx2.AsyncClient) -> Model:
     return CerebrasModel('llama3.1-8b', provider=CerebrasProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _crusoe(client: httpx.AsyncClient) -> Model:
+def _crusoe(client: httpx2.AsyncClient) -> Model:
     return CrusoeModel('openai/gpt-oss-120b', provider=CrusoeProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _ollama(client: httpx.AsyncClient) -> Model:
+def _ollama(client: httpx2.AsyncClient) -> Model:
     return OllamaModel(
         'llama3.2', provider=OllamaProvider(base_url='http://probe/v1', api_key=PROBE_KEY, http_client=client)
     )
 
 
-def _openrouter(client: httpx.AsyncClient) -> Model:
+def _openrouter(client: httpx2.AsyncClient) -> Model:
     return OpenRouterModel('openai/gpt-4o', provider=OpenRouterProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _snowflake(client: httpx.AsyncClient) -> Model:
+def _snowflake(client: httpx2.AsyncClient) -> Model:
     return SnowflakeModel(
         'llama3.1-70b', provider=SnowflakeProvider(account='probe', token=PROBE_KEY, http_client=client)
     )
 
 
-def _zai(client: httpx.AsyncClient) -> Model:
+def _zai(client: httpx2.AsyncClient) -> Model:
     return ZaiModel('glm-4.6', provider=ZaiProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _bedrock_mantle_chat(client: httpx.AsyncClient) -> Model:
+def _bedrock_mantle_chat(client: httpx2.AsyncClient) -> Model:
     # `gpt-oss-safeguard-*` are the only Mantle models served on the Chat Completions interface.
     return BedrockMantleChatModel(
         'openai.gpt-oss-safeguard-20b',
@@ -457,7 +491,7 @@ def _bedrock_mantle_chat(client: httpx.AsyncClient) -> Model:
     )
 
 
-def _bedrock_mantle_responses(client: httpx.AsyncClient) -> Model:
+def _bedrock_mantle_responses(client: httpx2.AsyncClient) -> Model:
     # GPT-5.4 keeps reasoning off by default, so sampling params are not dropped before the wire.
     return BedrockMantleResponsesModel(
         'openai.gpt-5.4',
@@ -465,7 +499,7 @@ def _bedrock_mantle_responses(client: httpx.AsyncClient) -> Model:
     )
 
 
-def _anthropic(client: httpx.AsyncClient) -> Model:
+def _anthropic(client: httpx2.AsyncClient) -> Model:
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=client))
 
 
@@ -473,7 +507,7 @@ def _groq(client: httpx.AsyncClient) -> Model:
     return GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _mistral(client: httpx.AsyncClient) -> Model:
+def _mistral(client: httpx2.AsyncClient) -> Model:
     return MistralModel('mistral-large-latest', provider=MistralProvider(api_key=PROBE_KEY, http_client=client))
 
 
@@ -481,7 +515,7 @@ def _cohere(client: httpx.AsyncClient) -> Model:
     return CohereModel('command-r-plus', provider=CohereProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _google(client: httpx.AsyncClient) -> Model:
+def _google(client: httpx2.AsyncClient) -> Model:
     return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
@@ -512,9 +546,9 @@ CASES = [
         _needs(openai_available, 'openai'),
     ),
     Case('AnthropicModel', ('Anthropic',), http_probe(_anthropic), _needs(anthropic_available, 'anthropic')),
-    Case('GroqModel', ('Groq',), http_probe(_groq), _needs(groq_available, 'groq')),
+    Case('GroqModel', ('Groq',), legacy_http_probe(_groq), _needs(groq_available, 'groq')),
     Case('MistralModel', ('Mistral',), http_probe(_mistral), _needs(mistral_available, 'mistral')),
-    Case('CohereModel', ('Cohere',), http_probe(_cohere), _needs(cohere_available, 'cohere')),
+    Case('CohereModel', ('Cohere',), legacy_http_probe(_cohere), _needs(cohere_available, 'cohere')),
     Case('GoogleModel', ('Google',), http_probe(_google), _needs(google_available, 'google')),
     Case('BedrockConverseModel', ('Bedrock',), bedrock_probe, _needs(bedrock_available, 'bedrock')),
     Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),

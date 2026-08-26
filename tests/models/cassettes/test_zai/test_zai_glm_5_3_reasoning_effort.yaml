@@ -1,0 +1,160 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '183'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3
+      reasoning_effort: max
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '995'
+      content-type:
+      - application/json; charset=UTF-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            The user is asking a simple arithmetic question: What is 2 + 2?
+
+            The answer is 4. This is a basic addition fact that doesn't require any elaborate reasoning.
+
+            The question is extremely simple, so my response should be correspondingly brief and direct. There's no need for lengthy explanation, hedging, or unnecessary elaboration. A direct answer is best here.
+
+            I could just say "4" or "2 + 2 = 4". The latter is slightly more complete and clear. Either works. Given the simplicity, keeping it short is ideal.
+          role: assistant
+      created: 1787259738
+      id: 2026082105021459b8578d40894aa9
+      model: glm-5.3
+      object: chat.completion
+      request_id: 2026082105021459b8578d40894aa9
+      usage:
+        completion_tokens: 125
+        completion_tokens_details:
+          reasoning_tokens: 116
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 145
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '137'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3
+      stream: false
+      thinking:
+        clear_thinking: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '977'
+      content-type:
+      - application/json; charset=UTF-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            The user is asking a simple arithmetic question: What is 2 + 2?
+
+            This is one of the most basic math questions. The answer is 4.
+
+            How should I format this? The question is extremely simple and deserves a direct, concise answer. There's no need for lengthy explanations, headers, bullet points, or markdown formatting. A single sentence or even just the number would suffice, though a brief complete sentence is more natural and conversational.
+
+            2 + 2 = 4
+
+            That's it. No need to overthink this.
+          role: assistant
+      created: 1787259742
+      id: 20260821050219787b1f0e32e04586
+      model: glm-5.3
+      object: chat.completion
+      request_id: 20260821050219787b1f0e32e04586
+      usage:
+        completion_tokens: 120
+        completion_tokens_details:
+          reasoning_tokens: 111
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 140
+    status:
+      code: 200
+      message: OK
+version: 1
