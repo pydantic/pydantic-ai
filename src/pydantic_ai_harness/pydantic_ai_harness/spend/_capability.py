@@ -1,7 +1,7 @@
 """Track what an agent spends, and stop it when a budget is gone.
 
-`UsageLimits` in Pydantic AI caps tokens and requests for the duration of one
-run. `SpendLimits` covers what that leaves: money, periods longer than a run,
+`UsageLimits` in Pydantic AI caps tokens, requests and cost for the duration of
+one run. `SpendLimits` covers what that leaves: periods longer than a run,
 partitioning by tenant or user, and a counter that several worker processes
 share. It prices each response with
 [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], adds it to
@@ -29,6 +29,7 @@ from pydantic_ai.messages import ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
+from pydantic_ai_harness.spend._composition import warn_about_inner_wrappers
 from pydantic_ai_harness.spend._exceptions import SpendLimitExceeded, UnpricedModelError, UnpricedModelWarning
 from pydantic_ai_harness.spend._snapshot import BudgetStatus, SpendSnapshot, Spent, money_precision
 from pydantic_ai_harness.spend._store import (
@@ -85,15 +86,21 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     budget that reset every run would not be a daily budget. Per-run isolation
     comes from `Budget(window='run')`, whose key carries the run id.
 
-    Durable execution: not supported inside a Temporal workflow. These hooks run in
-    workflow code while only the model request is the activity, and the run stops
-    before any accrual, on the wall clock `before_model_request` reads to pick the
-    window, which the sandbox restricts. `SpendEntry.token` is what makes the accrual
-    itself replay-safe on DBOS and Prefect; it does not reach this, because nothing
-    accrues. `exhausted()` works without a `RunContext` so a workflow can at least be
-    refused admission on what is already recorded -- but a workflow admitted that way
-    records nothing of its own, so it is a gate on the door, not a budget on what
-    happens inside. Tracked in
+    Durable execution: not supported inside a durable workflow, on Temporal, DBOS,
+    or Prefect. The hooks run in orchestration code, while the model request beside
+    them is a durable unit restored from its checkpoint, so re-execution replays the
+    accrual without replaying the request it counted. `SpendEntry.token` identifies
+    the response, so a store implementing `BatchSpendStore` applies a replayed accrual
+    once rather than twice -- within `dedup_retain`, and not at all through the adapter
+    that drives a deprecated `SpendStore`, which has nowhere to put the token. What is
+    left is the other direction: recovery that lands in a fresh worker holding a fresh
+    `InMemorySpendStore` finds neither the counter nor the marker that guards it, and
+    admits more than the budget allows. Temporal stops earlier than any of that, on
+    the wall clock `before_model_request` reads to pick the window, which the sandbox
+    restricts and `PydanticAIPlugin` does not pass `pydantic_ai_harness` through.
+    `exhausted()` works without a `RunContext` so a workflow can at least be refused
+    admission on what is already recorded -- but it reserves nothing, so it is a gate
+    on the door, not a budget on what happens inside. Tracked in
     <https://github.com/pydantic/pydantic-ai-harness/issues/531>.
     """
 
@@ -151,6 +158,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     Instance-level and never reset, matching the capability's own posture that state
     outlives a run: a per-run set would warn again on every run for the same model.
+    """
+
+    _reported_arrangements: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Capability arrangements already reported by `SpendCompositionWarning`, so each reports once.
+
+    Instance-level and never reset, like `_warned_unpriced`. Keyed on the arrangement rather
+    than being a single flag because `agent.run(capabilities=...)` can put a different chain
+    around this instance on each run, and a flag set by a safe first run would hide the rest.
     """
 
     _store: BatchSpendStore = field(init=False, repr=False, compare=False)
@@ -242,17 +257,16 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return 'SpendLimits'
 
     def get_ordering(self) -> CapabilityOrdering:
-        """Sit innermost, so the accrual is the first thing to happen to a billed response.
+        """Sit innermost, so the accrual happens as close to the provider call as ordering allows.
 
-        Innermost puts this capability's `wrap_model_request` closest to the provider call,
-        so every other capability's wrapper -- and every capability's
-        `after_model_request` -- runs outside the accrual and cannot reject a response the
-        counter has not already seen.
+        Innermost puts this capability's `wrap_model_request` inside every capability outside
+        that tier, so their wrappers -- and every capability's `after_model_request` -- run
+        outside the accrual and cannot reject a response the counter has not already seen.
 
         This orders against non-innermost capabilities only. Innermost members are not
         ordered among themselves, and the one listed later nests further in, so another
-        innermost capability (`TemporalDurability`, `InputGuardrail`) placed after this one
-        still wraps inside it and can reject a billed response before it is counted. List
+        innermost capability placed after this one still wraps inside it. `InputGuardrail` is
+        the one that reaches a billed response before the counter does. List
         `SpendLimits` last among innermost capabilities where that matters; closing it
         outright is <https://github.com/pydantic/pydantic-ai-harness/issues/534>.
         """
@@ -271,7 +285,19 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Refuse the request if any budget with a ceiling is already spent."""
+        """Refuse the request if any budget with a ceiling is already spent.
+
+        Also where the arrangement `get_ordering` cannot rule out is reported. The sorted
+        chain is readable from `RunContext.root_capability` from `before_run` onward but not
+        before it: `for_agent` sees only the capabilities the agent was constructed with, and
+        `ctx.root_capability` is still `None` in `for_run`, so neither covers a capability
+        added through `agent.run(capabilities=...)`. `before_run` would serve as well, since
+        the chain is fixed for a run; the read sits here to stay on the request path, beside
+        the accrual it is about. Re-reading per request costs nothing because
+        `_reported_arrangements` makes it idempotent, and keying on the arrangement rather
+        than on having reported is what covers a chain that differs between runs.
+        """
+        warn_about_inner_wrappers(ctx.root_capability, self, self._reported_arrangements)
         enforcing = [(budget, key) for budget, key in self._keyed(ctx) if budget.enforces]
         read = await self._read(list(dict.fromkeys(key for _, key in enforcing)))
         for budget, key in enforcing:
@@ -285,7 +311,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Price what the provider returned and add it to every window, before anything can reject it.
+        """Price what the provider returned and add it to every window, before an outer capability can reject it.
 
         The accrual belongs here rather than in `after_model_request` because
         `after_model_request` runs outside this chain, once the whole chain has returned.
@@ -431,11 +457,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
         An admission check, and only that. It reads the counters; it reserves nothing and
         records nothing, so work started on the strength of it goes unmeasured unless
-        something else accrues it. Under Temporal that is the whole of what is available --
-        the hooks cannot reach a shared store mid-run -- so a workflow admitted here spends
-        against a counter that never moves, and the next workflow is admitted on the same
-        stale reading. Sound as a floor on runaway spend already recorded, not as a ceiling
-        on what the workflow goes on to spend.
+        something else accrues it. That makes it the pre-flight option on every durable
+        engine, and what the next caller reads differs. Under Temporal nothing accrues
+        inside the workflow at all, because the sandbox refuses the clock these hooks read,
+        so the counter still holds the admission reading. Under DBOS and Prefect the accrual
+        does run, and `SpendEntry.token` keeps a replay of it from counting twice, so the
+        counter tracks the workflow as long as recovery still reaches the store that accrued.
+        Either way this is a floor on runaway spend already recorded, not a ceiling on what
+        the workflow goes on to spend.
 
         `status()` omits what it cannot resolve, and `any(...)` over the remainder is a brake
         that silently checks nothing when every budget is scoped -- so this raises instead,
@@ -500,7 +529,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         Temporal's workflow sandbox restricts. The sandbox's own error names
         `datetime.datetime.now` and not what it means here, so it is translated. Matched by
         class name rather than by importing `temporalio`, which this package does not depend
-        on, and which `durable_exec/AGENTS.md` rules out detecting.
+        on, and which core's own `pydantic_ai/durable_exec/AGENTS.md` rules out: "Prefer generic
+        capabilities/toolsets/models extension points over engine-specific escape hatches."
 
         The message leads with the unsafety rather than the passthrough that silences it: the
         sandbox is refusing a symptom, and a caller who only removes the symptom gets a
