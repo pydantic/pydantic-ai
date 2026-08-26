@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Never, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
@@ -161,7 +161,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     @overload
     def emit_event(self, event: CapabilityEvent, /) -> CapabilityEvent: ...
 
-    def emit_event(self, event: str | CustomEvent | CapabilityEvent, data: Any = None, /) -> Never:
+    def emit_event(
+        self, event: str | CustomEvent | CapabilityEvent, data: Any = None, /
+    ) -> CustomEvent | CapabilityEvent:
         """Reject `emit_event` from inside a Temporal activity.
 
         Tools run inside activities where the run's event stream isn't reachable, so events emitted
