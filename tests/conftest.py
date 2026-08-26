@@ -815,21 +815,21 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     original_httpx = pydantic_ai.models.create_async_http_client
     original_httpx2 = pydantic_ai._http.create_async_httpx2_client
 
-    def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
-        key = ('httpx', kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
-        if key not in cache or cache[key].is_closed:
-            cache[key] = original_httpx(**kwargs)
-        client = cache[key]
-        assert isinstance(client, httpx.AsyncClient)
-        return client
+    def make_cached(
+        family: str, factory: Callable[..., _HttpClient], expected: type[_HttpClient]
+    ) -> Callable[..., _HttpClient]:
+        def cached_per_test(**kwargs: Any) -> _HttpClient:
+            key = (family, kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+            if key not in cache or cache[key].is_closed:
+                cache[key] = factory(**kwargs)
+            client = cache[key]
+            assert isinstance(client, expected)
+            return client
 
-    def cached_httpx2_per_test(**kwargs: Any) -> httpx2.AsyncClient:
-        key = ('httpx2', kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
-        if key not in cache or cache[key].is_closed:
-            cache[key] = original_httpx2(**kwargs)
-        client = cache[key]
-        assert isinstance(client, httpx2.AsyncClient)
-        return client
+        return cached_per_test
+
+    cached_per_test = make_cached('httpx', original_httpx, httpx.AsyncClient)
+    cached_httpx2_per_test = make_cached('httpx2', original_httpx2, httpx2.AsyncClient)
 
     for mod in list(sys.modules.values()):
         # Read the module's own namespace via `__dict__` rather than `getattr`: some

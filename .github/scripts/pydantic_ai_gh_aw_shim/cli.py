@@ -46,7 +46,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
 
-import httpx
+import httpx2
 import logfire
 from anthropic import AsyncAnthropic
 from mcp.shared.exceptions import McpError
@@ -178,7 +178,7 @@ def run_request_limit() -> int:
 # sending data. Two minutes is generous enough for large generations but
 # prevents indefinite hangs. SDK-level retries cover transient 429/5xx before
 # raising.
-_LLM_TIMEOUT = httpx.Timeout(timeout=120.0, connect=10.0)
+_LLM_TIMEOUT = httpx2.Timeout(timeout=120.0, connect=10.0)
 _LLM_MAX_RETRIES = 4
 
 # Wall-clock caps (seconds).  These are last-resort guards on top of the

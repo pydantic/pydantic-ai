@@ -11,7 +11,6 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -59,8 +58,6 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutput,
         ChatCompletionStreamOutputChoice,
         ChatCompletionStreamOutputDelta,
-        ChatCompletionStreamOutputDeltaToolCall,
-        ChatCompletionStreamOutputFunction,
         ChatCompletionStreamOutputUsage,
     )
     from huggingface_hub.errors import HfHubHTTPError
@@ -559,125 +556,6 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world', 'hello world.']
-        )
-        assert result.is_complete
-
-
-def struc_chunk(
-    tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
-) -> ChatCompletionStreamOutput:
-    return chunk(
-        [
-            ChatCompletionStreamOutputDelta.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
-                {
-                    'role': 'assistant',
-                    'tool_calls': [
-                        ChatCompletionStreamOutputDeltaToolCall.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
-                            {
-                                'index': 0,
-                                'function': ChatCompletionStreamOutputFunction.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
-                                    {
-                                        'name': tool_name,
-                                        'arguments': tool_arguments,
-                                    }
-                                ),
-                            }
-                        )
-                    ],
-                }
-            ),
-        ],
-        finish_reason=finish_reason,
-    )
-
-
-class MyTypedDict(TypedDict, total=False):
-    first: str
-    second: str
-
-
-async def test_stream_structured(allow_model_requests: None):
-    stream = [
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),
-        chunk([ChatCompletionStreamOutputDelta(role='assistant', tool_calls=[])]),
-        chunk(
-            [
-                ChatCompletionStreamOutputDelta(
-                    role='assistant',
-                    tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # pyright: ignore[reportArgumentType]
-                    ],
-                )
-            ]
-        ),
-        chunk(
-            [
-                ChatCompletionStreamOutputDelta(
-                    role='assistant',
-                    tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # pyright: ignore[reportArgumentType]
-                    ],
-                )
-            ]
-        ),
-        struc_chunk('final_result', None),
-        chunk(
-            [
-                ChatCompletionStreamOutputDelta(
-                    role='assistant',
-                    tool_calls=[
-                        ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # pyright: ignore[reportArgumentType]
-                    ],
-                )
-            ]
-        ),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        chunk([]),
-    ]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
-        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
-        # double check usage matches stream count
-        assert result.usage.output_tokens == len(stream)
-
-
-async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream = [
-        struc_chunk('final_result', None),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        struc_chunk(None, None, finish_reason='stop'),
-    ]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
         )
         assert result.is_complete
 

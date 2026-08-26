@@ -466,8 +466,8 @@ class _JsonSchemaTestData:
 
     def _gen_any(self, schema: dict[str, Any]) -> Any:
         """Generate data for any JSON Schema."""
-        if const := schema.get('const'):
-            return const
+        if 'const' in schema:
+            return schema['const']
         elif enum := schema.get('enum'):
             return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
@@ -539,19 +539,33 @@ class _JsonSchemaTestData:
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
         maximum = schema.get('maximum')
+        minimum = schema.get('minimum')
+        if minimum is not None and maximum == minimum:
+            return minimum
+
         if maximum is None:
             exc_max = schema.get('exclusiveMaximum')
             if exc_max is not None:
                 maximum = exc_max - 1
 
-        minimum = schema.get('minimum')
         if minimum is None:
             exc_min = schema.get('exclusiveMinimum')
             if exc_min is not None:
                 minimum = exc_min + 1
 
         if minimum is not None and maximum is not None:
-            return minimum + self.seed % (maximum - minimum)
+            span = maximum - minimum
+            if (
+                schema.get('type') == 'integer'
+                and minimum % 1 == 0
+                and maximum % 1 == 0
+                and 'exclusiveMinimum' not in schema
+                and 'exclusiveMaximum' not in schema
+                and span > 0
+            ):
+                minimum = int(minimum)
+                span = int(maximum) - minimum + 1
+            return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
         elif maximum is not None:

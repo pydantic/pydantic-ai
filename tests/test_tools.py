@@ -1383,6 +1383,25 @@ def test_sync_prepare_tools_agent_wide():
     assert result.output == snapshot('{"foobar":"0"}')
 
 
+def test_tool_explicit_empty_description_suppresses_docstring():
+    """https://github.com/pydantic/pydantic-ai/issues/7670"""
+
+    def my_tool(x: int) -> int:
+        """Docstring that should not be sent to the model."""
+        return x
+
+    assert Tool(my_tool).tool_def.description == 'Docstring that should not be sent to the model.'
+    assert Tool(my_tool, description=None).tool_def.description == 'Docstring that should not be sent to the model.'
+    assert Tool(my_tool, description='').tool_def.description == ''
+    assert Tool(my_tool, description=' ').tool_def.description == ' '
+
+    test_model = TestModel()
+    agent = Agent(test_model, tools=[Tool(my_tool, description='')])
+    agent.run_sync('hello')
+    assert test_model.last_model_request_parameters is not None
+    assert test_model.last_model_request_parameters.function_tools[0].description == ''
+
+
 def test_function_tool_consistent_with_schema():
     def function(*args: Any, **kwargs: Any) -> str:
         assert len(args) == 0

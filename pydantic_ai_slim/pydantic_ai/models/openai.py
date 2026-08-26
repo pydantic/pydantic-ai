@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args, overload
+from typing import Any, Literal, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -25,7 +25,7 @@ from pydantic_core import to_json
 from typing_extensions import Never, Protocol, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._http import legacy_httpx
+from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
@@ -125,13 +125,6 @@ from . import (
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
-if TYPE_CHECKING:
-    from httpx import Timeout
-else:
-    # Legacy HTTPX is optional: without it `_normalize_openai_timeout`'s `isinstance` check falls back
-    # to the HTTPX2 type the SDK already accepts, so the conversion just rebuilds an equivalent value.
-    Timeout = legacy_httpx.Timeout if legacy_httpx is not None else HTTPX2Timeout
-
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
 try:
@@ -211,12 +204,6 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-def _normalize_openai_timeout(timeout: float | Timeout | NotGiven) -> float | HTTPX2Timeout | NotGiven:
-    if isinstance(timeout, Timeout):
-        return HTTPX2Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
-    return timeout
-
-
 def _preload_openai_sdk_resource_modules(model: OpenAIChatModel | OpenAIResponsesModel, client: AsyncOpenAI) -> None:
     """Load deferred OpenAI SDK modules before request handling.
 
@@ -294,7 +281,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels
+OpenAIModelName = str | AllModels | Literal['gpt-5.5-2026-04-23', 'gpt-5.5-pro', 'gpt-5.5-pro-2026-04-23']
 """
 Possible OpenAI model names.
 
@@ -304,6 +291,10 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
+
+The ids in the local `Literal` are bridged because `AllModels` doesn't list them at the floor the
+`openai` extra declares; they arrived in `openai` 3.1.0
+(https://github.com/openai/openai-python/pull/3617). Drop them once the floor is bumped past it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -1163,7 +1154,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stop=model_settings.get('stop_sequences', OMIT),
                     max_completion_tokens=max_tokens if supports_max_completion_tokens else OMIT,
                     max_tokens=OMIT if supports_max_completion_tokens else max_tokens,
-                    timeout=_normalize_openai_timeout(model_settings.get('timeout', NOT_GIVEN)),
+                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
@@ -2691,7 +2682,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[dict[str, str], float | HTTPX2Timeout | NotGiven]:
         extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
-        timeout = _normalize_openai_timeout(model_settings.get('timeout', NOT_GIVEN))
+        timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
     @overload
@@ -4004,8 +3995,8 @@ class OpenAIStreamedResponse(StreamedResponse):
         for dtc in choice.delta.tool_calls or []:
             maybe_event = self._parts_manager.handle_tool_call_delta(
                 vendor_part_id=dtc.index,
-                tool_name=dtc.function and dtc.function.name,
-                args=dtc.function and dtc.function.arguments,
+                tool_name=dtc.function.name if dtc.function is not None else None,
+                args=dtc.function.arguments if dtc.function is not None else None,
                 tool_call_id=dtc.id,
             )
             if maybe_event is not None:
@@ -4532,7 +4523,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                     # Collect annotations if the setting is enabled
                     if self._model_settings.get('openai_include_raw_annotations'):
-                        _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
+                        # `openai` 3.1 retyped `annotation` from `object` to a model union declared in the
+                        # event's own module, whose members are distinct classes from the identically
+                        # shaped ones `ResponseOutputText.annotations` uses. That distinction is invisible
+                        # in the payload but fatal to `responses_output_text_annotations_ta`, so normalize
+                        # to the wire dict both SDK shapes carry rather than serializing by type.
+                        annotation = chunk.annotation
+                        _annotations_by_item.setdefault(chunk.item_id, []).append(
+                            annotation.model_dump(mode='json') if isinstance(annotation, BaseModel) else annotation
+                        )
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
@@ -4556,9 +4555,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     provider_details: dict[str, Any] = {}
                     annotations = _annotations_by_item.get(chunk.item_id)
                     if annotations:
-                        provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
-                            list(annotations), warnings=False
-                        )
+                        provider_details['annotations'] = list(annotations)
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if (phase := _phase_by_item.get(chunk.item_id)) is not None:
@@ -5021,6 +5018,7 @@ def _map_usage(
         if isinstance(v, int)
     }
     response_data = dict(model=model, usage=usage_data)
+    reasoning_tokens: int | None = None
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
         input_tokens_details = usage_data.get('input_tokens_details')
@@ -5035,6 +5033,7 @@ def _map_usage(
 
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
+            reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
 
     request_usage = usage.RequestUsage.extract(
         response_data,
@@ -5044,14 +5043,26 @@ def _map_usage(
         api_flavor=api_flavor,
         details=details,
     )
-    # genai-prices' `RequestUsage.extract` doesn't yet map OpenAI's `cache_write_tokens`, which is nested
-    # under `prompt_tokens_details` (chat) / `input_tokens_details` (responses), unlike Anthropic's top-level
-    # cache fields that it already handles, so lift it manually here.
-    # TODO: Remove this block once genai-prices extracts the nested `cache_write_tokens` field.
+    # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
+    # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
+    # provider's extractor does — Azure's still omits it — so lift it manually here.
+    # TODO: Remove this block once those remaining extractors map it. Check `prices/providers/azure.yml`.
     if _is_str_dict(input_tokens_details):
         cache_write_tokens = input_tokens_details.get('cache_write_tokens')
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
+    # genai-prices' `openai` entry maps `completion_tokens_details.reasoning_tokens` to
+    # `output_reasoning_tokens`, but an OpenAI-compatible provider it knows by its own id resolves to that
+    # provider's extractor instead of to the `openai` fallback, and not all of those map it — `zai`'s,
+    # added in genai-prices 0.1.2, doesn't, which silently dropped Z.AI's reasoning-token count. Lift it
+    # for whichever provider matched, from what the SDK reported rather than from `details`, which the
+    # `responses` branch above fills with a synthetic zero. Left unset — not zeroed — when the SDK reports
+    # nothing, so a model that doesn't reason stays distinguishable from one that reasoned for free.
+    # TODO: Remove this block once genai-prices maps reasoning tokens for every OpenAI-compatible provider.
+    # https://github.com/pydantic/genai-prices/pull/580 (merged; not in 0.1.4 — drop once the floor is past the release that includes it).
+    if isinstance(reasoning_tokens, int) and 'output_reasoning_tokens' not in request_usage.__dict__:
+        # Extra field, not a declared `RequestUsage` attribute — `setattr` is how `__init__` sets extras.
+        setattr(request_usage, 'output_reasoning_tokens', reasoning_tokens)
     return request_usage
 
 
@@ -5624,10 +5635,11 @@ def _map_mcp_call(
         NativeToolReturnPart(
             tool_name=tool_name,
             tool_call_id=item.id,
-            content={
-                'output': item.output,
-                'error': item.error,
-            },
+            # Dumped rather than read off the item like `output` alone would allow: `openai` 3.1 retyped
+            # `McpCall.error` from `str` to a model union, so reading the attribute puts an SDK model
+            # into a message part that then can't be serialized with the message history. `warnings=False`
+            # because pre-3.1 the wire's error object lands in that `str`-typed field unconverted.
+            content=item.model_dump(mode='json', include={'output', 'error'}, warnings=False),
             provider_name=provider_name,
         ),
     )

@@ -64,7 +64,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> Provider[AsyncAnthropicClient]: ...
 
 
@@ -206,27 +206,36 @@ def gateway_provider(
             create_http_client=create_async_httpx2_client,
         )
 
+    if canonical == 'anthropic':
+        from anthropic import AsyncAnthropic
+
+        from .anthropic import AnthropicProvider
+
+        # Narrower than the other routes: `anthropic>=1` rejects a legacy client outright, so the
+        # route can't fall back to one the way the OpenAI and Google routes still do.
+        if http_client is not None and not isinstance(http_client, httpx2.AsyncClient):
+            raise UserError('The Anthropic Gateway route requires an `httpx2.AsyncClient`.')
+
+        def build_anthropic_provider(client: httpx2.AsyncClient) -> AnthropicProvider:
+            return AnthropicProvider(
+                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=client)
+            )
+
+        return _build_gateway_provider(
+            build_anthropic_provider,
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_httpx2_client,
+        )
+
     if isinstance(http_client, httpx2.AsyncClient):
-        raise UserError('`httpx2.AsyncClient` is only supported for OpenAI and Google Gateway routes.')
+        raise UserError('`httpx2.AsyncClient` is only supported for OpenAI, Google and Anthropic Gateway routes.')
 
     if canonical == 'groq':
         from .groq import GroqProvider
 
         return _build_gateway_provider(
             lambda client: GroqProvider(api_key=api_key, base_url=base_url, http_client=client),
-            api_key=api_key,
-            http_client=http_client,
-            create_http_client=create_async_http_client,
-        )
-    elif canonical == 'anthropic':
-        from anthropic import AsyncAnthropic
-
-        from .anthropic import AnthropicProvider
-
-        return _build_gateway_provider(
-            lambda client: AnthropicProvider(
-                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=client)
-            ),
             api_key=api_key,
             http_client=http_client,
             create_http_client=create_async_http_client,

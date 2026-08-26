@@ -98,7 +98,7 @@ logfire.instrument_pydantic_ai()
 
 ### SSE
 
-The [HTTP + Server-Sent Events](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`](https://gofastmcp.com/clients/transports).
+The [HTTP + Server-Sent Events](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`](https://gofastmcp.com/clients/transports).
 
 !!! note
     The SSE transport in MCP is deprecated. You should prefer Streamable HTTP for new deployments.
@@ -113,7 +113,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 ### Stdio
 
-MCP also offers the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio), where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. Pass a path to a Python or Node.js script, or build a [`StdioTransport`](https://gofastmcp.com/clients/transports) for full control over the command, arguments, and environment.
+MCP also offers the [stdio transport](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#stdio), where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. Pass a path to a Python or Node.js script, or build a [`StdioTransport`](https://gofastmcp.com/clients/transports) for full control over the command, arguments, and environment.
 
 ```python {title="mcp_stdio_client.py" test="skip"}
 from fastmcp.client.transports import StdioTransport
@@ -507,7 +507,7 @@ Because the per-run toolset's session is established inside the run itself, cred
 
 As an alternative to a dynamic toolset, you can construct a new `MCPToolset` yourself for each request and pass it to the [`toolsets` argument](../toolsets.md) of the agent run methods.
 
-## Custom TLS / SSL configuration
+## Custom TLS / SSL configuration {#custom-tls-ssl-configuration}
 
 In some environments you need to tweak how HTTPS connections are established — for example to trust an internal Certificate Authority, present a client certificate for **mTLS**, or (during local development only!) disable certificate verification altogether. `MCPToolset` exposes an `http_client` parameter so you can pass your own pre-configured [`httpx.AsyncClient`](https://www.python-httpx.org/async/):
 

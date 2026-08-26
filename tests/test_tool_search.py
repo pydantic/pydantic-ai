@@ -3742,7 +3742,7 @@ def test_anthropic_custom_replay_blocks_malformed_content():
 
     malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
     refs, message = _build_custom_tool_search_replay_blocks(
-        malformed, deferred_tools_active=True, available_tool_names=set()
+        malformed, deferred_tools_active=True, declared_tool_names=set()
     )
     assert refs is None and message is None
 
@@ -3766,7 +3766,7 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
         content={'discovered_tools': []},
         provider_details={'error_code': 'unavailable', 'error_message': 'temporary outage'},
     )
-    block = _build_tool_search_replay_block(return_part, 'srv_err', available_tool_names=set())
+    block = _build_tool_search_replay_block(return_part, 'srv_err', declared_tool_names=set())
     assert block == {
         'tool_use_id': 'srv_err',
         'type': 'tool_search_tool_result',
@@ -6410,7 +6410,7 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
         tool_call_id='c1',
     )
     refs, message = _build_custom_tool_search_replay_blocks(
-        empty, deferred_tools_active=True, available_tool_names=set()
+        empty, deferred_tools_active=True, declared_tool_names=set()
     )
     assert refs == []
     assert message == 'No matches; try other keywords.'
@@ -6428,7 +6428,7 @@ def test_anthropic_custom_replay_blocks_skips_non_typed_returns() -> None:
         tool_call_id='c1',
     )
     refs, message = _build_custom_tool_search_replay_blocks(
-        base_part, deferred_tools_active=True, available_tool_names={'foo'}
+        base_part, deferred_tools_active=True, declared_tool_names={'foo'}
     )
     assert refs is None and message is None
 
@@ -6449,7 +6449,7 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
 
     custom_part = ToolSearchReturnPart(content=content, tool_call_id='c1')
     refs, _ = _build_custom_tool_search_replay_blocks(
-        custom_part, deferred_tools_active=True, available_tool_names={'still_here'}
+        custom_part, deferred_tools_active=True, declared_tool_names={'still_here'}
     )
     assert refs == [{'tool_name': 'still_here', 'type': 'tool_reference'}]
 
@@ -6458,7 +6458,7 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
         tool_call_id='srv_ok',
         content=content,
     )
-    block = _build_tool_search_replay_block(native_part, 'srv_ok', available_tool_names={'still_here'})
+    block = _build_tool_search_replay_block(native_part, 'srv_ok', declared_tool_names={'still_here'})
     assert block == {
         'tool_use_id': 'srv_ok',
         'type': 'tool_search_tool_result',
@@ -7579,7 +7579,7 @@ class _HookObservingCapability(Capability[None]):
     async def before_tool_execute(
         self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
-        self.hook_log.append(f'before:{call.tool_name}:loaded={ctx.capability_loaded}')  # pragma: no cover
+        self.hook_log.append(f'before:{call.tool_name}:available={ctx.capability_active}')  # pragma: no cover
         return args  # pragma: no cover
 
     async def wrap_tool_execute(

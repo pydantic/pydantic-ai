@@ -12,6 +12,7 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
@@ -69,6 +70,7 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     deepseek_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     google_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
     grok_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
+    groq_mock = mocker.patch(f'{ns}.groq_model_profile', wraps=groq_model_profile)
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     openai_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
 
@@ -99,6 +101,13 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     # Test deepseek provider
     profile = provider.model_profile('deepseek/deepseek-chat')
     deepseek_mock.assert_called_with('deepseek-chat')
+    assert profile is not None
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    # Test groq provider — the suffix after the first `/` keeps its own `openai/gpt-oss` prefix,
+    # which is what `groq_model_profile` gates on
+    profile = provider.model_profile('groq/openai/gpt-oss-120b')
+    groq_mock.assert_called_with('openai/gpt-oss-120b')
     assert profile is not None
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
