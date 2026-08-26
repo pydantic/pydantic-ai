@@ -612,7 +612,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        for original_name, tool in self.tools.items():
+        for original_name, tool in list(self.tools.items()):
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
             if max_retries is None:
                 max_retries = ctx.max_retries

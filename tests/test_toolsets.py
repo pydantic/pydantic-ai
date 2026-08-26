@@ -137,6 +137,29 @@ async def test_function_toolset_tool_for_tool_def_preserves_rename_and_retry_bud
     assert await toolset.call_tool('renamed', {'value': 3}, ctx, rebuilt_tool) == 6
 
 
+async def test_function_toolset_defers_tools_registered_during_prepare():
+    ctx = build_run_context(None)
+    toolset = FunctionToolset[None]()
+    second_registered = False
+
+    def second() -> str:
+        return 'second'  # pragma: no cover
+
+    async def register_second(_ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        nonlocal second_registered
+        if not second_registered:
+            toolset.add_function(second)
+            second_registered = True
+        return tool_def
+
+    @toolset.tool_plain(prepare=register_second)
+    def first() -> str:
+        return 'first'  # pragma: no cover
+
+    assert list(await toolset.get_tools(ctx)) == ['first']
+    assert list(await toolset.get_tools(ctx)) == ['first', 'second']
+
+
 async def test_function_toolset():
     @dataclass
     class PrefixDeps:

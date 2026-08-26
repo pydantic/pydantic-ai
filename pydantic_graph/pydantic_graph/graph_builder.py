@@ -865,7 +865,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 try:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
                 except (BrokenResourceError, ClosedResourceError):
-                    pass
+                    pass  # pragma: no cover
                 return
             try:
                 if isinstance(result, _GraphTaskAsyncIterable):
