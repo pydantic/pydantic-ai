@@ -370,6 +370,9 @@ async def call_declaration(
 
 
 def recover_capability(ctx: RunContext[Any], capability_id: str) -> AbstractCapability[Any]:
+    run_capabilities = cast(dict[str, AbstractCapability[Any]], ctx.__dict__.get('_run_capabilities_by_id', {}))
+    if capability := run_capabilities.get(capability_id):
+        return capability
     agent = ctx.agent
     if agent is None:
         raise RuntimeError('A durable capability operation requires the worker agent on `RunContext`.')

@@ -464,11 +464,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         ctx.__dict__['_durability_bound'] = True
         if ctx.agent is None:
             return
-        operations: dict[tuple[int, str], Callable[..., Awaitable[object]]] = {}
-        for capability in leaf_capabilities(ctx.agent.root_capability):
-            capability_id = capability.id
-            if capability_id is None:
-                continue
+        operations: dict[tuple[str, str], Callable[..., Awaitable[object]]] = {}
+        run_capabilities = cast(dict[str, AbstractCapability[Any]], ctx.__dict__.get('_run_capabilities_by_id', {}))
+        for capability_id, capability in run_capabilities.items():
             for bound_capability_id, operation_name in self._bound_capability_operations:
                 if capability_id != bound_capability_id:
                     continue
@@ -481,7 +479,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 ) -> object:
                     return await self._invoke_capability_operation(_capability, _operation_name, ctx, args, kwargs)
 
-                operations[(id(capability), operation_name)] = dispatch
+                operations[(capability_id, operation_name)] = dispatch
         ctx.__dict__['_durable_operations'] = operations
 
     async def _invoke_capability_operation(

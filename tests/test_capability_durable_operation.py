@@ -165,6 +165,26 @@ class ContextPositions(AbstractCapability[Any]):
         return f'{previous_summary}:{len(messages)}:{ctx.model.model_name}'
 
 
+class PerRunOperation(AbstractCapability[Any]):
+    id = 'per_run_operation'
+
+    def __init__(self, replacements: list[PerRunOperation]) -> None:
+        self.replacements = replacements
+        self.calls = 0
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        replacement = PerRunOperation(self.replacements)
+        self.replacements.append(replacement)
+        return replacement
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.operation(ctx)
+
+    @durable_operation
+    async def operation(self, ctx: RunContext[Any]) -> None:
+        self.calls += 1
+
+
 class ModelReadingOperation(AbstractCapability[Any]):
     id = 'model_reader'
 
@@ -274,6 +294,38 @@ async def test_run_context_durable_operation_dispatches_bound_name() -> None:
 
     assert await operation() == 'dispatched'
     assert any(name == 'known_operation__capability__dynamic.operation' for name, _ in durability.calls)
+
+
+async def test_for_run_replacement_dispatches_on_run_instance() -> None:
+    replacements: list[PerRunOperation] = []
+    agent = Agent(
+        TestModel(),
+        name='for_run_operation',
+        capabilities=[PerRunOperation(replacements), RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    assert len(replacements) == 1
+    assert replacements[0].calls == 1
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert any(name == 'for_run_operation__capability__per_run_operation.operation' for name, _ in durability.calls)
+
+
+async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:
+    capability = Operations()
+    first_agent = Agent(TestModel(), name='first_agent', capabilities=[capability, RecordingDurability()])
+    second_agent = Agent(TestModel(), name='second_agent', capabilities=[capability, RecordingDurability()])
+
+    await first_agent.run('test')
+    await second_agent.run('test')
+
+    first_durability = RecordingDurability.from_agent(first_agent)
+    second_durability = RecordingDurability.from_agent(second_agent)
+    assert first_durability is not None and second_durability is not None
+    assert any(name == 'first_agent__capability__operations.calculate' for name, _ in first_durability.calls)
+    assert any(name == 'second_agent__capability__operations.calculate' for name, _ in second_durability.calls)
 
 
 async def test_no_context_operation_is_direct_outside_a_run() -> None:

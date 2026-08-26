@@ -106,15 +106,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
     ) -> DurableOperationHandle[P, R]:
         """Look up a typed capability operation, falling back to its original handler."""
         operations = cast(
-            dict[tuple[int, str], Callable[..., Awaitable[object]]] | None,
+            dict[tuple[str, str], Callable[..., Awaitable[object]]] | None,
             self.__dict__.get('_durable_operations'),
         )
+        capability_id = capability.id
         capability_operations = {
             operation_name
-            for capability_identity, operation_name in operations or {}
-            if capability_identity == id(capability)
+            for bound_capability_id, operation_name in operations or {}
+            if bound_capability_id == capability_id
         }
-        operation = operations.get((id(capability), name)) if operations is not None else None
+        operation = (
+            operations.get((capability_id, name)) if operations is not None and capability_id is not None else None
+        )
         if self.agent is not None:
             bindings = capability._get_durable_operation_bindings().get(id(self.agent), {})  # pyright: ignore[reportPrivateUsage]
             capability_operations.update(bindings)

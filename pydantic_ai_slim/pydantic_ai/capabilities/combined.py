@@ -878,7 +878,7 @@ def bind_capabilities_tier(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return replace(ctx, capability_loaded=_capability_loaded(capability, ctx))
+    return _replace_capability_context(ctx, capability_loaded=_capability_loaded(capability, ctx))
 
 
 def _ctx_for_available_cap(
@@ -887,7 +887,15 @@ def _ctx_for_available_cap(
     capability_loaded = _capability_loaded(capability, ctx)
     if capability.defer_loading is True and not capability_loaded:
         return None
-    return replace(ctx, capability_loaded=capability_loaded)
+    return _replace_capability_context(ctx, capability_loaded=capability_loaded)
+
+
+def _replace_capability_context(ctx: RunContext[AgentDepsT], *, capability_loaded: bool) -> RunContext[AgentDepsT]:
+    capability_ctx = replace(ctx, capability_loaded=capability_loaded)
+    for name in ('_durability_bound', '_durable_operations', '_run_capabilities_by_id'):
+        if name in ctx.__dict__:
+            capability_ctx.__dict__[name] = ctx.__dict__[name]
+    return capability_ctx
 
 
 def _capability_loaded(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:

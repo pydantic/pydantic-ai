@@ -217,6 +217,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
+        run_ctx.__dict__['_run_capabilities_by_id'] = {
+            capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
+        }
         run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
         if run_ctx.__dict__.get('_durability_bound', False):
             with set_current_run_context(run_ctx):
