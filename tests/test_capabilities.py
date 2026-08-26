@@ -137,7 +137,7 @@ from pydantic_ai.toolsets._capability_owned import (
     tool_defs_from_pre_definition_load_returns,
 )
 from pydantic_ai.toolsets._deferred_capability_loader import (
-    LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -1042,6 +1042,9 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.4-nano',
                         'gateway/openai:gpt-5.4-nano-2026-03-17',
                         'gateway/openai:gpt-5.5',
+                        'gateway/openai:gpt-5.5-2026-04-23',
+                        'gateway/openai:gpt-5.5-pro',
+                        'gateway/openai:gpt-5.5-pro-2026-04-23',
                         'gateway/openai:gpt-5.6-cyber',
                         'gateway/openai:gpt-5.6-luna',
                         'gateway/openai:gpt-5.6-sol',
@@ -1225,6 +1228,9 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5.4-nano',
                         'openai-chat:gpt-5.4-nano-2026-03-17',
                         'openai-chat:gpt-5.5',
+                        'openai-chat:gpt-5.5-2026-04-23',
+                        'openai-chat:gpt-5.5-pro',
+                        'openai-chat:gpt-5.5-pro-2026-04-23',
                         'openai-chat:gpt-5.6-cyber',
                         'openai-chat:gpt-5.6-luna',
                         'openai-chat:gpt-5.6-sol',
@@ -1302,6 +1308,9 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5.4-nano',
                         'openai:gpt-5.4-nano-2026-03-17',
                         'openai:gpt-5.5',
+                        'openai:gpt-5.5-2026-04-23',
+                        'openai:gpt-5.5-pro',
+                        'openai:gpt-5.5-pro-2026-04-23',
                         'openai:gpt-5.6-cyber',
                         'openai:gpt-5.6-luna',
                         'openai:gpt-5.6-sol',
@@ -1391,6 +1400,8 @@ def test_model_json_schema_with_capabilities():
                         'xai:grok-4.3-latest',
                         'xai:grok-4.5',
                         'xai:grok-4.5-latest',
+                        'xai:grok-4.6',
+                        'xai:grok-build-0.1',
                         'xai:grok-code-fast-1',
                         'zai:autoglm-phone-multilingual',
                         'zai:glm-4-32b-0414-128k',
@@ -2869,7 +2880,7 @@ def test_combined_capability_get_model_settings_deferred():
     class DynamicSettingsCap(AbstractCapability):
         def get_model_settings(self) -> Callable[[RunContext], _ModelSettings]:
             def settings(ctx: RunContext) -> _ModelSettings:
-                seen_dynamic_loaded.append(ctx.capability_loaded)
+                seen_dynamic_loaded.append(ctx.capability_active)
                 return _ModelSettings(temperature=0.2)
 
             return settings
@@ -2914,7 +2925,7 @@ async def test_deferred_hooks_do_not_fire_until_capability_is_loaded() -> None:
 
     @hooks.on.before_model_request
     async def record(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
-        seen_loaded.append(ctx.capability_loaded)
+        seen_loaded.append(ctx.capability_active)
         return request_context
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -4807,7 +4818,7 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='always-on')
+    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='always-on')
     retry_messages: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -4849,7 +4860,7 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='deferred')
+    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='deferred')
     retry_messages: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -11233,7 +11244,7 @@ async def _registered_capability_context(
             self, ctx: RunContext, request_context: ModelRequestContext
         ) -> ModelRequestContext:
             captured_capabilities.update(ctx.capabilities)
-            captured_available_ids.update(ctx.available_capability_ids)
+            captured_available_ids.update(ctx.active_capability_ids)
             return request_context
 
     agent = Agent(

@@ -524,7 +524,7 @@ class ToolManager(Generic[AgentDepsT]):
         concluding the tool does not exist — and the resulting search/load exchange restores the
         history that justifies the call, which is what keeps a compacted history coherent.
 
-        Both requirements apply to a capability-owned tool: an available capability is what makes
+        Both requirements apply to a capability-owned tool: an active capability is what makes
         its tools *eligible* to be shown, not proof that any of them were. An always-on capability
         can own search-gated tools, and loading a deferred one reveals its tools through the same
         availability delta everything else uses — so discovery stays the single answer to "has the
@@ -534,10 +534,10 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx.is_tool_available(tool_def):
             return None
         # `is_tool_available` makes the decision, so introspection and execution cannot disagree;
-        # the rest only picks which way to point the model. An unavailable capability is named
+        # the rest only picks which way to point the model. An inactive capability is named
         # because loading it is the action to take — searching would not help until it is active.
         if (capability_id := tool_def.capability_id) is not None and (
-            capability_id not in self.ctx.available_capability_ids
+            capability_id not in self.ctx.active_capability_ids
         ):
             return (
                 f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
