@@ -122,7 +122,7 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                     ),
                     None,
                 )
-                if durability is not None:
+                if durability is not None and durability.in_durable_context:
                     request_context = args[0] if target.__name__ == 'before_model_request' and args else None
                     dispatch_args = (
                         (ModelRequestContextProjection.from_context(request_context),)
@@ -159,6 +159,27 @@ async def _dispatch_and_apply_model_request_projection(
     return result
 
 
+async def call_tier_one_operation(
+    capability: AbstractCapability[Any], operation: str, ctx: RunContext[Any], *args: Any
+) -> Any:
+    """Call an inherently durable hook through the bound engine when one is active."""
+    if getattr(type(capability), operation) is getattr(AbstractCapability, operation):
+        return await getattr(capability, operation)(ctx, *args)
+    agent = ctx.agent
+    if agent is not None:
+        from ._base import BaseDurabilityCapability
+
+        durability = next(
+            (cap for cap in leaf_capabilities(agent.root_capability) if isinstance(cap, BaseDurabilityCapability)),
+            None,
+        )
+        if durability is not None and durability.in_durable_context:
+            return await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+                capability, operation, ctx, args, {}
+            )
+    return await getattr(capability, operation)(ctx, *args)
+
+
 def tier_one_durable_operation(function: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
     """Mark a base hook whose overrides are inherently durable."""
     setattr(
@@ -170,6 +191,7 @@ def tier_one_durable_operation(function: Callable[..., Awaitable[R]]) -> Callabl
 
 
 _NEVER_DURABLE_HOOKS = {
+    'get_sandbox': '`get_sandbox` returns a live sandbox connection, which cannot cross a durable boundary.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
     'wrap_run': '`wrap_run` receives a handler callable, which cannot cross a durable boundary.',
@@ -183,7 +205,13 @@ _NEVER_DURABLE_HOOKS = {
 }
 
 
+tier_one_durable_operation(AbstractCapability.create_sandbox)
+tier_one_durable_operation(AbstractCapability.destroy_sandbox)
+
+
 def collect_capability_operations(capability: AbstractCapability[Any]) -> dict[str, CapabilityMethodDeclaration]:
+    from pydantic_ai.capabilities import WrapperCapability
+
     handlers = dict(capability.get_durable_operations() or {})
     for base in type(capability).__mro__[1:]:
         for method_name, base_member in vars(base).items():
@@ -193,12 +221,13 @@ def collect_capability_operations(capability: AbstractCapability[Any]) -> dict[s
             if marker is None or not marker.tier_one:
                 continue
             member = getattr(type(capability), method_name)
-            if member is not base_member:
-                if marker.name in handlers:
-                    raise UserError(
-                        f'Duplicate durable operation name {marker.name!r} on capability {capability.id!r}.'
-                    )
-                handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
+            if member is base_member or (
+                isinstance(capability, WrapperCapability) and member is getattr(WrapperCapability, method_name)
+            ):
+                continue
+            if marker.name in handlers:
+                raise UserError(f'Duplicate durable operation name {marker.name!r} on capability {capability.id!r}.')
+            handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
 
     for method_name, member in inspect.getmembers(type(capability)):
         marker = cast(_DurableOperationMarker | None, getattr(member, '__pydantic_ai_durable_operation__', None))

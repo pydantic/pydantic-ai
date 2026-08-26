@@ -43,7 +43,12 @@ def temporalize_function_toolset(
 ) -> DurableFunctionToolset[AgentDepsT]:
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
-            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            ctx = deserialize_run_context(
+                run_context_type,
+                params.serialized_run_context,
+                deps=deps,
+                agent=agent,
+            )
             try:
                 if params.tool_def is not None:
                     # Rebuild the tool from the definition the workflow prepared, so a tool's `prepare`

@@ -30,6 +30,7 @@ from pydantic_ai.durable_exec._operation import (
     CacheIdentity,
     CallToolId,
     CancelSuspendedResponseId,
+    CapabilityOperationId,
     CompactMessagesId,
     DurableOperation,
     DurableOperationId,
@@ -599,6 +600,8 @@ def _exhaustive_identity(operation_id: DurableOperationId) -> str:
             return 'validation'
         case CallToolId():
             return 'call'
+        case CapabilityOperationId():
+            return 'capability'
     assert_never(operation_id)
 
 
@@ -612,6 +615,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         GetInstructionsId('mcp'),
         ValidateToolArgumentsId('dynamic', 'dynamic'),
         CallToolId('mcp', 'mcp'),
+        CapabilityOperationId('sandbox', 'create_sandbox'),
     ]
     assert [_exhaustive_identity(operation_id) for operation_id in identities] == [
         'model',
@@ -622,6 +626,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         'instructions',
         'validation',
         'call',
+        'capability',
     ]
 
 

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
+from pydantic_ai.sandboxes import UnavailableSandbox
 from pydantic_ai.tools import RunContext
 
 _NON_SERIALIZABLE = '<non-serializable>'
@@ -83,7 +84,7 @@ def _replace_run_context(
         if _is_container(value):
             inputs[key] = _map_container(value, lambda item: _replace_run_context({'_': item})['_'])
         elif _is_run_context(value):
-            inputs[key] = {
+            projected: dict[str, Any] = {
                 'deps': _cacheable_value(value.deps),
                 'agent': value.agent.name if value.agent is not None else None,
                 'model': value.model.model_id,
@@ -134,6 +135,14 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
             }
+            # Explicit sandbox identity forks the key because tools can produce
+            # environment-specific results. Inspecting deferred state must never connect it.
+            # `UnavailableSandbox` (including the framework default) is policy state, so it
+            # remains equivalent to the previous "no sandbox" input for caching.
+            sandbox_identity = value.sandbox.durable_identity()
+            if not isinstance(sandbox_identity, UnavailableSandbox):
+                projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
+            inputs[key] = projected
 
     return inputs
 

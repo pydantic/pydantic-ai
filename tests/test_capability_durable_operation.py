@@ -10,13 +10,14 @@ from prefect import flow
 from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
     ModelRequestContextProjection,
     _model_request_schema,  # pyright: ignore[reportPrivateUsage]
     call_declaration,
+    call_tier_one_operation,
     collect_capability_operations,
     recover_capability,
     tier_one_durable_operation,
@@ -32,6 +33,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
@@ -214,6 +216,45 @@ def test_tier_one_override_is_automatically_registered() -> None:
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert ('tier_one', 'provision') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_tier_one_override_dispatches_through_durability() -> None:
+    class SandboxCapability(AbstractCapability[Any]):
+        id = 'sandbox'
+
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            assert ctx.run_id is not None
+            return SandboxRef(provider='test', sandbox_id=ctx.run_id)
+
+    capability = SandboxCapability()
+    durability = RecordingDurability()
+    agent = Agent(TestModel(), name='sandbox', capabilities=[capability, durability])
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run')
+    ctx.agent = agent
+
+    ref = await call_tier_one_operation(capability, 'create_sandbox', ctx)
+
+    assert ref == SandboxRef(provider='test', sandbox_id='run')
+    assert durability.calls == [('sandbox__capability__sandbox.create_sandbox', ({},))]
+
+
+def test_transparent_wrapper_does_not_register_forwarded_tier_one_hooks() -> None:
+    wrapper = WrapperCapability[Any](AbstractCapability[Any]())
+
+    assert 'create_sandbox' not in collect_capability_operations(wrapper)
+    assert 'destroy_sandbox' not in collect_capability_operations(wrapper)
+
+
+def test_get_sandbox_cannot_be_decorated_as_durable() -> None:
+    class Invalid(AbstractCapability[Any]):
+        id = 'invalid'
+
+        @durable_operation
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            pass
+
+    with pytest.raises(UserError, match='returns a live sandbox connection, which cannot cross a durable boundary'):
+        Agent(TestModel(), name='invalid', capabilities=[Invalid(), RecordingDurability()])
 
 
 def test_temporal_registration_has_stable_name_and_types() -> None:

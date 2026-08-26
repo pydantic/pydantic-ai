@@ -53,6 +53,7 @@ from .._cancel import CancellationToken, RunCancellation, take_run_binding
 from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
+from .._run_context import RunPreparationContext
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -67,7 +68,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities
+from ..capabilities.abstract import leaf_capabilities, resolve_run_sandbox
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -75,6 +76,8 @@ from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
+from ..sandboxes import Sandbox, SandboxBackend, SandboxRef
+from ..sandboxes._policy import default_sandbox_backend
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -1156,6 +1159,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1181,6 +1185,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1206,6 +1211,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1300,6 +1306,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1403,7 +1410,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Explicit run/spec/override models are authoritative. Otherwise the capability model
         # contribution selects the initial model needed to construct RunContext and resolve
         # `for_run()`; dynamic contributions are evaluated again for later request steps.
-        model_is_explicit = model is not None or self._override_model.get() is not None
+        override_model = self._override_model.get()
+        explicit_raw_model = override_model.value if override_model is not None else model
+        model_is_explicit = model is not None or override_model is not None
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
@@ -1490,6 +1499,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=_agent_graph.resolve_run_id(run_id, message_history),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
+        run_state_key = object()
 
         # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
         model_settings_override = self._override_model_settings.get()
@@ -1539,6 +1549,53 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer = NoOpTracer()
             instrumentation_cap = None
 
+        preparation_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        if instrumentation_cap is not None and not has_capability_type(preparation_layers, InstrumentationCap):
+            preparation_layers.insert(0, instrumentation_cap)
+        preparation_capability = (
+            CombinedCapability(preparation_layers) if len(preparation_layers) > 1 else preparation_layers[0]
+        )
+
+        initial_ctx: RunContext[AgentDepsT] | None = None
+
+        async def _resolve_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
+            assert initial_ctx is not None, 'sandbox connection attempted before the run context was built'
+            try:
+                backend = await preparation_capability.get_sandbox(initial_ctx, ref)
+            except exceptions.UserError:
+                raise
+            except Exception as error:
+                raise exceptions.UserError(
+                    f'Failed to connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}.'
+                ) from error
+            if backend is None:
+                raise exceptions.UserError(
+                    f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
+                    f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
+                )
+            return backend
+
+        if isinstance(sandbox, SandboxRef):
+            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, _resolve_sandbox_ref)
+        else:
+            sandbox_facade = Sandbox.wrap(sandbox) if sandbox is not None else None
+        explicit_sandbox = sandbox_facade is not None
+
+        preparation_ctx = RunPreparationContext[AgentDepsT](
+            agent=self,
+            deps=deps,
+            model=explicit_raw_model if isinstance(explicit_raw_model, models.Model) else None,
+            sandbox=sandbox_facade,
+            messages=list(state.message_history),
+            usage=usage,
+            run_id=state.run_id,
+            conversation_id=state.conversation_id,
+            _run_state_key=run_state_key,
+        )
+        preparation_stack = AsyncExitStack()
+        await preparation_stack.__aenter__()
+        await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
+
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`
         # are populated later by `build_run_context` once the run is iterating.
@@ -1560,7 +1617,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
+            sandbox=sandbox_facade or Sandbox.wrap(default_sandbox_backend()),
+            _run_state_key=run_state_key,
         )
+
+        sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
+        sandbox_ref: SandboxRef | None = None
+        if not explicit_sandbox:
+            supplied = await resolve_run_sandbox(preparation_capability, initial_ctx)
+            if supplied is not None:
+                sandbox_supplier, sandbox_ref = supplied
+                sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
+            else:
+                sandbox_facade = Sandbox.wrap(default_sandbox_backend())
+            initial_ctx.sandbox = sandbox_facade
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1745,6 +1815,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            sandbox=sandbox_facade,
+            run_state_key=run_state_key,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -1800,7 +1872,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # cancel unrelated later work on the task that drove the run.
                 graph_deps.cancellation.release_issued()
 
+        _run_error: BaseException | None = None
         async with AsyncExitStack() as stack:
+            stack.push_async_exit(preparation_stack)
+
+            def _record_unwind_error(
+                exc_type: type[BaseException] | None, exc: BaseException | None, traceback: Any
+            ) -> Literal[False]:
+                del exc_type, traceback
+                nonlocal _run_error
+                if exc is not None and _run_error is None:
+                    _run_error = exc
+                return False
+
+            stack.push(_record_unwind_error)
+            if sandbox_supplier is not None and sandbox_ref is not None:
+                from pydantic_ai.durable_exec._capability_operation import call_tier_one_operation
+
+                async def _destroy_run_sandbox() -> None:
+                    with anyio.CancelScope(shield=True):
+                        await call_tier_one_operation(sandbox_supplier, 'destroy_sandbox', initial_ctx, sandbox_ref)
+
+                stack.push_async_callback(_destroy_run_sandbox)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
 
@@ -1876,6 +1969,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 finally:
                     if agent_run.result is not None:
                         self._resolve_and_store_metadata(agent_run.ctx, metadata)
+
+        if _run_error is not None:
+            raise exceptions.UserError(
+                'A `wrap_entire_run` hook suppressed the run error, which is not supported: '
+                '`wrap_entire_run` has no control-flow power. Re-raise the exception (or do not catch it) '
+                'and use `wrap_run` or `on_run_error` for recovery.'
+            ) from _run_error
 
     def _get_metadata(
         self,
