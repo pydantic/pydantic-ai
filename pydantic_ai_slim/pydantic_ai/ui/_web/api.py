@@ -12,6 +12,7 @@ from starlette.routing import Route
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
@@ -29,6 +30,21 @@ ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | Know
 # the UI's real SDK major and reserves it for future v7-only chunks. `to_web()` controls both ends
 # (server + bundled UI). See `VercelAIAdapter.sdk_version`.
 BUNDLED_UI_SDK_VERSION: Literal[7] = 7
+
+# `/chat` requires exactly this content type. This is a CSRF control, not content negotiation: a
+# browser can send the three CORS-safelisted content types (`text/plain`, `multipart/form-data`,
+# `application/x-www-form-urlencoded`) — or no content type at all — cross-origin with no preflight,
+# and every one of them can carry a JSON body. Without this check, a page the developer happens to
+# visit while running the web UI could start an agent run on their machine, and execute whatever
+# tools the served agent exposes. `application/json` is not safelisted, so requiring it forces a
+# preflight, which `options_chat` refuses.
+#
+# Keep this an allowlist. A denylist of the safelisted types would miss the no-content-type case,
+# and would silently stop covering anything added to the safelist later.
+#
+# The bundled UI — and the Vercel AI SDK's `DefaultChatTransport` generally — always sends
+# `application/json`; other clients need to set the header explicitly.
+JSON_MEDIA_TYPE = 'application/json'
 
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
@@ -95,6 +111,11 @@ def create_api_app(
 ) -> Starlette:
     """Create API app for the web chat UI.
 
+    This sub-app carries no `Host` validation of its own: `create_web_app()` applies
+    `HostValidationMiddleware` to the outer app it mounts this into. Serving it directly, or
+    re-mounting `create_web_app(...).router` (which drops application middleware), exposes the chat
+    endpoint to any `Host` — mount the app `create_web_app()` returns instead.
+
     Args:
         agent: Agent instance.
         models: Models to make available in the UI. Can be:
@@ -130,15 +151,27 @@ def create_api_app(
 
     seen_model_ids: set[str] = set()
     for label, model_ref in all_models:
-        model = infer_model(model_ref)
+        try:
+            model = infer_model(model_ref)
+        except UserError:
+            # A capability resolver may intentionally use an ID that built-in inference does
+            # not understand. Resolution needs run dependencies, so leave custom references
+            # untouched here and let Agent resolve them when the request is dispatched.
+            if agent._root_capability.has_resolve_model_id:  # pyright: ignore[reportPrivateUsage]
+                model = None
+            else:
+                raise
         # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-        model_id = model_ref if isinstance(model_ref, str) else model.model_id
+        model_id = model_ref if isinstance(model_ref, str) else model_ref.model_id
         if model_id in seen_model_ids:
             continue
         seen_model_ids.add(model_id)
-        display_name = label or model.label
-        model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-        supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
+        display_name = label or (model.label if model is not None else model_id)
+        if model is None:
+            supported_tool_ids = []
+        else:
+            model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
 
         model_id_to_ref[model_id] = model_ref
         model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
@@ -147,7 +180,17 @@ def create_api_app(
     allowed_tool_ids = {tool.unique_id for tool in ui_native_tools}
 
     async def options_chat(request: Request) -> Response:
-        """Handle CORS preflight requests."""
+        """Answer CORS preflight requests without granting cross-origin access.
+
+        Deliberately carries no `Access-Control-Allow-*` header, so a browser refuses any
+        cross-origin request that needs a preflight. Together with the `application/json`
+        requirement in `post_chat()`, that is what keeps a page the developer visits from reaching
+        the local web UI: requiring a non-safelisted content type forces the preflight, and this
+        response denies it.
+
+        Do not add `Access-Control-Allow-Origin` here without an accompanying CSRF control — on its
+        own it re-opens the endpoint to any website the developer has open.
+        """
         return Response()
 
     async def configure_frontend(request: Request) -> Response:
@@ -164,6 +207,15 @@ def create_api_app(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
+        if (media_type := request.headers.get('content-type', '').split(';')[0].strip().lower()) != JSON_MEDIA_TYPE:
+            # Checked up front so a cross-origin-forgeable request is turned away before the body is
+            # parsed and before the agent is dispatched — the attacker never needs to read the
+            # response, so the run itself is the damage.
+            return JSONResponse(
+                {'error': f'Expected `Content-Type: {JSON_MEDIA_TYPE}`, got {media_type or "no content type"}'},
+                status_code=415,
+            )
+
         adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
             request, agent=agent, sdk_version=sdk_version
         )

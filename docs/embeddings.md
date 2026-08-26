@@ -97,7 +97,7 @@ The best embedding model depends on your language, domain, latency, deployment, 
 
 For Retrieval-Augmented Generation (RAG), embeddings are one part of a larger retrieval pipeline. Pydantic AI provides [`Embedder`][pydantic_ai.embeddings.Embedder] for query and document embeddings, and [tools](tools.md) for giving retrieved context to an agent. The [RAG example](examples/rag.md) demonstrates vector storage, retrieval, and passing retrieved context to an agent using pre-split data.
 
-If you want a provider-managed pipeline instead, first upload or import files into a provider-managed store, then pass its ID to [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]. The provider handles chunking, embeddings, storage, and retrieval; see the [File Search Tool docs](builtin-tools.md#file-search-tool) for supported providers. The rest of this section covers building your own pipeline, where these choices stay application-specific.
+If you want a provider-managed pipeline instead, first upload or import files into a provider-managed store, then pass its ID to [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]. The provider handles chunking, embeddings, storage, and retrieval; see the [File Search Tool docs](native-tools.md#file-search-tool) for supported providers. The rest of this section covers building your own pipeline, where these choices stay application-specific.
 
 A typical custom RAG pipeline looks like this:
 
@@ -766,7 +766,9 @@ embedder = Embedder(model)
 - `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, Bedrock, VoyageAI)
 - `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, Bedrock, VoyageAI)
 
-Settings can be specified at the embedder level (applied to all calls) or per-call:
+Settings can be specified on the model, at the embedder level (applied to all calls), or per call.
+They are merged in that order: later settings override earlier values for the same key, while values set only in earlier layers are preserved.
+The example below shows embedder defaults overridden for one call:
 
 ```python {title="embedding_settings.py"}
 from pydantic_ai import Embedder
@@ -840,6 +842,10 @@ async def test_my_rag_system():
         assert test_model.last_settings is not None
 ```
 
+Setting [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] to `False` also blocks embedding requests, so an embedder you forgot to override raises instead of quietly calling the provider. [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] and [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] are unaffected, as neither reaches a provider.
+
+This covers [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] as well, but only where tokenization happens server-side: Google and Cohere count tokens through an API call and are blocked, while OpenAI tokenizes locally with `tiktoken` and is not.
+
 ## Instrumentation
 
 Enable OpenTelemetry instrumentation for debugging and monitoring:
@@ -892,7 +898,7 @@ async def rerank(query: str, candidates: list[str], top_k: int = 3) -> list[str]
 Call `rerank()` on the candidates returned by your vector search (for example, in the `retrieve` tool of the [RAG example](examples/rag.md)) before handing the results to the LLM.
 
 !!! tip "Managed reranker alternatives"
-    If you'd rather not run a reranker locally, several providers offer hosted rerankers, including [Cohere Rerank](https://docs.cohere.com/docs/rerank-overview), [VoyageAI Rerank](https://docs.voyageai.com/docs/reranker), and [Jina Rerank](https://jina.ai/reranker). Call their HTTP clients or SDKs from a helper function with the same shape as `rerank()` above.
+    If you'd rather not run a reranker locally, several providers offer hosted rerankers, including [Cohere Rerank](https://docs.cohere.com/docs/rerank-overview), [VoyageAI Rerank](https://docs.voyageai.com/docs/reranker), and [Jina Rerank](https://jina.ai/reranker). Call their HTTP clients or SDKs from a helper function with the same signature as `rerank()` above.
 
 For more background on retrieve-and-rerank pipelines, see Hugging Face's [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag). To serve open-source embedding and reranker models yourself, see Hugging Face [Text Embeddings Inference](https://huggingface.co/docs/text-embeddings-inference) and its [supported rerankers](https://huggingface.co/docs/text-embeddings-inference/supported_models#supported-re-rankers-and-sequence-classification-models).
 

@@ -17,7 +17,6 @@ import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
-from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
 
@@ -32,6 +31,7 @@ from rich.progress import Progress
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
+from pydantic_ai._utils import await_maybe, is_async_callable
 from pydantic_evals._utils import run_until_complete
 
 from . import _task_run
@@ -551,7 +551,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 f' when serializing or deserializing.',
                 UserWarning,
             )
-            return Any, Any, Any  # type: ignore
+            return Any, Any, Any  # pyright: ignore[reportReturnType]
 
     @classmethod
     def from_file(
@@ -828,15 +828,15 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: meta_type | None = None  # pyright: ignore[reportInvalidTypeForm]
             expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm]
             if evaluator_schema_types:  # pragma: no branch
-                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore[reportInvalidTypeArguments, reportInvalidTypeForm, reportUnknownVariableType]  # noqa: UP007
 
         class Dataset(BaseModel, extra='forbid'):
             name: str | None = None
             cases: list[Case]
             if evaluator_schema_types:  # pragma: no branch
-                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore[reportInvalidTypeArguments, reportInvalidTypeForm, reportUnknownVariableType]  # noqa: UP007
             if report_evaluator_schema_types:  # pragma: no branch
-                report_evaluators: list[Union[tuple(report_evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+                report_evaluators: list[Union[tuple(report_evaluator_schema_types)]] = []  # pyright: ignore[reportInvalidTypeArguments, reportInvalidTypeForm, reportUnknownVariableType]  # noqa: UP007
 
         json_schema = Dataset.model_json_schema()
         # See `_add_json_schema` below, since `$schema` is added to the JSON, it has to be supported in the JSON
@@ -974,10 +974,12 @@ async def _run_task(
                 context_subtree() as span_tree_,
             ):
                 t0 = time.perf_counter()
-                if iscoroutinefunction(task):
-                    task_output_ = cast(OutputT, await task(case.inputs))
+                task_output_: OutputT
+                if is_async_callable(task):
+                    task_output_ = await await_maybe(task(case.inputs))
                 else:
-                    task_output_ = cast(OutputT, await to_thread.run_sync(task, case.inputs))
+                    # A plain `def` may still return an awaitable, which `to_thread.run_sync` would leave un-awaited.
+                    task_output_ = await await_maybe(await to_thread.run_sync(task, case.inputs))
                 fallback_duration = time.perf_counter() - t0
             duration_ = _get_span_duration(task_span, fallback_duration)
             return task_run_, task_output_, duration_, span_tree_
@@ -1297,7 +1299,7 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
         The duration of the span in seconds.
     """
     try:
-        return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
+        return (span.end_time - span.start_time) / 1_000_000_000  # pyright: ignore[reportOperatorIssue, reportUnknownVariableType]
     except (AttributeError, TypeError):  # pragma: lax no cover
         return fallback
 

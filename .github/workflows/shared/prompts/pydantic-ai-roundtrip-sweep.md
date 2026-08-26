@@ -45,40 +45,47 @@ existing suite. The bug must be one you triggered and observed.
 ## What to Skip
 
 - Speculation without a failing reproduction.
-- By-design lossy fields explicitly documented as such.
+- A **UI adapter** (Vercel AI, AG-UI) dropping a field documented as **not sent to the model**
+  (application-only annotations such as `TextContent.metadata`), or any field explicitly
+  documented as by-design lossy. The UI wire formats have no place to carry application-only
+  fields, so that loss is by design, not a state-loss bug. `ModelMessagesTypeAdapter` carries
+  every field — a field *dropped* there is a real bug, so don't skip it (JSON-mode normalization
+  of `Any`-typed values, such as a `tuple` in `TextContent.metadata` reloading as a `list`, is
+  not a drop). See the "What survives a round-trip" note in `docs/message-history.md`.
 - Behavior already tracked by an open issue or fixed by an open PR — **search both first**.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
 The gap may already be tracked by an open **issue** or already fixed by an
-open **PR** — check both. List them through the proxied `gh` CLI and filter
-locally — the `/search/issues` endpoint is blocked by the firewall proxy and
-there are no `mcp__github__*` tools.
+open **PR** — check both using the local corpora prefetched before the sandbox
+started.
 
 **(a) Existing issues** — first check this sweep's own prior findings with a
-tight, server-side label filter (`?labels=` on the issue-list endpoint is
-allowed even though `/search/issues` is not):
+label filter:
 
 ```
-gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=roundtrip-sweep&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title}'
+jq '.[] | select(any(.labels[]; .name == "roundtrip-sweep")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
 Only if that is inconclusive, widen to a full open-issue scan and grep locally
 for "round-trip", "serialize", and the boundary/function you investigated:
 
 ```
-gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
 **(b) Existing PRs** — a fix may already be open (and even approved). List
 open PRs and scan for one touching the failing symbol or file:
 
 ```
-gh api --paginate 'repos/pydantic/pydantic-ai/pulls?state=open&per_page=100' \
-  --jq '.[] | {number, title}'
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-pull-requests.json
 ```
+
+Do not enumerate issues or PRs with `gh` from inside the sandbox; list
+requests can stall until the workflow times out.
 
 If a matching open issue or PR exists, call `mcp__safeoutputs__noop`
 immediately instead of filing. If a PR looks related but you cannot confirm it

@@ -67,7 +67,9 @@ class ToolsetTool(Generic[AgentDepsT]):
     Called on every tool call, receiving the schema-validated arguments as keyword args.
     The function should have the same typed parameters as the tool function,
     with `RunContext` as the first argument.
-    Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure, return `None` on success.
+    Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the arguments and
+    try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model
+    should adapt to instead of retrying. Return `None` on success.
     """
 
 
@@ -242,7 +244,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return ApprovalRequiredToolset(self, approval_required_func)
 
     def defer_loading(self, tool_names: Sequence[str] | None = None) -> DeferredLoadingToolset[AgentDepsT]:
-        """Returns a new toolset that marks tools for deferred loading, hiding them until discovered via tool search.
+        """Returns a new toolset that marks tools for deferred loading, hiding them until revealed.
+
+        Tool search, `load_capability` and another tool's `ToolReturn.tools` all reveal.
 
         See [toolset docs](../toolsets.md#deferred-loading) for more information.
 

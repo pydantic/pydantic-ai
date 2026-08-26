@@ -119,13 +119,7 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
 
 
 def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
-    if isinstance(e, ValidationError):
-        content: list[Any] | str = e.errors(include_url=False, include_context=False)
-    else:
-        content = e.message
-    m = _messages.RetryPromptPart(content=content, tool_name=run_context.tool_name)
-    if run_context.tool_call_id:
-        m.tool_call_id = run_context.tool_call_id
+    m = _messages.RetryPromptPart.from_error(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
     return ToolRetryError(m)
 
 
@@ -393,12 +387,9 @@ async def execute_output_function(
         return await function_schema.call(args, run_context)
     except ModelRetry as r:
         if wrap_validation_errors:
-            m = _messages.RetryPromptPart(
-                content=r.message,
-                tool_name=run_context.tool_name,
+            m = _messages.RetryPromptPart.from_error(
+                r, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id
             )
-            if run_context.tool_call_id:
-                m.tool_call_id = run_context.tool_call_id  # pragma: no cover
             raise ToolRetryError(m) from r
         else:
             raise
@@ -433,8 +424,9 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         if self._is_async:
             function = cast(Callable[[Any], Awaitable[T]], self.function)
             return await function(*args)
-        function = cast(Callable[[Any], T], self.function)
-        return await _utils.run_in_executor(function, *args)
+        # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+        function = cast(Callable[[Any], T | Awaitable[T]], self.function)
+        return await _utils.await_maybe(await _utils.run_in_executor(function, *args))
 
 
 @dataclass(kw_only=True)
@@ -1510,7 +1502,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return '<output>'  # pragma: no cover
+        return '<output>'
 
     @property
     def label(self) -> str:

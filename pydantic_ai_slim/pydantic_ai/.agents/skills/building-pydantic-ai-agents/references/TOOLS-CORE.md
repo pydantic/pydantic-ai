@@ -55,10 +55,12 @@ Useful `RunContext` fields include:
 - `ctx.usage`
 - `ctx.messages`
 - `ctx.retry`
+- `ctx.realtime` — whether the run is a realtime session
+- `ctx.realtime_session` — the live `RealtimeSession` once connected (`None` in classic runs and before connect)
 
 ## Use MCP Servers
 
-For URL-based MCP servers, use the `MCP` capability — it runs the MCP server locally by default and lets you opt into the model provider's native MCP support with `native=True`. See the [MCP capability docs](https://ai.pydantic.dev/capabilities/#mcp).
+For URL-based MCP servers, use the `MCP` capability — it runs the MCP server locally by default and lets you opt into the model provider's native MCP support with `native=True`. See the [MCP capability docs](https://pydantic.dev/docs/ai/capabilities/mcp/).
 
 ```python
 from pydantic_ai import Agent
@@ -89,7 +91,7 @@ agent = Agent(
 )
 ```
 
-When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://ai.pydantic.dev/mcp/client/) directly and pass it via `toolsets=[...]`.
+When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://pydantic.dev/docs/ai/mcp/client/) directly and pass it via `toolsets=[...]`. Its `tool_error_behavior` controls how a tool error from the server surfaces: `'retry'` (default) raises `ModelRetry`, `'failed'` raises `ToolFailed` (recorded as `outcome='failed'`), and `'error'` raises the raw `fastmcp` `ToolError`. For SEP-1686 tools with optional task support, set `prefer_tasks=False` to use normal calls; required tasks still use task-augmented execution.
 
 ## Search with DuckDuckGo, Tavily, or Exa
 

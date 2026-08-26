@@ -15,14 +15,14 @@ from .abstract import AbstractToolset, ToolsetTool
 class WrapperToolset(AbstractToolset[AgentDepsT]):
     """A toolset that wraps another toolset and delegates to it.
 
-    See [toolset docs](../toolsets.md#wrapping-a-toolset) for more information.
+    See [toolset docs](../toolsets.md#changing-tool-execution) for more information.
     """
 
     wrapped: AbstractToolset[AgentDepsT]
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     @property
     def label(self) -> str:

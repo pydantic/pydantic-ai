@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '175'
+      - '214'
       content-type:
       - application/json
       host:
@@ -21,6 +21,8 @@ interactions:
       - content: What is the capital of France? Answer in one word.
         role: user
       model: gpt-5.5
+      reasoning:
+        context: all_turns
       stream: false
     uri: https://api.openai.com/v1/responses
   response:
@@ -34,11 +36,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1630'
+      - '1627'
       content-type:
       - application/json
       openai-processing-ms:
-      - '948'
+      - '920'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -49,11 +51,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1783719043
-      created_at: 1783719042
+      completed_at: 1784912265
+      created_at: 1784912264
       error: null
       frequency_penalty: 0.0
-      id: resp_09e02a9651d2963f006a516482a3608196ab8197e1e5ce126f
+      id: resp_0c50a8f4942eda61006a639988f6f4819cb379a73d3e1f1682
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -68,7 +70,7 @@ interactions:
           logprobs: []
           text: Paris
           type: output_text
-        id: msg_09e02a9651d2963f006a5164835080819693f0b8bd703c986f
+        id: msg_0c50a8f4942eda61006a639989a1f4819c825be1674b177e7f
         phase: final_answer
         role: assistant
         status: completed
@@ -79,7 +81,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: 24h
       reasoning:
-        context: current_turn
+        context: all_turns
         effort: medium
         mode: standard
         summary: null
