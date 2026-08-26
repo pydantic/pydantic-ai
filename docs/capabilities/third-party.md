@@ -27,6 +27,7 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/guardrails/) provides input and output guardrails that validate or block requests and responses, and Pydantic AI enforces usage, token, and request limits via [`UsageLimits`](../agent.md#usage-limits). As a community alternative bundling several ready-made shields, including USD cost tracking:
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
+* [`attenu-guard`](https://github.com/attenu-io/attenu-guard) - Per-agent permission enforcement: `DelegationGuard` is a capability whose `before_tool_execute` checks every tool call against the run's permission set before it runs, and `GuardedDeps.delegate()` fits the agent-delegation pattern so a delegated agent's permissions are computed as a subset of the caller's (chain ceilings, revocation). Every decision lands in a hash-chained audit log that `attenu-guard verify` checks offline.
 
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
