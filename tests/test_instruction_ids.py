@@ -454,6 +454,27 @@ async def test_combined_capability_subclass_get_instructions_override_is_authori
     assert await run_and_capture(agent) == [InstructionPart(content='Override.', id='capability:group')]
 
 
+async def test_two_toolsets_sharing_an_id_collide_even_under_different_declared_segments():
+    """What a source owns is its key, so declaring different segments beneath it changes nothing.
+
+    `toolset:same` means everything the toolset registered under `same` contributes. Comparing whole
+    ids instead would let the pair through whenever each happened to declare a segment, leaving the
+    key owned by two sources — exactly the ambiguity the rule exists to prevent.
+    """
+    agent = Agent(
+        toolsets=[
+            InstructionsToolset([InstructionPart(content='First.', id='first')], id='same'),
+            InstructionsToolset([InstructionPart(content='Second.', id='second')], id='same'),
+        ]
+    )
+
+    with pytest.raises(
+        UserError,
+        match=r"Two toolsets have the same `id` 'same' and both contribute instructions, so 'toolset:same' would address blocks from each\.",
+    ):
+        await run_and_capture(agent)
+
+
 async def test_a_combined_toolset_subclass_can_delegate_get_instructions_to_super():
     """Delegating to `super()` is how a subclass extends what it wraps, so it has to terminate.
 

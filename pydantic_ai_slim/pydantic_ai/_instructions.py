@@ -67,6 +67,16 @@ def declared_instruction_id(source_id: str, declared_id: str) -> str:
     return f'{source_id}:{declared_id}'
 
 
+def instruction_source_key(id: str) -> str:
+    """The source key a block's [`id`][pydantic_ai.messages.InstructionPart.id] belongs to.
+
+    Everything up to the declared segment, so `'toolset:weather:limits'` and `'toolset:weather'` both
+    answer `'toolset:weather'`. Ownership is a property of the source key rather than of the whole
+    id: two sources sharing one key is what makes it ambiguous, whatever they declare beneath it.
+    """
+    return ':'.join(id.split(':')[:2])
+
+
 def resolve_declared_id(source_id: str | None, declared_id: str | None) -> str | None:
     """Resolve one block's declared id against the key of the source that contributed it.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic_ai._instructions import instruction_source_key
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
@@ -23,14 +24,20 @@ def flatten_instruction_contributions(
     Separate from the collection itself so a toolset that has already gathered its children can
     apply the rule without re-entering the walk that produced them.
     """
-    sources_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
+    owners: dict[str, AbstractToolset[AgentDepsT]] = {}
     parts: list[InstructionPart] = []
     for source, source_parts in contributions:
         for part in source_parts:
-            if part.id is not None and (existing := sources_by_id.setdefault(part.id, source)) is not source:
+            if part.id is None:
+                continue
+            # Ownership is claimed over the source key, not the whole id: two toolsets sharing an
+            # `id` make `toolset:<id>` ambiguous even where each declares a different segment under
+            # it, so comparing full ids would let exactly that pair through.
+            source_key = instruction_source_key(part.id)
+            if owners.setdefault(source_key, source) is not source:
                 raise UserError(
-                    f'Two toolsets have the same `id` {existing.id!r} and both contribute instructions, '
-                    f'so {part.id!r} would address blocks from each. '
+                    f'Two toolsets have the same `id` {source_key.partition(":")[2]!r} and both contribute '
+                    f'instructions, so {source_key!r} would address blocks from each. '
                     'Toolset `id`s must be unique among all toolsets registered with the same agent.'
                 )
         parts.extend(source_parts)
