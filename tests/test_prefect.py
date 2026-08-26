@@ -3752,6 +3752,48 @@ async def test_prefect_mcp_tool_metadata_false_runs_inline(monkeypatch: pytest.M
     assert ran_in_task == [False]
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_mcp_tool_metadata_false_runs_inline(
+    monkeypatch: pytest.MonkeyPatch, blockbuster_enabled: bool
+) -> None:
+    """The capability path preserves Prefect's documented MCP task opt-out behavior."""
+    assert blockbuster_enabled is False
+    ran_in_task: list[bool] = []
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='cap_opt_out_mcp')
+
+    tool = ToolsetTool(
+        toolset=mcp_toolset,
+        tool_def=ToolDefinition(name='inline', metadata={'prefect': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    async def get_tools(ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        return {'inline': tool}
+
+    async def recording_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], resolved_tool: ToolsetTool[None]
+    ) -> Any:
+        ran_in_task.append(TaskRunContext.get() is not None)
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'get_tools', get_tools)
+    monkeypatch.setattr(mcp_toolset, 'call_tool', recording_call_tool)
+    agent = Agent(
+        TestModel(call_tools='all'),
+        name='capability_mcp_opt_out',
+        toolsets=[mcp_toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    assert await run_agent() == '{"inline":"done"}'
+    assert ran_in_task == [False]
+
+
 async def test_prefect_model_request_task_rejects_enqueue() -> None:
     """The non-streaming model-request task guards enqueue like its streaming sibling.
 

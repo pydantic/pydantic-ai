@@ -327,6 +327,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _force_sequential_tools_in_durable_context: ClassVar[bool] = False
     """Whether tool calls must run sequentially inside the durable container."""
 
+    _allow_inline_mcp_in_durable_context: ClassVar[bool] = True
+    """Whether MCP I/O may run inline when a tool opts out of its durable unit."""
+
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
 
@@ -974,7 +977,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 assert tool is not None
                 from pydantic_ai.mcp import MCPToolset
 
-                if isinstance(tool.toolset, MCPToolset):
+                if not self._allow_inline_mcp_in_durable_context and isinstance(tool.toolset, MCPToolset):
                     raise UserError(
                         f'{self.engine_name} durable config for MCP tool {tool_name!r} has been explicitly '
                         'set to `False` (durable execution disabled), but MCP tools perform I/O and cannot '

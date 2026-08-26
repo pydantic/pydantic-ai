@@ -133,6 +133,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         'dynamic': 'enter-never',
     }
     _tool_call_result_upgrade_lenient = False
+    _allow_inline_mcp_in_durable_context = False
     _journal_discovery = True
 
     _durable_unit_noun = 'activity'
