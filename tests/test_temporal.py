@@ -11657,12 +11657,10 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             f'{prefix}__model_request_stream': [request_params, None],
             f'{prefix}__model_compact_messages': [
                 _CompactMessagesParams(
-                    request_context=ModelRequestContext(
-                        model=cast(Model[Any], ctx.model),
-                        messages=request_params.messages,
-                        model_settings=None,
-                        model_request_parameters=request_params.model_request_parameters,
-                    ),
+                    messages=request_params.messages,
+                    model_settings=None,
+                    model_request_parameters=request_params.model_request_parameters,
+                    streaming=False,
                     instructions='Keep decisions',
                     serialized_run_context=serialized_run_context,
                 ),

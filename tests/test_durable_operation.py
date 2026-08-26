@@ -549,6 +549,53 @@ async def test_temporal_backend_dispatches_compact_messages(monkeypatch: pytest.
     assert summary == 'compact messages: test:test'
 
 
+async def test_temporal_compaction_payload_round_trips_live_durable_model() -> None:
+    pytest.importorskip('temporalio')
+    from temporalio.contrib.pydantic import pydantic_data_converter
+
+    from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+        _CompactMessagesTransport,
+    )
+
+    async def request_segment(request: ModelRequestContext) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    async def stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
+        return StreamedActivityResult(ModelResponse(parts=[]), [])
+
+    async def compact_segment(request: ModelRequestContext, instructions: str | None) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    async def cancel_segment(response: ModelResponse) -> None:
+        pass
+
+    model = DurableModel(
+        TestModel(),
+        request_segment=request_segment,
+        request_stream_segment=stream_segment,
+        compact_messages_segment=compact_segment,
+        cancel_suspended_response_segment=cancel_segment,
+    )
+    agent = Agent(TestModel(), name='compact-converter', capabilities=[TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    request_context = ModelRequestContext(
+        model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    transport = _CompactMessagesTransport(durability)
+    wire = transport.dump(CompactMessagesOperationParams(None, request_context, None, ctx))
+
+    payloads = await pydantic_data_converter.encode([wire])
+    [decoded] = await pydantic_data_converter.decode(payloads, [tuple[_CompactMessagesParams, type(None)]])
+
+    assert decoded[0].messages == []
+    assert decoded[0].model_request_parameters == ModelRequestParameters()
+
+
 async def test_temporal_backend_labels_validation_activity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
