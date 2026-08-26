@@ -26,9 +26,13 @@ from typing_extensions import TypeAliasType, TypeVar, assert_never
 from pydantic_ai._cost import calculate_price_for_usage
 
 from . import _otel_messages, _utils
+from ._event_registry import (
+    EVENT_ENVELOPE_FIELDS as _EVENT_ENVELOPE_FIELDS,
+    event_family_schema as _event_family_schema,
+)
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from .exceptions import ModelRetry, UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -4335,12 +4339,6 @@ deserializable in processes that have imported the module defining it; see
 [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent] for what happens otherwise.
 """
 
-_EVENT_ENVELOPE_FIELDS = frozenset({'event_kind', 'name', 'data', 'tool_call_id', 'tool_name'})
-"""Fields that identify and attribute an emitted event, as opposed to carrying its payload."""
-
-_UNKNOWN_EVENT_TAG = '__unknown__'
-_BASE_EVENT_TAG = '__base__'
-
 
 @dataclass(repr=False, kw_only=True)
 class CustomEvent:
@@ -4463,96 +4461,6 @@ class UnknownCustomEvent(CustomEvent, _register=False):
     re-flattens them, so a downstream consumer that does have the defining module imported recovers
     the typed event.
     """
-
-
-def _event_family_schema(
-    handler: pydantic.GetCoreSchemaHandler,
-    *,
-    registry: Mapping[str, type[Any]],
-    tag_field: str,
-    unknown_type: type[Any],
-    base_schema: pydantic_core.core_schema.CoreSchema | None = None,
-) -> pydantic_core.core_schema.CoreSchema:
-    """Build a tagged union over an event registry, degrading unregistered tags to an "unknown" envelope.
-
-    Like the native tools union (see `AbstractNativeTool.__get_pydantic_core_schema__`), the union is
-    rebuilt from the registry at schema-generation time, so subclasses defined by applications and
-    third-party packages validate to their own class. Unlike native tools, an unregistered tag doesn't
-    fail validation: it degrades to `unknown_type` carrying the raw payload in `data` (or, when
-    `base_schema` is given and the value has no non-envelope fields, the plain base class).
-    """
-    # Snapshot the registry: the union's choices are fixed once this schema is built, so a class
-    # registered later must degrade to the unknown envelope rather than produce a dangling tag.
-    known_tags = frozenset(registry)
-
-    def discriminator(value: Any) -> str | None:
-        if isinstance(value, dict):
-            mapping = cast('dict[str, Any]', value)
-            tag = mapping.get(tag_field)
-            if isinstance(tag, str) and tag in known_tags:
-                return tag
-            if base_schema is not None and not (mapping.keys() - _EVENT_ENVELOPE_FIELDS):
-                return _BASE_EVENT_TAG
-            return _UNKNOWN_EVENT_TAG
-        tag = getattr(value, tag_field, None)
-        if isinstance(tag, str) and tag in known_tags:
-            return tag
-        if isinstance(value, unknown_type):
-            return _UNKNOWN_EVENT_TAG
-        return _BASE_EVENT_TAG if base_schema is not None else None
-
-    unknown_schema = pydantic_core.core_schema.no_info_before_validator_function(
-        _gather_unknown_event_payload(tag_field, unknown_type),
-        handler.generate_schema(unknown_type),
-        serialization=pydantic_core.core_schema.wrap_serializer_function_ser_schema(_flatten_unknown_event),
-    )
-    choices: dict[str, pydantic_core.core_schema.CoreSchema] = {}
-    for tag, event_cls in registry.items():
-        if not dataclasses.is_dataclass(event_cls):
-            raise UserError(  # pragma: no cover
-                f'Event class {event_cls.__qualname__} (registered as {tag!r}) must be a dataclass.'
-            )
-        choices[tag] = handler.generate_schema(event_cls)
-    choices[_UNKNOWN_EVENT_TAG] = unknown_schema
-    if base_schema is not None:
-        choices[_BASE_EVENT_TAG] = base_schema
-    return pydantic_core.core_schema.tagged_union_schema(choices, discriminator)
-
-
-def _gather_unknown_event_payload(tag_field: str, unknown_type: type[Any]) -> Callable[[Any], Any]:
-    """Before-validator for the unknown-event envelope: move unrecognized payload fields into `data`."""
-
-    def gather(value: Any) -> Any:
-        if isinstance(value, dict):
-            mapping = cast('dict[str, Any]', value)
-            envelope = {k: v for k, v in mapping.items() if k in _EVENT_ENVELOPE_FIELDS}
-            payload = {k: v for k, v in mapping.items() if k not in _EVENT_ENVELOPE_FIELDS}
-            if payload:
-                if (data := envelope.get('data')) is not None:
-                    payload['data'] = data
-                envelope['data'] = payload
-            warnings.warn(
-                f'Unknown event {tag_field} {mapping.get(tag_field)!r}; validating as {unknown_type.__name__}. '
-                f'Is the module that defines this event imported?',
-                UserWarning,
-                stacklevel=2,
-            )
-            return envelope
-        return value
-
-    return gather
-
-
-def _flatten_unknown_event(value: Any, serializer: pydantic_core.core_schema.SerializerFunctionWrapHandler) -> Any:
-    """Serializer for the unknown-event envelope: re-flatten `data` so the typed event can be recovered."""
-    dumped: Any = serializer(value)
-    if isinstance(dumped, dict):
-        mapping = cast('dict[str, Any]', dumped)
-        if isinstance(data := mapping.pop('data', None), dict):
-            return {**cast('dict[str, Any]', data), **mapping}
-        mapping['data'] = data
-        return mapping
-    return dumped
 
 
 RealtimeSessionEvent = Annotated[
