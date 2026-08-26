@@ -136,8 +136,9 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
     capability's required stable `id`.
 
     ```python
-    from pydantic_ai import RunContext
     from pydantic_ai.capabilities import AbstractCapability, durable_operation
+    from pydantic_ai.tools import RunContext
+
 
     class Audit(AbstractCapability[None]):
         id = 'audit'
