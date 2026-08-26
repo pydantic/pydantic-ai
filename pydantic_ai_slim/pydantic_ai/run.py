@@ -511,12 +511,21 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         return self._graph_run.state.pending_messages
 
-    def emit_event(self, event: _messages.CustomEvent) -> None:
+    @overload
+    def emit_event(self, name: str, data: Any = None, /) -> _messages.CustomEvent: ...
+
+    @overload
+    def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
+
+    def emit_event(self, event: str | _messages.CustomEvent, data: Any = None, /) -> _messages.CustomEvent:
         """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into this run's event stream.
+
+        Pass a name and an optional payload, or a constructed event object -- see
+        [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
 
         Lets code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] inject application-defined
         events (e.g. from an external harness or event bus) into the stream, alongside events emitted from
-        tools and capability hooks via [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
+        tools via [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
         The event surfaces on the next pull from the run's node stream.
 
         Designed to be called from the same event loop driving `agent.iter()`. If you're forwarding events
@@ -524,9 +533,16 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         (e.g. `loop.call_soon_threadsafe(agent_run.emit_event, event)`).
 
         Args:
-            event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
+            event: The event name, or a constructed [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
+            data: The payload, when a name is passed.
+
+        Returns:
+            The event as emitted.
         """
+        if isinstance(event, str):
+            event = _messages.CustomEvent(name=event, data=data)
         self._graph_run.state.event_stream_buffer.append(event)
+        return event
 
     def enqueue(
         self,

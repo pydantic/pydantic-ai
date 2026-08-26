@@ -4462,6 +4462,44 @@ async def test_custom_event_maps_to_ag_ui_custom_event():
     )
 
 
+async def test_typed_custom_event_maps_to_ag_ui_custom_event():
+    """A typed `CustomEvent` subclass maps its own fields as the AG-UI `CustomEvent` value."""
+
+    @dataclass(kw_only=True)
+    class AgUiSyncEvent(PydanticAICustomEvent, name='ag_ui_sync'):
+        done: int
+        total: int
+
+    async def event_generator():
+        yield AgUiSyncEvent(done=3, total=9)
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_sync', 'value': {'done': 3, 'total': 9}},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                'outcome': {'type': 'success'},
+            },
+        ]
+    )
+
+
 async def test_custom_event_passes_through_ag_ui_base_event():
     """A `CustomEvent` whose payload is an AG-UI event is passed through verbatim."""
 

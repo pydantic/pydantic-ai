@@ -5,6 +5,7 @@ import json
 import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
@@ -1761,6 +1762,35 @@ async def test_custom_event_maps_to_data_chunk():
             {'type': 'start'},
             {'type': 'data-progress', 'data': {'pct': 50}},
             {'type': 'data-progress', 'data': {'tool_call_id': 'call_1', 'data': {'pct': 100}}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_typed_custom_event_maps_to_data_chunk():
+    """A typed `CustomEvent` subclass maps its own fields as the `data-{name}` chunk data."""
+
+    @dataclass(kw_only=True)
+    class VercelSyncEvent(CustomEvent, name='vercel_sync'):
+        done: int
+        total: int
+
+    async def event_generator():
+        yield VercelSyncEvent(done=3, total=9)
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-vercel_sync', 'data': {'done': 3, 'total': 9}},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',

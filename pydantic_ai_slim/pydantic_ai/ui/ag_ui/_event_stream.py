@@ -427,12 +427,13 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseEvent]:
         # An `ag_ui.core.BaseEvent` payload is passed through verbatim, mirroring the tool-return metadata passthrough.
-        if isinstance(event.data, BaseEvent):
-            yield event.data
+        payload = event.to_payload()
+        if isinstance(payload, BaseEvent):
+            yield payload
         else:
             # When the event is tool-scoped, nest the payload under `data` alongside the `tool_call_id`
             # so consumers can attribute it; otherwise the payload is the value directly.
-            value = {'tool_call_id': event.tool_call_id, 'data': event.data} if event.tool_call_id else event.data
+            value = {'tool_call_id': event.tool_call_id, 'data': payload} if event.tool_call_id else payload
             yield AGUICustomEvent(name=event.name, value=value)
 
     async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:

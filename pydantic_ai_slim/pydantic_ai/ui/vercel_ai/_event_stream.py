@@ -416,12 +416,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseChunk]:
         # A data-carrying chunk payload (`DataChunk`, `SourceUrlChunk`, etc.) is passed through verbatim,
         # mirroring the tool-return metadata passthrough.
-        if isinstance(event.data, DATA_CHUNK_TYPES):
-            yield event.data
+        payload = event.to_payload()
+        if isinstance(payload, DATA_CHUNK_TYPES):
+            yield payload
         else:
             # When the event is tool-scoped, nest the payload under `data` alongside the `tool_call_id`
             # so consumers can attribute it; otherwise the payload is the data directly.
-            data = {'tool_call_id': event.tool_call_id, 'data': event.data} if event.tool_call_id else event.data
+            data = {'tool_call_id': event.tool_call_id, 'data': payload} if event.tool_call_id else payload
             yield DataChunk(type=f'data-{event.name}', data=data)
 
     async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:

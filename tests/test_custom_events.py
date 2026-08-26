@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     CustomEvent,
     ModelMessage,
     ToolReturnPart,
+    UnknownCustomEvent,
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -61,7 +62,9 @@ async def test_emit_from_tool_auto_stamps_tool_call_id():
 
     events = await _collect_events(agent)
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot([CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1')])
+    assert custom == snapshot(
+        [CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')]
+    )
 
 
 async def test_explicit_tool_call_id_preserved():
@@ -199,7 +202,9 @@ async def test_surfaced_via_run_stream_events():
             events.append(event)
 
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot([CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1')])
+    assert custom == snapshot(
+        [CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')]
+    )
 
 
 async def test_surfaced_via_run_stream():
@@ -221,7 +226,9 @@ async def test_surfaced_via_run_stream():
         assert await result.get_output() == 'done'
 
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot([CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1')])
+    assert custom == snapshot(
+        [CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')]
+    )
 
 
 def test_emit_without_buffer_raises():
@@ -241,7 +248,189 @@ def test_serialization_round_trip():
             'name': 'progress',
             'data': {'pct': 50, 'label': 'halfway'},
             'tool_call_id': 'call_1',
+            'tool_name': None,
             'event_kind': 'custom',
         }
     )
     assert adapter.validate_python(dumped) == event
+
+
+async def test_emit_event_name_data_shorthand():
+    """`ctx.emit_event('name', data)` wraps the payload in a `CustomEvent` and returns it as emitted."""
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    def progress(ctx: RunContext[Any]) -> str:
+        emitted = ctx.emit_event('progress', {'pct': 50})
+        assert emitted == CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')
+        return 'ok'
+
+    events = await _collect_events(agent)
+    custom = [event for event in events if isinstance(event, CustomEvent)]
+    assert custom == snapshot(
+        [CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')]
+    )
+
+
+async def test_agent_run_emit_event_shorthand():
+    """`AgentRun.emit_event('name', data)` wraps the payload in a `CustomEvent`."""
+
+    async def only_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=only_text))
+
+    collected: list[AgentStreamEvent] = []
+    async with agent.iter('go') as run:
+        emitted = run.emit_event('external', {'source': 'bus'})
+        assert emitted == CustomEvent(name='external', data={'source': 'bus'})
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        collected.append(event)
+
+    custom = [event for event in collected if isinstance(event, CustomEvent)]
+    assert custom == snapshot([CustomEvent(name='external', data={'source': 'bus'})])
+
+
+# --- Typed `CustomEvent` subclasses ---
+#
+# These are unit tests of the event registry and its serialization: the registry is process-global
+# state keyed by event name, and the (de)serialization branches they pin — subclass round-trip,
+# unknown-name degradation, re-flattening — can't be reached through a model request.
+
+
+@dataclass(kw_only=True)
+class SyncProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+@dataclass(kw_only=True)
+class RenamedEvent(CustomEvent, name='sync_renamed'):
+    label: str
+
+
+def test_custom_event_requires_name():
+    """`name` has a static-only default (so typed subclasses don't require it); direct construction enforces it."""
+    with pytest.raises(ValueError, match='`CustomEvent` requires a `name`'):
+        CustomEvent(data={'x': 1})
+
+
+def test_typed_subclass_round_trip():
+    """A typed subclass round-trips through the union back to its own class, payload as its own fields."""
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    event = SyncProgressEvent(done=3, total=9)
+    assert event.name == 'sync_progress'
+    dumped = adapter.dump_python(event)
+    assert dumped == snapshot(
+        {
+            'name': 'sync_progress',
+            'data': None,
+            'tool_call_id': None,
+            'tool_name': None,
+            'event_kind': 'custom',
+            'done': 3,
+            'total': 9,
+        }
+    )
+    revalidated = adapter.validate_python(dumped)
+    assert isinstance(revalidated, SyncProgressEvent)
+    assert revalidated == event
+
+
+def test_typed_subclass_explicit_name():
+    """A `name` class argument overrides the class-name-derived event name."""
+    event = RenamedEvent(label='x')
+    assert event.name == 'sync_renamed'
+
+
+def test_typed_subclass_to_payload():
+    """`to_payload` returns the subclass's own fields; the base class returns `data`."""
+    assert SyncProgressEvent(done=3, total=9).to_payload() == {'done': 3, 'total': 9}
+    assert CustomEvent(name='progress', data={'pct': 50}).to_payload() == {'pct': 50}
+
+
+def test_duplicate_event_name_rejected():
+    """Registering a second event class under an existing name fails at class definition."""
+    with pytest.raises(TypeError, match="Duplicate custom event name 'sync_progress'"):
+
+        @dataclass(kw_only=True)
+        class _ConflictingEvent(CustomEvent, name='sync_progress'):  # pyright: ignore[reportUnusedClass]
+            pass
+
+
+async def test_typed_subclass_emitted_from_tool():
+    """A typed subclass emitted from a tool is stamped like any custom event and keeps its type."""
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    def progress(ctx: RunContext[Any]) -> str:
+        ctx.emit_event(SyncProgressEvent(done=1, total=2))
+        return 'ok'
+
+    events = await _collect_events(agent)
+    custom = [event for event in events if isinstance(event, SyncProgressEvent)]
+    assert custom == snapshot([SyncProgressEvent(done=1, total=2, tool_call_id='call_1', tool_name='progress')])
+
+
+def test_unknown_event_name_with_payload_degrades():
+    """An event dict with an unregistered name and payload fields validates as `UnknownCustomEvent`.
+
+    Nothing is dropped: the payload rides in `data`, and re-serialization re-flattens it so a
+    downstream consumer that has the defining module imported recovers the typed event.
+    """
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = {
+        'event_kind': 'custom',
+        'name': 'their_typed_event',
+        'progress': 0.5,
+        'stage': 'fetching',
+    }
+    with pytest.warns(UserWarning, match="Unknown event name 'their_typed_event'"):
+        event = adapter.validate_python(wire)
+    assert event == snapshot(UnknownCustomEvent(name='their_typed_event', data={'progress': 0.5, 'stage': 'fetching'}))
+    assert isinstance(event, UnknownCustomEvent)
+    assert event.to_payload() == {'progress': 0.5, 'stage': 'fetching'}
+
+    redumped = adapter.dump_python(event)
+    assert redumped == snapshot(
+        {
+            'progress': 0.5,
+            'stage': 'fetching',
+            'name': 'their_typed_event',
+            'tool_call_id': None,
+            'tool_name': None,
+            'event_kind': 'custom',
+        }
+    )
+
+
+def test_unknown_event_name_without_payload_is_base():
+    """An event dict with an unregistered name and no payload fields is a plain base event: no warning."""
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = {'event_kind': 'custom', 'name': 'quick_status', 'data': {'stage': 'fetching'}}
+    event = adapter.validate_python(wire)
+    assert type(event) is CustomEvent
+    assert event == snapshot(CustomEvent(name='quick_status', data={'stage': 'fetching'}))
+
+
+def test_registration_after_adapter_not_seen():
+    """The union is built per `TypeAdapter`: an adapter built before a class was registered degrades
+    its events to `UnknownCustomEvent` (the import-order caveat), while a fresh adapter recovers them."""
+    old_adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+
+    @dataclass(kw_only=True)
+    class LateEvent(CustomEvent, name='late_event'):
+        value: int
+
+    fresh_adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = fresh_adapter.dump_python(LateEvent(value=1))
+    with pytest.warns(UserWarning, match="Unknown event name 'late_event'"):
+        degraded = old_adapter.validate_python(wire)
+    assert isinstance(degraded, UnknownCustomEvent)
+    assert degraded.data == {'value': 1}
+
+    recovered = fresh_adapter.validate_python(old_adapter.dump_python(degraded))
+    assert recovered == LateEvent(value=1)

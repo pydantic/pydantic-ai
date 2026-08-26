@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import dataclasses
 import hashlib
 import mimetypes
 import os
@@ -18,6 +19,7 @@ from urllib.parse import urlparse
 import pydantic
 import pydantic_core
 from genai_prices import types as genai_types
+from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, TypeVar, assert_never
 
@@ -26,7 +28,7 @@ from pydantic_ai._cost import calculate_price_for_usage
 from . import _otel_messages, _utils
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from .exceptions import ModelRetry, UnexpectedModelBehavior
+from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -4325,21 +4327,63 @@ HandleResponseEvent = Annotated[
 """An event yielded when handling a model response, indicating tool calls and results."""
 
 
+CUSTOM_EVENT_TYPES: dict[str, type[CustomEvent]] = {}
+"""Registry of [`CustomEvent`][pydantic_ai.messages.CustomEvent] subclasses, keyed by their `name`.
+
+Subclasses register automatically when their class is defined, so an event type is only
+deserializable in processes that have imported the module defining it; see
+[`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent] for what happens otherwise.
+"""
+
+_EVENT_ENVELOPE_FIELDS = frozenset({'event_kind', 'name', 'data', 'tool_call_id', 'tool_name'})
+"""Fields that identify and attribute an emitted event, as opposed to carrying its payload."""
+
+_UNKNOWN_EVENT_TAG = '__unknown__'
+_BASE_EVENT_TAG = '__base__'
+
+
 @dataclass(repr=False, kw_only=True)
 class CustomEvent:
     """An application-defined event emitted into the agent's event stream.
 
-    Emit these from tools, capability hooks, or code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter]
+    Emit these from tools or code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter]
     via [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event] or
     [`AgentRun.emit_event`][pydantic_ai.run.AgentRun.emit_event] to surface progress updates, intermediate
     results, or status information to consumers of the stream without adding to the model's context.
+
+    There are two ways to define an event: pass a `name` and an untyped `data` payload
+    (what the `ctx.emit_event('name', data)` shorthand constructs), or subclass this class with typed
+    fields carrying the payload:
+
+    ```python
+    from dataclasses import dataclass
+
+    from pydantic_ai import CustomEvent
+
+
+    @dataclass(kw_only=True)
+    class SyncProgressEvent(CustomEvent):
+        done: int
+        total: int
+    ```
+
+    Subclasses must be dataclasses. Each subclass registers itself under its `name` -- derived from
+    the class name (`SyncProgressEvent` -> `'sync_progress'`) unless overridden with a `name` class
+    argument -- so instances round-trip through serialization back to the subclass, and consumers can
+    use `isinstance` checks instead of matching name strings. Deserializing an event whose name isn't
+    registered in the current process yields an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent].
     """
 
-    name: str
-    """The application-defined name of the event."""
+    name: str = ''
+    """The application-defined name of the event.
+
+    Required (and enforced at construction) when instantiating `CustomEvent` directly; on typed
+    subclasses it defaults to the registered event name, so it never needs to be passed.
+    """
 
     data: Any = None
-    """The event payload.
+    """The event payload of a directly-constructed (or shorthand-emitted) event; typed subclasses
+    carry their payload as their own fields instead and leave this unset.
 
     Deliberately untyped so any application-defined payload can ride along. To flow through durable
     execution and the UI adapters, the payload must be serializable by pydantic (e.g. a `BaseModel`,
@@ -4354,10 +4398,161 @@ class CustomEvent:
     to the originating tool call.
     """
 
+    tool_name: str | None = None
+    """The name of the tool this event is associated with, if any; stamped like `tool_call_id`."""
+
     event_kind: Literal['custom'] = 'custom'
     """Event type identifier, used as a discriminator."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+    def __post_init__(self) -> None:
+        # `name` only has a static default so that typed subclasses (whose registered name is
+        # injected as the real default at class definition) don't require it in their constructors.
+        if not self.name:
+            raise ValueError('`CustomEvent` requires a `name`.')
+
+    def __init_subclass__(cls, *, name: str | None = None, _register: bool = True, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if not _register:
+            return
+        event_name = name or to_snake(cls.__name__.removesuffix('Event'))
+        if (existing := CUSTOM_EVENT_TYPES.get(event_name)) is not None:
+            raise TypeError(
+                f'Duplicate custom event name {event_name!r}: already registered by {existing.__qualname__}. '
+                f"Pass an explicit name, e.g. `class {cls.__name__}(CustomEvent, name='...')`."
+            )
+        CUSTOM_EVENT_TYPES[event_name] = cls
+        # Redeclare `name` on the subclass so it defaults to (and always serializes as) the registered name.
+        cls.__annotations__ = {'name': 'str', **cls.__annotations__}
+        setattr(cls, 'name', field(default=event_name, kw_only=True))
+
+    def to_payload(self) -> Any:
+        """The event's payload: `data` for a directly-constructed event, the subclass's own fields for a typed one.
+
+        This is what the UI adapters send to the frontend (AG-UI `CustomEvent.value`, Vercel AI `data-{name}`
+        chunk data). Override to customize the payload shape.
+        """
+        if type(self) in (CustomEvent, UnknownCustomEvent):
+            return self.data
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self) if f.name not in _EVENT_ENVELOPE_FIELDS}
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: Any, handler: pydantic.GetCoreSchemaHandler
+    ) -> pydantic_core.core_schema.CoreSchema:
+        if cls is not CustomEvent:
+            return handler(source)
+        return _event_family_schema(
+            handler,
+            registry=CUSTOM_EVENT_TYPES,
+            tag_field='name',
+            unknown_type=UnknownCustomEvent,
+            # An unregistered name with no extra payload fields is a directly-constructed base event,
+            # not a degraded typed one -- validate it as the base, silently.
+            base_schema=handler(source),
+        )
+
+
+@dataclass(repr=False, kw_only=True)
+class UnknownCustomEvent(CustomEvent, _register=False):
+    """A typed custom event whose `name` isn't registered in this process.
+
+    Produced when deserializing an event emitted by a process that had the defining module imported
+    (e.g. across a durable execution boundary). The payload fields ride in `data`, and serialization
+    re-flattens them, so a downstream consumer that does have the defining module imported recovers
+    the typed event.
+    """
+
+
+def _event_family_schema(
+    handler: pydantic.GetCoreSchemaHandler,
+    *,
+    registry: Mapping[str, type[Any]],
+    tag_field: str,
+    unknown_type: type[Any],
+    base_schema: pydantic_core.core_schema.CoreSchema | None = None,
+) -> pydantic_core.core_schema.CoreSchema:
+    """Build a tagged union over an event registry, degrading unregistered tags to an "unknown" envelope.
+
+    Like the native tools union (see `AbstractNativeTool.__get_pydantic_core_schema__`), the union is
+    rebuilt from the registry at schema-generation time, so subclasses defined by applications and
+    third-party packages validate to their own class. Unlike native tools, an unregistered tag doesn't
+    fail validation: it degrades to `unknown_type` carrying the raw payload in `data` (or, when
+    `base_schema` is given and the value has no non-envelope fields, the plain base class).
+    """
+    # Snapshot the registry: the union's choices are fixed once this schema is built, so a class
+    # registered later must degrade to the unknown envelope rather than produce a dangling tag.
+    known_tags = frozenset(registry)
+
+    def discriminator(value: Any) -> str | None:
+        if isinstance(value, dict):
+            mapping = cast('dict[str, Any]', value)
+            tag = mapping.get(tag_field)
+            if isinstance(tag, str) and tag in known_tags:
+                return tag
+            if base_schema is not None and not (mapping.keys() - _EVENT_ENVELOPE_FIELDS):
+                return _BASE_EVENT_TAG
+            return _UNKNOWN_EVENT_TAG
+        tag = getattr(value, tag_field, None)
+        if isinstance(tag, str) and tag in known_tags:
+            return tag
+        if isinstance(value, unknown_type):
+            return _UNKNOWN_EVENT_TAG
+        return _BASE_EVENT_TAG if base_schema is not None else None
+
+    unknown_schema = pydantic_core.core_schema.no_info_before_validator_function(
+        _gather_unknown_event_payload(tag_field, unknown_type),
+        handler.generate_schema(unknown_type),
+        serialization=pydantic_core.core_schema.wrap_serializer_function_ser_schema(_flatten_unknown_event),
+    )
+    choices: dict[str, pydantic_core.core_schema.CoreSchema] = {}
+    for tag, event_cls in registry.items():
+        if not dataclasses.is_dataclass(event_cls):
+            raise UserError(  # pragma: no cover
+                f'Event class {event_cls.__qualname__} (registered as {tag!r}) must be a dataclass.'
+            )
+        choices[tag] = handler.generate_schema(event_cls)
+    choices[_UNKNOWN_EVENT_TAG] = unknown_schema
+    if base_schema is not None:
+        choices[_BASE_EVENT_TAG] = base_schema
+    return pydantic_core.core_schema.tagged_union_schema(choices, discriminator)
+
+
+def _gather_unknown_event_payload(tag_field: str, unknown_type: type[Any]) -> Callable[[Any], Any]:
+    """Before-validator for the unknown-event envelope: move unrecognized payload fields into `data`."""
+
+    def gather(value: Any) -> Any:
+        if isinstance(value, dict):
+            mapping = cast('dict[str, Any]', value)
+            envelope = {k: v for k, v in mapping.items() if k in _EVENT_ENVELOPE_FIELDS}
+            payload = {k: v for k, v in mapping.items() if k not in _EVENT_ENVELOPE_FIELDS}
+            if payload:
+                if (data := envelope.get('data')) is not None:
+                    payload['data'] = data
+                envelope['data'] = payload
+            warnings.warn(
+                f'Unknown event {tag_field} {mapping.get(tag_field)!r}; validating as {unknown_type.__name__}. '
+                f'Is the module that defines this event imported?',
+                UserWarning,
+                stacklevel=2,
+            )
+            return envelope
+        return value
+
+    return gather
+
+
+def _flatten_unknown_event(value: Any, serializer: pydantic_core.core_schema.SerializerFunctionWrapHandler) -> Any:
+    """Serializer for the unknown-event envelope: re-flatten `data` so the typed event can be recovered."""
+    dumped: Any = serializer(value)
+    if isinstance(dumped, dict):
+        mapping = cast('dict[str, Any]', dumped)
+        if isinstance(data := mapping.pop('data', None), dict):
+            return {**cast('dict[str, Any]', data), **mapping}
+        mapping['data'] = data
+        return mapping
+    return dumped
 
 
 RealtimeSessionEvent = Annotated[

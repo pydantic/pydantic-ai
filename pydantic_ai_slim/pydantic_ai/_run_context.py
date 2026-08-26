@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, overload
 
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar, deprecated
@@ -471,22 +471,39 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
-    def emit_event(self, event: _messages.CustomEvent) -> None:
+    @overload
+    def emit_event(self, name: str, data: Any = None, /) -> _messages.CustomEvent: ...
+
+    @overload
+    def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
+
+    def emit_event(self, event: str | _messages.CustomEvent, data: Any = None, /) -> _messages.CustomEvent:
         """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into the current run's event stream.
 
+        Pass a name and an optional payload -- `ctx.emit_event('sync_progress', {'done': 3})` -- to emit
+        a plain [`CustomEvent`][pydantic_ai.messages.CustomEvent], or a constructed event object, typically
+        an instance of an application-defined
+        [`CustomEvent` subclass](../agent.md#typed-custom-events) with typed payload fields.
+
         Safe to call from anywhere a `RunContext` is available during a run — async tools, sync tools
-        (auto-wrapped in a thread executor by Pydantic AI), capability hooks, history processors, and
+        (auto-wrapped in a thread executor by Pydantic AI), history processors, and
         output validators. The event reaches the run's `event_stream_handler`,
         [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events],
         [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, and the UI adapters.
 
         When emitted from within a tool call and the event doesn't already set a
         [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id], the current
-        [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] is stamped on a copy of the event so
+        [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] and
+        [`tool_name`][pydantic_ai.tools.RunContext.tool_name] are stamped on a copy of the event so
         consumers can attribute it to the originating tool call.
 
         Args:
-            event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
+            event: The event name, or a constructed [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
+            data: The payload, when a name is passed; must be serializable by pydantic to flow through
+                durable execution and the UI adapters.
+
+        Returns:
+            The event as emitted (with any stamped attribution fields).
 
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent's event stream (e.g. a manually
@@ -497,9 +514,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`emit_event` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.emit_event`). This `RunContext` has no event stream to emit into.'
             )
+        if isinstance(event, str):
+            event = _messages.CustomEvent(name=event, data=data)
         if event.tool_call_id is None and self.tool_call_id is not None:
-            event = dataclasses.replace(event, tool_call_id=self.tool_call_id)
+            event = dataclasses.replace(event, tool_call_id=self.tool_call_id, tool_name=self.tool_name)
         self._emit_event(event)
+        return event
 
     def enqueue(
         self,
