@@ -287,8 +287,7 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
         max_retries=0,
         args_validator=TOOL_SCHEMA_VALIDATOR,
     )
-    with pytest.raises(UserError, match='MCP tools perform I/O'):
-        resolve_tool_config(mcp_tool, 'mcp_inline')
+    assert resolve_tool_config(mcp_tool, 'mcp_inline') is False
 
     assert BaseDurabilityCapability._model_id_suffix(base, 'model') == '.model'  # pyright: ignore[reportPrivateUsage]
     base._default_model_id = 'model'  # pyright: ignore[reportPrivateUsage]
