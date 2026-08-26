@@ -27,6 +27,13 @@ class DurableInvocationName:
 
 
 class DurableOperationNamer(Protocol):
+    """Maps typed operation IDs to stable persisted and display names.
+
+    Engine authors can implement this protocol when `JournalOperationNamer` does not match their
+    runtime's naming rules. See the
+    [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     def operation_name(self, operation_id: DurableOperationId) -> str: ...
 
     def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName: ...
@@ -48,6 +55,13 @@ def _tool_name(params: object) -> str:
 
 
 class JournalOperationNamer:
+    """Stable default naming policy for sequence-based journal engines.
+
+    Use this with either backend tier when persisted operation names can follow Pydantic AI's
+    journal convention. Pin the generated names before changing agent, model, or toolset identity.
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     def __init__(self, agent_name: str, *, default_model_id: str = 'default') -> None:
         self._agent_name = agent_name
         self._default_model_id = default_model_id

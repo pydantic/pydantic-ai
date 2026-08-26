@@ -1,4 +1,4 @@
-"""Serialization codec for the durable-execution base assembly (prototype).
+"""Serialization codecs for durable execution backends.
 
 A `DurabilityCodec` is the single seam the base uses at every serialization site. It splits the
 two engine families cleanly:
@@ -26,7 +26,9 @@ class DurabilityCodec(Protocol):
     """Reduces a value to a durably-storable payload and rebuilds it on the other side.
 
     `tp` is a "type form" (a class, or an annotated/aliased type like `CallToolResult`), i.e.
-    anything `TypeAdapter` accepts -- so it is typed `Any`, not `type[T]`.
+    anything `TypeAdapter` accepts, so it is typed `Any`, not `type[T]`. Engine authors select a
+    codec on `BaseDurabilityCapability`; see
+    [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
 
     def dump(self, tp: Any, value: Any) -> Any: ...
@@ -65,4 +67,12 @@ class _JsonCodec:
 
 
 IDENTITY_CODEC: DurabilityCodec = _IdentityCodec()
+"""Codec for engines whose durable primitive owns Python-object serialization.
+
+See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+"""
 JSON_CODEC: DurabilityCodec = _JsonCodec()
+"""Codec for engines that need Pydantic AI values reduced to JSON-compatible payloads.
+
+See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+"""

@@ -16,10 +16,20 @@ P_contra = TypeVar('P_contra', contravariant=True)
 ConfigT_co = TypeVar('ConfigT_co', covariant=True)
 
 ToolsetKind: TypeAlias = Literal['function', 'mcp', 'dynamic']
+"""The leaf toolset categories an engine can configure and wrap.
+
+Engine authors use this type for declarative lifecycle settings and per-tool configuration. See
+[Building a durable execution backend](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+"""
 
 
 @dataclass(frozen=True)
 class ModelRequestId:
+    """Identifies a model request operation in an engine's configuration resolver.
+
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     model_id: str | None
     streaming: bool
     model_name: str
@@ -27,46 +37,88 @@ class ModelRequestId:
 
 @dataclass(frozen=True)
 class CancelSuspendedResponseId:
+    """Identifies cancellation of a suspended model response for engine configuration.
+
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     model_id: str | None
     model_name: str
 
 
 @dataclass(frozen=True)
 class CompactMessagesId:
+    """Identifies a durable message-compaction operation for engine configuration.
+
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     model_id: str | None
     model_name: str
 
 
 @dataclass(frozen=True)
 class EventStreamHandlerId:
+    """Identifies a durable event-stream handler invocation for engine configuration.
+
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     pass
 
 
 @dataclass(frozen=True)
 class CapabilityOperationId:
+    """Identifies an operation contributed by a capability.
+
+    Engine configuration receives these operations through the same backend as built-in model and
+    tool operations. See the
+    [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     capability_id: str
     operation: str
 
 
 @dataclass(frozen=True)
 class GetToolsId:
+    """Identifies durable tool discovery for a particular toolset.
+
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     toolset_kind: ToolsetKind
     toolset_id: str
 
 
 @dataclass(frozen=True)
 class GetInstructionsId:
+    """Identifies durable instruction discovery for an MCP toolset.
+
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     toolset_id: str
 
 
 @dataclass(frozen=True)
 class ValidateToolArgumentsId:
+    """Identifies durable argument validation for a particular toolset.
+
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     toolset_kind: ToolsetKind
     toolset_id: str
 
 
 @dataclass(frozen=True)
 class CallToolId:
+    """Identifies durable tool execution for a particular toolset.
+
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     toolset_kind: ToolsetKind
     toolset_id: str
 
@@ -82,6 +134,11 @@ DurableOperationId: TypeAlias = (
     | ValidateToolArgumentsId
     | CallToolId
 )
+"""The closed union of operation identifiers passed to engine configuration.
+
+Match on every variant when configuration depends on the operation. See
+[durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+"""
 
 
 @dataclass(frozen=True)
@@ -112,6 +169,13 @@ class ResultCodec(Generic[R], Protocol):
 
 
 class OperationConfigRole(str, Enum):
+    """The broad role used to select base configuration for a durable operation.
+
+    Combine this with the concrete `DurableOperationId` variant when an engine needs finer-grained
+    configuration. See the
+    [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     MODEL = 'model'
     EVENT = 'event'
     TOOL_DISCOVERY = 'tool_discovery'

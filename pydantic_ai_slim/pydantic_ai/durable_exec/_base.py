@@ -265,7 +265,7 @@ class _LegacyResultCodec(ResultCodec[_T]):
 
 
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
-    """Shared base for the durable-execution capabilities (Temporal, DBOS, Prefect).
+    """Base for building a durable execution engine as an agent capability.
 
     Owns the model registry and the model round-trip across the durable boundary:
     a `Model` instance can't be serialized into an activity/step/task, so a request
@@ -281,6 +281,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     on the workflow/flow side, and
     [`_resolve_model_for_request`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._resolve_model_for_request]
     inside the activity/step/task.
+    Engine authors declare serialization, toolset lifecycle, discovery, and concurrency behavior,
+    then supply a `DurableOperationBackend` that connects operations to the engine SDK. See
+    [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
 
     engine_name: ClassVar[str]
@@ -291,7 +294,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
 
-    # --- Declarative Shape-D surface (prototype) -----------------------------------------------
+    # --- Declarative engine surface -------------------------------------------------------------
     # Everything below is DATA an engine sets rather than behavior it overrides. The base's
     # concrete `_wrap_leaf_toolset` / `wrap_model_request` / `_dispatch_event_stream_event`
     # (built on `run_durable_unit` + `_codec`) consult these; a callable engine implements only
@@ -714,7 +717,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return wrapped
 
     # ===========================================================================================
-    #  Base-owned Shape-D assembly (prototype)
+    #  Base-owned operation assembly
     #
     #  These methods used to be overridden by every engine. They are now concrete defaults built
     #  on the declarative fields above plus two behavioral hooks -- `run_durable_unit` (the durable

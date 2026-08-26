@@ -27,7 +27,7 @@ from ._types import TaskConfig, default_task_config
 class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
 
-    Ported onto the declarative Shape-D base: the base owns toolset/model/event assembly, and this
+    Built on the declarative base: the base owns toolset/model/event assembly, and this
     capability contributes the Prefect operation backend, transparency gate, and task configuration.
     """
 

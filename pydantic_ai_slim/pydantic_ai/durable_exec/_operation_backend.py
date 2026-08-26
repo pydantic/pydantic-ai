@@ -27,6 +27,13 @@ class BoundDurableOperation(Generic[P_bound, W_bound, R_bound], Protocol):
 
 
 class DurableOperationBackend(Protocol[ConfigT_co]):
+    """Contract between `BaseDurabilityCapability` and an engine's durable primitive.
+
+    Engine authors normally implement this by subclassing `CallableOperationBackend` or
+    `RegisteredOperationBackend`. See
+    [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     @abstractmethod
     def bind(self, operation: DurableOperation[P, W, R]) -> BoundDurableOperation[P, W, R]: ...
 
@@ -58,6 +65,13 @@ class _CallableBoundOperation(Generic[P, W, R]):
 
 
 class CallableOperationBackend(ABC, Generic[ConfigT]):
+    """Base for engines that execute an async callback in a named durable unit.
+
+    Subclasses implement `_execute`; this base owns naming, configuration, cache identity, and
+    result encoding. See the
+    [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
     def __init__(self, *, namer: DurableOperationNamer, config: DurableOperationConfig[ConfigT]) -> None:
         self._namer = namer
         self._config = config
@@ -108,7 +122,12 @@ class CallableOperationBackend(ABC, Generic[ConfigT]):
 
 
 class RegisteredOperationBackend(ABC, Generic[ConfigT]):
-    """Base for backends that register named SDK handlers while binding operations."""
+    """Base for engines that register named SDK handlers while binding operations.
+
+    Subclasses implement `_register`; this base collects the returned worker registrations and
+    owns naming and configuration. See
+    [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
 
     def __init__(self, *, namer: DurableOperationNamer, config: DurableOperationConfig[ConfigT]) -> None:
         self._namer = namer
