@@ -836,6 +836,10 @@ For application code that just needs to plug in a handler, use the dedicated [`H
 
 A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.
 
+Runtime integrations receive these operations through the same typed backend as model and tool
+operations. See [Building a durable execution backend](../durable_execution/backends.md) when
+implementing an engine.
+
 ```python
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
