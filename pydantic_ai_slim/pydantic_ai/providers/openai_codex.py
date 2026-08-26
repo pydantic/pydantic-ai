@@ -30,7 +30,7 @@ import httpx2
 from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 from typing_extensions import Self
 
-from pydantic_ai._http import create_async_httpx2_client, warn_if_legacy_httpx_client
+from pydantic_ai._http import create_async_httpx2_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.openai_codex import openai_codex_model_profile
@@ -198,10 +198,19 @@ def _credentials_from_token_response(
     )
 
 
-async def _post_json(url: str, form: Mapping[str, str]) -> dict[str, Any]:
-    """POST a form-urlencoded OAuth request and decode the JSON response."""
-    async with httpx2.AsyncClient(timeout=httpx2.Timeout(timeout=30, connect=5)) as client:
-        response = await client.post(url, data=dict(form), headers={'Accept': 'application/json'})
+async def _post_json(
+    url: str, form: Mapping[str, str], http_client: httpx2.AsyncClient | None = None
+) -> dict[str, Any]:
+    """POST a form-urlencoded OAuth request and decode the JSON response.
+
+    When `http_client` is given the request goes through it (so custom transports and proxies apply
+    to refreshes too); otherwise an ephemeral client is used.
+    """
+    if http_client is None:
+        async with httpx2.AsyncClient(timeout=httpx2.Timeout(timeout=30, connect=5)) as client:
+            response = await client.post(url, data=dict(form), headers={'Accept': 'application/json'})
+    else:
+        response = await http_client.post(url, data=dict(form), headers={'Accept': 'application/json'})
     if response.status_code != 200:
         try:
             body = response.json()
@@ -213,7 +222,11 @@ async def _post_json(url: str, form: Mapping[str, str]) -> dict[str, Any]:
         raise CredentialsRefreshError(
             f'Token request to {url} failed with status {response.status_code}: {detail}{hint}'
         )
-    return response.json()
+    try:
+        # `ValidationError` subclasses `ValueError`, so this also rejects invalid JSON.
+        return _OBJECT_ADAPTER.validate_python(response.json())
+    except ValueError:
+        raise CredentialsRefreshError(f'Token endpoint {url} returned a non-object response.') from None
 
 
 def _read_codex_cli_credentials() -> OpenAICodexCredentials:
@@ -257,9 +270,12 @@ class OpenAICodexOAuthFlow:
         Args:
             scope: The OAuth scopes to request.
             extra_params: Additional query parameters, merged over the defaults (so they can also
-                override them). The production Codex login's `id_token_add_organizations=true` and
-                `codex_cli_simplified_flow=true` are sent by default: without the former, the
-                `id_token` can omit the account id for multi-org accounts (live-verified 2026-08-25).
+                override them), except `client_id` and `redirect_uri`: `exchange_code()` always
+                posts the public client id and the flow's `redirect_uri`, so overriding either
+                here would make the authorization code unusable. The production Codex login's
+                `id_token_add_organizations=true` and `codex_cli_simplified_flow=true` are sent by
+                default: without the former, the `id_token` can omit the account id for multi-org
+                accounts (live-verified 2026-08-25).
         """
         challenge = base64.urlsafe_b64encode(hashlib.sha256(self.code_verifier.encode()).digest()).rstrip(b'=')
         params: dict[str, str] = {
@@ -274,6 +290,12 @@ class OpenAICodexOAuthFlow:
             'codex_cli_simplified_flow': 'true',
         }
         if extra_params:
+            if overridden := sorted({'client_id', 'redirect_uri'} & extra_params.keys()):
+                raise UserError(
+                    f'`extra_params` cannot override {", ".join(overridden)}: `exchange_code()` always posts '
+                    "the public client id and the flow's `redirect_uri`, so the authorization code would be "
+                    'unusable. Pass `redirect_uri=` to the constructor instead.'
+                )
             params.update(extra_params)
         return f'{_AUTHORIZE_URL}?{urlencode(params)}'
 
@@ -366,6 +388,11 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     @property
     def credentials(self) -> OpenAICodexCredentials:
         """The current credentials (rotated in place by refreshes; persist via the callback)."""
+        if not hasattr(self, '_credentials'):
+            raise UserError(
+                '`credentials` is unavailable when the provider wraps an existing `openai_client`, '
+                'which opts out of credential injection entirely.'
+            )
         return self._credentials
 
     @staticmethod
@@ -394,10 +421,11 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
             openai_client: An existing `AsyncOpenAI` client to use as-is. Opts out of credential
                 injection entirely; `credentials`, `on_credentials_refresh`, and `http_client`
                 must be `None`.
-            http_client: An existing HTTP client to use. Note the provider attaches
-                `OpenAICodexAuth` to whichever client it ends up using; the auth only injects
-                credentials on requests to the Codex host, so the client can safely be reused
-                for other destinations.
+            http_client: An existing `httpx2.AsyncClient` to use. Must be dedicated to this
+                provider (no auth of its own): the provider attaches `OpenAICodexAuth` to it, and
+                sharing a client between providers would mix tenants' credentials. The auth only
+                injects credentials on HTTPS requests to the Codex host, so the client can safely
+                be reused for other destinations.
         """
         self._on_credentials_refresh = on_credentials_refresh
         if openai_client is not None:
@@ -409,27 +437,37 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
 
         self._credentials = credentials if credentials is not None else _read_codex_cli_credentials()
         self._revision = 0
+        self._last_refresh_error: tuple[int, Exception] | None = None
         self._auth = OpenAICodexAuth(self)
         if http_client is None:
             http_client = create_async_httpx2_client()
             self._own_http_client = http_client
             self._http_client_factory = self._create_http_client
         else:
-            warn_if_legacy_httpx_client(http_client, consumer='OpenAI-compatible providers', stacklevel=3)
-        # `AuthTypes` accepts any concrete `httpx2.Auth` subclass; pyright's structural check on
-        # the generator-method pair is over-strict here.
-        http_client.auth = self._auth  # pyright: ignore[reportAttributeAccessIssue]
+            if not isinstance(http_client, httpx2.AsyncClient):
+                raise UserError(
+                    '`OpenAICodexProvider` requires an `httpx2` client for `http_client`: the legacy '
+                    '`httpx.AsyncClient` cannot carry its credential-injecting auth.'
+                )
+            if http_client.auth is not None:
+                raise UserError(
+                    'The `http_client` already has auth configured (it may belong to another provider); '
+                    'pass a dedicated client so credentials cannot mix across tenants.'
+                )
+        http_client.auth = self._auth
+        self._http_client = http_client
         self._client = AsyncOpenAI(
             base_url=_CODEX_BASE_URL,
             # The SDK merges its own bearer header into requests; `OpenAICodexAuth` replaces it.
             api_key='codex-subscription-auth',
-            http_client=http_client,  # pyright: ignore[reportArgumentType]
+            http_client=http_client,
         )
 
-    def _create_http_client(self) -> _OpenAIHTTPClient:
+    def _create_http_client(self) -> httpx2.AsyncClient:
         """Factory used when a closed provider-owned client is reopened."""
         client = create_async_httpx2_client()
         client.auth = self._auth
+        self._http_client = client
         return client
 
     def _set_http_client(self, http_client: _OpenAIHTTPClient) -> None:
@@ -472,7 +510,11 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
             async with self._refresh_lock:
                 if self._is_stale():  # recheck after acquiring: single-flight, not just serialized
                     await self._refresh_locked()
-        except CredentialsRefreshError:
+        except CredentialsPersistenceError:
+            raise  # the refresh itself succeeded; a failed save must never be silent
+        except Exception:
+            # Transport failures and rejected grants alike fall through to the 401 path, which
+            # retries with the still-current token and surfaces real errors.
             pass
 
     async def _refresh_for_401(self, revision_used: int) -> None:
@@ -486,7 +528,13 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         async with self._refresh_lock:
             if self._revision != revision_used:  # recheck after acquiring
                 return
-            await self._refresh_locked()
+            if (last := self._last_refresh_error) is not None and last[0] == revision_used:
+                raise last[1]  # share the single-flight failure instead of re-running it per waiter
+            try:
+                await self._refresh_locked()
+            except Exception as e:
+                self._last_refresh_error = (revision_used, e)
+                raise
 
     async def _refresh_locked(self) -> None:
         # The caller must hold `_refresh_lock`.
@@ -498,6 +546,9 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 'refresh_token': self._credentials.refresh_token.get_secret_value(),
                 'client_id': _PUBLIC_CLIENT_ID,
             },
+            # The provider's own client, so custom transports and proxies apply to refreshes too;
+            # the auth flow ignores non-Codex hosts, so this cannot recurse or leak the bearer.
+            http_client=self._http_client,
         )
         new_credentials = _credentials_from_token_response(data, fallback_account_id=self._credentials.account_id)
         # Atomic replace of the complete set, then bump the revision so concurrent 401s observe it.

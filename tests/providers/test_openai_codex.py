@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import hashlib
@@ -7,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import anyio
+import httpx
 import httpx2
 import pytest
 from pydantic import SecretStr
@@ -71,7 +74,9 @@ class TokenEndpointMock:
         self.results = list(results)
         self.forms: list[dict[str, Any]] = []
 
-    async def __call__(self, url: str, form: dict[str, Any]) -> dict[str, Any]:
+    async def __call__(
+        self, url: str, form: dict[str, Any], http_client: httpx2.AsyncClient | None = None
+    ) -> dict[str, Any]:
         self.forms.append(form)
         await asyncio.sleep(0.001)  # widen race windows for single-flight assertions
         result = self.results[min(len(self.forms), len(self.results)) - 1]
@@ -226,6 +231,24 @@ async def test_post_json_success_and_error_shapes(monkeypatch: pytest.MonkeyPatc
         await _post_json(url, {})
     with pytest.raises(CredentialsRefreshError, match='gateway exploded'):
         await _post_json(url, {})
+
+
+async def test_post_json_rejects_non_object_success_bodies():
+    """A 200 carrying JSON `null`, a list, or unparsable text raises instead of `AttributeError` later."""
+    queue = [
+        httpx2.Response(200, json=None),
+        httpx2.Response(200, json=[1, 2]),
+        httpx2.Response(200, text='not json'),
+    ]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return queue.pop(0)
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    async with client:
+        for _ in range(3):
+            with pytest.raises(CredentialsRefreshError, match='non-object response'):
+                await _post_json('https://auth.openai.com/oauth/token', {}, http_client=client)
     assert _jwt_expires_at('a.b') is None
     assert _jwt_expires_at(f'a.{base64.urlsafe_b64encode(b"not json").decode()}.c') is None
     assert _jwt_expires_at(make_jwt({'exp': 'soon'})) is None
@@ -349,6 +372,63 @@ async def test_401_after_inflight_rotation_replays_without_second_refresh(monkey
     assert len(mock.forms) == 1  # only the in-flight rotation refreshed; the 401 did not
 
 
+async def test_failed_refresh_is_single_flighted_across_waiters(monkeypatch: pytest.MonkeyPatch):
+    """A burst of 401s whose refresh fails shares that failure instead of retrying it per waiter."""
+    mock = TokenEndpointMock(CredentialsRefreshError('the grant is dead'))
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    provider = make_provider(make_credentials())
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(401)
+
+    async with authed_client(provider, handler) as client:
+        results = await asyncio.gather(
+            *(client.get('https://chatgpt.com/backend-api/codex/x') for _ in range(5)),
+            return_exceptions=True,
+        )
+
+    assert all(isinstance(result, CredentialsRefreshError) for result in results)
+    assert len(mock.forms) == 1  # one failed refresh, shared with every waiter
+
+
+async def test_stale_refresh_transport_error_falls_through_to_request(monkeypatch: pytest.MonkeyPatch):
+    """A transport failure during the proactive refresh must not abort a request whose token still works."""
+    mock = TokenEndpointMock(RuntimeError('network down'))
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    provider = make_provider(make_credentials(exp=time.time() - 100))
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        response = await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert response.status_code == 200  # served with the still-current token
+    assert len(mock.forms) == 1  # the proactive attempt happened, and its failure stayed quiet
+
+
+async def test_stale_refresh_persistence_error_propagates(monkeypatch: pytest.MonkeyPatch):
+    """The proactive path swallows refresh failures but never a failed save of rotated credentials."""
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+
+    async def failing_callback(credentials: OpenAICodexCredentials) -> None:
+        raise RuntimeError('db down')
+
+    provider = OpenAICodexProvider(
+        credentials=make_credentials(exp=time.time() - 100), on_credentials_refresh=failing_callback
+    )
+
+    def handler(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the persistence error must surface before any request goes out')
+
+    async with authed_client(provider, handler) as client:
+        with pytest.raises(CredentialsPersistenceError):
+            await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert provider.credentials.access_token.get_secret_value() == 'access-new'  # memory is current
+
+
 async def test_non_expiry_401_does_not_loop(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock(TOKEN_RESPONSE, TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
@@ -452,6 +532,45 @@ def test_openai_client_passthrough():
     client = AsyncOpenAI(api_key='irrelevant', base_url='https://chatgpt.com/backend-api/codex')
     provider = OpenAICodexProvider(openai_client=client)
     assert provider.client is client  # used as-is: no credential injection, no auth wrapping
+    with pytest.raises(UserError, match='unavailable when the provider wraps'):
+        _ = provider.credentials
+
+
+def test_shared_http_client_with_auth_is_rejected():
+    """A client that already carries auth (e.g. another provider's) must not be silently rebound."""
+    first_client = httpx2.AsyncClient()
+    OpenAICodexProvider(credentials=make_credentials(), http_client=first_client)
+    with pytest.raises(UserError, match='already has auth configured'):
+        OpenAICodexProvider(credentials=make_credentials(), http_client=first_client)
+
+
+def test_legacy_http_client_is_rejected():
+    with pytest.raises(UserError, match='requires an `httpx2` client'):
+        OpenAICodexProvider(credentials=make_credentials(), http_client=httpx.AsyncClient())
+
+
+async def test_refresh_uses_the_provider_http_client():
+    """Refreshes ride the provider's own client, so custom transports and proxies apply to them too."""
+    token_hits = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal token_hits
+        if request.url.host == 'auth.openai.com':
+            token_hits += 1
+            assert 'authorization' not in request.headers  # host scoping keeps the bearer off the auth host
+            return httpx2.Response(200, json=TOKEN_RESPONSE)
+        if request.headers['authorization'] == 'Bearer access-new':
+            return httpx2.Response(200)
+        return httpx2.Response(401)
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    provider = OpenAICodexProvider(credentials=make_credentials(), http_client=http_client)
+    async with http_client:
+        response = await http_client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert response.status_code == 200
+    assert token_hits == 1  # the refresh went through the provider's transport
+    assert provider.credentials.access_token.get_secret_value() == 'access-new'
 
 
 async def test_caller_supplied_http_client_gets_scoped_auth():
@@ -502,6 +621,12 @@ def test_authorization_url_extra_params_add_and_override():
     assert 'codex_cli_simplified_flow=false' in url  # overridden
     assert 'codex_cli_simplified_flow=true' not in url
     assert 'id_token_add_organizations=true' in url  # untouched default survives
+
+
+def test_authorization_url_rejects_identity_overrides():
+    flow = OpenAICodexOAuthFlow()
+    with pytest.raises(UserError, match='cannot override client_id, redirect_uri'):
+        flow.authorization_url(extra_params={'client_id': 'other', 'redirect_uri': 'https://example.com/cb'})
 
 
 async def test_exchange_code_posts_pkce_form(monkeypatch: pytest.MonkeyPatch):

@@ -67,25 +67,30 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import OpenAICodexOAuthFlow, OpenAICodexProvider
 
 flow = OpenAICodexOAuthFlow()  # defaults to the pinned http://localhost:1455/auth/callback
-code: list[str] = []
+result: dict[str, str] = {}
 
 
 class Callback(BaseHTTPRequestHandler):
     def do_GET(self):
         params = parse_qs(urlparse(self.path).query)
         if params.get('state', [None])[0] == flow.state:
-            code.append(params['code'][0])
+            if 'code' in params:
+                result['code'] = params['code'][0]
+            else:  # e.g. the user clicked Deny: surface the error instead of hanging
+                result['error'] = params.get('error', ['unknown'])[0]
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Logged in - you can close this tab.')
+        self.wfile.write(b'You can close this tab.')
 
 
 server = HTTPServer(('localhost', 1455), Callback)
 webbrowser.open(flow.authorization_url())
-while not code:
+while not result:
     server.handle_request()  # serve until the callback with a valid state arrives
+if 'error' in result:
+    raise RuntimeError(f'Authorization failed: {result["error"]}')
 
-credentials = asyncio.run(flow.exchange_code(code[0]))
+credentials = asyncio.run(flow.exchange_code(result['code']))
 # persist wherever your app keeps secrets - not ~/.codex, which belongs to the Codex CLI
 
 provider = OpenAICodexProvider(credentials=credentials)
