@@ -2,9 +2,9 @@
 `<thinking>` tags they find in assistant history into their own user-visible answers.
 
 These are recorded observations of *model* behavior, not assertions about our mapping — the histories are
-built from plain `TextPart`s shaped exactly the way `AnthropicModel._map_message` renders a `ThinkingPart`
-that can't ride the native reasoning channel. That keeps them valid as evidence no matter how the mapper
-is changed.
+built from plain text, a `TextPart` for the assistant channel and a `UserPromptPart` for the user one,
+shaped exactly the way `AnthropicModel._map_message` renders a `ThinkingPart` that can't ride the native
+reasoning channel. That keeps them valid as evidence no matter how the mapper is changed.
 
 What the cassettes show:
 
@@ -12,20 +12,23 @@ What the cassettes show:
   reasoning-shaped turns never triggered it, six did, matching the reporter's "90+ turns, self-sustaining"
 * annotating the tag suppresses the copying on `claude-sonnet-4-6` but **not** on `claude-opus-4-5`, which
   copies the annotation verbatim — attribute included — onto reasoning it just produced itself
+* the *channel* is what settles it: the identical attributed block moved into a `user` turn stops the
+  copying on the model that copies every assistant-turn variant, which is the design this ships
 
 Because the behavior is stochastic, each cassette pins one recorded instance of a rate measured over
 repeated live runs. The rates come from a 134-call sweep at 6 prior turns with no system prompt: bare
 `6/9` sonnet and `4/4` opus, annotated `0/9` sonnet and `4/4` opus, and `0/5` sonnet / `0/4` opus for the
-no-tag control. Recording matched those rates — the `sonnet-bare-leaks` cassette took three attempts to
-catch the leak, every other case recorded its outcome first try.
+no-tag control, and `0/16` for the same attributed block moved into the user turn. Recording matched
+those rates — the `sonnet-bare-leaks` cassette took three attempts to catch the leak, every other case
+recorded its outcome first try.
 """
 
 from __future__ import annotations as _annotations
 
+import json
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Any, Literal
 
 import pytest
 
@@ -33,14 +36,10 @@ from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPa
 
 from ..._inline_snapshot import snapshot
 from ...conftest import try_import
+from ..conftest import AnthropicModelFactory, RequestCapture
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
-
-if TYPE_CHECKING:
-    from pydantic_ai.models.anthropic import AnthropicModel
-
-    ANTHROPIC_MODEL_FIXTURE = Callable[..., AnthropicModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -103,17 +102,20 @@ _FOLLOWUP = (
     'night it slides back 2. how many days until it gets out? explain your reasoning.'
 )
 
-_THINKING_TAG = re.compile(r'</?thinking\b[^>]*>')
+_THINKING_TAG = re.compile(r'</?(?:assistant_)?thinking\b[^>]*>')
 
 
-def _history(wrapper: str | None) -> list[ModelMessage]:
-    """Six prior turns whose reasoning is wrapped in `wrapper`, or omitted entirely when it is `None`."""
+def _history(case: Case) -> list[ModelMessage]:
+    """Six prior turns whose reasoning rides `case.block` in `case.channel`, or is omitted entirely."""
     messages: list[ModelMessage] = []
     for question, reasoning, answer in _PRIOR_TURNS:
         messages.append(ModelRequest(parts=[UserPromptPart(content=question)]))
+        rendered = None if case.block is None else case.block.format(reasoning=reasoning)
+        if rendered is not None and case.channel == 'user':
+            messages.append(ModelRequest(parts=[UserPromptPart(content=rendered)]))
         parts: list[TextPart] = []
-        if wrapper is not None:
-            parts.append(TextPart(content=f'<thinking{wrapper}>\n{reasoning}\n</thinking>'))
+        if rendered is not None and case.channel == 'assistant':
+            parts.append(TextPart(content=rendered))
         parts.append(TextPart(content=answer))
         messages.append(ModelResponse(parts=parts))
     return messages
@@ -123,9 +125,23 @@ def _history(wrapper: str | None) -> list[ModelMessage]:
 class Case:
     id: str
     model_name: str
-    wrapper: str | None
+    block: str | None
+    """How each prior turn's reasoning is wrapped, with a `{reasoning}` placeholder; `None` omits it."""
+    channel: Literal['assistant', 'user']
+    """The turn the block rides in. `'user'` is the shape Pydantic AI ships for this family."""
     expected_tags: list[str]
-    """The `<thinking>` tags the model emitted in its own user-visible answer."""
+    """The thinking tags the model emitted in its own user-visible answer."""
+    sent_tags: set[tuple[str, str]]
+    """Every (role, tag) pair the recorded request carried, read off the wire rather than the cassette."""
+    sent_length: int
+    """Length of the serialized outbound messages, so an edit to the history can't replay green."""
+
+
+_BARE = '<thinking>\n{reasoning}\n</thinking>'
+_NOTED = '<thinking note="carried over from earlier in this conversation">\n{reasoning}\n</thinking>'
+_ATTRIBUTED = '<thinking by="openai">\n{reasoning}\n</thinking>'
+# The shape Pydantic AI ships for this family: the same reasoning, attributed, in a user turn.
+_CARRIED = '<assistant_thinking by="openai">\n{reasoning}\n</assistant_thinking>'
 
 
 CASES = [
@@ -134,31 +150,66 @@ CASES = [
         # repeated runs.
         'sonnet-bare-leaks',
         'claude-sonnet-4-6',
-        '',
+        _BARE,
+        'assistant',
         snapshot(['<thinking>', '</thinking>']),
+        snapshot({('assistant', '</thinking>'), ('assistant', '<thinking>')}),
+        snapshot(3971),
     ),
     Case(
         # An annotated tag suppresses the copying on sonnet: 0/9.
         'sonnet-annotated-clean',
         'claude-sonnet-4-6',
-        ' note="carried over from earlier in this conversation"',
+        _NOTED,
+        'assistant',
         snapshot([]),
+        snapshot(
+            {
+                ('assistant', '</thinking>'),
+                ('assistant', '<thinking note="carried over from earlier in this conversation">'),
+            }
+        ),
+        snapshot(4307),
     ),
     Case(
         # Opus copies the annotated tag anyway: 4/4, same as bare. The annotation is read as part of the
         # format to imitate, not as a signal that the block isn't the model's own.
         'opus-annotated-leaks',
         'claude-opus-4-5',
-        ' note="carried over from earlier in this conversation"',
+        _NOTED,
+        'assistant',
         snapshot(['<thinking note="carried over from earlier in this conversation">', '</thinking>']),
+        snapshot(
+            {
+                ('assistant', '</thinking>'),
+                ('assistant', '<thinking note="carried over from earlier in this conversation">'),
+            }
+        ),
+        snapshot(4307),
     ),
     Case(
         # And it copies a provenance attribute wholesale, so opus's own reasoning reaches the user labelled
         # as another provider's: 4/4.
         'opus-attributed-leaks',
         'claude-opus-4-5',
-        ' by="openai"',
+        _ATTRIBUTED,
+        'assistant',
         snapshot(['<thinking by="openai">', '</thinking>']),
+        snapshot({('assistant', '</thinking>'), ('assistant', '<thinking by="openai">')}),
+        snapshot(4055),
+    ),
+    Case(
+        # The shipped design, against `opus-attributed-leaks` as its control: same model, same attributed
+        # wrapper, same reasoning — only the channel differs, and the copying stops. Recorded once here;
+        # the rate behind it is 0/16 across the sweep that chose this placement, against 8/8 for the same
+        # content in the assistant turn.
+        'opus-carried-in-user-turn-clean',
+        'claude-opus-4-5',
+        _CARRIED,
+        'user',
+        snapshot([]),
+        snapshot({('user', '</assistant_thinking>'), ('user', '<assistant_thinking by="openai">')}),
+        snapshot(4175),
     ),
     Case(
         # Control: with no tag anywhere in history opus never emits one, so the copying above is precedent,
@@ -166,15 +217,37 @@ CASES = [
         'opus-no-tags-control',
         'claude-opus-4-5',
         None,
+        'assistant',
         snapshot([]),
+        snapshot(set()),
+        snapshot(2513),
     ),
 ]
 
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
-async def test_thinking_tag_mimicry(case: Case, allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE):
-    """A `<thinking>` tag replayed in assistant history is copied into the model's user-visible answer."""
-    agent = Agent(anthropic_model(case.model_name))
-    result = await agent.run(_FOLLOWUP, message_history=_history(case.wrapper))
+async def test_thinking_tag_mimicry(
+    case: Case,
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """A thinking tag replayed in an *assistant* turn is copied into the answer the user reads; in a
+    *user* turn it is not."""
+    model: AnthropicModel = anthropic_model(case.model_name, capture=True)
+    agent = Agent(model)
+    result = await agent.run(_FOLLOWUP, message_history=_history(case))
 
     assert _THINKING_TAG.findall(result.output) == case.expected_tags
+
+    # These cassettes match on method and URI only, so an edited history replays the old answer and stays
+    # green while the recording stops being evidence for it. Reading the request off the wire pins what
+    # each recorded answer is evidence *for*: the wrapper, the turn it rides in, and the history's size.
+    sent: list[dict[str, Any]] = request_capture.body('/v1/messages')['messages']
+    assert {
+        (message['role'], tag)
+        for message in sent
+        for block in message['content']
+        for tag in _THINKING_TAG.findall(block['text'])
+    } == case.sent_tags
+    assert len(json.dumps(sent)) == case.sent_length

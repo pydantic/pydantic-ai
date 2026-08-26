@@ -711,6 +711,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
 
+        A message this step *inserts* is not guaranteed to reach the wire as a turn of its own:
+        `_make_request` re-runs `_clean_message_history` over the result, whose merge pass folds an
+        inserted `ModelRequest` into the request ahead of it — behind that request's `CachePoint`,
+        if it has one. `FallbackModel` skips that second cleanup, and `direct.model_request` calls
+        the adapter without going through this step at all, so the same history can render three
+        ways. Rewriting parts in place is safe; a rewrite that depends on landing in its own turn
+        belongs in the adapter's own message-prep, where the rendered position is known
+        (`AnthropicModel._map_message` carries a worked example).
+
         Args:
             messages: The history to pre-process.
             model_request_parameters: The parameters this history will be sent with. Optional, and

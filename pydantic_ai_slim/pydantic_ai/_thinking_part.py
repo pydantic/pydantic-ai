@@ -61,8 +61,9 @@ def render_replayed_thinking(content: str, profile: ModelProfile, provider_name:
         attributes = f' by="{provider_name}"' if provider_name else ''
         start_tag, end_tag = f'<assistant_thinking{attributes}>', '</assistant_thinking>'
         # Reasoning that talks about the wrapper would otherwise close it early and spill the rest into
-        # the message as if the user had written it.
-        content = content.replace(end_tag, '<\\/assistant_thinking>')
+        # the message as if the user had written it. Derived from `end_tag` so a rename can't leave the
+        # escape matching a tag that no longer exists.
+        content = content.replace(end_tag, end_tag.replace('</', '<\\/', 1))
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
     return '\n'.join([start_tag, content, end_tag]), carry_in_user_turn

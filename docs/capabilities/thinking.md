@@ -62,11 +62,11 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 
 ## Thinking in message history
 
-Pydantic AI always sends a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from message history back to the model. Reasoning is usually load-bearing for the turns that follow it, so dropping it would cost the model context it produced for itself.
+Pydantic AI sends a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from message history back to the model instead of dropping it. Reasoning is usually load-bearing for the turns that follow it, so dropping it would cost the model context it produced for itself. The one profile value that opts out of sending it is `False` on [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts], which no shipped model sets.
 
-Where the provider's own reasoning channel is available — a signed thinking block, an encrypted reasoning item, a dedicated `reasoning` field — that is what carries it. That channel needs the signature the provider minted, so it is only open for a part that still has one and came from that same provider. A part that lost its signature on a round trip through storage, was rebuilt by a [history processor](../message-history.md#processing-message-history), or came from another model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain can't use it; Pydantic AI then writes the reasoning out as text in the model's thinking tags rather than dropping it.
+Where the provider's own reasoning channel is available — a signed thinking block, an encrypted reasoning item, a dedicated `reasoning` field — that is what carries it. Each of those channels checks a credential the provider minted, a signature or the id it issued for the item, so the channel is only open for a part that still has one and came from that same provider. A part that lost it on a round trip through storage, was rebuilt by a [history processor](../message-history.md#processing-message-history), or came from another model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain can't use it; Pydantic AI then writes the reasoning out as text in the model's thinking tags rather than dropping it.
 
-Anthropic is the exception to *where* that text goes — see [Thinking carried over from another model](#thinking-carried-over-from-another-model).
+Anthropic is the exception to both *where* that text goes and *how* it is tagged — see [Carried-over thinking](#carried-over-thinking).
 
 ## OpenAI
 
@@ -125,20 +125,20 @@ agent = Agent(model, model_settings=settings)
 
 Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
 
-### Thinking carried over from another model
+### Carried-over thinking
 
-Reasoning that can't ride Anthropic's native reasoning channel — see [Thinking in message history](#thinking-in-message-history) for when that happens — is sent as text, but not from the turn it was produced in.
+Reasoning that can't ride Anthropic's native reasoning channel — see [Thinking in message history](#thinking-in-message-history) for when that happens — is sent as text, but not from the turn it was produced in. Claude's *own* reasoning takes this path too whenever its signature didn't survive, which is the common case: a history round-tripped through your storage.
 
 !!! warning "Claude imitates formatting it sees in assistant turns"
     Sending that text in the assistant turn teaches Claude that writing thinking tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.
 
     Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel].
 
-    Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags, with a `by` attribute naming the provider of the response it came from — `<assistant_thinking by="openai">` for a `FallbackModel` chain that fell back from OpenAI, and a bare `<assistant_thinking>` when that response names no provider. The trade-off is that Claude describes the reasoning inaccurately anyway if you ask it who wrote it — measured on `claude-opus-4-5`, it claims the reasoning as its own whether or not the tag names a different source.
+    Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags, with a `by` attribute naming the provider of the response it came from: `<assistant_thinking by="anthropic">` for Claude's own unsigned reasoning, `<assistant_thinking by="openai">` for a `FallbackModel` chain that fell back from OpenAI, and a bare `<assistant_thinking>` when that response names no provider. The trade-off is that Claude describes the reasoning inaccurately anyway if you ask it who wrote it — measured on `claude-opus-4-5`, it claims the reasoning as its own whether or not the tag names a different source.
 
     To send it in the assistant turn instead, turn the flag off for your model:
 
-    ```python {title="anthropic_foreign_thinking.py"}
+    ```python {title="anthropic_carried_thinking.py"}
     from pydantic_ai import Agent
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.profiles import ModelProfile
@@ -228,6 +228,8 @@ agent = Agent(model, model_settings=settings)
 ## Bedrock
 
 For Claude Sonnet 4.6+ and Opus 4.6+, Pydantic AI's unified `thinking` setting translates to AWS's required [adaptive thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html) shape automatically — set [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] and you're done.
+
+Claude served through Bedrock inherits the Anthropic model profile, so reasoning replayed from history follows [Carried-over thinking](#carried-over-thinking) here too.
 
 For older Claude models or to pin a specific `budget_tokens`, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](../agent.md#model-run-settings) to pass provider-specific configuration directly:
 

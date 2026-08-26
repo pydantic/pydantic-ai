@@ -1325,10 +1325,13 @@ class BedrockConverseModel(Model[BaseClient]):
                             thinking_text, carry_in_user_turn = render_replayed_thinking(
                                 item.content, profile, message.provider_name
                             )
-                            if carry_in_user_turn:
-                                carried_thinking.append({'text': thinking_text})
-                            else:
+                            if not carry_in_user_turn:
                                 content.append({'text': thinking_text})
+                            elif item.content:
+                                # A redacted block arrives with its reasoning stripped (`content=''`), and
+                                # an empty wrapper in the user turn tells the model the assistant thought
+                                # nothing. Dropping it matches `AnthropicModel`, which guards the same arm.
+                                carried_thinking.append({'text': thinking_text})
                     elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
@@ -1366,7 +1369,26 @@ class BedrockConverseModel(Model[BaseClient]):
                     # applies `bedrock_tool_result_colocatable_content` to it like any other user
                     # content — for Claude that set contains `text`, so it does end up sharing the turn
                     # with preceding tool results.
-                    bedrock_messages.append({'role': 'user', 'content': carried_thinking})
+                    #
+                    # The exception that pass can't handle is a `CachePoint` the user put at the end of
+                    # that turn. Merged behind the marker, the carried text becomes the turn's last
+                    # block, and `bedrock_cache_messages` then appends an automatic cache point that
+                    # `_get_last_user_message_content` had been suppressing. The extra point costs the
+                    # user their *oldest* explicit one, since `_limit_cache_points` keeps the newest
+                    # four. Slotting the carried text in ahead of the marker leaves both the point
+                    # count and the marker's position exactly as authored.
+                    previous_content: Sequence[ContentBlockUnionTypeDef] = (
+                        bedrock_messages[-1]['content']
+                        if bedrock_messages and bedrock_messages[-1]['role'] == 'user'
+                        else []
+                    )
+                    if previous_content and 'cachePoint' in previous_content[-1]:
+                        bedrock_messages[-1] = {
+                            'role': 'user',
+                            'content': [*previous_content[:-1], *carried_thinking, previous_content[-1]],
+                        }
+                    else:
+                        bedrock_messages.append({'role': 'user', 'content': carried_thinking})
                 if content:
                     bedrock_messages.append({'role': 'assistant', 'content': content})
             else:

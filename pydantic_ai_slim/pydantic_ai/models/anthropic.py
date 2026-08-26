@@ -2192,15 +2192,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     # assistant turn as house style and starts writing `<thinking>` tags into the
                     # answers the user reads (https://github.com/pydantic/pydantic-ai/issues/5869).
                     #
-                    # Emitted as its own turn here rather than merged into the user message ahead of
-                    # it, which the API combines it with anyway: the position is known while mapping,
-                    # so a `system` entry, a response that renders no assistant turn, or two
-                    # responses in a row can't move the target out from under a backwards search.
-                    # It goes *ahead* of any `system` entry this request emitted, so that entry
-                    # still has no user turn to hop and keeps the cache boundary it was authored
-                    # with — see `_place_system_messages_before_generation`.
+                    # Emitted as a turn of its own rather than merged into the user message ahead of
+                    # it — the API combines consecutive user turns anyway, and building the turn here
+                    # fixes its position while mapping, so a `system` entry, a response that renders
+                    # no assistant turn, or two responses in a row can't move the target out from
+                    # under a backwards search. It goes *ahead* of any `system` entry this request
+                    # emitted, so that entry still has no user turn to hop and keeps the cache
+                    # boundary it was authored with — see `_place_system_messages_before_generation`.
                     #
-                    # That last line is why the placement stays here rather than moving to
+                    # Keeping that boundary is also why the placement stays here rather than moving to
                     # `Model.prepare_messages`, which is where a profile-flag-driven part-to-part
                     # rewrite would otherwise belong. `render_replayed_thinking` centralizes what can
                     # be centralized — the tags and the flag's meaning — but a turn inserted there
@@ -2212,7 +2212,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     # to notice at runtime. Nor can a message be aimed ahead of that entry to begin
                     # with: it's a rendering decision with no message-level existence. `FallbackModel`
                     # skips the second cleanup and the direct-call path skips `prepare_messages`
-                    # entirely, so the same history would also render three different ways.
+                    # entirely, so the same history would also render three different ways — and
+                    # under durable execution the inserted `ModelRequest` would be a real message,
+                    # serialized into the activity payload and recorded in workflow history, so a
+                    # registered and an unregistered model string would replay different histories.
                     insert_at = len(anthropic_messages)
                     while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
                         insert_at -= 1

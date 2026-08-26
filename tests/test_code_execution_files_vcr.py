@@ -24,7 +24,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import ModelResponse, UploadedFile
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ThinkingPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
@@ -91,6 +91,65 @@ async def test_anthropic_code_execution_files(allow_model_requests: None, anthro
     user_content = json.loads(messages_request.body)['messages'][0]['content']
     container_uploads = [block for block in user_content if block['type'] == 'container_upload']
     assert container_uploads == [{'type': 'container_upload', 'file_id': uploaded.id}]
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_behind_carried_thinking(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """Anthropic accepts the upload block in the synthesized `user` turn that carried reasoning creates.
+
+    The blocks are pinned to the *first* user message so that message stays byte-identical as history
+    grows. Reasoning that can't ride the native reasoning channel is carried into a `user` turn ahead of
+    the assistant turn it came from, so on a history opening with a `ModelResponse` that synthesized turn
+    *is* the first user message and takes the uploads. Still a stable anchor — the leading response can't
+    change either — and the recorded 200 is the half only the API can answer.
+
+    What the recording also shows is the container not finding the file. That is not this placement: the
+    same run with an ordinary prior user turn and no carried reasoning anywhere fails identically, while
+    the single-turn recording above was re-verified live on the same day and reads the file. An upload
+    block outside the final user turn not reaching a fresh container is a pre-existing defect in the
+    anchor, tracked in https://github.com/pydantic/pydantic-ai/issues/7775.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+    # Unsigned and unattributed: the shape a storage round trip leaves behind, which is what sends the
+    # reasoning down the carried-turn path instead of the native one.
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='They uploaded a CSV, so the sum has to come from the file, not from memory.'),
+                TextPart(content='Ready when you are.'),
+            ]
+        )
+    ]
+
+    try:
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+        )
+
+        result = await agent.run(_PROMPT, message_history=history)
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    messages = json.loads([r for r in vcr.requests if '/v1/messages' in r.uri][0].body)['messages']
+    assert [(message['role'], [block['type'] for block in message['content']]) for message in messages] == snapshot(
+        [('user', ['text', 'container_upload']), ('assistant', ['text']), ('user', ['text'])]
+    )
+    assert messages[0]['content'][0]['text'].startswith('<assistant_thinking>')
+    # The tool ran, so the whole request — carried turn, upload block and all — was served, not rejected.
+    assert [part.part_kind for part in result.all_messages()[-1].parts] == snapshot(
+        ['builtin-tool-call', 'builtin-tool-return', 'text', 'builtin-tool-call', 'builtin-tool-return', 'text']
+    )
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')

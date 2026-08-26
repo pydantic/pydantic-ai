@@ -110,6 +110,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_thinking': False,
     'thinking_always_enabled': False,
     'thinking_tags': ('<think>', '</think>'),
+    'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     # OpenAIModelProfile subclass defaults

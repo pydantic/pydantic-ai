@@ -1,6 +1,6 @@
 """Anthropic accepts the wire shape a carried-over `ThinkingPart` produces.
 
-`tests/test_foreign_thinking_placement.py` pins *where* the mapper puts an unsigned or foreign
+`tests/test_thinking_placement.py` pins *where* the mapper puts an unsigned or foreign
 `ThinkingPart` when the profile carries `mimics_assistant_message_formatting`: in a `user` message of its
 own, ahead of the assistant turn it was produced in. That placement is only safe if Anthropic takes it,
 and the hardest shape it can produce is this one — two consecutive `user` messages, the first holding a
@@ -13,6 +13,9 @@ rather than out of the recording, and answered with a real 200.
 """
 
 from __future__ import annotations as _annotations
+
+import os
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -29,11 +32,18 @@ from pydantic_ai import (
 )
 
 from ..._inline_snapshot import snapshot
+from ...cassette_utils import single_request_body
 from ...conftest import try_import
-from ..conftest import AnthropicModelFactory, RequestCapture
+from ..conftest import AnthropicModelFactory, RequestCapture, message_shape
+
+if TYPE_CHECKING:
+    from vcr.cassette import Cassette
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from anthropic import AsyncAnthropicBedrock
+
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -60,6 +70,14 @@ _HISTORY: list[ModelMessage] = [
         parts=[ToolCallPart(tool_name='treasury_duration', args={'tenor_years': 10}, tool_call_id=_TOOL_CALL_ID)]
     ),
     ModelRequest(parts=[ToolReturnPart(tool_name='treasury_duration', content='8.1', tool_call_id=_TOOL_CALL_ID)]),
+    ModelResponse(parts=[ThinkingPart(content=_REASONING), TextPart(content=_ANSWER)]),
+]
+
+
+# The same trigger without the tool exchange: the whole claim on this transport is that two consecutive
+# `user` turns are accepted, and a tool call would only add a second thing that could fail.
+_PLAIN_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
     ModelResponse(parts=[ThinkingPart(content=_REASONING), TextPart(content=_ANSWER)]),
 ]
 
@@ -145,4 +163,118 @@ Duration measures price sensitivity to rates, and the lookup came back with 8.1 
     )
     assert result.output == snapshot(
         "A longer duration means more interest-rate risk, as the bond's price will be more sensitive to changes in interest rates."
+    )
+
+
+async def test_carried_thinking_accepted_with_thinking_enabled(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """The same placement is accepted with extended thinking on, which is where the composition rules are.
+
+    Anthropic only constrains how an assistant turn may open — a `thinking` block first — once thinking is
+    enabled, and that is the configuration every user reaching this code path is in: reasoning only exists
+    to be carried because the model produced it. The other recording here is thinking-disabled, so it
+    could not have caught a rule that only applies with the `thinking` object present.
+    """
+    model: AnthropicModel = anthropic_model('claude-sonnet-4-5', capture=True)
+    agent = Agent(
+        model, model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    )
+
+    @agent.tool_plain
+    def treasury_duration(tenor_years: int) -> str:
+        """Modified duration of the on-the-run Treasury at the given tenor."""
+        return '8.1'  # pragma: no cover
+
+    result = await agent.run(_FOLLOW_UP, message_history=_HISTORY)
+
+    body = request_capture.body('/v1/messages')
+    assert body['thinking'] == snapshot({'type': 'enabled', 'budget_tokens': 1024})
+    assert message_shape(body) == snapshot(
+        [
+            ('user', ['text']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+            ('user', ['text']),
+            ('assistant', ['text']),
+            ('user', ['text']),
+        ]
+    )
+    assert result.output == snapshot(
+        "A longer duration means **more** interest rate risk, as the bond's price will be more sensitive to changes in interest rates."
+    )
+
+
+@pytest.fixture
+def anthropic_bedrock_client() -> AsyncAnthropicBedrock:
+    """An `AsyncAnthropicBedrock` client, SigV4-signed from the ambient AWS credentials on replay too.
+
+    `botocore` only ships under the `bedrock` extra, and the SDK imports it at request-prep time.
+    """
+    pytest.importorskip('botocore')
+
+    return AsyncAnthropicBedrock(aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'))
+
+
+async def test_carried_thinking_accepted_on_bedrock_transport(
+    allow_model_requests: None,
+    anthropic_bedrock_client: AsyncAnthropicBedrock,
+    vcr: Cassette,
+):
+    """The synthesized turn is accepted on a transport other than the direct Claude API.
+
+    `AnthropicModel` also serves `AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, `AsyncAnthropicFoundry`
+    and `AsyncAnthropicBedrockMantle` clients, all of which now emit this turn. This file already carries
+    the scar of a transport claim inferred from a direct-API result rather than measured (see
+    `_INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS`), so the one transport the credentials reach is recorded.
+    Vertex, Foundry and Mantle stay inferred from this and from `BedrockConverseModel`'s own coverage.
+    """
+    model = AnthropicModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client),
+    )
+    assert model.profile.get('mimics_assistant_message_formatting') is True
+
+    result = await Agent(model).run(_FOLLOW_UP, message_history=_PLAIN_HISTORY)
+
+    assert single_request_body(vcr)['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'text': 'What is the modified duration of the 10-year Treasury?', 'type': 'text'}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': """\
+<assistant_thinking>
+Duration measures price sensitivity to rates, and the lookup came back with 8.1 for the 10-year, so a 1% move in yields is worth roughly 8% of price.
+</assistant_thinking>\
+""",
+                        'type': 'text',
+                    }
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {'text': 'About 8.1 years, so a 1% rate move is worth roughly 8% of its price.', 'type': 'text'}
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'In one sentence: does a longer duration mean more or less interest-rate risk?',
+                        'type': 'text',
+                    }
+                ],
+            },
+        ]
+    )
+    assert result.output == snapshot(
+        "Longer duration means more interest-rate risk, as the bond's price will move more for a given change in yields."
     )

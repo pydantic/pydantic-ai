@@ -1,0 +1,228 @@
+interactions:
+- request:
+    body: "--72a545b0327f486027412819538c69ec\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
+      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--72a545b0327f486027412819538c69ec--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '198'
+      content-type:
+      - multipart/form-data; boundary=72a545b0327f486027412819538c69ec
+      host:
+      - api.anthropic.com
+    method: POST
+    uri: https://api.anthropic.com/v1/files?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '190'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=275
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      created_at: '2026-08-26T01:51:39.020143Z'
+      downloadable: false
+      filename: data.csv
+      id: file_01KvSMXNb3nB1UMXB1kqLmHC
+      mime_type: text/csv
+      size_bytes: 30
+      type: file
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '655'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: |-
+            <assistant_thinking>
+            They uploaded a CSV, so the sum has to come from the file, not from memory.
+            </assistant_thinking>
+          type: text
+        - file_id: file_01KvSMXNb3nB1UMXB1kqLmHC
+          type: container_upload
+        role: user
+      - content:
+        - text: Ready when you are.
+          type: text
+        role: assistant
+      - content:
+        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2488'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-baf7471e760df8977b3a6fd8f69924c9-4b73a7d08879b150-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-08-26T02:51:50.144838Z'
+        id: container_01GFgP7TbrLeMTqWykedgXRy
+      content:
+      - id: srvtoolu_01D9QrH3BM8btUigW5JLwWK8
+        input:
+          command: |
+            python3 -c "
+            import csv, os
+
+            file_path = os.path.join(os.environ['INPUT_DIR'], 'data.csv')
+
+            total = 0.0
+            with open(file_path, newline='') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    total += float(row['value'])
+
+            print(f'Sum of value column: {total}')
+            "
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 1
+          stderr: |
+            Traceback (most recent call last):
+              File "<string>", line 7, in <module>
+            FileNotFoundError: [Errno 2] No such file or directory: '/files/input/d2442eaa9f8949f5/data.csv'
+          stdout: ''
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01D9QrH3BM8btUigW5JLwWK8
+        type: bash_code_execution_tool_result
+      - text: 'Let me locate the file first:'
+        type: text
+      - id: srvtoolu_01AGLkatoCwTj3Mify43PXmP
+        input:
+          command: find / -name "data.csv" 2>/dev/null
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 1
+          stderr: ''
+          stdout: |
+            /usr/local/lib/python3.11/site-packages/statsmodels/datasets/danish_data/data.csv
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01AGLkatoCwTj3Mify43PXmP
+        type: bash_code_execution_tool_result
+      - text: |-
+          It seems the uploaded file isn't accessible in the environment right now. The `data.csv` file could not be found at the expected input path. Here's what you can try:
+
+          1. **Re-upload the file** -- Sometimes uploads don't persist into the execution environment. Please try uploading `data.csv` again.
+          2. **Paste the data directly** -- If the file is small, you can paste its contents here and I'll process it right away.
+
+          Once the file is accessible, I'll compute the sum of the `value` column immediately!
+        type: text
+      id: msg_011CeQXH2Ad8UvstnYqbiTyr
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 7572
+        output_tokens: 360
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: DELETE
+    uri: https://api.anthropic.com/v1/files/file_01KvSMXNb3nB1UMXB1kqLmHC?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '63'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=198
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      id: file_01KvSMXNb3nB1UMXB1kqLmHC
+      type: file_deleted
+    status:
+      code: 200
+      message: OK
+version: 1

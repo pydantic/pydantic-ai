@@ -497,6 +497,10 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Carried-over thinking
+
+A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
+
 ## Mid-conversation system messages
 
 Adding an instruction to the agent's `system_prompt` partway through a long session rewrites the front of the prompt, which invalidates every cached prefix behind it. Anthropic avoids that by accepting a system message *inside* the conversation, at the instruction's own position in the history rather than ahead of it, so everything cached up to that point stays cached.
