@@ -402,16 +402,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """The root capability of the agent, containing all registered capabilities."""
         raise NotImplementedError
 
-    @property
-    def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
-        """The Pydantic validation context configured for this agent, or a function that builds it from the run context.
-
-        This is the spec the agent was given, not the object a specific run validates against; the
-        latter is available as
-        [`RunContext.validation_context`][pydantic_ai.tools.RunContext.validation_context]. Durable
-        execution reads it to rebuild the validation context inside a durable unit, where the run
-        context can't carry an arbitrary user object across the boundary.
-        """
+    def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        """Return the agent's private validation-context specification."""
         raise NotImplementedError
 
     @property

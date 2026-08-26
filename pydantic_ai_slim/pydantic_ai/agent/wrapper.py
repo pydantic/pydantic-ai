@@ -97,7 +97,10 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @property
     def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
-        return self.wrapped.validation_context
+        return self.wrapped._get_validation_context()
+
+    def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        return self.wrapped._get_validation_context()
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:

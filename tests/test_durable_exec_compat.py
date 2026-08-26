@@ -487,6 +487,17 @@ async def test_validation_error_crosses_call_tool_result_boundary() -> None:
     with pytest.raises(ValidationError, match='valid integer'):
         unwrap_tool_call_result(payload)
 
+    def non_serializable_input(ctx: RunContext[None], value: int) -> None:
+        TypeAdapter(int).validate_python(object())
+
+    unsafe_toolset = FunctionToolset(tools=[Tool(typed, args_validator=non_serializable_input)])
+    unsafe_tool = (await unsafe_toolset.get_tools(ctx))['typed']
+    payload = await wrap_tool_validation_result(run_args_validator(unsafe_tool, {'value': 1}, ctx))
+    dumped = JSON_CODEC.dump(CallToolResult, payload)
+    sanitized = dumped['errors'][0]['input']
+    assert sanitized['type'] == 'builtins.object'
+    assert sanitized['repr'].startswith('<object object at 0x')
+
     def invalid_args_validator(ctx: RunContext[None], value: int) -> None:
         TypeAdapter(int).validate_python('invalid-from-args-validator')
 

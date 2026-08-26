@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag, ValidationError
-from pydantic_core import PydanticCustomError
+from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
@@ -50,6 +50,17 @@ class _ToolArgsValidationError(Exception):
         self.error = error
 
 
+def _serializable_validation_input(value: Any) -> Any:
+    try:
+        return to_jsonable_python(value)
+    except PydanticSerializationError:
+        try:
+            representation = repr(value)
+        except Exception:
+            representation = '<repr failed>'
+        return {'type': f'{type(value).__module__}.{type(value).__qualname__}', 'repr': representation}
+
+
 def live_validation_context(ctx: RunContext[Any]) -> Any:
     """Return the run's live validation context for in-process durable units."""
     return object.__getattribute__(ctx, 'validation_context')
@@ -59,7 +70,7 @@ def validation_context_from_agent(agent: AbstractAgent[Any, Any] | None) -> Vali
     """Rebuild a run's validation context inside a serialized durable unit."""
 
     def resolve(ctx: RunContext[Any]) -> Any:
-        spec = agent.validation_context if agent is not None else None
+        spec = agent._get_validation_context() if agent is not None else None  # pyright: ignore[reportPrivateUsage]
         return build_validation_context(spec, ctx)
 
     return resolve
@@ -306,7 +317,7 @@ async def _wrap_tool_result(coro: Awaitable[Any]) -> CallToolResult:
                     type=detail['type'],
                     loc=list(detail['loc']),
                     msg=detail['msg'],
-                    input=detail.get('input'),
+                    input=_serializable_validation_input(detail.get('input')),
                 )
                 for detail in error.errors(include_url=False, include_context=False)
             ],
