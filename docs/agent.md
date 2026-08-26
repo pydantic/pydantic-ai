@@ -296,7 +296,7 @@ Alongside the framework's own events, a tool or code driving [`agent.iter()`](#i
 
 `CustomEvent` is for application-owned events; reusable capability authors define namespaced, typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s as described in [Capability events](capabilities/overview.md#capability-events).
 
-From anywhere a [`RunContext`][pydantic_ai.tools.RunContext] is available, call [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] with a name and an optional data payload. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] and [`tool_name`][pydantic_ai.messages.CustomEvent.tool_name] are stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
+From anywhere a [`RunContext`][pydantic_ai.tools.RunContext] is available in async code, await [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] with a name and an optional data payload. Sync tools cannot emit events; write async tools when they need to emit events. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] and [`tool_name`][pydantic_ai.messages.CustomEvent.tool_name] are stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
 
 ```python {title="custom_events.py"}
 from collections.abc import AsyncIterator
@@ -335,7 +335,7 @@ agent = Agent(FunctionModel(stream_function=model_function))
 async def process_files(ctx: RunContext, count: int) -> str:
     for i in range(1, count + 1):
         # Do some long-running work, emitting a progress event after each step.
-        ctx.emit_event('progress', {'done': i, 'total': count})
+        await ctx.emit_event('progress', {'done': i, 'total': count})
     return f'Processed {count} files.'
 
 
@@ -404,7 +404,7 @@ agent = Agent(FunctionModel(stream_function=model_function))
 @agent.tool
 async def sync_files(ctx: RunContext, count: int) -> str:
     for i in range(1, count + 1):
-        ctx.emit_event(SyncProgressEvent(done=i, total=count))
+        await ctx.emit_event(SyncProgressEvent(done=i, total=count))
     return f'Synchronized {count} files.'
 
 

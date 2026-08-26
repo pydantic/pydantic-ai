@@ -155,13 +155,15 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         return super()._deferred_capability_ids
 
     @overload
-    def emit_event(self, name: str, data: Any = None, /) -> CustomEvent: ...
-    @overload
-    def emit_event(self, event: CustomEvent, /) -> CustomEvent: ...
-    @overload
-    def emit_event(self, event: CapabilityEvent, /) -> CapabilityEvent: ...
+    async def emit_event(self, name: str, data: Any = None, /) -> CustomEvent: ...
 
-    def emit_event(
+    @overload
+    async def emit_event(self, event: CustomEvent, /) -> CustomEvent: ...
+
+    @overload
+    async def emit_event(self, event: CapabilityEvent, /) -> CapabilityEvent: ...
+
+    async def emit_event(
         self, event: str | CustomEvent | CapabilityEvent, data: Any = None, /
     ) -> CustomEvent | CapabilityEvent:
         """Reject `emit_event` from inside a Temporal activity.
