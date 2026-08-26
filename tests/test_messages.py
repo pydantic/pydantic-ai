@@ -65,6 +65,8 @@ from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     RealtimeSessionErrorEvent,
     ToolReturnContent,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _post_compaction_window_for_response,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
     narrow_message_parts,
     post_compaction_window,
@@ -2865,3 +2867,68 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_empty_compaction_part_is_not_a_wire_boundary():
+    """An empty plaintext summary is a failed compaction, not a boundary.
+
+    `content is not None` used to treat `''` as payload, so `_post_compaction_window_for_response`
+    dropped the history the empty summary cannot replace. Align with `has_content()`.
+    This is a unit test because no recorded provider currently emits an empty compaction block.
+    """
+    empty = CompactionPart(content='', provider_name='anthropic')
+    missing = CompactionPart(content=None, provider_name='anthropic')
+    summary = CompactionPart(content='latest summary', provider_name='anthropic')
+    encrypted = CompactionPart(
+        content=None,
+        provider_name='openai',
+        provider_details={'encrypted_content': 'opaque'},
+    )
+    encrypted_empty_text = CompactionPart(
+        content='',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'opaque'},
+    )
+
+    assert empty.has_content() is False
+    assert _compaction_part_is_wire_boundary(empty, 'anthropic') is False
+    assert _compaction_part_is_wire_boundary(missing, 'anthropic') is False
+    assert _compaction_part_is_wire_boundary(summary, 'anthropic') is True
+    assert _compaction_part_is_wire_boundary(encrypted, 'openai') is True
+    assert _compaction_part_is_wire_boundary(encrypted_empty_text, 'openai') is True
+    assert _compaction_part_is_wire_boundary(empty, 'openai') is False
+
+
+def test_post_compaction_window_for_response_keeps_history_when_summary_is_empty():
+    """Empty compaction must not discard the pre-boundary messages that justified later tool calls."""
+    serving = ModelResponse(parts=[TextPart(content='follow-up')], provider_name='anthropic')
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[CompactionPart(content='', provider_name='anthropic')], provider_name='anthropic'),
+        ModelRequest.user_text_prompt('tail'),
+        serving,
+    ]
+
+    window = _post_compaction_window_for_response(messages, serving)
+
+    assert window == messages
+
+
+def test_post_compaction_window_for_response_slices_at_nonempty_compaction():
+    """A real summary still trims history for the serving provider."""
+    serving = ModelResponse(parts=[TextPart(content='follow-up')], provider_name='anthropic')
+    compaction = ModelResponse(
+        parts=[CompactionPart(content='latest summary', provider_name='anthropic')],
+        provider_name='anthropic',
+    )
+    tail = ModelRequest.user_text_prompt('tail')
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        compaction,
+        tail,
+        serving,
+    ]
+
+    window = _post_compaction_window_for_response(messages, serving)
+
+    assert window == [compaction, tail, serving]
