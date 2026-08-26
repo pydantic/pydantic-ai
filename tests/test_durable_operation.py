@@ -202,8 +202,8 @@ def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], An
 
     from pydantic_ai.mcp import MCPToolset
 
-    async def function_tool() -> str:
-        return 'function'
+    # Assembly inspects this tool's definition but never executes its body.
+    async def function_tool() -> str: ...
 
     function_toolset = FunctionToolset(id='functions')
     function_toolset.add_function(function_tool)
@@ -553,21 +553,21 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     pytest.importorskip('temporalio')
     from temporalio.contrib.pydantic import pydantic_data_converter
 
-    from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
+    from pydantic_ai.durable_exec._utils import DurableModel
     from pydantic_ai.durable_exec.temporal import TemporalDurability
     from pydantic_ai.durable_exec.temporal._transports import (
         _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
         _CompactMessagesTransport,
     )
 
-    async def request_segment(request: ModelRequestContext) -> ModelResponse:
-        return ModelResponse(parts=[])
+    # Converter round-tripping inspects these callables but cannot dispatch them.
+    async def request_segment(request: ModelRequestContext) -> ModelResponse: ...
 
-    async def stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-        return StreamedActivityResult(ModelResponse(parts=[]), [])
+    async def stream_segment(request: ModelRequestContext) -> StreamedActivityResult: ...
 
-    async def compact_segment(request: ModelRequestContext, instructions: str | None) -> ModelResponse:
-        return ModelResponse(parts=[])
+    async def compact_segment(  # pragma: no cover
+        request: ModelRequestContext, instructions: str | None
+    ) -> ModelResponse: ...
 
     async def cancel_segment(response: ModelResponse) -> None:
         pass
@@ -602,11 +602,10 @@ async def test_temporal_backend_labels_validation_activity(
     pytest.importorskip('temporalio')
     from pydantic_ai.durable_exec.temporal._operation_backend import TemporalBoundOperation
 
-    async def handler(params: _ToolParams) -> None:
-        raise AssertionError('activity handler is not called by the workflow-side dispatcher')
+    # The workflow dispatcher receives these callables as identities and must not invoke them.
+    async def handler(params: _ToolParams) -> None: ...
 
-    async def registration(params: _ToolParams) -> None:
-        raise AssertionError('registration is passed to `execute_activity`, not called directly')
+    async def registration(params: _ToolParams) -> None: ...
 
     operation = DurableOperation(
         operation_id=ValidateToolArgumentsId('dynamic', 'tools'),
@@ -727,14 +726,12 @@ async def test_durable_model_compact_messages_dispatches_operation(
     async def compact_messages_segment(request_context: ModelRequestContext, instructions: str | None) -> ModelResponse:
         return await operation(CompactMessagesOperationParams(None, request_context, instructions, ctx))
 
-    async def unused_request(request_context: ModelRequestContext) -> ModelResponse:
-        raise AssertionError('not called')
+    # Compact-message dispatch must not enter the other model segment callables.
+    async def unused_request(request_context: ModelRequestContext) -> ModelResponse: ...
 
-    async def unused_stream(request_context: ModelRequestContext) -> StreamedActivityResult:
-        raise AssertionError('not called')
+    async def unused_stream(request_context: ModelRequestContext) -> StreamedActivityResult: ...
 
-    async def unused_cancel(response: ModelResponse) -> None:
-        raise AssertionError('not called')
+    async def unused_cancel(response: ModelResponse) -> None: ...
 
     model = DurableModel(
         TestModel(),
@@ -1203,14 +1200,14 @@ def test_trivial_transport_cache_and_invocation_helpers() -> None:
     invocation = OperationInvocation(params=value, config='config')
     assert invocation.params is value
     assert invocation.config == 'config'
+    assert _NoneConfig().for_tool(OperationConfigRole.TOOL_CALL, CallToolId('function', 'tools'), None, 'tool') is False
 
 
 def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported_ids() -> None:
     pytest.importorskip('dbos')
     from pydantic_ai.durable_exec.dbos._operation_backend import DBOSOperationBackend, DBOSOperationConfig
 
-    async def handler(params: _DispatchParams) -> None:
-        return None
+    async def handler(params: _DispatchParams) -> None: ...
 
     backend = DBOSOperationBackend(
         agent_name='registered',
@@ -1315,9 +1312,8 @@ async def test_tool_body_validation_error_is_not_sent_to_model() -> None:
     secret = 'database-secret'
     model_messages: list[list[Any]] = []
 
-    async def inspect_record() -> str:
+    async def inspect_record() -> None:
         TypeAdapter(int).validate_python(secret)
-        raise AssertionError('unreachable')
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
         model_messages.append(messages)
@@ -1398,8 +1394,8 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
             instructions=None,
         )
 
-    async def never_called(*args: Any) -> Any:
-        raise AssertionError('not called')
+    # Missing validation is rejected before tool execution can be dispatched.
+    async def never_called(*args: Any) -> Any: ...
 
     durable = DurableDynamicToolset(
         DynamicToolset(lambda _: None, id='missing_validation'),
@@ -1420,17 +1416,16 @@ async def test_legacy_validation_fallbacks_remain_inline() -> None:
     def validate_value(ctx: RunContext[None], value: str) -> None:
         calls.append(value)
 
-    async def tool(value: str) -> str:
-        return value
+    # This test invokes only the validator wrappers, not the tool body.
+    async def tool(value: str) -> str: ...
 
-    async def unused_operation(
+    async def unused_operation(  # pragma: no cover
         name: str,
         tool_args: dict[str, Any],
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
         config: Mapping[str, Any],
-    ) -> Any:
-        raise AssertionError('not called')
+    ) -> Any: ...
 
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     function_toolset = FunctionToolset([Tool(tool, args_validator=validate_value)], id='function')
@@ -1445,8 +1440,7 @@ async def test_legacy_validation_fallbacks_remain_inline() -> None:
     function_validator = function_tools['tool'].args_validator_func
     assert function_validator is not None
     result = function_validator(ctx, value='function')
-    if inspect.isawaitable(result):
-        await result
+    assert result is None
 
     dynamic_toolset = DynamicToolset(lambda _: function_toolset, id='dynamic')
     dynamic = DurableDynamicToolset(

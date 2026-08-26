@@ -1777,8 +1777,8 @@ async def test_prefectify_dynamic_toolset_runs_args_validator_in_task() -> None:
 
     validated: list[int] = []
 
-    async def tool(value: int) -> int:
-        return value
+    # This test dispatches only the validator task, not the tool body.
+    async def tool(value: int) -> int: ...
 
     def validator(ctx: RunContext[None], value: int) -> None:
         validated.append(value)

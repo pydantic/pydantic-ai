@@ -2228,8 +2228,8 @@ async def test_temporalize_dynamic_toolset_runs_args_validator_in_activity() -> 
 
     validated: list[int] = []
 
-    async def tool(value: int) -> int:
-        return value
+    # This test dispatches only the validator activity, not the tool body.
+    async def tool(value: int) -> int: ...
 
     def validator(ctx: RunContext[None], value: int) -> None:
         validated.append(value)
@@ -8745,11 +8745,10 @@ def test_durability_tool_metadata_disables_activity():
 async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs():
     """Capability-owned config preserves every legacy `metadata={'temporal': False}` outcome."""
 
-    async def async_tool() -> str:
-        return 'async'
+    # Metadata resolution inspects these tools but deliberately never executes them.
+    async def async_tool() -> str: ...
 
-    def sync_tool() -> str:
-        return 'sync'
+    def sync_tool() -> str: ...
 
     toolset = FunctionToolset[None](id='opt_out_tools')
     toolset.add_function(async_tool, metadata={'temporal': False})

@@ -191,11 +191,11 @@ class ModelReplacingBeforeModelRequest(AbstractCapability[Any]):
 class RenamedContextBeforeModelRequest(AbstractCapability[Any]):
     id = 'renamed_before_model'
 
+    # Only the declared context parameter name is inspected; dispatch would duplicate other hook tests.
     @durable_operation
-    async def before_model_request(  # pyright: ignore[reportIncompatibleMethodOverride]
+    async def before_model_request(  # pyright: ignore[reportIncompatibleMethodOverride] # pragma: no cover
         self, run_context: RunContext[Any], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        return request_context
+    ) -> ModelRequestContext: ...
 
 
 class ContextPositions(AbstractCapability[Any]):
@@ -334,11 +334,10 @@ async def test_run_context_durable_operation_rejects_unknown_bound_name() -> Non
     class Dynamic(AbstractCapability[Any]):
         id = 'dynamic'
 
-        async def alpha(self) -> str:
-            return 'alpha'
+        # These handlers are registered only to test unknown-name rejection before dispatch.
+        async def alpha(self) -> str: ...
 
-        async def zeta(self) -> str:
-            return 'zeta'
+        async def zeta(self) -> str: ...
 
         def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
             return {'zeta': self.zeta, 'alpha': self.alpha}
@@ -576,15 +575,14 @@ def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
 
 def test_tier_one_override_is_automatically_registered() -> None:
     class TierOneBase(AbstractCapability[Any]):
+        # Registration, not execution, is the behavior under test.
         @tier_one_durable_operation
-        async def provision(self, ctx: RunContext[Any]) -> str:
-            return 'base'
+        async def provision(self, ctx: RunContext[Any]) -> str: ...
 
     class TierOne(TierOneBase):
         id = 'tier_one'
 
-        async def provision(self, ctx: RunContext[Any]) -> str:
-            return 'override'
+        async def provision(self, ctx: RunContext[Any]) -> str: ...
 
     agent = Agent(TestModel(), name='tier_one', capabilities=[TierOne(), RecordingDurability()])
     durability = RecordingDurability.from_agent(agent)
@@ -640,13 +638,13 @@ def test_unannotated_parameter_is_rejected_at_bind() -> None:
     class Unannotated(AbstractCapability[Any]):
         id = 'unannotated'
 
+        # Binding rejects the missing annotation before this handler can be dispatched.
         @durable_operation  # pyright: ignore[reportUnknownArgumentType]
-        async def operation(
+        async def operation(  # pragma: no cover
             self,
             ctx: RunContext[Any],
             value,  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
-        ) -> str:
-            return str(value)  # pyright: ignore[reportUnknownArgumentType]
+        ) -> str: ...
 
     with pytest.raises(UserError, match="Parameter 'value' must have a type annotation"):
         Agent(TestModel(), name='unannotated', capabilities=[Unannotated(), RecordingDurability()])
@@ -800,25 +798,23 @@ def test_sync_non_hook_operation_is_rejected_by_decorator() -> None:
 
 def test_tier_one_base_and_duplicate_override_paths() -> None:
     class Base(AbstractCapability[Any]):
+        # Collection behavior is tested without dispatching any of these declarations.
         @tier_one_durable_operation
-        async def operation(self, ctx: RunContext[Any]) -> str:
-            return 'base'
+        async def operation(self, ctx: RunContext[Any]) -> str: ...
 
         sentinel = True
 
     assert collect_capability_operations(Base()) == {}
 
     class Override(Base):
-        async def operation(self, ctx: RunContext[Any]) -> str:
-            return 'override'
+        async def operation(self, ctx: RunContext[Any]) -> str: ...
 
     assert set(collect_capability_operations(Override())) == {'operation'}
 
     class Duplicate(Base):
         id = 'duplicate'
 
-        async def operation(self, ctx: RunContext[Any]) -> str:
-            return 'override'
+        async def operation(self, ctx: RunContext[Any]) -> str: ...
 
         def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
             return {'operation': self.operation}
@@ -860,8 +856,8 @@ def test_before_model_request_context_parameter_can_have_any_name() -> None:
 
 def test_dynamic_operation_without_run_context_is_supported() -> None:
     class MissingContext(AbstractCapability[Any]):
-        async def operation(self, value: int) -> int:
-            return value
+        # Only the declaration's lack of a `RunContext` parameter is inspected.
+        async def operation(self, value: int) -> int: ...
 
         def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
             return {'operation': self.operation}
