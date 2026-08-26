@@ -109,12 +109,13 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
-XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest']
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']
 """Possible xAI model names.
 
-`grok-4.5`/`grok-4.5-latest` are bridged with a local `Literal` because `xai_sdk`'s `ChatModel` doesn't
-list them yet (as of 1.17.0). Drop the literal once the `xai-sdk` floor is bumped past the release that
-adds them to `ChatModel`.
+The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the
+floor the `xai` extra declares: `grok-build-0.1` arrived in 1.15.0, `grok-4.5`/`grok-4.5-latest` in
+1.17.1, and `grok-4.6` in 1.18.0. Drop each once the floor is bumped past the release that adds it
+to `ChatModel`. https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
 """
 
 # `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
