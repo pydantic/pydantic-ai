@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+import anyio
 import httpx2
 import pytest
 from pydantic import SecretStr
@@ -29,7 +30,10 @@ with try_import() as imports_successful:
         OpenAICodexCredentials,
         OpenAICodexOAuthFlow,
         OpenAICodexProvider,
+        _account_id_from_id_token,  # pyright: ignore[reportPrivateUsage]
+        _credentials_from_token_response,  # pyright: ignore[reportPrivateUsage]
         _jwt_expires_at,  # pyright: ignore[reportPrivateUsage]
+        _post_json,  # pyright: ignore[reportPrivateUsage]
     )
 
     from ..models.mock_openai import MockOpenAIResponses
@@ -148,6 +152,20 @@ def test_from_codex_cli_missing_file(env: TestEnv, tmp_path: Path):
         OpenAICodexProvider()
 
 
+def test_from_codex_cli_unreadable_file(env: TestEnv, tmp_path: Path):
+    (tmp_path / 'auth.json').mkdir()  # a directory: `read_text` raises an `OSError` subclass
+    env.set('CODEX_HOME', str(tmp_path))
+    with pytest.raises(UserError, match='Could not read'):
+        OpenAICodexProvider()
+
+
+def test_from_codex_cli_malformed_json(env: TestEnv, tmp_path: Path):
+    (tmp_path / 'auth.json').write_text('not json')
+    env.set('CODEX_HOME', str(tmp_path))
+    with pytest.raises(UserError, match='Malformed'):
+        OpenAICodexProvider()
+
+
 def test_no_openai_api_key_fallback(env: TestEnv, tmp_path: Path):
     env.set('CODEX_HOME', str(tmp_path))
     env.set('OPENAI_API_KEY', 'sk-fake')
@@ -162,6 +180,52 @@ def test_jwt_expiry_hint():
     now = time.time()
     assert _jwt_expires_at(make_jwt({'exp': now - 100})) is not None
     assert _jwt_expires_at('garbage') is None
+
+
+def test_account_id_claim_fallbacks():
+    assert _account_id_from_id_token('garbage') is None  # unparsable id_token
+    # Top-level claims are consulted when the nested claim is absent or empty.
+    assert _account_id_from_id_token(make_jwt({'chatgpt_account_id': 'acc-top'})) == 'acc-top'
+    assert _account_id_from_id_token(make_jwt({'account_id': 'acc-legacy'})) == 'acc-legacy'
+    assert _account_id_from_id_token(make_jwt({})) is None
+
+
+def test_token_response_validation_errors():
+    with pytest.raises(CredentialsRefreshError, match='access_token'):
+        _credentials_from_token_response({})
+    with pytest.raises(CredentialsRefreshError, match='refresh_token'):
+        _credentials_from_token_response({'access_token': 'a'})
+    with pytest.raises(CredentialsRefreshError, match='account id'):
+        _credentials_from_token_response({'access_token': 'a', 'refresh_token': 'r'})
+
+
+async def test_post_json_success_and_error_shapes(monkeypatch: pytest.MonkeyPatch):
+    """The OAuth POST helper: success, JSON error with `invalid_grant` hint, JSON error without
+    a description, and a non-JSON error body."""
+    real_client = httpx2.AsyncClient
+    queue = [
+        httpx2.Response(200, json={'ok': True}),
+        httpx2.Response(400, json={'error': 'invalid_grant', 'error_description': 'expired'}),
+        httpx2.Response(403, json={'error': 'access_denied'}),
+        httpx2.Response(500, text='gateway exploded'),
+    ]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return queue.pop(0)
+
+    def client_factory(**kwargs: Any) -> httpx2.AsyncClient:
+        return real_client(transport=httpx2.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(httpx2, 'AsyncClient', client_factory)
+
+    url = 'https://auth.openai.com/oauth/token'
+    assert await _post_json(url, {'grant_type': 'refresh_token'}) == {'ok': True}
+    with pytest.raises(CredentialsRefreshError, match='expired; the grant was rejected'):
+        await _post_json(url, {})
+    with pytest.raises(CredentialsRefreshError, match='access_denied'):
+        await _post_json(url, {})
+    with pytest.raises(CredentialsRefreshError, match='gateway exploded'):
+        await _post_json(url, {})
     assert _jwt_expires_at('a.b') is None
     assert _jwt_expires_at(f'a.{base64.urlsafe_b64encode(b"not json").decode()}.c') is None
     assert _jwt_expires_at(make_jwt({'exp': 'soon'})) is None
@@ -228,7 +292,7 @@ async def test_malformed_jwt_degrades_to_401_path(monkeypatch: pytest.MonkeyPatc
         response = await client.get('https://chatgpt.com/backend-api/codex/x')
 
     assert response.status_code == 200
-    assert len(mock.forms) == 1  # exactly one refresh — from the 401, not the unparseable hint
+    assert len(mock.forms) == 1  # exactly one refresh — from the 401, not the unparsable hint
     assert requests_seen == [old_bearer, 'Bearer access-new']  # original + one replay
 
 
@@ -241,7 +305,7 @@ async def test_simultaneous_401s_single_flight_recheck(monkeypatch: pytest.Monke
     provider = make_provider(make_credentials())  # no expiry hint: only the 401 can trigger refresh
     old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
     sends: list[str] = []
-    lock = asyncio.Lock()
+    lock = anyio.Lock()
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
         async with lock:
@@ -260,6 +324,29 @@ async def test_simultaneous_401s_single_flight_recheck(monkeypatch: pytest.Monke
     assert provider.credentials.access_token.get_secret_value() == 'access-new'
     assert len(sends) == 10  # every logical request was sent exactly twice (original + replay)
     assert sorted(set(sends)) == sorted({'Bearer access-new', old_bearer})
+
+
+async def test_401_after_inflight_rotation_replays_without_second_refresh(monkeypatch: pytest.MonkeyPatch):
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    provider = make_provider(make_credentials())
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Another task rotates the credentials while this request is in flight, so its 401
+            # must replay with the fresh set directly instead of refreshing a second time.
+            await provider._refresh_for_401(0)  # pyright: ignore[reportPrivateUsage]
+            return httpx2.Response(401)
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        response = await client.get('https://chatgpt.com/backend-api/codex/x')
+
+    assert response.status_code == 200
+    assert len(mock.forms) == 1  # only the in-flight rotation refreshed; the 401 did not
 
 
 async def test_non_expiry_401_does_not_loop(monkeypatch: pytest.MonkeyPatch):
@@ -312,9 +399,9 @@ async def test_callback_failure_updates_memory_but_raises_persistence_error(monk
     old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        if request.headers['authorization'] == old_bearer:
-            return httpx2.Response(401)
-        return httpx2.Response(200)
+        # The persistence error surfaces during the refresh, so the replay never goes out.
+        assert request.headers['authorization'] == old_bearer
+        return httpx2.Response(401)
 
     async with authed_client(provider, handler) as client:
         with pytest.raises(CredentialsPersistenceError, match='persistence callback raised'):
@@ -340,12 +427,50 @@ def test_sync_auth_flow_is_rejected():
         auth.sync_auth_flow(httpx2.Request('GET', 'https://example.com'))
 
 
+async def test_auth_never_sent_to_foreign_hosts():
+    """A caller-supplied client may be reused for other destinations; credentials stay home."""
+    provider = make_provider()
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        response = await client.get('https://example.com/unrelated')
+
+    assert response.status_code == 200
+    assert 'authorization' not in seen[0].headers
+    assert 'chatgpt-account-id' not in seen[0].headers
+    assert 'originator' not in seen[0].headers
+
+
 def test_openai_client_passthrough():
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key='irrelevant', base_url='https://chatgpt.com/backend-api/codex')
     provider = OpenAICodexProvider(openai_client=client)
     assert provider.client is client  # used as-is: no credential injection, no auth wrapping
+
+
+async def test_caller_supplied_http_client_gets_scoped_auth():
+    http_client = httpx2.AsyncClient()
+    try:
+        OpenAICodexProvider(credentials=make_credentials(), http_client=http_client)
+        assert isinstance(http_client.auth, OpenAICodexAuth)
+    finally:
+        await http_client.aclose()
+
+
+async def test_reopen_after_close_reattaches_auth():
+    """Exiting the provider context closes its owned client; re-entering rebuilds one with auth."""
+    provider = make_provider()
+    async with provider:
+        pass
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not http_client.is_closed
+        assert isinstance(http_client.auth, OpenAICodexAuth)
 
 
 # --- Flow primitives ---
@@ -594,3 +719,82 @@ async def test_forced_stream_without_events_raises(allow_model_requests: None):
     model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
     with pytest.raises(UnexpectedModelBehavior, match='without content'):
         await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+
+
+# --- Session affinity (mirrors the official Codex client's session/thread identifiers) ---
+
+
+def _codex_model_with_streams(count: int) -> tuple[OpenAIResponsesModel, MockOpenAIResponses]:
+    events = [_codex_stream(slim_completed=True) for _ in range(count)]
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
+    return model, cast(MockOpenAIResponses, mock_client)
+
+
+def _turn(conversation_id: str | None, run_id: str | None) -> ModelRequest:
+    return ModelRequest(parts=[UserPromptPart('hi')], conversation_id=conversation_id, run_id=run_id)
+
+
+async def test_session_affinity_stable_within_conversation(allow_model_requests: None):
+    """Runs sharing a conversation share `session-id` and `prompt_cache_key`; each run is its own thread.
+
+    Mirrors the official client's semantics: threads (root and subagents) differ in `thread-id` but
+    share the session id and cache key.
+    """
+    model, mock = _codex_model_with_streams(2)
+    await model.request([_turn('conv-1', 'run-1')], None, ModelRequestParameters())
+    await model.request([_turn('conv-1', 'run-1'), _turn('conv-1', 'run-2')], None, ModelRequestParameters())
+
+    first, second = mock.response_kwargs
+    assert first['extra_headers']['session-id'] == 'conv-1'
+    assert first['extra_headers']['thread-id'] == 'run-1'
+    assert first['extra_headers']['x-client-request-id'] == 'run-1'
+    assert first['prompt_cache_key'] == 'conv-1'
+    assert second['extra_headers']['session-id'] == 'conv-1'
+    assert second['extra_headers']['thread-id'] == 'run-2'
+    assert second['prompt_cache_key'] == 'conv-1'
+
+
+async def test_session_affinity_isolated_between_conversations(allow_model_requests: None):
+    model, mock = _codex_model_with_streams(2)
+    await model.request([_turn('conv-1', 'run-1')], None, ModelRequestParameters())
+    await model.request([_turn('conv-2', 'run-2')], None, ModelRequestParameters())
+
+    first, second = mock.response_kwargs
+    assert first['extra_headers']['session-id'] == 'conv-1'
+    assert second['extra_headers']['session-id'] == 'conv-2'
+    assert first['prompt_cache_key'] != second['prompt_cache_key']
+
+
+async def test_session_affinity_explicit_overrides_win(allow_model_requests: None):
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    settings = OpenAIResponsesModelSettings(
+        openai_prompt_cache_key='my-key', extra_headers={'session-id': 'my-session'}
+    )
+    await model.request([_turn('conv-1', 'run-1')], settings, ModelRequestParameters())
+
+    kwargs = mock.response_kwargs[0]
+    assert kwargs['extra_headers']['session-id'] == 'my-session'  # the explicit header wins
+    assert kwargs['extra_headers']['thread-id'] == 'run-1'  # unspecified headers are still derived
+    assert kwargs['prompt_cache_key'] == 'my-key'  # the explicit cache key wins
+
+
+async def test_session_affinity_thread_falls_back_to_session(allow_model_requests: None):
+    # A request stamped with a conversation but no run (e.g. hand-built history) is one thread.
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    await model.request([_turn('conv-1', None)], None, ModelRequestParameters())
+
+    kwargs = mock.response_kwargs[0]
+    assert kwargs['extra_headers']['thread-id'] == 'conv-1'
+    assert kwargs['extra_headers']['x-client-request-id'] == 'conv-1'
+
+
+async def test_no_affinity_without_conversation_identity(allow_model_requests: None):
+    """Direct model use outside an agent run leaves the wire shape unchanged."""
+    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
+    await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+
+    kwargs = mock.response_kwargs[0]
+    assert 'prompt_cache_key' not in kwargs
+    for header in ('session-id', 'thread-id', 'x-client-request-id'):
+        assert header not in kwargs['extra_headers']

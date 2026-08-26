@@ -30,5 +30,8 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
             openai_responses_requires_streaming=True,
             openai_responses_requires_store_false=True,
             openai_supports_input_token_counting=False,
+            # The official Codex client keys prompt-cache affinity off a stable session id and
+            # emits `session-id`/`thread-id` headers on every request; mirror that per conversation.
+            openai_responses_session_affinity=True,
         ),
     )

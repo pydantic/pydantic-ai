@@ -61,6 +61,7 @@ __all__ = (
 )
 
 _CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
+_CODEX_HOST = httpx2.URL(_CODEX_BASE_URL).host
 _AUTHORIZE_URL = 'https://auth.openai.com/oauth/authorize'
 _TOKEN_URL = 'https://auth.openai.com/oauth/token'
 # The public Codex CLI client: OpenAI's registration pins the redirect URI to exactly this
@@ -294,9 +295,10 @@ class OpenAICodexOAuthFlow:
 class OpenAICodexAuth(httpx2.Auth):
     """httpx auth injecting Codex subscription headers, with single-flight refresh-and-replay.
 
-    Injects `Authorization: Bearer …`, `chatgpt-account-id`, and `originator`. On a 401 it performs
-    at most one refresh-and-replay; non-expiry 401s therefore cannot loop. The proactive expiry
-    check treats the unverified JWT `exp` as a hint only.
+    Injects `Authorization: Bearer …`, `chatgpt-account-id`, and `originator`, but only on
+    requests to the Codex host, so a caller-supplied client reused for other destinations never
+    leaks credentials. On a 401 it performs at most one refresh-and-replay; non-expiry 401s
+    therefore cannot loop. The proactive expiry check treats the unverified JWT `exp` as a hint only.
     """
 
     def __init__(self, provider: OpenAICodexProvider) -> None:
@@ -312,6 +314,11 @@ class OpenAICodexAuth(httpx2.Auth):
         raise RuntimeError('`OpenAICodexAuth` only supports async HTTP clients.')
 
     async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
+        if request.url.host != _CODEX_HOST:
+            # Never send subscription credentials to a foreign destination: a caller-supplied
+            # client may be reused for arbitrary hosts.
+            yield request
+            return
         # The two classes are deliberately coupled in one module; the provider owns the state and
         # the auth is its wire-side skin.
         await self._provider._refresh_if_stale()  # pyright: ignore[reportPrivateUsage]
@@ -388,7 +395,9 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 injection entirely; `credentials`, `on_credentials_refresh`, and `http_client`
                 must be `None`.
             http_client: An existing HTTP client to use. Note the provider attaches
-                `OpenAICodexAuth` to whichever client it ends up using.
+                `OpenAICodexAuth` to whichever client it ends up using; the auth only injects
+                credentials on requests to the Codex host, so the client can safely be reused
+                for other destinations.
         """
         self._on_credentials_refresh = on_credentials_refresh
         if openai_client is not None:

@@ -1,6 +1,6 @@
 # OpenAI Codex
 
-Use your [ChatGPT/Codex subscription](https://chatgpt.com/codex) with any Pydantic AI agent: OpenAI officially permits Codex subscription authentication from alternative harnesses, and Pydantic AI ships it as the `openai-codex` provider, distinct from the API-key-based [`openai` provider](openai.md). Requests go to the Codex backend with OAuth credentials instead of an API key.
+Use your [ChatGPT/Codex subscription](https://chatgpt.com/codex) with any Pydantic AI agent: the `openai-codex` provider authenticates against the Codex backend using the same OAuth flow as the official [Codex CLI](https://developers.openai.com/codex/cli/), distinct from the API-key-based [`openai` provider](openai.md). Requests go to the Codex backend with OAuth credentials instead of an API key. Your use of the Codex backend is governed by your agreement with OpenAI; check the applicable [usage policies](https://openai.com/policies/) for your subscription.
 
 ## Install
 
@@ -94,6 +94,12 @@ print(agent.run_sync('hello from my own login flow').output)
 
 !!! note
     The public Codex client pins its redirect URI to exactly `http://localhost:1455/auth/callback`, so login always completes on the user's machine: a hosted web app can never receive the callback directly. Web apps run this same flow from a component on the user's machine (or a tunnel to it) and send the resulting credentials to the backend.
+
+## Session affinity and prompt caching
+
+The official Codex client keys prompt-cache affinity off a stable session ID: it sends `session-id` and `thread-id` headers on every request and defaults the body `prompt_cache_key` to the session ID. Pydantic AI mirrors this per conversation: when messages carry a [`conversation_id`](../message-history.md) (every agent run does), the conversation is the session and the run is the thread, and `prompt_cache_key` defaults to the conversation ID. Runs that share message history therefore share cache affinity automatically, and separate conversations stay isolated.
+
+An explicit `openai_prompt_cache_key` model setting, or explicitly supplied `extra_headers`, always win over the derived values.
 
 ## Limitations
 

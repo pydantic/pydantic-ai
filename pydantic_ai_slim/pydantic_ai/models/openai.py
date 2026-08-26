@@ -578,6 +578,21 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
         model_settings.pop(setting, None)
 
 
+def _session_affinity_ids(messages: list[ModelMessage]) -> tuple[str, str] | None:
+    """Conversation-scoped `(session_id, thread_id)` mirroring the official Codex client's affinity.
+
+    The session is the conversation (stable across runs sharing message history) and the thread is
+    the run (stable within a run, distinct across runs), matching how Codex threads share a session.
+    Returns `None` when the messages carry no conversation identity (e.g. direct `Model.request()`
+    usage outside an agent run), in which case the request is left unchanged.
+    """
+    session_id = next((m.conversation_id for m in reversed(messages) if m.conversation_id), None)
+    if session_id is None:
+        return None
+    thread_id = next((m.run_id for m in reversed(messages) if m.run_id), None)
+    return session_id, thread_id or session_id
+
+
 @dataclass
 class _ResponsesRequestParams:
     """Typed request parameters shared by Responses API calls."""
@@ -2772,6 +2787,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             store = False
         extra_headers, timeout = self._build_request_options(model_settings)
 
+        prompt_cache_key: str | Omit = model_settings.get('openai_prompt_cache_key', OMIT)
+        if profile.get('openai_responses_session_affinity', False) and (affinity := _session_affinity_ids(messages)):
+            session_id, thread_id = affinity
+            # Explicit user-supplied headers and cache key win over the derived affinity.
+            extra_headers.setdefault('session-id', session_id)
+            extra_headers.setdefault('thread-id', thread_id)
+            extra_headers.setdefault('x-client-request-id', thread_id)
+            if isinstance(prompt_cache_key, Omit):
+                prompt_cache_key = session_id
+
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
         prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
 
@@ -2799,7 +2824,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     store=store,
                     user=model_settings.get('openai_user', OMIT),
                     include=include or OMIT,
-                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                    prompt_cache_key=prompt_cache_key,
                     prompt_cache_retention=prompt_cache_retention,
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     background=model_settings.get('openai_background', OMIT),

@@ -383,6 +383,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
     """
 
+    openai_responses_session_affinity: bool
+    """Whether to emit conversation-scoped session-affinity metadata on Responses requests. Default: `False`.
+
+    When `True` and the request messages carry a `conversation_id`, the canonical `session-id`,
+    `thread-id`, and `x-client-request-id` headers are emitted (the session is the conversation,
+    the thread is the run), and the body `prompt_cache_key` defaults to the session ID unless
+    `openai_prompt_cache_key` is set explicitly. Set for the Codex backend, whose official client
+    preserves these identifiers across turns for prompt-cache affinity.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
