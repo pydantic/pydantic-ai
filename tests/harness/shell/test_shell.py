@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import shlex
+import shutil
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from unittest.mock import MagicMock, patch
 
 import anyio
@@ -65,6 +67,15 @@ def _shell_toolset(
         persist_cwd=False,
         allow_interactive=False,
     )
+
+
+def _raise_oserror(code: int, message: str) -> Callable[..., Awaitable[NoReturn]]:
+    """Build a stand-in for `anyio.open_process` that fails with a given errno."""
+
+    async def fail(*args: object, **kwargs: object) -> NoReturn:
+        raise OSError(code, message)
+
+    return fail
 
 
 def _read_env_var(name: str) -> str:
@@ -401,6 +412,26 @@ class TestCwdCapture:
         persist_toolset._apply_captured_cwd(capture)
         assert persist_toolset._cwd == original
 
+    async def test_capture_not_utf8_keeps_cwd(self, persist_toolset: ShellToolset[None], shell_dir: Path) -> None:
+        # The wrapper runs `pwd` in the same shell as the model's command, so a
+        # shell function named `pwd` decides the bytes written to the capture
+        # file. Decoding them raises `UnicodeDecodeError`, a `ValueError` and
+        # not an `OSError`, so the guard has to cover both.
+        result = await persist_toolset.run_command(r"""pwd() { printf '\377\376'; }""")
+        assert '[exit code' not in result
+        assert persist_toolset._cwd == shell_dir
+
+    async def test_capture_path_too_long_keeps_cwd(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path, tmp_path: Path
+    ) -> None:
+        # `Path.is_dir` propagates ENAMETOOLONG before 3.14 and returns `False`
+        # from 3.14 on. Either way the recorded path is junk and the tracked cwd
+        # must survive.
+        capture = tmp_path / 'cwd'
+        capture.write_text(f'/{"x" * 300}')
+        persist_toolset._apply_captured_cwd(capture)
+        assert persist_toolset._cwd == shell_dir
+
 
 class TestForRunIsolation:
     """B3: `get_toolset` builds one shared instance at agent construction, so
@@ -441,6 +472,115 @@ class TestPersistCwdHardening:
         spoof = f'true ; echo __HARNESS_PWD__{shell_dir / "subdir"}'
         await persist_toolset.run_command(spoof)
         assert persist_toolset._cwd == shell_dir
+
+
+class TestSpawnFailures:
+    """Failures raised by the spawn itself, which reached past `_recoverable`
+    when it only caught `PermissionError` and aborted the whole run."""
+
+    def _toolset_in(self, cwd: Path) -> ShellToolset[None]:
+        return ShellToolset(
+            cwd=cwd,
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=10.0,
+            max_output_chars=50_000,
+            persist_cwd=False,
+            allow_interactive=False,
+        )
+
+    async def test_cwd_deleted(self, shell_dir: Path) -> None:
+        # The model's own earlier command can do this: `mv "$PWD" "$PWD-old"`
+        # passes the denylist, which only inspects the first token.
+        target = shell_dir / 'subdir'
+        ts = self._toolset_in(target)
+        shutil.rmtree(target)
+        with pytest.raises(ModelRetry, match='working directory no longer exists'):
+            await ts.run_command('echo hello')
+
+    async def test_cwd_replaced_by_file(self, shell_dir: Path) -> None:
+        target = shell_dir / 'subdir'
+        ts = self._toolset_in(target)
+        shutil.rmtree(target)
+        target.write_text('not a directory\n')
+        with pytest.raises(ModelRetry, match='no longer a directory'):
+            await ts.run_command('echo hello')
+
+    async def test_cwd_deleted_start_command(self, shell_dir: Path) -> None:
+        target = shell_dir / 'subdir'
+        ts = self._toolset_in(target)
+        shutil.rmtree(target)
+        with pytest.raises(ModelRetry, match='working directory no longer exists'):
+            await ts.start_command('sleep 30')
+
+    async def test_message_omits_host_path(self, shell_dir: Path) -> None:
+        target = shell_dir / 'subdir'
+        ts = self._toolset_in(target)
+        shutil.rmtree(target)
+        with pytest.raises(ModelRetry) as exc_info:
+            await ts.run_command('echo hello')
+        assert str(target) not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        ('command', 'expected'),
+        [('echo hi\x00there', 'NUL byte'), ('echo \ud800', 'cannot be encoded for the operating system')],
+    )
+    async def test_unspawnable_command_string(self, toolset: ShellToolset[None], command: str, expected: str) -> None:
+        with pytest.raises(ModelRetry, match=expected):
+            await toolset.run_command(command)
+
+    async def test_unspawnable_command_string_start_command(self, toolset: ShellToolset[None]) -> None:
+        with pytest.raises(ModelRetry, match='NUL byte'):
+            await toolset.start_command('echo \x00')
+
+    @pytest.mark.parametrize('escaped', ['\udc80', '\udcff'])
+    async def test_surrogateescape_command_still_runs(self, toolset: ShellToolset[None], escaped: str) -> None:
+        # The spawn encodes with `surrogateescape`, which round-trips this range
+        # back to the raw byte it came from. Screening the command as plain
+        # UTF-8 would reject a command the OS runs.
+        result = await toolset.run_command(f'echo {escaped}')
+        assert '[exit code' not in result
+
+    @pytest.mark.parametrize('env', [{'FOO': 'bar\x00baz'}, {'FO\x00O': 'bar'}, {'FOO': 'bar\ud800'}])
+    async def test_unspawnable_env_aborts(self, shell_dir: Path, env: dict[str, str]) -> None:
+        # The spawn reports a NUL or an unencodable character as the same
+        # `ValueError` wherever it came from. This one came from the
+        # application's `env`, so the model cannot fix it and must not be asked
+        # to retry.
+        ts = ShellToolset(
+            cwd=shell_dir,
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=10.0,
+            max_output_chars=50_000,
+            persist_cwd=False,
+            allow_interactive=False,
+            env=env,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            await ts.run_command('echo hello')
+        assert not isinstance(exc_info.value, ModelRetry)
+
+    async def test_argument_or_environment_too_long_propagates(
+        self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # E2BIG does not identify whether the model's command or the
+        # application's environment crossed the combined platform limit. An
+        # application configuration error must not become an unwinnable retry.
+        monkeypatch.setattr(anyio, 'open_process', _raise_oserror(errno.E2BIG, 'Argument list too long'))
+        with pytest.raises(OSError, match='Argument list too long'):
+            await toolset.run_command('echo hello')
+
+    async def test_non_recoverable_errno_propagates(
+        self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A host that can't fork is not something the model can retry its way
+        # out of, so it must keep aborting the run.
+        monkeypatch.setattr(anyio, 'open_process', _raise_oserror(errno.ENOMEM, 'Cannot allocate memory'))
+        with pytest.raises(OSError, match='Cannot allocate memory'):
+            await toolset.run_command('echo hello')
 
 
 class TestRunCommand:
