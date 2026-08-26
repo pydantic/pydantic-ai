@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
@@ -88,8 +88,9 @@ WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
 """Handler type for wrap_output_process."""
 
-DurableOperationHandler: TypeAlias = Callable[..., Awaitable[Any]]
-"""Handler contributed by a capability for durable execution."""
+DurableOperationDispatcher: TypeAlias = Callable[
+    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
+]
 
 
 CapabilityPosition = Literal['outermost', 'innermost']
@@ -186,6 +187,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     YAML/JSON specs (via `Agent.from_spec`); they have
     sensible defaults and typically don't need to be overridden.
     """
+
+    _durable_operation_bindings: dict[int, dict[str, DurableOperationDispatcher]] = field(
+        default_factory=lambda: {}, init=False, repr=False
+    )
 
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
@@ -308,6 +313,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         is that `innermost` capabilities can't contribute toolsets of their own.
         """
         return self
+
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Install private per-run state before lifecycle hooks."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -436,8 +444,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_durable_operations(self) -> dict[str, DurableOperationHandler] | None:
-        """Durable units this capability contributes, keyed by capability-scoped id."""
+    def get_durable_operations(self) -> Mapping[str, object] | None:
+        """Return async handlers contributed as durable operations, keyed by operation name.
+
+        Invoke a contributed handler with
+        [`RunContext.durable_operation()`][pydantic_ai.tools.RunContext.durable_operation], passing
+        the same typed handler as the third argument. Its handle dispatches through a bound
+        durability engine, or awaits the original handler when no durability capability is bound.
+
+        Returns:
+            A mapping from stable operation names to async handlers, or `None`.
+        """
         return None
 
     # --- Tool preparation hooks ---

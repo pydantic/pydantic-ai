@@ -2,11 +2,11 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import sys
-from collections.abc import Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, ParamSpec, cast
 
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
@@ -33,6 +33,19 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 
 RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+
+P = ParamSpec('P')
+R = TypeVar('R')
+
+
+class DurableOperationHandle(Generic[P, R]):
+    """A typed callable for a capability-contributed durable operation."""
+
+    def __init__(self, handler: Callable[P, Awaitable[R]]) -> None:
+        self._handler = handler
+
+    async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        return await self._handler(*args, **kwargs)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -84,6 +97,33 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
+    _durable_operations: dict[tuple[int, str], Callable[..., Awaitable[object]]] = field(
+        default_factory=lambda: {}, repr=False
+    )
+    _durability_bound: bool = field(default=False, repr=False)
+
+    def durable_operation(
+        self,
+        capability: AbstractCapability[object],
+        name: str,
+        handler: Callable[P, Awaitable[R]],
+    ) -> DurableOperationHandle[P, R]:
+        """Look up a typed capability operation, falling back to its original handler."""
+        operation = self._durable_operations.get((id(capability), name))
+        if operation is None and self.agent is not None:
+            dispatcher = capability._durable_operation_bindings.get(id(self.agent), {}).get(  # pyright: ignore[reportPrivateUsage]
+                name
+            )
+            if dispatcher is not None:
+
+                async def bound_operation(*args: object, **kwargs: object) -> object:
+                    return await dispatcher(cast(RunContext[object], self), args, kwargs)
+
+                operation = bound_operation
+        if operation is None:
+            return DurableOperationHandle(handler)
+        return DurableOperationHandle(cast(Callable[P, Awaitable[R]], operation))
+
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])

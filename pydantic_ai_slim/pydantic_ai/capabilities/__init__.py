@@ -1,7 +1,7 @@
 from typing import Any, TypeAlias
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai._run_context import AgentDepsT, DurableOperationHandle
 from pydantic_ai.native_tools._tool_search import (
     ToolSearchFunc as ToolSearchFunc,
     ToolSearchLocalStrategy as ToolSearchLocalStrategy,
@@ -155,6 +155,7 @@ __all__ = [
     'CombinedCapability',
     'DynamicCapability',
     'durable_operation',
+    'DurableOperationHandle',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',

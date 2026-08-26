@@ -217,11 +217,16 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
-        with set_current_run_context(run_ctx):
+        run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
+        if run_ctx._durability_bound:  # pyright: ignore[reportPrivateUsage]
+            with set_current_run_context(run_ctx):
+                await run_capability.before_run(run_ctx)
+                current_ctx = contextvars.copy_context()
+        else:
             await run_capability.before_run(run_ctx)
-            # Capture context vars set by wrap_run/before_run so they can be propagated to the
-            # caller's task, where the run body and any child tasks execute.
             current_ctx = contextvars.copy_context()
+        # Capture context vars set by wrap_run/before_run so they can be propagated to the
+        # caller's task, where the run body and any child tasks execute.
         _wrap_context = [
             (var, current_ctx[var])
             for var in current_ctx
@@ -1131,6 +1136,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     @property
     def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
         """The Pydantic validation context configured for this agent, or a function that builds it from the run context."""
+        return self._validation_context
+
+    def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
         return self._validation_context
 
     def __repr__(self) -> str:

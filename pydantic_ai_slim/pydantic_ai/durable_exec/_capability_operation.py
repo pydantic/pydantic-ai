@@ -128,7 +128,35 @@ def durable_operation(*, name: str | None = None) -> Callable[[Callable[P, A]], 
 
 
 def durable_operation(function: Any = None, /, *, name: str | None = None) -> Any:
-    """Declare an async capability method as a durable operation."""
+    """Declare an async capability method as a durable operation.
+
+    The method keeps its original signature. During a run with a durability capability, calls
+    dispatch through that engine's activity, step, or task. Without durability, calls await the
+    original method directly. The optional `name` is the stable operation name within the
+    capability's required stable `id`.
+
+    ```python
+    from pydantic_ai import RunContext
+    from pydantic_ai.capabilities import AbstractCapability, durable_operation
+
+    class Audit(AbstractCapability[None]):
+        id = 'audit'
+
+        @durable_operation
+        async def record(self, ctx: RunContext[None], message: str) -> bool:
+            return bool(message)
+    ```
+
+    Args:
+        function: The async capability method when used as `@durable_operation`.
+        name: An explicit stable name when used as `@durable_operation(name='...')`.
+
+    Returns:
+        The marked method with its parameter and return types preserved.
+
+    Raises:
+        TypeError: If the decorated method is synchronous.
+    """
 
     def decorate(target: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
         if not inspect.iscoroutinefunction(target):
@@ -152,59 +180,29 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                     break
             if ctx is None:
                 return await target(self, *args, **kwargs)
-            agent = ctx.agent
-            if agent is not None:
-                from ._base import BaseDurabilityCapability
-
-                durability = next(
-                    (
-                        cap
-                        for cap in leaf_capabilities(agent.root_capability)
-                        if isinstance(cap, BaseDurabilityCapability)
-                    ),
-                    None,
-                )
-                if durability is not None:
-                    request_context = next(
-                        (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
-                    )
-                    if isinstance(request_context, ModelRequestContext):
-                        projection = ModelRequestContextProjection.from_context(request_context)
-                        dispatch_args = tuple(projection if value is request_context else value for value in args)
-                        dispatch_kwargs = {
-                            key: projection if value is request_context else value for key, value in kwargs.items()
-                        }
-                    else:
-                        dispatch_args = args
-                        dispatch_kwargs = kwargs
-                    return cast(
-                        R,
-                        await _dispatch_and_apply_model_request_projection(
-                            durability, self, marker.name, ctx, dispatch_args, dispatch_kwargs, request_context
-                        ),
-                    )
-            return await target(self, *args, **kwargs)
+            request_context = next(
+                (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
+            )
+            if isinstance(request_context, ModelRequestContext):
+                projection = ModelRequestContextProjection.from_context(request_context)
+                dispatch_args = tuple(projection if value is request_context else value for value in args)
+                dispatch_kwargs = {
+                    key: projection if value is request_context else value for key, value in kwargs.items()
+                }
+            else:
+                dispatch_args = args
+                dispatch_kwargs = kwargs
+            handler = target.__get__(self, type(self))
+            result = await ctx.durable_operation(self, marker.name, handler)(*dispatch_args, **dispatch_kwargs)
+            if request_context is not None and isinstance(result, ModelRequestContextProjection):
+                result.apply(request_context)
+                return cast(R, request_context)
+            return cast(R, result)
 
         setattr(decorated, '__pydantic_ai_durable_operation__', marker)
         return decorated
 
     return decorate(function) if function is not None else decorate
-
-
-async def _dispatch_and_apply_model_request_projection(
-    durability: Any,
-    capability: AbstractCapability[Any],
-    operation: str,
-    ctx: RunContext[Any],
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    request_context: ModelRequestContext | None,
-) -> Any:
-    result = await durability._invoke_capability_operation(capability, operation, ctx, args, kwargs)
-    if request_context is not None and isinstance(result, ModelRequestContextProjection):
-        result.apply(request_context)
-        return request_context
-    return result
 
 
 def tier_one_durable_operation(function: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
@@ -231,7 +229,9 @@ _NEVER_DURABLE_HOOKS = {
 }
 
 
-def collect_capability_operations(capability: AbstractCapability[Any]) -> dict[str, CapabilityMethodDeclaration]:
+def collect_capability_operations(  # noqa: C901
+    capability: AbstractCapability[Any],
+) -> dict[str, CapabilityMethodDeclaration]:
     handlers = dict(capability.get_durable_operations() or {})
     for base in type(capability).__mro__[1:]:
         for method_name, base_member in vars(base).items():
@@ -244,7 +244,8 @@ def collect_capability_operations(capability: AbstractCapability[Any]) -> dict[s
             if member is not base_member:
                 if marker.name in handlers:
                     raise UserError(
-                        f'Duplicate durable operation name {marker.name!r} on capability {capability.id!r}.'
+                        f'Duplicate durable operation name {marker.name!r} on capability {capability.id!r}. '
+                        'Use `@durable_operation(name=...)` or change the hook key.'
                     )
                 handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
 
@@ -257,11 +258,17 @@ def collect_capability_operations(capability: AbstractCapability[Any]) -> dict[s
         if reason := _NEVER_DURABLE_HOOKS.get(method_name):
             raise UserError(reason)
         if marker.name in handlers:
-            raise UserError(f'Duplicate durable operation name {marker.name!r} on capability {capability.id!r}.')
+            raise UserError(
+                f'Duplicate durable operation name {marker.name!r} on capability {capability.id!r}. '
+                'Use `@durable_operation(name=...)` or change the hook key.'
+            )
         handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
 
     declarations: dict[str, CapabilityMethodDeclaration] = {}
     for operation_name, handler in handlers.items():
+        if not callable(handler):
+            raise UserError(f'Durable operation {operation_name!r} must be an async callable.')
+        handler = cast(Callable[..., Awaitable[Any]], handler)
         original = cast(_DurableOperationMarker | None, getattr(handler, '__pydantic_ai_durable_operation__', None))
         function = original.function if original is not None else handler
         bound = function.__get__(capability, type(capability))

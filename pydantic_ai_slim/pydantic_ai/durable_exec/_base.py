@@ -380,7 +380,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             if capability_id is None:
                 raise UserError(
                     f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
-                    '`id` because persisted operation identity and worker-side recovery must remain stable.'
+                    '`id` because persisted operation identity and worker-side recovery must remain stable. '
+                    f"Construct it as `{type(capability).__name__}(id='...')`."
                 )
             for operation_name, declaration in declarations.items():
                 key = (capability_id, operation_name)
@@ -437,6 +438,49 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 )
                 self._bound_capability_operations[key] = backend.bind(operation)
                 self._capability_declarations[key] = declaration
+
+                async def dispatch_for_run_context(
+                    ctx: RunContext[object],
+                    args: tuple[object, ...],
+                    kwargs: dict[str, object],
+                    *,
+                    _capability: AbstractCapability[Any] = capability,
+                    _operation_name: str = operation_name,
+                ) -> Any:
+                    return await self._invoke_capability_operation(_capability, _operation_name, ctx, args, kwargs)
+
+                capability._durable_operation_bindings = {
+                    **capability._durable_operation_bindings,
+                    id(agent): {
+                        **capability._durable_operation_bindings.get(id(agent), {}),
+                        operation_name: dispatch_for_run_context,
+                    },
+                }
+
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        ctx._durability_bound = True  # pyright: ignore[reportPrivateUsage]
+        if ctx.agent is None:
+            return
+        operations: dict[tuple[int, str], Callable[..., Awaitable[object]]] = {}
+        for capability in leaf_capabilities(ctx.agent.root_capability):
+            capability_id = capability.id
+            if capability_id is None:
+                continue
+            for bound_capability_id, operation_name in self._bound_capability_operations:
+                if capability_id != bound_capability_id:
+                    continue
+
+                async def dispatch(
+                    *args: object,
+                    _capability: AbstractCapability[Any] = capability,
+                    _operation_name: str = operation_name,
+                    **kwargs: object,
+                ) -> object:
+                    return await self._invoke_capability_operation(_capability, _operation_name, ctx, args, kwargs)
+
+                operations[(id(capability), operation_name)] = dispatch
+        ctx._durable_operations.clear()  # pyright: ignore[reportPrivateUsage]
+        ctx._durable_operations.update(operations)  # pyright: ignore[reportPrivateUsage]
 
     async def _invoke_capability_operation(
         self,
@@ -1558,6 +1602,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     async def _compact_messages_operation(self, params: CompactMessagesOperationParams) -> ModelResponse:
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
+            params.request_context.model = model
             return await model.compact_messages(params.request_context, instructions=params.instructions)
 
     async def _cancel_suspended_response_without_run_context(

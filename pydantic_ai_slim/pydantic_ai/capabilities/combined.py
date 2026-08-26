@@ -293,6 +293,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 await capability.before_run(cap_ctx)
 
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        for capability in self.capabilities:
+            capability._prepare_run_context(ctx)
+
     async def after_run(
         self,
         ctx: RunContext[AgentDepsT],

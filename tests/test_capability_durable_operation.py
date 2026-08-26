@@ -9,6 +9,7 @@ from typing import Any, ClassVar, cast
 import pytest
 from dbos import DBOS, DBOSConfig, SetWorkflowID
 from prefect import flow
+from prefect.context import TaskRunContext
 from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
 from pydantic_ai import Agent
@@ -404,20 +405,32 @@ async def test_decorated_model_request_hook_round_trips_mutation() -> None:
     assert any(name == 'before_model__capability__before_model.before_model_request' for name, _ in durability.calls)
 
 
-def test_dynamic_hook_and_decorator_produce_the_same_declaration() -> None:
+async def test_dynamic_hook_dispatches_through_public_run_context_lookup() -> None:
     class Dynamic(AbstractCapability[Any]):
         id = 'dynamic'
 
-        async def operation(self, ctx: RunContext[Any], value: int) -> int:
-            return value
+        def __init__(self) -> None:
+            self.in_task = False
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            operation = ctx.durable_operation(self, 'operation', self.operation)
+            self.in_task = await operation(1)
+
+        async def operation(self, value: int) -> bool:
+            return value == 1 and TaskRunContext.get() is not None
 
         def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
             return {'operation': self.operation}
 
-    agent = Agent(TestModel(), name='dynamic', capabilities=[Dynamic(), RecordingDurability()])
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    assert ('dynamic', 'operation') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+    capability = Dynamic()
+    agent = Agent(TestModel(), name='dynamic', capabilities=[capability, PrefectDurability()])
+
+    @flow
+    async def run() -> None:
+        await agent.run('test')
+
+    await run()
+    assert capability.in_task
 
 
 def test_sync_non_hook_operation_is_rejected_by_decorator() -> None:
@@ -507,6 +520,18 @@ def test_two_run_context_parameters_are_rejected_at_bind() -> None:
         match=r"Durable operation '.*operation' cannot take more than one `RunContext` parameter\.",
     ):
         Agent(TestModel(), name='duplicate_context', capabilities=[DuplicateContext(), RecordingDurability()])
+
+
+def test_variadic_run_context_is_rejected_for_durable_operation() -> None:
+    class VariadicContext(AbstractCapability[Any]):
+        id = 'variadic_context'
+
+        @durable_operation
+        async def operation(self, *ctx: RunContext[Any]) -> None:
+            pass
+
+    with pytest.raises(UserError, match=r'RunContext cannot be used as a variadic positional parameter'):
+        Agent(TestModel(), name='variadic_context', capabilities=[VariadicContext(), RecordingDurability()])
 
 
 async def test_defensive_capability_operation_paths() -> None:
