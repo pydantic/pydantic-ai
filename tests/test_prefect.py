@@ -222,6 +222,13 @@ def test_durability_declarative_contract_rejects_other_invalid_fields(
 
 
 async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin base defaults that concrete engines override and that public runs cannot isolate.
+
+    The wrapper assembly, naming, config composition, serialization hooks, and abstract durable
+    primitive are internal extension points. Public capability runs exercise each concrete
+    engine's overrides instead, so direct calls keep the base implementations covered without
+    constructing a synthetic public engine for every hook.
+    """
     events: list[AgentStreamEvent] = []
 
     class FunctionOnlyDurability(PrefectDurability):
@@ -302,11 +309,9 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
         await BaseDurabilityCapability.run_durable_unit(base, 'unit', value, inputs=(), config=None)
 
     payload = await wrap_tool_call_result(value())
-    # `monkeypatch` restores these class attributes even if an assertion below raises; a bare
-    # assignment would leak the mutation into every later test that builds a `PrefectDurability`.
-    monkeypatch.setattr(type(durability), '_tool_call_result_upgrade_lenient', False)
-    assert durability._unwrap_tool_result(payload) == 'value'  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.undo()
+    with monkeypatch.context() as patch:
+        patch.setattr(type(durability), '_tool_call_result_upgrade_lenient', False)
+        assert durability._unwrap_tool_result(payload) == 'value'  # pyright: ignore[reportPrivateUsage]
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     event = FinalResultEvent(tool_name=None, tool_call_id=None)
@@ -329,7 +334,7 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
 
     @flow
     async def force_sequential() -> None:
-        await BaseDurabilityCapability.wrap_run(bound, ctx, handler=sequential_handler)
+        await bound.wrap_run(ctx, handler=sequential_handler)
 
     await force_sequential()
 
