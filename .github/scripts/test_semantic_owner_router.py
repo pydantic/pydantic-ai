@@ -8,7 +8,7 @@ import urllib.parse
 from collections.abc import Mapping
 from email.message import Message
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 import yaml
@@ -34,6 +34,7 @@ def item(
     labels: list[str] | None = None,
     assignees: list[str] | None = None,
     pull_request: bool = False,
+    author: str = 'contributor',
     state: str = 'open',
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
@@ -47,6 +48,7 @@ def item(
     }
     if pull_request:
         value['pull_request'] = {'url': f'https://api.github.com/pulls/{number}'}
+        value['author'] = {'login': author}
     return value
 
 
@@ -58,6 +60,7 @@ class FakeClient(router.attention.GitHubClient):
         self.drafts: set[int] = set()
         self.changed_counts: dict[int, int] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
+        self.search_results: list[list[int]] = []
         self.permissions = {login: 'write' for login in ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')}
         self.calls: list[tuple[str, str, object | None]] = []
 
@@ -74,12 +77,12 @@ class FakeClient(router.attention.GitHubClient):
             variables = payload['variables']
             assert isinstance(variables, Mapping)
             if 'number' not in variables:
+                numbers = self.search_results.pop(0) if self.search_results else self.items
                 return {
                     'data': {
                         'search': {
                             'nodes': [
-                                {'number': value['number'], 'updatedAt': value['updated_at']}
-                                for value in self.items.values()
+                                {'number': number, 'updatedAt': self.items[number]['updated_at']} for number in numbers
                             ]
                         }
                     }
@@ -104,6 +107,7 @@ class FakeClient(router.attention.GitHubClient):
                     value.update(
                         {
                             'isDraft': number in self.drafts,
+                            'author': source['author'],
                             'changedFiles': self.changed_counts.get(number, len(filenames)),
                             'files': {
                                 'nodes': [{'path': filename} for filename in filenames],
@@ -147,12 +151,29 @@ def test_repository_allowlist_is_exact():
         router.select(client, 'attacker/repository', None, None)
 
 
-def test_graphql_projection_never_requests_title_body_or_author():
+def test_graphql_projection_never_requests_title_or_body():
     compact = ''.join(router._ITEM_QUERY.split()).casefold()
 
     assert 'title' not in compact
     assert 'body' not in compact
-    assert 'author' not in compact
+
+
+@pytest.mark.parametrize(
+    ('permission', 'expected'),
+    [
+        ('write', ('adtyavrdhn', 'author:adtyavrdhn')),
+        ('read', ('dsfaccini', 'path:pydantic_ai_slim/pydantic_ai/models/')),
+    ],
+)
+def test_pr_author_precedence_requires_current_maintainer_permission(permission: str, expected: tuple[str, str]):
+    client = FakeClient({7: item(7, pull_request=True, author='adtyavrdhn')})
+    client.permissions['adtyavrdhn'] = permission
+    client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision is not None
+    assert (decision['owner'], decision['evidence']) == expected
 
 
 @pytest.mark.parametrize(
@@ -764,6 +785,35 @@ def test_recovery_skips_full_assignee_list_without_starving_the_next():
     assert selected['number'] == 8
 
 
+def test_daily_recovery_is_opt_in_lower_priority_and_bounded():
+    client = FakeClient({number: item(number, labels=['MCP']) for number in range(1, 9)})
+
+    client.search_results = [[]]
+    assert router.select_batch(client, CORE, None, None) == []
+
+    client.search_results = [[8]]
+    assert [
+        selection['number'] for selection in router.select_batch(client, CORE, None, None, legacy_recovery=True)
+    ] == [8]
+
+    client.search_results = [[], list(range(1, 8))]
+    selected = router.select_batch(client, CORE, None, None, legacy_recovery=True)
+    assert [selection['number'] for selection in selected] == [1, 2, 3, 4, 5, 6]
+
+    legacy_queries = [
+        str(cast(Mapping[str, object], payload)['variables']['query'])
+        for method, path, payload in client.calls
+        if method == 'POST'
+        and path == '/graphql'
+        and isinstance(payload, Mapping)
+        and isinstance(payload.get('variables'), Mapping)
+        and 'created:<' in str(payload['variables'].get('query'))
+    ]
+    assert legacy_queries == [
+        'repo:pydantic/pydantic-ai is:open created:<2026-08-18 -draft:true no:assignee sort:updated-desc',
+    ]
+
+
 @pytest.mark.parametrize(
     'value',
     [
@@ -778,21 +828,52 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
     with pytest.raises(ValueError, match='selected owner'):
         router._slack_payload(  # pyright: ignore[reportPrivateUsage]
             CORE,
+            'Issue',
             router.Decision(number=7, owner='DouweM', evidence='label:durable exec'),
             value,
         )
 
 
-def test_notification_payload_contains_only_canonical_fields():
+@pytest.mark.parametrize(
+    ('item_type', 'decision', 'expected'),
+    [
+        (
+            'Issue',
+            router.Decision(number=7177, owner='dsfaccini', evidence='participant:dsfaccini'),
+            'Routing intent: Issue <https://github.com/pydantic/pydantic-ai/issues/7177|pydantic/pydantic-ai#7177> '
+            '→ <@UDAVID>\nWhy: <@UDAVID> was the most recent qualified maintainer to participate.',
+        ),
+        (
+            'PullRequest',
+            router.Decision(number=7, owner='adtyavrdhn', evidence='author:adtyavrdhn'),
+            'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
+            '→ <@UADITYA>\nWhy: <@UADITYA> authored this pull request.',
+        ),
+        (
+            'PullRequest',
+            router.Decision(number=7, owner='dsfaccini', evidence='path:pydantic_ai_slim/pydantic_ai/models/'),
+            'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
+            '→ <@UDAVID>\nWhy: Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
+        ),
+        (
+            'Issue',
+            router.Decision(number=7, owner='dsfaccini', evidence='future-policy:evidence'),
+            'Routing intent: Issue <https://github.com/pydantic/pydantic-ai/issues/7|pydantic/pydantic-ai#7> '
+            '→ <@UDAVID>\nWhy: Matched the semantic ownership policy.',
+        ),
+    ],
+)
+def test_notification_is_linked_typed_and_explained(
+    item_type: Literal['Issue', 'PullRequest'], decision: router.Decision, expected: str
+):
     payload = router._slack_payload(  # pyright: ignore[reportPrivateUsage]
-        HARNESS,
-        router.Decision(number=620, owner='dsfaccini', evidence='label:cap:compaction'),
+        CORE,
+        item_type,
+        decision,
         MENTIONS,
     )
 
-    assert json.loads(payload) == {
-        'text': 'Routing intent: pydantic/pydantic-ai-harness#620 → <@UDAVID>\nWhy: label:cap:compaction'
-    }
+    assert json.loads(payload)['text'] == expected
 
 
 def test_no_attacker_text_is_used_in_output_or_notification():
@@ -804,8 +885,7 @@ def test_no_attacker_text_is_used_in_output_or_notification():
     assert decision is not None
     serialized = json.dumps(decision)
     assert attacker not in serialized
-
-    assert attacker not in router._slack_payload(CORE, decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
+    assert attacker not in router._slack_payload(CORE, 'Issue', decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_stale_route_is_not_prepared():
@@ -818,6 +898,20 @@ def test_stale_route_is_not_prepared():
     )
 
     assert payload is None
+
+
+def test_prepare_rejects_non_allowlisted_repository_before_fetching():
+    client = FakeClient({7: item(7, labels=['streaming'])})
+
+    with pytest.raises(ValueError, match='not allowlisted'):
+        router.prepare_current(
+            client,
+            'attacker/repository',
+            router.Decision(number=7, owner='adtyavrdhn', evidence='label:streaming'),
+            MENTIONS,
+        )
+
+    assert client.calls == []
 
 
 def test_serialized_rerun_prepares_and_assigns_once():
@@ -863,9 +957,7 @@ def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pyte
     selected = dict(line.split('=', 1) for line in output.read_text().splitlines())
     assert selected == {
         'should_assign': 'true',
-        'number': '7',
-        'owner': 'adtyavrdhn',
-        'evidence': 'label:streaming',
+        'routes': '[{"number":7,"owner":"adtyavrdhn","evidence":"label:streaming"}]',
     }
 
     output.write_text('')
@@ -936,10 +1028,22 @@ def test_workflow_is_notification_first_and_least_privilege():
         'issues': 'write',
         'pull-requests': 'write',
     }
+    assert jobs['route']['strategy'] == {
+        'fail-fast': False,
+        'max-parallel': 1,
+        'matrix': {'route': '${{ fromJSON(needs.select.outputs.routes) }}'},
+    }
+    assert jobs['route']['concurrency']['group'] == 'semantic-owner-${{ github.repository }}-${{ matrix.route.number }}'
     prepare, notify, assign = jobs['route']['steps'][1:]
     select_step = jobs['select']['steps'][1]
     assert select_step['env']['ROUTING_PARTICIPANT_LOGIN'] == '${{ github.event.comment.user.login }}'
+    assert select_step['env']['ROUTING_LEGACY_RECOVERY'] == (
+        "${{ github.event.schedule == '40 7 * * *' || inputs.legacy_recovery }}"
+    )
     assert prepare['id'] == 'prepare'
+    assert prepare['env']['ROUTE_NUMBER'] == '${{ matrix.route.number }}'
+    assert prepare['env']['ROUTE_OWNER'] == '${{ matrix.route.owner }}'
+    assert prepare['env']['ROUTE_EVIDENCE'] == '${{ matrix.route.evidence }}'
     assert notify['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
     assert notify['with']['payload'] == '${{ steps.prepare.outputs.slack_payload }}'
     assert notify['with']['errors'] is True

@@ -121,8 +121,8 @@ History carries *which* capability ids were loaded, not the capabilities themsel
 Several [`RunContext`][pydantic_ai.tools.RunContext] fields expose progressive-disclosure state to tools, hooks, and capability-owned callbacks:
 
 - `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded through the `load_capability` tool, reconstructed from message history before each model request. A capability loaded during a step appears from the *next* step onwards, which is also the first step on which its instructions and tools reach the model.
-- `ctx.available_capability_ids` — the currently-live capability IDs: always-available capabilities plus `ctx.loaded_capability_ids`.
-- `ctx.capability_loaded` — only meaningful while Pydantic AI is running a capability-owned hook or callback. It is scoped to that capability; deferred hooks and callbacks are skipped until this value would be true.
+- `ctx.active_capability_ids` — the currently-live capability IDs: always-on capabilities plus `ctx.loaded_capability_ids`.
+- `ctx.capability_active` — only meaningful while Pydantic AI is running a capability-owned hook or callback. It is scoped to that capability; deferred hooks and callbacks are skipped until this value would be true. Active, not loaded: an always-on capability's hooks read `True` although nothing ever loaded it.
 - `ctx.discovered_tool_names` — deferred function tools revealed by durable history, whether through tool search, [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn], or a capability load.
 - `ctx.available_tool_names` — function tool names currently known as available: always-visible tools from the current step's assembled tool manager plus names revealed in history. Early hooks such as `before_run` may see only the history-derived names, or an empty set if none exist yet, before tool definitions have been prepared. See [Hook ordering](../hooks.md#hook-ordering) for how hook timing affects what is populated.
 - `ctx.is_tool_available(tool)` — whether a function tool is currently visible. Wrapping toolsets should pass the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] they hold; model-request hooks and tool execution can pass a name from the current `ctx.tools` snapshot.
@@ -251,7 +251,7 @@ agent = Agent('openai-responses:gpt-5.4', capabilities=[AccountSecurityWorkflow(
 ```
 
 !!! note "Checking other capabilities"
-    `ctx.capability_loaded` is scoped to the capability whose hook is currently running. For an always-on hook capability, it is always true. To check whether another deferred capability has been loaded, look for its ID in `ctx.loaded_capability_ids`, for example `if 'account-security' in ctx.loaded_capability_ids:`. If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-available capability and inspect `ctx.loaded_capability_ids`.
+    `ctx.capability_active` is scoped to the capability whose hook is currently running. For an always-on hook capability, it is always true. To check whether another deferred capability has been loaded, look for its ID in `ctx.loaded_capability_ids`, for example `if 'account-security' in ctx.loaded_capability_ids:`. If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-on capability and inspect `ctx.loaded_capability_ids`.
 
 ### Deferred native tools
 

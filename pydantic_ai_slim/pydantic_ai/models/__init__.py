@@ -194,8 +194,8 @@ class ModelRequestParameters:
 
     Input to visibility resolution: `ToolDefinition.defer_loading` records what the author asked
     for and stays set after a reveal, so this answers the separate question of what the model can
-    see *now*. History can name tools that no longer exist in the current run's definitions, so
-    this is not necessarily a subset of `function_tools`' names; resolution ignores unknown names.
+    see *now*. History can name tools that no longer exist in the current run's definitions; those
+    are dropped where this is derived, so it is a subset of `function_tools`' names by construction.
     """
 
     deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
@@ -743,7 +743,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # a forged-but-well-shaped name must not reach system voice, and an always-visible
             # tool named by a delta has no "now available" news and no exchange to fabricate:
             # the delta is a no-op for it on this channel just as on the native ones.
-            available_tool_names = (
+            deferred_tool_names = (
                 {tool.name for tool in model_request_parameters.function_tools if tool.defer_loading}
                 if model_request_parameters is not None
                 else None
@@ -768,9 +768,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
             # tools do arrive hidden and do need the reveal.
             if self._hides_deferred_schemas(model_request_parameters):
-                messages = _synthesize_tool_availability_delta_messages(messages, available_tool_names)
+                messages = _synthesize_tool_availability_delta_messages(messages, deferred_tool_names)
             else:
-                messages = _announce_tool_availability_delta_messages(messages, available_tool_names)
+                messages = _announce_tool_availability_delta_messages(messages, deferred_tool_names)
 
         from .._tool_search import synthesize_local_tool_search_messages
 
@@ -2370,7 +2370,7 @@ def _replace_tool_search_exchanges_with_deltas(
 
 
 def _announce_tool_availability_delta_messages(
-    messages: list[ModelMessage], available_tool_names: set[str] | None
+    messages: list[ModelMessage], deferred_tool_names: set[str] | None
 ) -> list[ModelMessage]:
     """Render tool availability changes as a mid-conversation system instruction.
 
@@ -2417,7 +2417,7 @@ def _announce_tool_availability_delta_messages(
                 replacement_parts.append(part)
                 continue
             # A delta that adds nothing has nothing to announce, so it drops out entirely.
-            added = [name for name in part.tools_added if available_tool_names is None or name in available_tool_names]
+            added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
             if added:
                 replacement_parts.append(
                     SystemPromptPart(
@@ -2443,7 +2443,7 @@ def _announce_tool_availability_delta_messages(
 
 
 def _synthesize_tool_availability_delta_messages(
-    messages: list[ModelMessage], available_tool_names: set[str] | None
+    messages: list[ModelMessage], deferred_tool_names: set[str] | None
 ) -> list[ModelMessage]:
     """Render tool availability changes as the local tool-search exchange.
 
@@ -2498,7 +2498,7 @@ def _synthesize_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 pending.append(part)
                 continue
-            added = [name for name in part.tools_added if available_tool_names is None or name in available_tool_names]
+            added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
             if not added:
                 continue
 

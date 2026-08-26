@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministically assign one open item to its semantic maintainer owner."""
+"""Deterministically assign open items to their semantic maintainer owners."""
 
 from __future__ import annotations
 
@@ -12,17 +12,15 @@ import urllib.error
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, TypedDict, cast  # noqa: TID251
+from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 import issue_pr_attention_monitor as attention
 
 _REPOSITORIES = attention.REPOSITORIES
 _OWNERS = frozenset(attention.MAINTAINER_OWNERS)
 _MANUAL_OWNER = 'adtyavrdhn'
-# Everything before this rollout watermark was handled by the one-time manual
-# audit. Keeping it fixed makes later outages recoverable without draining years
-# of historical backlog into the triage channel.
 _RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
+_LEGACY_BATCH_LIMIT = 6
 _FILE_LIMIT = 100
 _ASSIGNEE_LIMIT = 10
 _PARTICIPATION_TIMELINE_PAGES = 2
@@ -39,6 +37,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
       }
       ... on PullRequest {
         number state isDraft changedFiles
+        author { login }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
         files(first: 100) { nodes { path } pageInfo { hasNextPage } }
@@ -373,6 +372,28 @@ def _pull_request_draft_status(item: Mapping[str, Any]) -> str | None:
     return 'draft' if value else None
 
 
+def _pull_request_precedence(
+    client: attention.GitHubClient,
+    repo: str,
+    number: int,
+    item: Mapping[str, Any],
+) -> Selection | None:
+    if draft_status := _pull_request_draft_status(item):
+        return Selection(number=number, decision=None, status=draft_status)
+    author = item.get('author')
+    author_login = cast(Mapping[str, object], author).get('login') if isinstance(author, Mapping) else None
+    if isinstance(author_login, str):
+        key = author_login.casefold()
+        owner = next((candidate for candidate in _OWNERS if candidate.casefold() == key), None)
+        if owner is not None and client.maintainer_login(repo, owner, refresh=True) is not None:
+            return Selection(
+                number=number,
+                decision=Decision(number=number, owner=owner, evidence=f'author:{owner}'),
+                status='route',
+            )
+    return None
+
+
 def decision_for(
     client: attention.GitHubClient,
     repo: str,
@@ -401,8 +422,8 @@ def decision_for(
     if len(normalized['assignees']) >= _ASSIGNEE_LIMIT:
         return Selection(number=number, decision=None, status='assignee-capacity')
     is_pull_request = item.get('__typename') == 'PullRequest'
-    if is_pull_request and (draft_status := _pull_request_draft_status(item)) is not None:
-        return Selection(number=number, decision=None, status=draft_status)
+    if is_pull_request and (precedence := _pull_request_precedence(client, repo, number, item)) is not None:
+        return precedence
     participant = _participant_decision(client, repo, number, participant_login)
     if participant is not None:
         return Selection(number=number, decision=participant, status='route')
@@ -479,10 +500,65 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
     )
 
 
-def _recovery_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
+def _recovery_numbers(
+    client: attention.GitHubClient,
+    repo: str,
+    qualified: Sequence[str],
+    *,
+    legacy: bool = False,
+) -> list[int]:
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
-    query = f'repo:{repo} is:open created:>={_RECOVERY_EPOCH} -draft:true {negatives} sort:created-asc'
+    created = f'created:<{_RECOVERY_EPOCH}' if legacy else f'created:>={_RECOVERY_EPOCH}'
+    order = 'updated-desc' if legacy else 'created-asc'
+    assignees = 'no:assignee' if legacy else negatives
+    query = f'repo:{repo} is:open {created} -draft:true {assignees} sort:{order}'
     return _search_numbers(client, query)
+
+
+def _select_numbers(
+    client: attention.GitHubClient,
+    repo: str,
+    numbers: Sequence[int],
+    *,
+    limit: int,
+) -> list[Selection]:
+    selected: list[Selection] = []
+    for number in numbers:
+        selection = decision_for(client, repo, number)
+        if selection['decision'] is not None:
+            selected.append(selection)
+            if len(selected) == limit:
+                break
+    return selected
+
+
+def select_batch(
+    client: attention.GitHubClient,
+    repo: str,
+    issue_number: str | None,
+    pull_request_number: str | None,
+    participant_login: str | None = None,
+    *,
+    legacy_recovery: bool = False,
+) -> list[Selection]:
+    """Select an event item, one recent recovery, or a bounded legacy batch."""
+    repo = _repository(repo)
+    if number := event_number(issue_number, pull_request_number):
+        if participant_login:
+            owner = _participant_owner(participant_login)
+            if owner is None or client.maintainer_login(repo, owner, refresh=True) is None:
+                return [Selection(number=number, decision=None, status='non-maintainer-response')]
+        return [decision_for(client, repo, number, participant_login=participant_login)]
+    qualified = _qualified_owners(client, repo)
+    recent = _select_numbers(client, repo, _recovery_numbers(client, repo, qualified), limit=1)
+    if recent or not legacy_recovery:
+        return recent
+    return _select_numbers(
+        client,
+        repo,
+        _recovery_numbers(client, repo, qualified, legacy=True),
+        limit=_LEGACY_BATCH_LIMIT,
+    )
 
 
 def select(
@@ -492,20 +568,9 @@ def select(
     pull_request_number: str | None,
     participant_login: str | None = None,
 ) -> Selection:
-    """Select exactly the event item or one recovery candidate."""
-    repo = _repository(repo)
-    if number := event_number(issue_number, pull_request_number):
-        if participant_login:
-            owner = _participant_owner(participant_login)
-            if owner is None or client.maintainer_login(repo, owner, refresh=True) is None:
-                return Selection(number=number, decision=None, status='non-maintainer-response')
-        return decision_for(client, repo, number, participant_login=participant_login)
-    qualified = _qualified_owners(client, repo)
-    for number in _recovery_numbers(client, repo, qualified):
-        selection = decision_for(client, repo, number)
-        if selection['decision'] is not None:
-            return selection
-    return Selection(number=0, decision=None, status='nothing-to-route')
+    """Select exactly the event item or one recent recovery candidate."""
+    selected = select_batch(client, repo, issue_number, pull_request_number, participant_login)
+    return selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
 
 
 def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> bool:
@@ -550,11 +615,38 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     return True
 
 
-def _slack_payload(repo: str, decision: Decision, mentions_value: str) -> str:
+def _routing_reason(decision: Decision, mention: str) -> str:
+    evidence = decision['evidence']
+    owner = decision['owner']
+    if evidence == f'participant:{owner}':
+        return f'{mention} was the most recent qualified maintainer to participate.'
+    if evidence == f'author:{owner}':
+        return f'{mention} authored this pull request.'
+    source, separator, detail = evidence.partition(':')
+    if separator and detail and source in {'label', 'path'}:
+        return f'Matched ownership {source} `{detail}`.'
+    if evidence.startswith('manual:'):
+        return 'Automatic routing could not determine an available semantic owner, so this needs manual triage.'
+    return 'Matched the semantic ownership policy.'
+
+
+def _slack_payload(
+    repo: str,
+    item_type: Literal['Issue', 'PullRequest'],
+    decision: Decision,
+    mentions_value: str,
+) -> str:
     """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
     mentions = attention.slack_mentions(mentions_value, decision['owner'])
-    text = f'Routing intent: {repo}#{decision["number"]} → {mentions[decision["owner"]]}\nWhy: {decision["evidence"]}'
+    mention = mentions[decision['owner']]
+    if item_type == 'Issue':
+        kind, path = 'Issue', 'issues'
+    else:
+        kind, path = 'Pull request', 'pull'
+    number = decision['number']
+    item = f'<https://github.com/{repo}/{path}/{number}|{repo}#{number}>'
+    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision, mention)}'
     return json.dumps({'text': text}, separators=(',', ':'))
 
 
@@ -565,6 +657,13 @@ def prepare_current(
     mentions_value: str,
 ) -> str | None:
     """Build a notice only while the selected route still matches GitHub."""
+    repo = _repository(repo)
+    item = _fetch_item(client, repo, expected['number'])
+    if item is None:
+        return None
+    item_type = item.get('__typename')
+    if item_type not in ('Issue', 'PullRequest'):
+        raise RuntimeError('GitHub returned invalid routing metadata')
     current = decision_for(
         client,
         repo,
@@ -573,7 +672,7 @@ def prepare_current(
     )
     if current['decision'] != expected:
         return None
-    return _slack_payload(repo, expected, mentions_value)
+    return _slack_payload(repo, item_type, expected, mentions_value)
 
 
 def _output(values: Mapping[str, object]) -> None:
@@ -618,23 +717,26 @@ def main() -> int:
             _summary(f'#{args.number}: ' + ('prepared routing intent' if payload else 'route changed'))
             return 0
         if args.mode == 'select':
-            selected = select(
+            selected = select_batch(
                 client,
                 repo,
                 os.environ.get('ROUTING_ISSUE_NUMBER'),
                 os.environ.get('ROUTING_PULL_REQUEST_NUMBER'),
                 os.environ.get('ROUTING_PARTICIPANT_LOGIN'),
+                legacy_recovery=os.environ.get('ROUTING_LEGACY_RECOVERY') == 'true',
             )
-            decision = selected['decision']
+            decisions = [selection['decision'] for selection in selected if selection['decision'] is not None]
+            first = selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
             _output(
                 {
-                    'should_assign': str(decision is not None).lower(),
-                    'number': selected['number'],
-                    'owner': decision['owner'] if decision else '',
-                    'evidence': decision['evidence'] if decision else '',
+                    'should_assign': str(bool(decisions)).lower(),
+                    'routes': json.dumps(decisions, separators=(',', ':')),
                 }
             )
-            _summary(f'#{selected["number"]}: {selected["status"]}' if selected['number'] else selected['status'])
+            if decisions:
+                _summary(', '.join(f'#{route["number"]}' for route in decisions) + ': route')
+            else:
+                _summary(f'#{first["number"]}: {first["status"]}' if first['number'] else first['status'])
             return 0
         if args.number is None or args.owner is None or args.evidence is None:
             parser.error('assign requires --number, --owner, and --evidence')

@@ -109,7 +109,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
-            defer_loading: Whether to hide tools from the model until discovered via tool search.
+            defer_loading: Whether to hide tools from the model until they're revealed by tool search,
+                `load_capability`, or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 Applies to all tools, unless overridden when adding a tool.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
@@ -260,7 +261,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
@@ -405,7 +407,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
@@ -529,7 +532,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
-            defer_loading: Whether to hide this tool until it's discovered via tool search.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
