@@ -87,7 +87,7 @@ async def test_xsearch_callable_native_none_raises(allow_model_requests: None):
     """A callable native factory returning None raises rather than enabling default X search."""
 
     def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('fallback model should not run when the native factory returns None')
+        raise AssertionError('fallback model should not run when the native factory returns None')  # pragma: no cover
 
     inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})))
 
@@ -178,7 +178,7 @@ async def test_image_generation_callable_native_none_raises(allow_model_requests
     """A callable native factory returning None raises rather than enabling default image generation."""
 
     def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('fallback model should not run when the native factory returns None')
+        raise AssertionError('fallback model should not run when the native factory returns None')  # pragma: no cover
 
     inner_model = FunctionModel(
         inner_model_fn,
