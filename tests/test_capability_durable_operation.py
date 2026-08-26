@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import uuid
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from decimal import Decimal
@@ -592,6 +593,22 @@ def test_usage_delta_ignores_non_numeric_extension_values() -> None:
 
     assert 'opaque' not in delta.__dict__
     assert 'opaque' not in delta.details
+
+
+async def test_usage_snapshot_copies_details_before_in_place_handler_mutation() -> None:
+    """`RunUsage.__copy__` isolates its only mutable field before worker-side accounting."""
+    usage = RunUsage(details={'existing': 2})
+    before = copy.copy(usage)
+    ctx = RunContext(deps=None, model=TestModel(), usage=usage)
+
+    async def handler(ctx: RunContext[None]) -> None:
+        ctx.usage.details['existing'] += 3
+
+    await handler(ctx)
+
+    assert before.details == {'existing': 2}
+    assert before.details is not usage.details
+    assert _usage_delta(before, usage).details == {'existing': 3}
 
 
 async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
