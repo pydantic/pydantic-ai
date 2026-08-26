@@ -94,6 +94,22 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """
 
 
+class _ToolUnavailable(ModelRetry):
+    """A `ModelRetry` refusing a call because the tool is not available yet.
+
+    A distinct type only so `_make_validation_failure` can recognise it. It
+    reaches the model as an ordinary retry prompt, exactly like the `ModelRetry` it replaced.
+
+    Carries the tool it refused: the refusal is raised while resolving, before the caller has
+    bound the resolved tool, and the budget this failure is charged against is the tool's own
+    `max_retries` — not the manager's default, which is all an unresolved name could offer.
+    """
+
+    def __init__(self, message: str, tool: ToolsetTool[Any]):
+        super().__init__(message)
+        self.tool = tool
+
+
 class _ValidationDeferral(Exception):
     """Internal signal that validation requested approval for or deferred the tool call.
 
@@ -140,6 +156,14 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
     succeeded_tools: set[str] = field(default_factory=set[str])
     """Names of tools that succeeded in this run step."""
+    availability_refused: set[str] = field(default_factory=set[str])
+    """Names of tools that have already spent their one free availability refusal this run.
+
+    Kept apart from `retries` so a refusal — which is about the state of the run, not about the
+    call's arguments — cannot consume the budget the tool needs for a real failure later. Spans
+    the whole run rather than a step: the correction a refusal asks for takes at least one more
+    step to carry out, so a per-step set would refill before it was ever read.
+    """
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
 
@@ -187,6 +211,7 @@ class ToolManager(Generic[AgentDepsT]):
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
+            availability_refused=self.availability_refused,
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -236,7 +261,7 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx.retries.get(name, 0) >= max_retries:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
-                'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
+                'limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
             ) from error
 
     @staticmethod
@@ -469,20 +494,60 @@ class ToolManager(Generic[AgentDepsT]):
         return tool_result
 
     def _resolve_tool(self, call: ToolCallPart) -> tuple[str, ToolsetTool[AgentDepsT]]:
-        """Resolve tool name to ResolvedTool, raising ModelRetry for unknown tools."""
+        """Resolve tool name to ResolvedTool, raising ModelRetry for unknown or unavailable tools."""
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         name = call.tool_name
         tool = self.tools.get(name)
         if tool is None:
-            if self.tools:
-                available = sorted(self.tools.keys())
+            # Name only what the model can call this turn, the same `is_tool_available` gate the unavailable-tool
+            # check applies, so a name that tool search or `load_capability` has yet to reveal stays out of
+            # this message.
+            available = sorted(n for n, t in self.tools.items() if self.ctx.is_tool_available(t.tool_def))
+            if available:
                 msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
+            elif self.tools:
+                msg = 'No tools are available yet: search for the tools you need.'
             else:
                 msg = 'No tools available.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+        if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
+            raise _ToolUnavailable(unavailable, tool)
         return name, tool
+
+    def _unavailable_reason(self, tool_def: ToolDefinition) -> str | None:
+        """Why this tool cannot be called yet, or `None` when it is available.
+
+        A deferred tool is callable only once the model has been shown it. The message says *not
+        available yet* rather than "unknown tool" so the model searches or loads again instead of
+        concluding the tool does not exist — and the resulting search/load exchange restores the
+        history that justifies the call, which is what keeps a compacted history coherent.
+
+        Both requirements apply to a capability-owned tool: an active capability is what makes
+        its tools *eligible* to be shown, not proof that any of them were. An always-on capability
+        can own search-gated tools, and loading a deferred one reveals its tools through the same
+        availability delta everything else uses — so discovery stays the single answer to "has the
+        model seen this?".
+        """
+        assert self.ctx is not None
+        if self.ctx.is_tool_available(tool_def):
+            return None
+        # `is_tool_available` makes the decision, so introspection and execution cannot disagree;
+        # the rest only picks which way to point the model. An inactive capability is named
+        # because loading it is the action to take — searching would not help until it is active.
+        if (capability_id := tool_def.capability_id) is not None and (
+            capability_id not in self.ctx.active_capability_ids
+        ):
+            return (
+                f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
+                f'{capability_id!r}. Call `load_capability` for it first, then call the tool again '
+                "once you've read the capability's instructions."
+            )
+        return (
+            f'Tool {tool_def.name!r} is not available yet: search for it first, then call it again '
+            "once you've seen its schema."
+        )
 
     def _make_validation_success(
         self,
@@ -519,8 +584,18 @@ class ToolManager(Generic[AgentDepsT]):
         cause = (
             error.__cause__ if isinstance(error, ToolRetryError) and isinstance(error.__cause__, Exception) else error
         )
-        self._check_max_retries(name, max_retries, cause)
-        self.failed_tools.add(name)
+        # An availability refusal is not a mistake about *this* tool's arguments — it says the run
+        # is not in a state where the tool can be called, and names the step that fixes it. The
+        # first one per tool is free: charging it would make a single act of model disobedience
+        # fatal on the default budget of 1, defeating a message written to be acted on, and would
+        # leave the tool with nothing left when it is later called properly and fails for real.
+        # Later refusals of the same tool charge normally, so a model that never takes the
+        # correction still ends the run.
+        if isinstance(error, _ToolUnavailable) and name not in self.availability_refused:
+            self.availability_refused.add(name)
+        else:
+            self._check_max_retries(name, max_retries, cause)
+            self.failed_tools.add(name)
         validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
         return ValidatedToolCall(
             call=call,
@@ -598,6 +673,11 @@ class ToolManager(Generic[AgentDepsT]):
         except (ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
+            if isinstance(e, _ToolUnavailable):
+                # Raised during resolution, so `tool` above was never bound — but the tool exists
+                # and its own `max_retries` is the budget this refusal belongs to. Only a name that
+                # resolves to nothing falls back to the manager's default.
+                tool = e.tool
             return self._make_validation_failure(call.tool_name, call, tool, ctx, e)
         except ToolFailed as e:
             if not wrap_validation_errors:

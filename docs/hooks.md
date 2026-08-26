@@ -70,7 +70,10 @@ print(result.output)
 #> success (no tool calls)
 ```
 
-Both sync and async hook functions are accepted. Sync functions are automatically wrapped for async execution.
+Both sync and async hook functions are accepted. Sync functions are run in a thread pool, so a slow one won't hold up the rest of the run.
+
+!!! note "Sync hooks run on a separate thread"
+    Pydantic AI assumes that a sync hook contains blocking code (if it didn't, it could be async), so it runs sync hooks on a worker thread to keep the rest of the run responsive. Two things follow: a value the hook sets on a [`contextvars.ContextVar`][contextvars.ContextVar] is not visible outside the hook, and asyncio APIs like `asyncio.get_running_loop()` raise an error, since the worker thread has no event loop. Reading context variables still works, but the write limitation also applies to libraries that use them internally, such as tracing and logging integrations. If your hook needs any of these, make it async.
 
 ### On-demand hooks
 
@@ -390,7 +393,7 @@ Across multiple capabilities, the [composition rules](capabilities/custom.md#com
 
 Hook timing also affects what is populated on [`RunContext`][pydantic_ai.tools.RunContext]. Early run and node hooks can fire before the current step's tool manager and model request parameters have been assembled. At that point `ctx.available_tool_names` can still include tool-search discoveries reconstructed from history, but `ctx.tools` and current request parameters may be empty or reflect the previous step. `before_model_request` and later model-request hooks see the request about to be sent, including the current function tools, native tools, and model settings. Tool and output hooks see the state for the call or output currently being processed.
 
-For on-demand capabilities, `ctx.loaded_capability_ids` updates as soon as the `load_capability` tool runs. Function tools, native tools, and model settings from the loaded capability appear on the next model request, while hooks owned by that capability can only run for hook points reached after the capability has loaded.
+For on-demand capabilities, `ctx.loaded_capability_ids` is derived from message history before each model request, so a capability loaded during a step appears from the *next* step onwards — the same step that first carries its instructions to the model, and therefore the first on which its tools can be called. Function tools, native tools, and model settings from the loaded capability appear on that request too, and hooks owned by the capability run for hook points reached from then on. A hook that looks for a capability in the very turn it was loaded will not find it.
 
 ## Error hooks
 

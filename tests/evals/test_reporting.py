@@ -1,16 +1,19 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from io import BytesIO, TextIOWrapper
 
 import pytest
 from pydantic import BaseModel
+from rich.console import Console
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
-from .utils import render_table
+from .utils import render_table, trim_trailing_whitespace
 
 with try_import() as imports_successful:
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext
+    from pydantic_evals.evaluators.evaluator import EvaluatorFailure
     from pydantic_evals.reporting import (
         EvaluationRenderer,
         EvaluationReport,
@@ -1370,3 +1373,174 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
 │ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
 └───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
 """)
+
+
+def render_to_non_utf8_console(
+    report: EvaluationReport, baseline: EvaluationReport | None = None, *, encoding: str = 'cp1252'
+) -> str:
+    """Print a report to a console whose stream can't encode Unicode report text, and return what was written.
+
+    This is Windows with stdout redirected to a file or a pipe: Python uses UTF-8 for the console
+    itself, but falls back to the ANSI code page for a redirected stream.
+    """
+    buffer = BytesIO()
+    stream = TextIOWrapper(buffer, encoding=encoding, errors='strict', newline='')
+    report.print(baseline=baseline, console=Console(file=stream, width=150))
+    stream.flush()
+    return trim_trailing_whitespace(buffer.getvalue().decode(encoding))
+
+
+async def test_print_falls_back_to_ascii_glyphs_on_non_utf8_console(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata], sample_report_case: ReportCase
+):
+    """A report printed to a stream that can't encode `✔`/`✗` renders ASCII markers instead of raising."""
+    failed_assertion = EvaluationResult(
+        name='FailingEvaluator', value=False, reason=None, source=mock_evaluator.as_spec()
+    )
+    case = replace(
+        sample_report_case, assertions={**sample_report_case.assertions, 'FailingEvaluator': failed_assertion}
+    )
+    report = EvaluationReport(cases=[case], name='test_report')
+
+    assert render_to_non_utf8_console(report) == snapshot("""\
+                                Evaluation Summary: test_report
++---------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                 | Metrics         | Assertions | Duration |
+|-----------+--------------+------------------------+-----------------+------------+----------|
+| test_case | score1: 2.50 | label1: hello          | accuracy: 0.950 | vx         |  100.0ms |
+|-----------+--------------+------------------------+-----------------+------------+----------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 | 50.0% v    |  100.0ms |
++---------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_print_falls_back_to_ascii_duration_units_on_cp932_console(sample_report_case: ReportCase):
+    """Default duration values and diffs use ASCII units on a console that can't encode the micro sign."""
+    baseline_report = EvaluationReport(
+        cases=[replace(sample_report_case, task_duration=0.0001)], name='baseline_report'
+    )
+    report = EvaluationReport(cases=[replace(sample_report_case, task_duration=0.0002)], name='test_report')
+
+    assert render_to_non_utf8_console(report, baseline=baseline_report, encoding='cp932') == snapshot("""\
+                                    Evaluation Diff: baseline_report -> test_report
++----------------------------------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                 | Metrics         | Assertions |                          Duration |
+|-----------+--------------+------------------------+-----------------+------------+-----------------------------------|
+| test_case | score1: 2.50 | label1: hello          | accuracy: 0.950 | v          | 100us -> 200us (+100us / +100.0%) |
+|-----------+--------------+------------------------+-----------------+------------+-----------------------------------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 | 100.0% v   | 100us -> 200us (+100us / +100.0%) |
++----------------------------------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_print_diff_falls_back_to_ascii_glyphs_on_non_utf8_console(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata], sample_report_case: ReportCase
+):
+    """Every `→` in a diff report degrades too: metadata panel, value/number diffs, and cell diffs."""
+    failed_assertion = EvaluationResult(name='MockEvaluator', value=False, reason=None, source=mock_evaluator.as_spec())
+    baseline_case = replace(
+        sample_report_case,
+        assertions={'MockEvaluator': failed_assertion},
+        metrics={'accuracy': 0.95},
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='BaselineEvaluator',
+                error_message='Baseline error',
+                error_stacktrace='Baseline stacktrace',
+                source=mock_evaluator.as_spec(),
+            )
+        ],
+    )
+    new_case = replace(
+        sample_report_case,
+        labels={'label1': replace(sample_report_case.labels['label1'], value='goodbye')},
+        metrics={'accuracy': 0.97},
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='NewEvaluator',
+                error_message='New error',
+                error_stacktrace='New stacktrace',
+                source=mock_evaluator.as_spec(),
+            )
+        ],
+    )
+    baseline_report = EvaluationReport(
+        cases=[baseline_case], name='baseline_report', experiment_metadata={'model': 'gpt-4'}
+    )
+    new_report = EvaluationReport(cases=[new_case], name='new_report', experiment_metadata={'model': 'gpt-4o'})
+
+    assert render_to_non_utf8_console(new_report, baseline=baseline_report) == snapshot("""\
++- Evaluation Diff: baseline_report -> new_report -+
+| model: gpt-4 -> gpt-4o                           |
++--------------------------------------------------+
++----------------------------------------------------------------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                        | Metrics                  | Assertions         | Evaluator Failures           | Duration |
+|-----------+--------------+-------------------------------+--------------------------+--------------------+------------------------------+----------|
+| test_case | score1: 2.50 | label1: hello -> goodbye      | accuracy: 0.950 -> 0.970 | x -> v             | BaselineEvaluator: Baseline  |  100.0ms |
+|           |              |                               |                          |                    | error                        |          |
+|           |              |                               |                          |                    | ->                           |          |
+|           |              |                               |                          |                    | NewEvaluator: New error      |          |
+|-----------+--------------+-------------------------------+--------------------------+--------------------+------------------------------+----------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} ->     | accuracy: 0.950 -> 0.970 | 0.0% v -> 100.0% v |                              |  100.0ms |
+|           |              | {'goodbye': 1.0}              |                          |                    |                              |          |
++----------------------------------------------------------------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_print_diff_title_falls_back_to_ascii_glyphs_on_non_utf8_console(sample_report_case: ReportCase):
+    """Without an experiment-metadata panel the diff name lands in the table title, which degrades as well."""
+    baseline_report = EvaluationReport(cases=[sample_report_case], name='baseline_report')
+    new_report = EvaluationReport(cases=[replace(sample_report_case, metrics={'accuracy': 0.97})], name='new_report')
+
+    assert render_to_non_utf8_console(new_report, baseline=baseline_report) == snapshot("""\
+                             Evaluation Diff: baseline_report -> new_report
++------------------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                 | Metrics                  | Assertions | Duration |
+|-----------+--------------+------------------------+--------------------------+------------+----------|
+| test_case | score1: 2.50 | label1: hello          | accuracy: 0.950 -> 0.970 | v          |  100.0ms |
+|-----------+--------------+------------------------+--------------------------+------------+----------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 -> 0.970 | 100.0% v   |  100.0ms |
++------------------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_console_table_renders_ascii_glyphs_when_asked(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata], sample_report_case: ReportCase
+):
+    """A caller holding its own non-UTF-8 console can ask `console_table` for the fallback and print it."""
+    failed_assertion = EvaluationResult(
+        name='FailingEvaluator', value=False, reason=None, source=mock_evaluator.as_spec()
+    )
+    case = replace(
+        sample_report_case, assertions={**sample_report_case.assertions, 'FailingEvaluator': failed_assertion}
+    )
+    report = EvaluationReport(cases=[replace(case, task_duration=0.0001)], name='test_report')
+
+    buffer = BytesIO()
+    stream = TextIOWrapper(buffer, encoding='cp932', errors='strict', newline='')
+    console = Console(file=stream, width=150)
+    console.print(report.console_table(ascii_only=True, duration_config={}))
+    stream.flush()
+
+    assert trim_trailing_whitespace(buffer.getvalue().decode('cp932')) == snapshot("""\
+                                Evaluation Summary: test_report
++---------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                 | Metrics         | Assertions | Duration |
+|-----------+--------------+------------------------+-----------------+------------+----------|
+| test_case | score1: 2.50 | label1: hello          | accuracy: 0.950 | vx         |    100us |
+|-----------+--------------+------------------------+-----------------+------------+----------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 | 50.0% v    |    100us |
++---------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_console_table_keeps_custom_duration_formatters_on_ascii_only(sample_report_case: ReportCase):
+    """ASCII fallback applies only to renderer-supplied duration formatters."""
+    report = EvaluationReport(cases=[replace(sample_report_case, task_duration=0.0001)], name='test_report')
+
+    table = report.console_table(
+        ascii_only=True,
+        duration_config={'value_formatter': lambda _: 'custom µs'},
+    )
+
+    assert 'custom µs' in render_table(table)

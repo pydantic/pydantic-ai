@@ -47,7 +47,7 @@ Leaving `CAMERA_REALTIME_VOICE` empty uses the provider's default. Language, tur
 proactive audio, and affective dialog are Gemini-only. OpenAI and Azure map either VAD sensitivity
 control to their shared turn-detection sensitivity.
 
-The app is instrumented with [Logfire](https://ai.pydantic.dev/logfire/). When `LOGFIRE_TOKEN` is
+The app is instrumented with [Logfire](https://pydantic.dev/docs/ai/integrations/logfire/). When `LOGFIRE_TOKEN` is
 set, realtime sessions, model turns, and tool calls appear as traces; otherwise nothing is sent.
 
 ## Watch, search, and drawing

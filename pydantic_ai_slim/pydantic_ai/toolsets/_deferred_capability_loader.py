@@ -20,8 +20,8 @@ LOAD_CAPABILITY_TOOL_DESCRIPTION = (
     'Load a listed capability whenever it is plausibly relevant to the task.'
     ' Loading makes the capability instructions and any tools it provides available.'
 )
-LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE = (
-    'Capability {capability_id!r} is already available. '
+LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE = (
+    'Capability {capability_id!r} is already active. '
     'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
 )
 
@@ -53,7 +53,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         load_tool = ToolsetTool(
             toolset=self,
             tool_def=load_tool_def,
-            max_retries=1,
+            max_retries=ctx.max_retries,
             args_validator=_load_capability_args_ta.validator,  # pyright: ignore[reportArgumentType]
         )
 
@@ -75,8 +75,8 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         capability = ctx.capabilities.get(capability_id)
         if capability is None:
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
-        if capability_id in ctx.available_capability_ids:
-            raise ModelRetry(LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
+        if capability_id in ctx.active_capability_ids:
+            raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
         parts = [
             InstructionPart(content=instruction, dynamic=True)
@@ -87,7 +87,6 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         instructions_text = InstructionPart.join(parts)
 
-        ctx.loaded_capability_ids.add(capability_id)
         result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
         tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
         return ToolReturn(return_value=result, tools=tools or None)
