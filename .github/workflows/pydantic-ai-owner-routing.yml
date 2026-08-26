@@ -10,8 +10,15 @@ on:
     types: [opened, reopened, ready_for_review]
   schedule:
     - cron: '25 */6 * * *'
+    - cron: '40 7 * * *'
   workflow_dispatch:
   workflow_call:
+    inputs:
+      legacy_recovery:
+        description: Route up to six recently active items from before the recovery epoch
+        required: false
+        type: boolean
+        default: false
     secrets:
       PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
         required: true
@@ -20,7 +27,7 @@ permissions: {}
 
 jobs:
   select:
-    name: Select one item
+    name: Select routing batch
     # Keep this cheap runner gate aligned with `_PARTICIPATION_OWNERS` in the routing policy.
     if: >-
       (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') &&
@@ -36,9 +43,7 @@ jobs:
       pull-requests: read
     outputs:
       should_route: ${{ steps.select.outputs.should_assign }}
-      number: ${{ steps.select.outputs.number }}
-      owner: ${{ steps.select.outputs.owner }}
-      evidence: ${{ steps.select.outputs.evidence }}
+      routes: ${{ steps.select.outputs.routes }}
     steps:
       - name: Check out trusted routing policy
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -50,13 +55,14 @@ jobs:
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
           sparse-checkout-cone-mode: false
-      - name: Select one exact item
+      - name: Select routing decisions
         id: select
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ROUTING_ISSUE_NUMBER: ${{ github.event.issue.number }}
           ROUTING_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           ROUTING_PARTICIPANT_LOGIN: ${{ github.event.comment.user.login }}
+          ROUTING_LEGACY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.legacy_recovery }}
         run: python .github/scripts/semantic_owner_router.py select
 
   route:
@@ -65,8 +71,13 @@ jobs:
     if: needs.select.outputs.should_route == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        route: ${{ fromJSON(needs.select.outputs.routes) }}
     concurrency:
-      group: semantic-owner-${{ github.repository }}-${{ needs.select.outputs.number }}
+      group: semantic-owner-${{ github.repository }}-${{ matrix.route.number }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -89,9 +100,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
-          ROUTE_NUMBER: ${{ needs.select.outputs.number }}
-          ROUTE_OWNER: ${{ needs.select.outputs.owner }}
-          ROUTE_EVIDENCE: ${{ needs.select.outputs.evidence }}
+          ROUTE_NUMBER: ${{ matrix.route.number }}
+          ROUTE_OWNER: ${{ matrix.route.owner }}
+          ROUTE_EVIDENCE: ${{ matrix.route.evidence }}
         run: >-
           python .github/scripts/semantic_owner_router.py prepare
           --number "$ROUTE_NUMBER"
@@ -109,9 +120,9 @@ jobs:
         if: steps.prepare.outputs.should_notify == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ROUTE_NUMBER: ${{ needs.select.outputs.number }}
-          ROUTE_OWNER: ${{ needs.select.outputs.owner }}
-          ROUTE_EVIDENCE: ${{ needs.select.outputs.evidence }}
+          ROUTE_NUMBER: ${{ matrix.route.number }}
+          ROUTE_OWNER: ${{ matrix.route.owner }}
+          ROUTE_EVIDENCE: ${{ matrix.route.evidence }}
         run: >-
           python .github/scripts/semantic_owner_router.py assign
           --number "$ROUTE_NUMBER"
