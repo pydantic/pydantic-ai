@@ -140,10 +140,10 @@ async def main():
 
 Deferred tool calls also surface as batch-level events: `DeferredToolRequestsEvent` (once per batch of deferred calls, before any `HandleDeferredToolCalls` handler runs) and `DeferredToolResultsEvent` (when a handler resolves requests inline). Use these to tell a frontend the run is paused waiting for approvals or external calls.
 
-To surface progress or intermediate results from a tool (or capability hook) into the same event stream without polluting the model's context, emit a `CustomEvent` via `ctx.emit_event()`. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` is auto-stamped. Code driving `agent.iter()` can inject events with `AgentRun.emit_event()`.
+To surface progress or intermediate results from a tool into the same event stream without polluting the model's context, emit a `CustomEvent` via `ctx.emit_event()`. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` and `tool_name` are auto-stamped. Code driving `agent.iter()` can inject events with `AgentRun.emit_event()`. For structured payloads, define a dataclass subclass of `CustomEvent`, emit an instance, and use `isinstance()` in consumers.
 
 ```python
-from pydantic_ai import Agent, CustomEvent, RunContext
+from pydantic_ai import Agent, RunContext
 
 agent = Agent('openai:gpt-5.2', name='progress_agent')
 
@@ -151,7 +151,7 @@ agent = Agent('openai:gpt-5.2', name='progress_agent')
 @agent.tool
 async def process(ctx: RunContext, count: int) -> str:
     for i in range(count):
-        ctx.emit_event(CustomEvent(name='progress', data={'done': i + 1, 'total': count}))
+        ctx.emit_event('progress', {'done': i + 1, 'total': count})
     return 'done'
 ```
 
