@@ -449,16 +449,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 ) -> Any:
                     return await self._invoke_capability_operation(_capability, _operation_name, ctx, args, kwargs)
 
-                capability._durable_operation_bindings = {
-                    **capability._durable_operation_bindings,
-                    id(agent): {
-                        **capability._durable_operation_bindings.get(id(agent), {}),
-                        operation_name: dispatch_for_run_context,
-                    },
-                }
+                bindings = capability._get_durable_operation_bindings()
+                capability._set_durable_operation_bindings(
+                    {
+                        **bindings,
+                        id(agent): {
+                            **bindings.get(id(agent), {}),
+                            operation_name: dispatch_for_run_context,
+                        },
+                    }
+                )
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
-        ctx._durability_bound = True  # pyright: ignore[reportPrivateUsage]
+        ctx.__dict__['_durability_bound'] = True
         if ctx.agent is None:
             return
         operations: dict[tuple[int, str], Callable[..., Awaitable[object]]] = {}
@@ -479,8 +482,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     return await self._invoke_capability_operation(_capability, _operation_name, ctx, args, kwargs)
 
                 operations[(id(capability), operation_name)] = dispatch
-        ctx._durable_operations.clear()  # pyright: ignore[reportPrivateUsage]
-        ctx._durable_operations.update(operations)  # pyright: ignore[reportPrivateUsage]
+        ctx.__dict__['_durable_operations'] = operations
 
     async def _invoke_capability_operation(
         self,

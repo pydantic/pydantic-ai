@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from dataclasses import KW_ONLY, dataclass
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
 
 from pydantic import ValidationError
 from typing_extensions import deprecated
@@ -188,9 +188,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    _durable_operation_bindings: dict[int, dict[str, DurableOperationDispatcher]] = field(
-        default_factory=lambda: {}, init=False, repr=False
-    )
+    def _get_durable_operation_bindings(self) -> dict[int, dict[str, DurableOperationDispatcher]]:
+        return cast(
+            dict[int, dict[str, DurableOperationDispatcher]],
+            self.__dict__.get('_pydantic_ai_durable_operation_bindings', {}),
+        )
+
+    def _set_durable_operation_bindings(self, bindings: dict[int, dict[str, DurableOperationDispatcher]]) -> None:
+        object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
 
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.

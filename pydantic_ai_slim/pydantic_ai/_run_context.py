@@ -97,10 +97,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
-    _durable_operations: dict[tuple[int, str], Callable[..., Awaitable[object]]] = field(
-        default_factory=lambda: {}, repr=False
-    )
-    _durability_bound: bool = field(default=False, repr=False)
 
     def durable_operation(
         self,
@@ -109,11 +105,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
         handler: Callable[P, Awaitable[R]],
     ) -> DurableOperationHandle[P, R]:
         """Look up a typed capability operation, falling back to its original handler."""
-        operation = self._durable_operations.get((id(capability), name))
+        operations = cast(
+            dict[tuple[int, str], Callable[..., Awaitable[object]]] | None,
+            self.__dict__.get('_durable_operations'),
+        )
+        operation = operations.get((id(capability), name)) if operations is not None else None
         if operation is None and self.agent is not None:
-            dispatcher = capability._durable_operation_bindings.get(id(self.agent), {}).get(  # pyright: ignore[reportPrivateUsage]
-                name
-            )
+            dispatcher = capability._get_durable_operation_bindings().get(id(self.agent), {}).get(name)  # pyright: ignore[reportPrivateUsage]
             if dispatcher is not None:
 
                 async def bound_operation(*args: object, **kwargs: object) -> object:

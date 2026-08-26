@@ -218,7 +218,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
         run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
-        if run_ctx._durability_bound:  # pyright: ignore[reportPrivateUsage]
+        if run_ctx.__dict__.get('_durability_bound', False):
             with set_current_run_context(run_ctx):
                 await run_capability.before_run(run_ctx)
                 current_ctx = contextvars.copy_context()
