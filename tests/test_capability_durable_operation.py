@@ -195,6 +195,24 @@ class PerRunOperation(AbstractCapability[Any]):
         self.calls += 1
 
 
+class TenantScopedOperation(AbstractCapability[str]):
+    id = 'tenant_scoped_operation'
+
+    def __init__(self, tenant: str = 'unrestricted', observations: list[str] | None = None) -> None:
+        self.tenant = tenant
+        self.observations = observations if observations is not None else []
+
+    async def for_run(self, ctx: RunContext[str]) -> AbstractCapability[str]:
+        return TenantScopedOperation(ctx.deps, self.observations)
+
+    async def before_run(self, ctx: RunContext[str]) -> None:
+        self.observations.append(await self.read_tenant(ctx))
+
+    @durable_operation
+    async def read_tenant(self, ctx: RunContext[str]) -> str:
+        return self.tenant
+
+
 class ModelReadingOperation(AbstractCapability[Any]):
     id = 'model_reader'
 
@@ -764,11 +782,11 @@ async def test_defensive_capability_operation_paths() -> None:
     with pytest.raises(RuntimeError, match='require the durability model scope'):
         await call_declaration(projection_declaration, capability, CapabilityOperationParams(ctx, {}))
     with pytest.raises(RuntimeError, match='requires the worker agent'):
-        recover_capability(ctx, 'missing')
+        await recover_capability(ctx, 'missing')
     plain_agent = Agent(TestModel())
     ctx.agent = plain_agent
     with pytest.raises(RuntimeError, match='found 0'):
-        recover_capability(ctx, 'missing')
+        await recover_capability(ctx, 'missing')
 
     assert (
         await capability._calculate(  # pyright: ignore[reportPrivateUsage]
@@ -915,6 +933,35 @@ async def test_temporal_capability_operation_resolves_ctx_model_worker_side() ->
     assert await registration(wire, deps)
 
 
+async def test_temporal_capability_operation_rederives_for_run_instance_worker_side() -> None:
+    capability = TenantScopedOperation()
+    agent = Agent(
+        TestModel(),
+        name='temporal_tenant_scope',
+        deps_type=str,
+        capabilities=[capability, TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    declaration = durability._capability_declarations[  # pyright: ignore[reportPrivateUsage]
+        ('tenant_scoped_operation', 'read_tenant')
+    ]
+    transport = _CapabilityOperationTransport(durability, declaration)
+    ctx = RunContext(deps='tenant-a', agent=agent, model=TestModel(), usage=RunUsage())
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, {}))
+    registration = next(
+        activity
+        for activity in durability.temporal_activities
+        if ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        == 'agent__temporal_tenant_scope__capability__tenant_scoped_operation__read_tenant'
+    )
+
+    result = await registration(wire, deps)
+
+    assert result.value == 'tenant-a'
+    assert capability.tenant == 'unrestricted'
+
+
 @pytest.fixture
 def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
@@ -949,6 +996,28 @@ async def test_dbos_capability_operation_end_to_end(dbos: DBOS) -> None:
 
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert 'dbos_operations__capability__operations.calculate' in [step['function_name'] for step in steps]
+
+
+async def test_dbos_capability_operation_uses_for_run_instance_in_registered_step(dbos: DBOS) -> None:
+    observations: list[str] = []
+    capability = TenantScopedOperation(observations=observations)
+    agent = Agent(
+        TestModel(),
+        name='dbos_tenant_scope',
+        deps_type=str,
+        capabilities=[capability, DBOSDurability()],
+    )
+    workflow_id = str(uuid.uuid4())
+
+    @DBOS.workflow(name=f'capability_tenant_scope_{workflow_id}')
+    async def workflow() -> None:
+        await agent.run('test', deps='tenant-a')
+
+    with SetWorkflowID(workflow_id):
+        await workflow()
+
+    assert observations == ['tenant-a']
+    assert capability.tenant == 'unrestricted'
 
 
 async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> None:

@@ -399,7 +399,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     arguments = self._codec.load(dict[str, Any], self._codec.dump(dict[str, Any], params.arguments))
                     validated = cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
                     semantic_params = CapabilityOperationParams(params.run_context, validated, params.model_id)
-                    recovered = recover_capability(params.run_context, capability_id)
+                    recovered = await recover_capability(params.run_context, capability_id)
                     if declaration.model_request_hook:
                         projection = cast(ModelRequestContextProjection, semantic_params.arguments['request_context'])
                         async with self._durable_model_scope(projection.model_id, params.run_context) as (

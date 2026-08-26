@@ -384,7 +384,7 @@ async def call_declaration(
     return await bound(*args, **kwargs)
 
 
-def recover_capability(ctx: RunContext[Any], capability_id: str) -> AbstractCapability[Any]:
+async def recover_capability(ctx: RunContext[Any], capability_id: str) -> AbstractCapability[Any]:
     run_capabilities = cast(dict[str, AbstractCapability[Any]], ctx.__dict__.get('_run_capabilities_by_id', {}))
     if capability := run_capabilities.get(capability_id):
         return capability
@@ -394,7 +394,10 @@ def recover_capability(ctx: RunContext[Any], capability_id: str) -> AbstractCapa
     matches = [cap for cap in leaf_capabilities(agent.root_capability) if cap.id == capability_id]
     if len(matches) != 1:
         raise RuntimeError(f'Expected one bound capability with id {capability_id!r}, found {len(matches)}.')
-    return matches[0]
+    capability = matches[0]
+    if type(capability).for_run is AbstractCapability.for_run:
+        return capability
+    return await capability.for_run(ctx)
 
 
 CapabilityBoundOperation = BoundDurableOperation[CapabilityOperationParams, Any, Any]
