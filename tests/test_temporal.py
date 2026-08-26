@@ -157,6 +157,7 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
+    from pydantic_ai.durable_exec import DurableRunCancellation
     from pydantic_ai.durable_exec._toolset import (
         CallToolResult,
         unwrap_tool_call_result,
@@ -688,6 +689,98 @@ async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(
 
     await Replayer(
         workflows=[CancellationBackstopWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+
+
+_signal_cancellation_activity_started: asyncio.Event | None = None
+
+
+async def _signal_cancellation_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    assert _signal_cancellation_activity_started is not None
+    _signal_cancellation_activity_started.set()
+    yield 'thinking'
+    # Block until the model activity is cancelled by the run's first-party cancellation.
+    while True:
+        activity.heartbeat()
+        await asyncio.sleep(0.01)
+
+
+async def _signal_cancellation_event_stream_handler(
+    ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]
+) -> None:
+    async for _ in stream:
+        pass
+
+
+_signal_cancellation_agent = Agent(
+    FunctionModel(stream_function=_signal_cancellation_stream_model),
+    name='signal_cancellation_agent',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_signal_cancellation_event_stream_handler,
+            model_activity_config=ActivityConfig(
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                heartbeat_timeout=timedelta(seconds=1),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class SignalCancellationWorkflow:
+    def __init__(self) -> None:
+        # A fresh handle per workflow execution; it binds to this run's cancellation only.
+        self._cancellation = DurableRunCancellation[None]()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            return (await _signal_cancellation_agent.run(prompt, capabilities=[self._cancellation])).output
+        except RunCancelled:
+            # Catching `RunCancelled` lets the workflow complete normally on a first-party cancel
+            # rather than ending *Cancelled*, and keeps the run replay-deterministic.
+            return 'run cancelled'
+
+    @workflow.signal
+    def cancel(self) -> None:
+        self._cancellation.cancel()
+
+
+async def test_temporal_run_cancelled_by_workflow_signal(client: Client) -> None:
+    """An external `@workflow.signal` wired to `DurableRunCancellation.cancel()` cancels the
+    in-flight durable run first-party: the run raises `RunCancelled`, which the workflow catches to
+    complete normally rather than ending as a *Cancelled* workflow. The recorded history replays
+    deterministically."""
+    global _signal_cancellation_activity_started
+
+    _signal_cancellation_activity_started = asyncio.Event()
+    workflow_id = f'{SignalCancellationWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SignalCancellationWorkflow],
+        plugins=[AgentPlugin(_signal_cancellation_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            SignalCancellationWorkflow.run,
+            args=['cancel me'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        await _signal_cancellation_activity_started.wait()
+        await handle.signal(SignalCancellationWorkflow.cancel)
+
+        assert await handle.result() == 'run cancelled'
+
+        history = await handle.fetch_history()
+
+    await Replayer(
+        workflows=[SignalCancellationWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),
         data_converter=pydantic_data_converter,
     ).replay_workflow(history)
