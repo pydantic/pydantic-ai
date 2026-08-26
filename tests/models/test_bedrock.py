@@ -1288,10 +1288,17 @@ async def test_bedrock_stream_usage_with_cached_tokens(
     )
 
 
-_BEDROCK_GUARDRAIL_TRACE = {'guardrail': {'modelOutput': ['blocked']}}
+_BEDROCK_GUARDRAIL_TRACE: dict[str, Any] = {'guardrail': {'modelOutput': ['blocked']}}
+_BEDROCK_EMPTY_TRACE: dict[str, Any] = {}
 
 
-async def test_bedrock_trace(allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture):
+@pytest.mark.parametrize('trace', [_BEDROCK_GUARDRAIL_TRACE, _BEDROCK_EMPTY_TRACE])
+async def test_bedrock_trace(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    trace: dict[str, Any],
+):
     """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model)
@@ -1301,7 +1308,7 @@ async def test_bedrock_trace(allow_model_requests: None, bedrock_provider: Bedro
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
         'stopReason': 'guardrail_intervened',
         'usage': {'inputTokens': 1, 'outputTokens': 1},
-        'trace': _BEDROCK_GUARDRAIL_TRACE,
+        'trace': trace,
         'ResponseMetadata': {'HTTPStatusCode': 200},
     }
 
@@ -1310,13 +1317,17 @@ async def test_bedrock_trace(allow_model_requests: None, bedrock_provider: Bedro
     message = cast(ModelResponse, result.all_messages()[-1])
     assert message.provider_details == {
         'finish_reason': 'guardrail_intervened',
-        'trace': _BEDROCK_GUARDRAIL_TRACE,
+        'trace': trace,
     }
     assert message.finish_reason == 'content_filter'
 
 
+@pytest.mark.parametrize('trace', [_BEDROCK_GUARDRAIL_TRACE, _BEDROCK_EMPTY_TRACE])
 async def test_bedrock_trace_streamed(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    trace: dict[str, Any],
 ):
     """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
@@ -1330,9 +1341,45 @@ async def test_bedrock_trace_streamed(
         yield {
             'metadata': {
                 'usage': {'inputTokens': 1, 'outputTokens': 1},
+                'trace': trace,
+            }
+        }
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    message = cast(ModelResponse, result.all_messages()[-1])
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': trace,
+    }
+    assert message.finish_reason == 'content_filter'
+
+
+async def test_bedrock_trace_streamed_metadata_before_stop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {
+            'metadata': {
+                'usage': {'inputTokens': 1, 'outputTokens': 1},
                 'trace': _BEDROCK_GUARDRAIL_TRACE,
             }
         }
+        yield {'messageStop': {'stopReason': 'guardrail_intervened'}}
 
     mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
     mock_converse_stream.return_value = {
