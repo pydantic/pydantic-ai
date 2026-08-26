@@ -2842,7 +2842,7 @@ def _compaction_part_is_wire_boundary(
         return False
     if part.provider_details and 'encrypted_content' in part.provider_details:
         return True
-    return not requires_encrypted_content and part.content is not None
+    return not requires_encrypted_content and bool(part.content)
 
 
 def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunction]

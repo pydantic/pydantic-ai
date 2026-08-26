@@ -65,6 +65,8 @@ from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     RealtimeSessionErrorEvent,
     ToolReturnContent,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _post_compaction_window_for_response,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
     narrow_message_parts,
     post_compaction_window,
@@ -2865,3 +2867,40 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_empty_compaction_summary_is_not_a_wire_boundary():
+    """An empty plaintext summary cannot replace compacted history, so it is not a boundary.
+
+    `has_content()` already rejects `''`; the wire-boundary check used `content is not None`,
+    which treated the empty string as payload. No real provider is known to emit this, so this
+    is not a VCR test.
+    """
+    part = CompactionPart(content='', provider_name='anthropic')
+    assert not part.has_content()
+    assert not _compaction_part_is_wire_boundary(part, 'anthropic')
+    assert _compaction_part_is_wire_boundary(CompactionPart(content='summary', provider_name='anthropic'), 'anthropic')
+    encrypted = CompactionPart(
+        content='',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'enc'},
+    )
+    assert _compaction_part_is_wire_boundary(encrypted, 'openai')
+
+
+def test_post_compaction_window_for_response_does_not_cut_at_empty_summary():
+    """An empty CompactionPart is a failed compaction; the evidence window keeps pre-boundary history."""
+    justifying = ModelRequest.user_text_prompt('justifying history')
+    empty_compaction = ModelResponse(
+        parts=[CompactionPart(content='', provider_name='anthropic')],
+        provider_name='anthropic',
+    )
+    serving = ModelResponse(
+        parts=[ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')],
+        provider_name='anthropic',
+    )
+    messages: list[ModelMessage] = [justifying, empty_compaction, serving]
+
+    window = _post_compaction_window_for_response(messages, serving)
+
+    assert window == messages
