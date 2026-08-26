@@ -149,7 +149,7 @@ class EmitCapability(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.emit_event(FileReadEvent(path='hook.txt'))
+        await ctx.emit_event(FileReadEvent(path='hook.txt'))
         return request_context
 
 
@@ -165,8 +165,8 @@ async def test_capability_tool_emission_stamps_attribution():
     capability = Capability[Any](id='files')
 
     @capability.tool
-    def read_file(ctx: RunContext[Any]) -> str:
-        ctx.emit_event(FileReadEvent(path='tool.txt'))
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(FileReadEvent(path='tool.txt'))
         return 'ok'
 
     events = await _collect(Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[capability]))
@@ -179,8 +179,8 @@ async def test_app_tool_cannot_emit_capability_event():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
-    def read_file(ctx: RunContext[Any]) -> str:
-        ctx.emit_event(FileReadEvent(path='tool.txt'))
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(FileReadEvent(path='tool.txt'))
         return 'ok'
 
     with pytest.raises(UserError, match='Capability events belong to capabilities'):
@@ -193,7 +193,7 @@ async def test_capability_cannot_emit_custom_event():
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            ctx.emit_event(CustomEvent(name='bad'))
+            await ctx.emit_event(CustomEvent(name='bad'))
             return request_context
 
     agent = Agent(FunctionModel(stream_function=_only_text), capabilities=[BadCapability()])
@@ -206,7 +206,7 @@ async def test_hooks_can_emit_custom_event():
 
     @hooks.on.before_model_request
     async def emit(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
-        ctx.emit_event(CustomEvent(name='bridge'))
+        await ctx.emit_event(CustomEvent(name='bridge'))
         return request_context
 
     events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[hooks]))

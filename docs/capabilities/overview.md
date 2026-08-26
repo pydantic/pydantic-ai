@@ -194,7 +194,7 @@ Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-dem
 
 ## Capability events
 
-Reusable capabilities can publish typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s for coordination and observability. Give an event family a stable namespace, define each payload as a dataclass, and emit it from a capability hook or capability-contributed tool with [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event]:
+Reusable capabilities can publish typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s for coordination and observability. Give an event family a stable namespace, define each payload as a dataclass, and emit it from an async capability hook or capability-contributed tool by awaiting [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event]:
 
 ```python {title="capability_events.py"}
 from dataclasses import dataclass
@@ -216,7 +216,7 @@ class FileSystemCapability(AbstractCapability[None]):
     async def before_model_request(
         self, ctx: RunContext[None], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.emit_event(FileReadEvent(path='README.md'))
+        await ctx.emit_event(FileReadEvent(path='README.md'))
         return request_context
 ```
 
