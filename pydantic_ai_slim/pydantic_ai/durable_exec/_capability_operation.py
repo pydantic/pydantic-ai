@@ -9,8 +9,10 @@ from typing import Any, ParamSpec, TypeVar, cast, get_type_hints, overload
 from pydantic_ai._function_schema import (
     FunctionSchema,
     _extract_return_schema_type,  # pyright: ignore[reportPrivateUsage]
+    _is_call_ctx,  # pyright: ignore[reportPrivateUsage]
     function_schema,
 )
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
@@ -64,6 +66,7 @@ class CapabilityMethodDeclaration:
     signature: inspect.Signature
     schema: FunctionSchema
     result_type: object
+    ctx_parameter: str | None
     model_request_hook: bool = False
 
 
@@ -109,7 +112,15 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
         marker = _DurableOperationMarker(_operation_name(target, name), target)
 
         @wraps(target)
-        async def decorated(self: AbstractCapability[Any], ctx: RunContext[Any], *args: Any, **kwargs: Any) -> R:
+        async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> R:
+            bound = inspect.signature(target).bind(self, *args, **kwargs)
+            ctx: RunContext[Any] | None = get_current_run_context()
+            for value in bound.arguments.values():
+                if isinstance(value, RunContext):
+                    ctx = cast(RunContext[Any], value)
+                    break
+            if ctx is None:
+                return await target(self, *args, **kwargs)
             agent = ctx.agent
             if agent is not None:
                 from ._base import BaseDurabilityCapability
@@ -123,19 +134,25 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                     None,
                 )
                 if durability is not None:
-                    request_context = args[0] if target.__name__ == 'before_model_request' and args else None
-                    dispatch_args = (
-                        (ModelRequestContextProjection.from_context(request_context),)
-                        if isinstance(request_context, ModelRequestContext)
-                        else args
+                    request_context = next(
+                        (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
                     )
+                    if isinstance(request_context, ModelRequestContext):
+                        projection = ModelRequestContextProjection.from_context(request_context)
+                        dispatch_args = tuple(projection if value is request_context else value for value in args)
+                        dispatch_kwargs = {
+                            key: projection if value is request_context else value for key, value in kwargs.items()
+                        }
+                    else:
+                        dispatch_args = args
+                        dispatch_kwargs = kwargs
                     return cast(
                         R,
                         await _dispatch_and_apply_model_request_projection(
-                            durability, self, marker.name, ctx, dispatch_args, kwargs, request_context
+                            durability, self, marker.name, ctx, dispatch_args, dispatch_kwargs, request_context
                         ),
                     )
-            return await target(self, ctx, *args, **kwargs)
+            return await target(self, *args, **kwargs)
 
         setattr(decorated, '__pydantic_ai_durable_operation__', marker)
         return decorated
@@ -220,20 +237,22 @@ def collect_capability_operations(capability: AbstractCapability[Any]) -> dict[s
         model_request_hook = function.__name__ == 'before_model_request'
         schema_target = _model_request_schema if model_request_hook else bound
         signature = inspect.signature(schema_target)
+        ctx_parameters = [
+            name
+            for name, annotation in get_type_hints(bound, include_extras=True).items()
+            if name != 'return' and _is_call_ctx(annotation)
+        ]
+        if len(ctx_parameters) > 1:
+            raise UserError(
+                f'Durable operation {function.__qualname__!r} cannot take more than one `RunContext` parameter.'
+            )
         for parameter in signature.parameters.values():
-            if (
-                parameter.name != next(iter(signature.parameters), None)
-                and parameter.annotation is inspect.Parameter.empty
-            ):
+            if parameter.name not in ctx_parameters and parameter.annotation is inspect.Parameter.empty:
                 raise UserError(
                     f'Error generating schema for {function.__qualname__}:\n'
                     f'  Parameter {parameter.name!r} must have a type annotation'
                 )
         schema = function_schema(schema_target, GenerateToolJsonSchema)
-        if not schema.takes_ctx:
-            raise UserError(
-                f'Durable operation {function.__qualname__!r} must take `RunContext` as its first argument.'
-            )
         declarations[operation_name] = CapabilityMethodDeclaration(
             operation_name,
             function,
@@ -242,6 +261,7 @@ def collect_capability_operations(capability: AbstractCapability[Any]) -> dict[s
             ModelRequestContextProjection
             if model_request_hook
             else _extract_return_schema_type(get_type_hints(bound, include_extras=True).get('return'), bound),
+            ctx_parameters[0] if ctx_parameters else None,
             model_request_hook,
         )
     return declarations
@@ -253,10 +273,11 @@ def bind_arguments(
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> dict[str, Any]:
-    bound = declaration.signature.bind(ctx, *args, **kwargs)
+    bound = declaration.signature.bind(*args, **kwargs)
     bound.apply_defaults()
     arguments = dict(bound.arguments)
-    arguments.pop(next(iter(declaration.signature.parameters)))
+    if declaration.ctx_parameter is not None:
+        arguments.pop(declaration.ctx_parameter)
     for name, parameter in declaration.signature.parameters.items():
         if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             arguments.update(arguments.pop(name))

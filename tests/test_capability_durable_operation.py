@@ -107,6 +107,44 @@ class DurableBeforeModelRequest(AbstractCapability[Any]):
         return request_context
 
 
+class ContextPositions(AbstractCapability[Any]):
+    id = 'context_positions'
+
+    def __init__(self) -> None:
+        self.results: list[str] = []
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        self.results = [
+            await self.ctx_first(ctx, 'first'),
+            await self.ctx_last('last', ctx),
+            await self.ctx_keyword_only('keyword', ctx=ctx),
+            await self.no_ctx('none'),
+            await self._summarize(['one', 'two'], ctx, previous_summary='previous'),
+        ]
+
+    @durable_operation
+    async def ctx_first(self, ctx: RunContext[Any], value: str) -> str:
+        return f'{value}:{ctx.model.model_name}'
+
+    @durable_operation
+    async def ctx_last(self, value: str, ctx: RunContext[Any]) -> str:
+        return f'{value}:{ctx.model.model_name}'
+
+    @durable_operation
+    async def ctx_keyword_only(self, value: str, *, ctx: RunContext[Any]) -> str:
+        return f'{value}:{ctx.model.model_name}'
+
+    @durable_operation
+    async def no_ctx(self, value: str) -> str:
+        return value
+
+    @durable_operation
+    async def _summarize(
+        self, messages: list[str], ctx: RunContext[Any], *, previous_summary: str | None = None
+    ) -> str:
+        return f'{previous_summary}:{len(messages)}:{ctx.model.model_name}'
+
+
 async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
     capability = Operations()
     agent = Agent(TestModel(), capabilities=[capability])
@@ -345,7 +383,32 @@ def test_tier_one_base_and_duplicate_override_paths() -> None:
         collect_capability_operations(Duplicate())
 
 
-def test_dynamic_operation_requires_run_context() -> None:
+async def test_run_context_is_located_from_the_schema() -> None:
+    capability = ContextPositions()
+    agent = Agent(TestModel(), name='context_positions', capabilities=[capability, RecordingDurability()])
+
+    await agent.run('test')
+
+    assert capability.results == [
+        'first:test',
+        'last:test',
+        'keyword:test',
+        'none',
+        'previous:2:test',
+    ]
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    operation_names = [name for name, _ in durability.calls if '__capability__' in name]
+    assert operation_names == [
+        'context_positions__capability__context_positions.ctx_first',
+        'context_positions__capability__context_positions.ctx_last',
+        'context_positions__capability__context_positions.ctx_keyword_only',
+        'context_positions__capability__context_positions.no_ctx',
+        'context_positions__capability__context_positions.summarize',
+    ]
+
+
+def test_dynamic_operation_without_run_context_is_supported() -> None:
     class MissingContext(AbstractCapability[Any]):
         async def operation(self, value: int) -> int:
             return value
@@ -353,8 +416,23 @@ def test_dynamic_operation_requires_run_context() -> None:
         def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
             return {'operation': self.operation}
 
-    with pytest.raises(UserError, match='must take `RunContext`'):
-        collect_capability_operations(MissingContext())
+    declaration = collect_capability_operations(MissingContext())['operation']
+    assert declaration.ctx_parameter is None
+
+
+def test_two_run_context_parameters_are_rejected_at_bind() -> None:
+    class DuplicateContext(AbstractCapability[Any]):
+        id = 'duplicate_context'
+
+        @durable_operation
+        async def operation(self, first: RunContext[Any], second: RunContext[Any]) -> None:
+            pass
+
+    with pytest.raises(
+        UserError,
+        match=r"Durable operation '.*operation' cannot take more than one `RunContext` parameter\.",
+    ):
+        Agent(TestModel(), name='duplicate_context', capabilities=[DuplicateContext(), RecordingDurability()])
 
 
 async def test_defensive_capability_operation_paths() -> None:

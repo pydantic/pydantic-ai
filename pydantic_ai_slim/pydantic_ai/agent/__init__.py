@@ -53,6 +53,7 @@ from .._cancel import CancellationToken, RunCancellation, take_run_binding
 from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
+from .._run_context import set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -216,10 +217,11 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
-        await run_capability.before_run(run_ctx)
-        # Capture context vars set by wrap_run/before_run so they can be propagated to the
-        # caller's task, where the run body and any child tasks execute.
-        current_ctx = contextvars.copy_context()
+        with set_current_run_context(run_ctx):
+            await run_capability.before_run(run_ctx)
+            # Capture context vars set by wrap_run/before_run so they can be propagated to the
+            # caller's task, where the run body and any child tasks execute.
+            current_ctx = contextvars.copy_context()
         _wrap_context = [
             (var, current_ctx[var])
             for var in current_ctx
