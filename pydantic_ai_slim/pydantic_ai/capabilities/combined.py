@@ -874,7 +874,7 @@ def bind_capabilities_tier(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return replace(ctx, capability_active=_capability_active(capability, ctx))
+    return replace(ctx, capability_active=_capability_active(capability, ctx), _capability=capability)
 
 
 def _ctx_for_active_cap(
@@ -883,7 +883,7 @@ def _ctx_for_active_cap(
     capability_active = _capability_active(capability, ctx)
     if capability.defer_loading is True and not capability_active:
         return None
-    return replace(ctx, capability_active=capability_active)
+    return replace(ctx, capability_active=capability_active, _capability=capability)
 
 
 def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:

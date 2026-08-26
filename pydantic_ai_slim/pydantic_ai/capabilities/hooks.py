@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, overload
 
 import anyio
 from pydantic import ValidationError
@@ -747,6 +747,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
     """
 
     _registry: dict[str, list[_HookEntry[Any]]]
+    _emits_app_events: ClassVar[bool] = True
 
     def __init__(
         self,

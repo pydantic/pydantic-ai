@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterable, AsyncIterator, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
@@ -184,3 +184,5 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None  # Not spec-serializable (takes a callable)
+
+    _emits_app_events: ClassVar[bool] = True

@@ -272,6 +272,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     this one is the answer for a call the model has already made, where it is. See `AnchoredEvidence`.
     """
 
+    _capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
+    """The capability whose hook is currently being dispatched, if any."""
+
     @property
     @deprecated(
         '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
@@ -476,14 +479,20 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     @overload
     def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
+    @overload
+    def emit_event(self, event: _messages.CapabilityEvent, /) -> _messages.CapabilityEvent: ...
 
-    def emit_event(self, event: str | _messages.CustomEvent, data: Any = None, /) -> _messages.CustomEvent:
-        """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into the current run's event stream.
+    def emit_event(
+        self, event: str | _messages.CustomEvent | _messages.CapabilityEvent, data: Any = None, /
+    ) -> _messages.CustomEvent | _messages.CapabilityEvent:
+        """Emit a custom or capability event into the current run's event stream.
 
         Pass a name and an optional payload -- `ctx.emit_event('sync_progress', {'done': 3})` -- to emit
         a plain [`CustomEvent`][pydantic_ai.messages.CustomEvent], or a constructed event object, typically
         an instance of an application-defined
         [`CustomEvent` subclass](../agent.md#typed-custom-events) with typed payload fields.
+        Capability hooks and capability-contributed tools can instead emit a typed
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent].
 
         Safe to call from anywhere a `RunContext` is available during a run — async tools, sync tools
         (auto-wrapped in a thread executor by Pydantic AI), history processors, and
@@ -498,7 +507,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         consumers can attribute it to the originating tool call.
 
         Args:
-            event: The event name, or a constructed [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
+            event: The event name, or a constructed [`CustomEvent`][pydantic_ai.messages.CustomEvent] or
+                [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] to emit.
             data: The payload, when a name is passed; must be serializable by pydantic to flow through
                 durable execution and the UI adapters.
 
@@ -506,13 +516,38 @@ class RunContext(Generic[RunContextAgentDepsT]):
             The event as emitted (with any stamped attribution fields).
 
         Raises:
-            UserError: If this `RunContext` isn't backed by a running agent's event stream (e.g. a manually
-                constructed context, or the deserialized context inside a Temporal activity).
+            UserError: If this `RunContext` isn't backed by a running agent's event stream, or the event
+                family doesn't belong to the current emitter.
         """
         if self._event_stream_buffer is None:
             raise UserError(
                 '`emit_event` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.emit_event`). This `RunContext` has no event stream to emit into.'
+            )
+        capability_id: str | None = None
+        capability = self._capability
+        if capability is not None:
+            capability_id = next(
+                (run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id
+            )
+        elif self.tool_name is not None and self.tool_manager is not None and self.tool_manager.tools is not None:
+            if (tool := self.tool_manager.tools.get(self.tool_name)) is not None:
+                capability_id = tool.toolset.id if tool.toolset.id in self.capabilities else None
+
+        if isinstance(event, _messages.CapabilityEvent):
+            if capability_id is None:
+                raise UserError(
+                    'Capability events belong to capabilities and can only be emitted from a capability hook or '
+                    'capability-contributed tool. Application code should emit a `CustomEvent`; it can re-emit a '
+                    'received capability event as one.'
+                )
+            if event.capability_id is None:
+                event = dataclasses.replace(event, capability_id=capability_id)
+        # This private ClassVar is the intentional in-tree opt-out for app-facing callback capabilities.
+        elif capability is not None and not capability._emits_app_events:  # pyright: ignore[reportPrivateUsage]
+            raise UserError(
+                'Capabilities should define and emit `CapabilityEvent` subclasses instead of application '
+                '`CustomEvent`s.'
             )
         if isinstance(event, str):
             event = _messages.CustomEvent(name=event, data=data)

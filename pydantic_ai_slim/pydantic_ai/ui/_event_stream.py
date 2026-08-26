@@ -13,6 +13,7 @@ from ..exceptions import RunCancelled
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
+    CapabilityEvent,
     CompactionPart,
     CustomEvent,
     DeferredToolRequestsEvent,
@@ -439,6 +440,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
         - [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] -> `handle_deferred_tool_results`
         - [`CustomEvent`][pydantic_ai.messages.CustomEvent] -> `handle_custom_event`
+        - [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] -> `handle_capability_event`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
@@ -483,6 +485,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case CustomEvent():
                 async for e in self.handle_custom_event(event):
+                    yield e
+            case CapabilityEvent():
+                async for e in self.handle_capability_event(event):
                     yield e
             case AgentRunResultEvent():
                 async for e in self.handle_run_result(event):
@@ -895,6 +900,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             event: The custom event.
         """
         return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_capability_event(self, event: CapabilityEvent) -> AsyncIterator[EventT]:
+        """Handle a `CapabilityEvent` emitted during the run.
+
+        Capability events are internal coordination signals and are not forwarded to frontends by
+        default. Applications can subscribe and re-emit one as a `CustomEvent`; protocol adapter
+        subclasses can override this method when the protocol has a suitable representation.
+
+        Args:
+            event: The capability event.
+        """
+        return
         yield  # Make this an async generator
 
     async def handle_deferred_tool_requests(self, event: DeferredToolRequestsEvent) -> AsyncIterator[EventT]:

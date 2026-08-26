@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import pydantic
 import pytest
@@ -89,6 +89,8 @@ async def test_emit_from_capability_hook():
 
     @dataclass
     class EmitCapability(AbstractCapability[Any]):
+        _emits_app_events: ClassVar[bool] = True
+
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:

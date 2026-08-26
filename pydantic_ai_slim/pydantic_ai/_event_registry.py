@@ -23,7 +23,7 @@ import pydantic_core
 from ._utils import is_str_dict
 from .exceptions import UserError
 
-EVENT_ENVELOPE_FIELDS = frozenset({'event_kind', 'name', 'data', 'tool_call_id', 'tool_name'})
+EVENT_ENVELOPE_FIELDS = frozenset({'event_kind', 'name', 'kind', 'data', 'capability_id', 'tool_call_id', 'tool_name'})
 """Fields that identify and attribute an emitted event, as opposed to carrying its payload."""
 
 _UNKNOWN_TAG = '__unknown__'

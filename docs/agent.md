@@ -294,6 +294,8 @@ _(This example is complete, it can be run "as is")_
 
 Alongside the framework's own events, a tool or code driving [`agent.iter()`](#iterating-over-an-agents-graph) can emit its own [`CustomEvent`][pydantic_ai.messages.CustomEvent]s into the same stream. This is useful for surfacing progress updates, intermediate results, or status information from long-running work to whoever is consuming the stream, without adding anything to the model's context.
 
+`CustomEvent` is for application-owned events; reusable capability authors define namespaced, typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s as described in [Capability events](capabilities/overview.md#capability-events).
+
 From anywhere a [`RunContext`][pydantic_ai.tools.RunContext] is available, call [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] with a name and an optional data payload. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] and [`tool_name`][pydantic_ai.messages.CustomEvent.tool_name] are stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
 
 ```python {title="custom_events.py"}

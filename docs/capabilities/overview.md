@@ -192,6 +192,38 @@ agent = Agent('openai:gpt-5.6-sol', capabilities=[refunds])
 
 Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-demand.md) that stays collapsed to a one-line catalog entry until the model loads it — like [Agent Skills](on-demand.md#loading-skills-from-markdown-files), which you can wrap in a `Capability` directly. See [The `Capability` convenience class](on-demand.md#the-capability-convenience-class) for the full API. For behavior beyond instructions, tools, and toolsets — lifecycle hooks, model settings, native tools — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as covered in [Building Custom Capabilities](custom.md).
 
+## Capability events
+
+Reusable capabilities can publish typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s for coordination and observability. Give an event family a stable namespace, define each payload as a dataclass, and emit it from a capability hook or capability-contributed tool with [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event]:
+
+```python {title="capability_events.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+FILE_SYSTEM_EVENTS = 'file_system'
+
+
+@dataclass(kw_only=True)
+class FileReadEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS):
+    path: str
+
+
+@dataclass
+class FileSystemCapability(AbstractCapability[None]):
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.emit_event(FileReadEvent(path='README.md'))
+        return request_context
+```
+
+Pydantic AI stamps the emitting capability's run id as `capability_id`. Events emitted by its tools also receive `tool_call_id` and `tool_name`. They surface on the [agent run event stream](../agent.md#streaming-all-events) but are internal coordination signals, so UI adapters do not forward them by default. An application that wants to expose one to a frontend can consume it and emit an application [`CustomEvent`][pydantic_ai.messages.CustomEvent] with the public payload; a protocol adapter can instead override [`handle_capability_event()`][pydantic_ai.ui.UIEventStream.handle_capability_event].
+
+The namespace and event name form the serialized `kind` (for example, `file_system.file_read`). Import the module defining an event before deserialization to recover its typed subclass. Otherwise it becomes [`UnknownCapabilityEvent`][pydantic_ai.messages.UnknownCapabilityEvent] without losing payload fields; serializing it again preserves the wire representation so a later consumer can recover the typed event.
+
 ## Provider-adaptive tools
 
 [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] each cover a single capability (web search, URL fetch, image generation, X search, MCP) across two implementations:

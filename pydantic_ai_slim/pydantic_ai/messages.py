@@ -4360,13 +4360,13 @@ class CustomEvent:
 
 
     @dataclass(kw_only=True)
-    class SyncProgressEvent(CustomEvent):
+    class OperationProgressEvent(CustomEvent):
         done: int
         total: int
     ```
 
     Subclasses must be dataclasses. Each subclass registers itself under its `name` -- derived from
-    the class name (`SyncProgressEvent` -> `'sync_progress'`) unless overridden with a `name` class
+    the class name (`OperationProgressEvent` -> `'operation_progress'`) unless overridden with a `name` class
     argument -- so instances round-trip through serialization back to the subclass, and consumers can
     use `isinstance` checks instead of matching name strings. Deserializing an event whose name isn't
     registered in the current process yields an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent].
@@ -4463,6 +4463,91 @@ class UnknownCustomEvent(CustomEvent, _register=False):
     """
 
 
+CAPABILITY_EVENT_TYPES: dict[str, type[CapabilityEvent]] = {}
+"""Registry of [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] subclasses, keyed by `kind`."""
+
+
+@dataclass(repr=False, kw_only=True)
+class CapabilityEvent:
+    """A typed event emitted by a capability into the agent's event stream.
+
+    Capability authors define dataclass subclasses with a namespace shared by their event family.
+    The emitting capability's run id is stamped by [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
+    """
+
+    kind: str = ''
+    """The namespaced event kind, injected as the default on registered subclasses."""
+
+    capability_id: str | None = None
+    """The run id of the capability that emitted this event."""
+
+    tool_call_id: str | None = None
+    """The associated tool call id, when emitted by a capability-contributed tool."""
+
+    tool_name: str | None = None
+    """The associated tool name, when emitted by a capability-contributed tool."""
+
+    event_kind: Literal['capability'] = 'capability'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    def __post_init__(self) -> None:
+        if type(self) is CapabilityEvent:
+            raise TypeError('`CapabilityEvent` is a base class; define a dataclass subclass with a `namespace`.')
+
+    def __init_subclass__(
+        cls, *, namespace: str | None = None, name: str | None = None, _register: bool = True, **kwargs: Any
+    ) -> None:
+        super().__init_subclass__(**kwargs)
+        if not _register:
+            return
+        if namespace is None:
+            for base in cls.__mro__[1:]:
+                if issubclass(base, CapabilityEvent) and (base_kind := getattr(base, 'kind', '')):
+                    namespace = base_kind.partition('.')[0]
+                    break
+        if namespace is None:
+            raise TypeError(
+                f'Capability event {cls.__qualname__} requires a namespace, e.g. '
+                f"`class {cls.__name__}(CapabilityEvent, namespace='my_capability')`."
+            )
+        event_kind = f'{namespace}.{name or to_snake(cls.__name__.removesuffix("Event"))}'
+        if (existing := CAPABILITY_EVENT_TYPES.get(event_kind)) is not None:
+            raise TypeError(
+                f'Duplicate capability event kind {event_kind!r}: already registered by {existing.__qualname__}. '
+                f"Pass an explicit name, e.g. `class {cls.__name__}(CapabilityEvent, namespace={namespace!r}, name='...')`."
+            )
+        CAPABILITY_EVENT_TYPES[event_kind] = cls
+        cls.__annotations__ = {'kind': 'str', **cls.__annotations__}
+        setattr(cls, 'kind', field(default=event_kind, kw_only=True))
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: Any, handler: pydantic.GetCoreSchemaHandler
+    ) -> pydantic_core.core_schema.CoreSchema:
+        if cls is not CapabilityEvent:
+            return handler(source)
+        return _event_family_schema(
+            handler,
+            registry=CAPABILITY_EVENT_TYPES,
+            tag_field='kind',
+            unknown_type=UnknownCapabilityEvent,
+        )
+
+
+@dataclass(repr=False, kw_only=True)
+class UnknownCapabilityEvent(CapabilityEvent, _register=False):
+    """A typed capability event whose `kind` isn't registered in this process.
+
+    Produced when deserializing an event emitted by a process that had the defining module imported.
+    The payload fields ride in `data`, and serialization re-flattens them, so a downstream consumer
+    that does have the defining module imported recovers the typed event.
+    """
+
+    data: Any = None
+
+
 RealtimeSessionEvent = Annotated[
     RealtimeTurnCompleteEvent
     | RealtimeInputSpeechStartEvent
@@ -4478,7 +4563,12 @@ RealtimeSessionEvent = Annotated[
 """An event that occurs only in realtime session streams."""
 
 AgentStreamEvent = Annotated[
-    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent | RealtimeSessionEvent | CustomEvent,
+    ModelResponseStreamEvent
+    | EnqueuedMessagesEvent
+    | HandleResponseEvent
+    | RealtimeSessionEvent
+    | CustomEvent
+    | CapabilityEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event in an agent run or realtime session stream."""

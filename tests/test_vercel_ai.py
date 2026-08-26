@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CapabilityEvent,
     CompactionPart,
     CustomEvent,
     DocumentUrl,
@@ -1767,6 +1768,25 @@ async def test_custom_event_maps_to_data_chunk():
             '[DONE]',
         ]
     )
+
+
+async def test_capability_event_is_not_forwarded():
+    """Capability coordination events are dropped by the Vercel AI adapter by default."""
+
+    @dataclass(kw_only=True)
+    class VercelCapabilityEvent(CapabilityEvent, namespace='vercel_test'):
+        value: int
+
+    async def event_generator():
+        yield VercelCapabilityEvent(value=1, capability_id='test')
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert events == snapshot([{'type': 'start'}, {'type': 'finish-step'}, {'type': 'finish'}, '[DONE]'])
 
 
 async def test_typed_custom_event_maps_to_data_chunk():

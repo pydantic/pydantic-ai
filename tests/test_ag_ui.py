@@ -22,6 +22,7 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityEvent,
     CompactionPart,
     CustomEvent as PydanticAICustomEvent,
     DocumentUrl,
@@ -4450,6 +4451,41 @@ async def test_custom_event_maps_to_ag_ui_custom_event():
                 'timestamp': IsInt(),
                 'name': 'progress',
                 'value': {'tool_call_id': 'call_1', 'data': {'pct': 100}},
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                'outcome': {'type': 'success'},
+            },
+        ]
+    )
+
+
+async def test_capability_event_is_not_forwarded():
+    """Capability coordination events are dropped by the AG-UI adapter by default."""
+
+    @dataclass(kw_only=True)
+    class AgUiCapabilityEvent(CapabilityEvent, namespace='ag_ui_test'):
+        value: int
+
+    async def event_generator():
+        yield AgUiCapabilityEvent(value=1, capability_id='test')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'RUN_FINISHED',
