@@ -404,7 +404,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
         """Return the agent's private validation-context specification."""
-        raise NotImplementedError
+        return None
 
     @property
     @abstractmethod

@@ -10324,6 +10324,62 @@ async def test_wrapper_agent():
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
 
 
+def test_wrapper_agent_validation_context_defaults_to_none():
+    class CustomAgent(AbstractAgent[None, str]):
+        def __init__(self):
+            self._agent = Agent('test')
+
+        @property
+        def model(self):
+            return self._agent.model
+
+        @property
+        def name(self):
+            return self._agent.name
+
+        @name.setter
+        def name(self, value: str | None):
+            self._agent.name = value
+
+        @property
+        def description(self):
+            return self._agent.description
+
+        @description.setter
+        def description(self, value: Any):
+            self._agent.description = value
+
+        @property
+        def deps_type(self):
+            return self._agent.deps_type
+
+        @property
+        def output_type(self):
+            return self._agent.output_type
+
+        @property
+        def event_stream_handler(self):
+            return self._agent.event_stream_handler
+
+        @property
+        def toolsets(self):
+            return self._agent.toolsets
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: Any):
+            return None
+
+        def iter(self, *args: Any, **kwargs: Any):
+            return self._agent.iter(*args, **kwargs)
+
+        def override(self, *args: Any, **kwargs: Any):
+            return self._agent.override(*args, **kwargs)
+
+    assert WrapperAgent(CustomAgent()).validation_context is None
+
+
 async def test_abstract_agent_system_prompt_parts_default_is_empty():
     """A custom `AbstractAgent` subclass that doesn't resolve system prompts inherits an empty default.
 
