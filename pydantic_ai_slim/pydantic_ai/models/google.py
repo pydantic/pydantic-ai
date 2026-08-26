@@ -523,19 +523,30 @@ class GoogleModel(Model[Client]):
     def _is_google_cloud(self) -> bool:
         """Whether requests go to Google Cloud (Vertex) rather than the Gemini Developer API.
 
-        Derived from the client's transport rather than the provider name: a Vertex-backed
-        `genai.Client` passed to `GoogleProvider(client=...)` keeps `name` (and thus `system`)
-        as `'google'` for message-history compatibility, so the name alone can't identify
-        the transport.
+        Derived from the client's transport rather than the provider name, because either provider
+        accepts a pre-built `client=` and stores it as-is, so the two can disagree in both
+        directions: a Vertex-backed client in `GoogleProvider` keeps `name` `'google'`, and a
+        Gemini-API client in `GoogleCloudProvider` keeps `name` `'google-cloud'`. The name cannot be
+        reconciled against the client instead — it is persisted in `ModelMessage.provider_name` and
+        checked when replaying history, so changing it breaks replay of anything captured under the
+        old name. `AnthropicModel` reads its transport off the client for the same reason.
         """
         return bool(self.client.vertexai)
 
     @property
     def _matching_provider_names(self) -> frozenset[str]:
-        names = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
-        # Include the provider's own name so files uploaded through this model always
-        # validate against it, even when the name doesn't identify the transport.
-        return names | {self.system}
+        # Keyed on the transport, because the pre-v2 names this set exists to accept were themselves
+        # transport-derived: `GoogleProvider.name` used to return `google-vertex`/`google-gla` off the
+        # client. The union with `self.system` is load-bearing, not cosmetic — a Vertex-backed
+        # `GoogleProvider` stamps `provider_name='google'`, which the Google Cloud set does not contain,
+        # so without it this model would reject its own history. Both consumers depend on this set:
+        # `_content_model_response` replays thinking signatures and native tool parts through it, and
+        # `_validate_uploaded_file` checks `UploadedFile.provider_name` against it.
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES or self.system in _GEMINI_API_PROVIDER_NAMES:
+            names = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
+            return names | {self.system}
+        # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
+        return frozenset({self.system})  # pragma: no cover
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
