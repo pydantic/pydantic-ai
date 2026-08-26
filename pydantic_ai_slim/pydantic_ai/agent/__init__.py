@@ -2931,7 +2931,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
         )
-        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+        if len(resolved_layers) > 1:
+            run_capability = CombinedCapability(resolved_layers)
+            # A run's capabilities compose with a retained overriding container exactly as a
+            # registered sibling does, so the same key collision is reachable from here.
+            _validate_instruction_source_ids(run_capability)
+        else:
+            # Nothing composed, so nothing new can collide: construction already validated this one.
+            run_capability = resolved_layers[0]
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -4012,7 +4019,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     return explicit_ids
 
 
-def _validate_instruction_source_ids(root_capability: AbstractCapability[Any]) -> None:
+def _validate_instruction_source_ids(root_capability: CombinedCapability[Any]) -> None:
     """Reject two instruction sources that would contribute blocks under one `capability:<id>` key.
 
     `_validate_capability_ids` walks the flattened capabilities, but a `CombinedCapability` subclass
@@ -4021,12 +4028,10 @@ def _validate_instruction_source_ids(root_capability: AbstractCapability[Any]) -
     unchecked, and a sibling could share it -- leaving an application unable to tell whose text
     `capability:<id>` addresses, which is the one thing the key exists to make unambiguous.
 
-    Runs at construction, after `for_agent`, and again for a run's own capabilities: a capability
-    passed to `run()` composes with the retained container the same way a sibling does, so the
-    collision is reachable from there too.
+    Runs at construction, after `for_agent`, and again wherever a run composes new layers onto
+    the agent's: a capability passed to `run()` joins the retained container the same way a
+    registered sibling does, so the collision is reachable from there too.
     """
-    if not isinstance(root_capability, CombinedCapability):
-        return
     sources_by_id: dict[str, AbstractCapability[Any]] = {}
     for source in root_capability._instruction_sources:  # pyright: ignore[reportPrivateUsage]
         if source.id is None:
@@ -4113,7 +4118,6 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     capability.apply(capabilities.append)
 
     explicit_ids = _validate_capability_ids(capabilities)
-    _validate_instruction_source_ids(capability)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     for cap in capabilities:
