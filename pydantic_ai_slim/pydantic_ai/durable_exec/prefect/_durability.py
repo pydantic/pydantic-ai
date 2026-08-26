@@ -45,6 +45,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     }
     _tool_call_result_upgrade_lenient: ClassVar[bool] = True  # cached payloads may predate value-wrapping
     _journal_discovery: ClassVar[bool] = False  # resolve MCP/dynamic toolsets in flow code, journal only calls
+    _allow_inline_mcp_in_durable_context: ClassVar[bool] = True
     _durable_unit_noun = 'task'
     _durable_container_noun = 'flow'
     _tool_config_key = 'prefect'

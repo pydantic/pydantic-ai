@@ -330,7 +330,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _force_sequential_tools_in_durable_context: ClassVar[bool] = False
     """Whether tool calls must run sequentially inside the durable container."""
 
-    _allow_inline_mcp_in_durable_context: ClassVar[bool] = True
+    _allow_inline_mcp_in_durable_context: ClassVar[bool] = False
     """Whether MCP I/O may run inline when a tool opts out of its durable unit."""
 
     name: str
