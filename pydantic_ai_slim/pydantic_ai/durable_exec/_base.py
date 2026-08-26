@@ -987,7 +987,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 assert tool is not None
                 try:
                     from pydantic_ai.mcp import MCPToolset
-                except ImportError:  # pragma: no cover
+                except ImportError:
                     return False
 
                 if not self._allow_inline_mcp_in_durable_context and isinstance(tool.toolset, MCPToolset):
