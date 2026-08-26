@@ -203,7 +203,7 @@ class _FunctionCallToolCacheIdentity(CacheIdentity[_CallToolParams]):
 
 class _DynamicCallToolCacheIdentity(CacheIdentity[_DynamicCallToolParams]):
     def project(self, params: _DynamicCallToolParams) -> tuple[object, ...]:
-        return (params.name, params.tool_args, params.ctx)
+        return (params.name, params.tool_args, params.ctx, params.tool_def)
 
 
 class _LegacyOperationNamer(DurableOperationNamer):

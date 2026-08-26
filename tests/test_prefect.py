@@ -63,7 +63,12 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     Toolset,
 )
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._base import (
+    BaseDurabilityCapability,
+    ToolsetKind,
+    _DynamicCallToolCacheIdentity,  # pyright: ignore[reportPrivateUsage]
+    _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
     CallToolId,
@@ -2058,6 +2063,29 @@ async def test_cache_policy_hashes_tools_by_value_not_object_identity():
     assert key_for(shared_name, tools['side_effect']) == key_for(deserialized_name, tools['side_effect'])
     # The tool definition still forks the key: a different tool is a different cache entry.
     assert key_for(shared_name, tools['side_effect']) != key_for(shared_name, tools['other_effect'])
+
+
+def test_dynamic_tool_cache_identity_includes_prepared_definition() -> None:
+    """A prepared dynamic-tool definition can change call and validation behavior."""
+    cache_policy = PrefectAgentInputs()
+    identity = _DynamicCallToolCacheIdentity()
+    mock_task_ctx = MagicMock()
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    def key_for(tool_def: ToolDefinition) -> str | None:
+        params = _DynamicCallToolParams('search', {'query': 'x'}, ctx, tool_def)
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'logical_inputs': identity.project(params)},
+            flow_parameters={},
+        )
+
+    original = ToolDefinition(name='search', description='Search', timeout=1)
+    equal_copy = ToolDefinition(name='search', description='Search', timeout=1)
+    changed = ToolDefinition(name='search', description='Search carefully', timeout=2)
+
+    assert key_for(original) == key_for(equal_copy)
+    assert key_for(original) != key_for(changed)
 
 
 async def test_cache_policy_forks_identically_defined_tools_from_different_toolsets():
