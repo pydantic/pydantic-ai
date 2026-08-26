@@ -82,7 +82,8 @@ class Callback(BaseHTTPRequestHandler):
 
 server = HTTPServer(('localhost', 1455), Callback)
 webbrowser.open(flow.authorization_url())
-server.handle_request()  # one-shot: serves exactly the OAuth callback
+while not code:
+    server.handle_request()  # serve until the callback with a valid state arrives
 
 credentials = asyncio.run(flow.exchange_code(code[0]))
 # persist wherever your app keeps secrets - not ~/.codex, which belongs to the Codex CLI

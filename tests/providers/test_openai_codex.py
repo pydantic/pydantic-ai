@@ -427,7 +427,7 @@ def test_sync_auth_flow_is_rejected():
         auth.sync_auth_flow(httpx2.Request('GET', 'https://example.com'))
 
 
-async def test_auth_never_sent_to_foreign_hosts():
+async def test_auth_never_sent_to_foreign_or_plaintext_destinations():
     """A caller-supplied client may be reused for other destinations; credentials stay home."""
     provider = make_provider()
     seen: list[httpx2.Request] = []
@@ -437,12 +437,13 @@ async def test_auth_never_sent_to_foreign_hosts():
         return httpx2.Response(200)
 
     async with authed_client(provider, handler) as client:
-        response = await client.get('https://example.com/unrelated')
+        await client.get('https://example.com/unrelated')  # foreign host
+        await client.get('http://chatgpt.com/backend-api/codex/x')  # right host, plaintext scheme
 
-    assert response.status_code == 200
-    assert 'authorization' not in seen[0].headers
-    assert 'chatgpt-account-id' not in seen[0].headers
-    assert 'originator' not in seen[0].headers
+    for request in seen:
+        assert 'authorization' not in request.headers
+        assert 'chatgpt-account-id' not in request.headers
+        assert 'originator' not in request.headers
 
 
 def test_openai_client_passthrough():

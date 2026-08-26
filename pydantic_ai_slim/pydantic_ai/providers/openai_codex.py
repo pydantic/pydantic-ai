@@ -296,8 +296,8 @@ class OpenAICodexAuth(httpx2.Auth):
     """httpx auth injecting Codex subscription headers, with single-flight refresh-and-replay.
 
     Injects `Authorization: Bearer …`, `chatgpt-account-id`, and `originator`, but only on
-    requests to the Codex host, so a caller-supplied client reused for other destinations never
-    leaks credentials. On a 401 it performs at most one refresh-and-replay; non-expiry 401s
+    HTTPS requests to the Codex host, so a caller-supplied client reused for other destinations
+    (or downgraded to plaintext) never leaks credentials. On a 401 it performs at most one refresh-and-replay; non-expiry 401s
     therefore cannot loop. The proactive expiry check treats the unverified JWT `exp` as a hint only.
     """
 
@@ -314,9 +314,9 @@ class OpenAICodexAuth(httpx2.Auth):
         raise RuntimeError('`OpenAICodexAuth` only supports async HTTP clients.')
 
     async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
-        if request.url.host != _CODEX_HOST:
-            # Never send subscription credentials to a foreign destination: a caller-supplied
-            # client may be reused for arbitrary hosts.
+        if request.url.scheme != 'https' or request.url.host != _CODEX_HOST:
+            # Never send subscription credentials to a foreign destination or over plaintext:
+            # a caller-supplied client may be reused for arbitrary requests.
             yield request
             return
         # The two classes are deliberately coupled in one module; the provider owns the state and
