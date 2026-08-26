@@ -108,9 +108,9 @@ async def test_openai_native_tool_search(allow_model_requests: None) -> None:
     """
     client = openai.AsyncOpenAI()
 
-    # ToolFunction (namespace inner type) doesn't have defer_loading in its TypedDict,
-    # but the API accepts it. We build from FunctionToolParam and pass as namespace tools.
-    # TODO investigate whether this is due to a newer SDK version
+    # ToolFunction already has `defer_loading` as of openai 3.0.0; this still builds dicts from
+    # FunctionToolParam. Rewrite as typed ToolFunction when touching this test.
+    # https://github.com/openai/openai-python/blob/v3.0.0/src/openai/types/responses/namespace_tool_param.py
     namespace_tools = [
         {'type': 'function', 'name': t['name'], 'description': t.get('description'), 'parameters': t['parameters']}
         | ({'defer_loading': True} if i > 0 else {})

@@ -6,13 +6,15 @@ import re
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal, cast
+from unittest.mock import patch
 
+import httpx2
 import pytest
 from httpx import AsyncClient
 from pydantic import BaseModel
@@ -20,6 +22,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    CancellationToken,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -49,6 +52,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -58,12 +62,18 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
-    create_async_http_client,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.realtime import (
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
+from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -130,7 +140,7 @@ pytestmark = [
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = create_async_http_client()
+http_client = httpx2.AsyncClient()
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -1114,6 +1124,82 @@ async def test_dbos_agent_run_stream_events_in_workflow(allow_model_requests: No
         ),
     ):
         await run_stream_events_workflow()
+
+
+async def test_dbos_agent_realtime_session_in_workflow():
+    # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
+    # workflow; the guard trips before the model is ever connected.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'):
+        with pytest.raises(UserError, match='cannot be used inside a DBOS workflow'):
+            async with simple_dbos_agent.realtime(cast('Any', object())).session():
+                pass  # pragma: no cover
+
+
+async def test_dbos_agent_realtime_signaling_in_workflow():
+    # Browser-call signaling issues a live provider request, so workflow code can't call it directly:
+    # the two helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'):
+        realtime = simple_dbos_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+            await realtime.create_client_secret()
+
+
+async def test_dbos_agent_realtime_signaling_in_step():
+    # Inside a step — the boundary where DBOS records non-deterministic I/O — signaling delegates to
+    # the wrapped agent like `run()` does. The fake model has no WebRTC support, so reaching *its*
+    # refusal proves the workflow guard let the call through.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'), patch.object(DBOS, 'step_id', 7):
+        realtime = simple_dbos_agent.realtime(_FakeRealtimeModel())
+        with pytest.raises(UserError, match='does not support WebRTC'):
+            await realtime.create_client_secret()
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
+            supported_native_tools=frozenset(),
+        )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_dbos_agent_realtime_session_outside_workflow():
+    # Outside a workflow, the session is delegated to the wrapped agent.
+    async with simple_dbos_agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
 
 
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):
@@ -2274,6 +2360,23 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
+async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS) -> None:
+    """A same-process `cancellation_token` can't cross the durable boundary, so it's rejected inside
+    a workflow — but the same durable-capable agent still accepts one when run outside a workflow."""
+    agent = Agent(_durability_fn_model, name='durability_cancel_token', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        await agent.run('Hello', cancellation_token=CancellationToken())
+
+    with pytest.raises(UserError, match='`cancellation_token` cannot be used with DBOS durable execution'):
+        await run_durable_agent()
+
+    # Outside a workflow the capability is transparent, so the token works like a normal run.
+    result = await agent.run('Hello', cancellation_token=CancellationToken())
+    assert result.output == 'Echo: Hello'
+
+
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
     agent = Agent(
         _durability_fn_model,
@@ -2533,6 +2636,66 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
         await run_workflow()
 
     await agent.run('run')
+
+
+async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> None:
+    """`ctx.cancel()` inside a step-wrapped (dynamic) tool raises instead of replay-diverging.
+
+    Recovery replays the recorded step output without re-executing the tool, so an in-step
+    cancellation would silently not happen again. Outside a workflow the step degrades to a
+    plain call and cancellation keeps working.
+    """
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_cancel_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([cancel]), id='cancel_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='cancellation would silently not happen again'):
+        await run_workflow()
+
+    with pytest.raises(RunCancelled):
+        await agent.run('run')
+
+
+async def test_dbos_plain_tool_cancel_works_in_workflow(dbos: DBOS) -> None:
+    """A plain function tool is NOT step-wrapped under DBOS: it runs at workflow level, where
+    `cancel()` is live and replay-consistent (workflow-level code re-executes on recovery),
+    so cancellation works and surfaces as an ordinary `RunCancelled` application outcome."""
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_cancel_plain',
+        tools=[cancel],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(RunCancelled):
+        await run_workflow()
 
 
 async def test_dbos_dynamic_get_tools_rejects_enqueue_in_workflow(dbos: DBOS) -> None:
@@ -3916,3 +4079,19 @@ async def test_dbos_durability_continuation_resume_from_history(dbos: DBOS) -> N
     assert result.usage.output_tokens == 6
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
+    """`DBOSAgent.run_sync()` dispatches through its own workflow, not `AbstractAgent.run_sync()`, so it carries its own guard."""
+
+    def call_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delegate', '{}')])
+
+    outer_agent = Agent(FunctionModel(call_tool))
+
+    @outer_agent.tool_plain
+    def delegate() -> str:
+        return simple_dbos_agent.run_sync('hello').output
+
+    with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
+        await outer_agent.run('delegate')

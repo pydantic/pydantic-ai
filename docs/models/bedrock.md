@@ -90,6 +90,8 @@ model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
+When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
+
 ### Custom HTTP headers
 
 Use [`ModelSettings.extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] to add HTTP headers to
@@ -129,7 +131,7 @@ To request Bedrock's `'reserved'` tier (which requires a pre-purchased capacity 
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:
 
-1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. Pass `CachePoint(ttl='1h')` to opt into the extended cache duration.
+1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. A `CachePoint` at the start of a user prompt part has nothing before it in that message, so it caches everything up to the end of the previous user message instead. Pass `CachePoint(ttl='1h')` to opt into the extended cache duration.
 2. **Cache System Instructions**: Set [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
 3. **Cache Tool Definitions**: Set [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly.
 4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly to automatically cache the last user message.
@@ -440,4 +442,4 @@ agent = Agent(model)
 
 Mantle models are served by Pydantic AI's OpenAI model classes — [`BedrockMantleResponsesModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleResponsesModel] and [`BedrockMantleChatModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleChatModel] — so they accept the same settings as the direct [OpenAI](openai.md) models ([`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings] and [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings]).
 
-The Converse-route features above — [prompt caching](#prompt-caching), [service tier](#service-tier), and [application inference profiles](#using-aws-application-inference-profiles) — are specific to the Converse API and don't apply to the Mantle route.
+The Converse-route features above — [prompt caching](#prompt-caching), [service tier](#service-tier), and [application inference profiles](#using-aws-application-inference-profiles) — are specific to the Converse API and don't apply to the Mantle route. In particular [`bedrock_service_tier`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_service_tier] is a Converse setting; the Mantle models do forward the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] as the OpenAI parameter of the same name, since they are served by the OpenAI model classes.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
-    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.settings import ModelSettings
 
@@ -135,6 +135,88 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     return attrs
 
 
+CIRCULAR_REFERENCE_PLACEHOLDER = '<circular reference>'
+
+
+def redact_binary_content(value: Any, settings: InstrumentationSettings) -> object:
+    """Strip binary data out of a value that's about to be serialized into a span attribute.
+
+    The attributes that carry whatever a tool or output function produced serialize arbitrary
+    values, so they can't honor `include_binary_content` the way `_convert_binary_to_otel_part`
+    does for message content: `BinaryContent`'s own serialization is a public contract shared with
+    message history, and making it depend on instrumentation would change how it dumps everywhere.
+    The value is redacted up front instead, keeping the media type and the rest of the file
+    metadata, and dropping only the data. That retained set is `BinaryContent`'s own and is wider
+    than the `mime_type` `_convert_binary_to_otel_part` keeps, because this replaces a value the
+    type itself serialized rather than building a spec-shaped message part.
+
+    Containers and `ToolReturn` are walked, matching the depth at which binary content is honored
+    elsewhere (the sequence in a `UserPromptPart`'s content). A `BinaryContent` nested inside a
+    user's own model is left alone: rebuilding that model to redact one field would change how
+    everything else in the attribute is serialized.
+    """
+    if settings.include_binary_content:
+        return value
+    try:
+        return _redact_binary_content(value, set())
+    except Exception as e:
+        # Instrumentation must not fail an otherwise-successful run, and the value can't be handed
+        # back to make that happen: the callers fall back to `str(value)`, whose `BinaryContent`
+        # repr prints the very data the flag excludes. Only the exception's type is reported for
+        # the same reason -- its message is user-controlled and can itself embed a `BinaryContent`.
+        return f'Unable to redact binary content: {type(e).__name__}'
+
+
+def _redact_binary_content(value: Any, active: set[int]) -> object:
+    from pydantic_ai._deferred import DeferredToolRequests
+    from pydantic_ai.messages import BinaryContent, ToolReturn
+
+    identity = id(value)
+    if not isinstance(value, (BinaryContent, ToolReturn, DeferredToolRequests, Mapping, list, tuple)):
+        return value
+    if identity in active:
+        return CIRCULAR_REFERENCE_PLACEHOLDER
+
+    # Tracks the objects on the path currently being walked, not every object seen, so that the
+    # same `BinaryContent` appearing twice side by side is redacted twice rather than the second
+    # occurrence being mistaken for a cycle.
+    active.add(identity)
+    try:
+        if isinstance(value, BinaryContent):
+            return {
+                'media_type': value.media_type,
+                # Typed `dict[str, Any]`, so it can hold binary content of its own.
+                'vendor_metadata': _redact_binary_content(value.vendor_metadata, active),
+                'kind': value.kind,
+                'identifier': value.identifier,
+            }
+        if isinstance(value, ToolReturn):
+            return {
+                'return_value': _redact_binary_content(value.return_value, active),
+                'content': _redact_binary_content(value.content, active),
+                'metadata': _redact_binary_content(value.metadata, active),
+                # Tool names, so never binary.
+                'tools': value.tools,
+                'kind': value.kind,
+            }
+        if isinstance(value, DeferredToolRequests):
+            # Carries the metadata a deferring tool attached, so the run's own output has to drop
+            # the same binary the tool's span already did.
+            return {
+                'calls': _redact_binary_content(value.calls, active),
+                'approvals': _redact_binary_content(value.approvals, active),
+                'metadata': _redact_binary_content(value.metadata, active),
+            }
+        if isinstance(value, Mapping):
+            return {  # pyright: ignore[reportUnknownVariableType]
+                key: _redact_binary_content(item, active)
+                for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
+            }
+        return [_redact_binary_content(item, active) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    finally:
+        active.discard(identity)
+
+
 def serialize_any(value: Any) -> str:
     try:
         try:
@@ -199,23 +281,49 @@ def has_stale_message_json(
     return False
 
 
-def model_attributes(model: Model) -> dict[str, AttributeValue]:
+def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
+    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
     attributes: dict[str, AttributeValue] = {
-        GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
-        GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
-        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
     }
-    if base_url := model.base_url:
+    if base_url:
         try:
             parsed = urlparse(base_url)
-        except Exception:  # pragma: no cover
+            # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
+            hostname, port = parsed.hostname, parsed.port
+        except ValueError:
             pass
         else:
-            if parsed.hostname:  # pragma: no branch
-                attributes['server.address'] = parsed.hostname
-            if parsed.port:  # pragma: no branch
-                attributes['server.port'] = parsed.port
+            if hostname:  # pragma: no branch
+                attributes['server.address'] = hostname
+            if port:  # pragma: no branch
+                attributes['server.port'] = port
 
+    return attributes
+
+
+def model_attributes(model: AbstractModel) -> dict[str, AttributeValue]:
+    return {
+        **provider_attributes(model.system, model.base_url),
+        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+    }
+
+
+def model_metric_attributes(
+    provider_name: str | None,
+    request_model: AttributeValue | None,
+    response_model: AttributeValue | None,
+) -> dict[str, AttributeValue]:
+    """Build the dimensions shared by classic and realtime per-response metrics."""
+    attributes: dict[str, AttributeValue] = {'gen_ai.operation.name': 'chat'}
+    if provider_name is not None:
+        attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE] = provider_name
+        attributes[GEN_AI_SYSTEM_ATTRIBUTE] = provider_name
+    if request_model is not None:
+        attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE] = request_model
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
     return attributes
 
 
@@ -272,6 +380,12 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 
     tool_definitions: list[dict[str, Any]] = []
     for tool in all_tools:
+        if model_request_parameters.visibility_of(tool.name) == 'withheld':
+            # Withheld tools are not represented anywhere in the request — recording their
+            # schema and description would put a tool the model cannot see (and whose hidden
+            # description may be sensitive) into telemetry. `via_history` and `deferred` tools
+            # do reach the model, so they stay.
+            continue
         tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
         if tool.description:
             tool_def['description'] = tool.description
@@ -280,6 +394,41 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
         tool_definitions.append(tool_def)
 
     return tool_definitions
+
+
+def response_attributes(
+    response: ModelResponse,
+    response_model: AttributeValue | None,
+    price_calculation: PriceCalculation | None = None,
+) -> dict[str, AttributeValue]:
+    """Build the `gen_ai.response.*`, usage, and cost span attributes for a completed response.
+
+    Shared between the classic model-request span (`open_model_request_span`) and the realtime
+    session's per-turn `chat` span so the two paths report the same shape and can't drift.
+    `response_model` is set only when known (always the case for a classic request; a realtime
+    session may not know its model name).
+    """
+    attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
+    if price_calculation is not None:
+        attributes['operation.cost'] = float(price_calculation.total_price)
+    if response.provider_response_id is not None:
+        attributes['gen_ai.response.id'] = response.provider_response_id
+    if response.finish_reason is not None:
+        attributes['gen_ai.response.finish_reasons'] = [response.finish_reason]
+    return attributes
+
+
+def response_price_calculation(response: ModelResponse) -> PriceCalculation | None:
+    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`)."""
+    return best_effort_price(
+        response.usage,
+        model_name=response.model_name,
+        provider_api_url=response.provider_url,
+        provider_name=response.provider_name,
+        genai_request_timestamp=response.timestamp,
+    )
 
 
 class _FinishModelRequestSpan(Protocol):
@@ -363,26 +512,14 @@ def open_model_request_span(
                 price_calculation: PriceCalculation | None = None
 
                 def _record_metrics() -> None:
-                    metric_attributes = {
-                        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,
-                        GEN_AI_SYSTEM_ATTRIBUTE: system,
-                        'gen_ai.operation.name': operation,
-                        'gen_ai.request.model': request_model,
-                        'gen_ai.response.model': response_model,
-                    }
+                    metric_attributes = model_metric_attributes(system, request_model, response_model)
                     settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
 
                 record_metrics = _record_metrics
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                price_calculation = best_effort_price(
-                    response.usage,
-                    model_name=response.model_name,
-                    provider_api_url=response.provider_url,
-                    provider_name=response.provider_name,
-                    genai_request_timestamp=response.timestamp,
-                )
+                price_calculation = response_price_calculation(response)
 
                 if not span.is_recording():
                     return
@@ -395,16 +532,7 @@ def open_model_request_span(
                     message_json_cache=message_json_cache,
                 )
 
-                attributes_to_set: dict[str, Any] = {
-                    **response.usage.opentelemetry_attributes(),
-                    'gen_ai.response.model': response_model,
-                }
-                if price_calculation is not None:
-                    attributes_to_set['operation.cost'] = float(price_calculation.total_price)
-                if response.provider_response_id is not None:
-                    attributes_to_set['gen_ai.response.id'] = response.provider_response_id
-                if response.finish_reason is not None:
-                    attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                attributes_to_set = response_attributes(response, response_model, price_calculation)
                 if time_to_first_chunk is not None:
                     attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
@@ -545,6 +673,9 @@ class InstrumentationNames:
     # Deferral span attributes
     tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
     tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
+
+    # Set on tool spans for calls that failed before execution; absent on execution failures
+    tool_failure_stage_attr: ClassVar[str] = 'pydantic_ai.tool.failure_stage'
 
     @classmethod
     def for_version(cls, version: int) -> Self:

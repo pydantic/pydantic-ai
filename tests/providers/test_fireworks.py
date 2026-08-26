@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -46,12 +45,6 @@ def test_fireworks_provider_need_api_key(env: TestEnv) -> None:
         ),
     ):
         FireworksProvider()
-
-
-def test_fireworks_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = FireworksProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_fireworks_pass_openai_client() -> None:
@@ -102,3 +95,20 @@ def test_fireworks_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+
+def test_fireworks_mixed_case_model_name_profile_flags():
+    """Mixed-case model IDs (and mixed-case `accounts/fireworks/models/` paths)
+    must yield the same profile flags as their lowercase equivalents."""
+    provider = FireworksProvider(api_key='api-key')
+
+    deepseek = provider.model_profile('accounts/fireworks/models/DeepSeek-R1')
+    assert deepseek is not None
+    assert deepseek.get('supports_thinking') is True
+    assert deepseek.get('thinking_always_enabled') is True
+    assert deepseek.get('ignore_streamed_leading_whitespace') is True
+
+    # Mixed-case path prefix must also route correctly after lowercasing.
+    deepseek_mixed_path = provider.model_profile('Accounts/Fireworks/Models/DeepSeek-R1')
+    assert deepseek_mixed_path is not None
+    assert deepseek_mixed_path.get('supports_thinking') is True

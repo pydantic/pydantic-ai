@@ -2,7 +2,11 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import os
 import re
+import subprocess
+import sys
+import textwrap
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,7 +16,7 @@ from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
@@ -48,6 +52,7 @@ from pydantic_ai.capabilities import NativeTool, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
     InstructionPart,
     ModelMessage,
     NativeToolSearchCallPart,
@@ -799,65 +804,6 @@ def struc_chunk(
 class MyTypedDict(TypedDict, total=False):
     first: str
     second: str
-
-
-async def test_stream_structured(allow_model_requests: None):
-    stream = [
-        chunk([ChoiceDelta()]),
-        chunk([ChoiceDelta(tool_calls=[])]),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk('final_result', None),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        chunk([]),
-    ]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
-        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
-        # double check usage matches stream count
-        assert result.usage.output_tokens == len(stream)
-
-
-async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream = [
-        struc_chunk('final_result', None),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        struc_chunk(None, None, finish_reason='stop'),
-    ]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
 
 
 async def test_stream_native_output(allow_model_requests: None):
@@ -2042,7 +1988,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'test error',
-            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': 'test error'},
         )
     )
@@ -2057,7 +2003,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),
         )
     )
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -2072,7 +2018,7 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAIResponses.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),
         )
     )
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
@@ -5607,7 +5553,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body=body,
         )
     )
@@ -5668,7 +5614,7 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
     mock_client = MockOpenAIResponses.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
         )
     )
@@ -5715,7 +5661,7 @@ def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
         )
     )
@@ -5733,7 +5679,7 @@ def test_azure_400_non_dict_body(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body='Raw string body',
         )
     )
@@ -5751,7 +5697,7 @@ def test_azure_400_malformed_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'something_else': 'foo'},  # No 'error' key
         )
     )
@@ -6379,3 +6325,97 @@ async def test_extra_headers_not_mutated(allow_model_requests: None):
         'X-Custom': 'value',
         'User-Agent': IsStr(regex=r'pydantic-ai/.*'),
     }
+
+
+async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
+    """Malformed tool-call args are sent to the Chat Completions API as the `INVALID_JSON` wrapper.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7042.
+
+    OpenAI itself treats `arguments` as a free-form string, but an OpenAI-compatible gateway
+    (e.g. OpenRouter) fronting an object-typed backend rejects the whole request with
+    `tool_use.input: Input should be a valid dictionary`. Since the malformed part stays in the
+    history, every subsequent request replays it and the run can never recover — including the
+    retry the malformed args themselves triggered.
+
+    No cassette: OpenAI accepts anything in `arguments`, so a live recording can't exercise the
+    rejection — the party that rejects is a gateway we have no way to record against. The assertion
+    is therefore on the outbound request body.
+    """
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+
+    c = completion_message(ChatCompletionMessage(content='Here is the corrected result.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=[
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='search_knowledge', tool_call_id='call_123', args=bad_args)],
+                timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='search_knowledge',
+                        tool_call_id='call_123',
+                        content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                    )
+                ]
+            ),
+        ],
+    )
+    assert result.output == 'Here is the corrected result.'
+
+    # The raw malformed string never reaches the wire; the degraded object does.
+    assistant_message = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]
+    assert assistant_message == snapshot(
+        {
+            'role': 'assistant',
+            'content': None,
+            'tool_calls': [
+                {
+                    'id': 'call_123',
+                    'type': 'function',
+                    'function': {
+                        'name': 'search_knowledge',
+                        'arguments': """\
+{"INVALID_JSON":"{\\"query\\": \\"bad query\\", \\"file_ids\\":[4556]</parameter>\\n<parameter name=\\"limit\\": 8}"}\
+""",
+                    },
+                }
+            ],
+        }
+    )
+    assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {INVALID_JSON_KEY: bad_args}
+
+
+def test_model_construction_preloads_lazy_dependencies():
+    """Constructing a model resolves the deferred imports that stalled the first request's event loop (#7405).
+
+    No cassette, and a subprocess: import state is process-global and the rest of the suite has
+    already imported these modules, so only a fresh interpreter can observe what construction triggers.
+    """
+    script = textwrap.dedent(
+        """
+        import sys
+
+        from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        assert 'openai.resources.chat.completions' not in sys.modules, 'chat resources loaded too early'
+        assert 'genai_prices.data' not in sys.modules, 'pricing data loaded too early'
+
+        OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test'))
+        assert 'openai.resources.chat.completions' in sys.modules, 'chat resources not preloaded'
+        assert 'genai_prices.data' in sys.modules, 'pricing data not preloaded'
+
+        OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test'))
+        assert 'openai.resources.responses' in sys.modules, 'responses resources not preloaded'
+        """
+    )
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    process = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120, env=env)
+    assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'

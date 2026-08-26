@@ -4,13 +4,14 @@ import os
 import threading
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Literal
-from unittest.mock import MagicMock
+from typing import Any, Literal, cast
+from unittest.mock import MagicMock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, Field
 from pydantic.errors import PydanticUserError
@@ -57,16 +58,24 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
+from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.realtime import (
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
+from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -75,7 +84,8 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 try:
     from prefect import flow, task
-    from prefect.context import TaskRunContext
+    from prefect.context import FlowRunContext, TaskRunContext
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -138,7 +148,7 @@ pytestmark = [
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = create_async_http_client()
+http_client = httpx2.AsyncClient()
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -161,8 +171,19 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 @pytest.fixture(autouse=True, scope='session')
 def setup_prefect_test_harness() -> Iterator[None]:
     """Set up Prefect test harness for all tests."""
-    with prefect_test_harness(server_startup_timeout=60):
-        yield
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
+        with prefect_test_harness(server_startup_timeout=60):
+            yield
+
+
+@pytest.fixture(autouse=True)
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """Prefect's `@flow` constructor synchronously inspects its decorated function's source."""
+    return ('pydantic_ai.durable_exec.prefect',)
 
 
 @contextmanager
@@ -1031,6 +1052,70 @@ async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
         await run_stream_events_workflow()
 
 
+async def test_realtime_session_in_flow() -> None:
+    """Realtime sessions open a long-lived, non-deterministic connection, so they can't run in a flow."""
+    with patch.object(FlowRunContext, 'get', return_value=object()):
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            async with simple_prefect_agent.realtime(cast('Any', object())).session():
+                pass  # pragma: no cover
+
+
+async def test_realtime_signaling_in_flow() -> None:
+    """Browser-call signaling issues a live provider request, so it is guarded like a session."""
+    with patch.object(FlowRunContext, 'get', return_value=object()):
+        realtime = simple_prefect_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.create_client_secret()
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
+            supported_native_tools=frozenset(),
+        )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_realtime_session_outside_flow() -> None:
+    """Outside a flow, the session is delegated to the wrapped agent."""
+    async with simple_prefect_agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
+
+
 async def test_iter_in_flow(allow_model_requests: None) -> None:
     """Test that iter works inside a Prefect flow."""
 
@@ -1870,9 +1955,11 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'partial_output',  # only set for output validators, which run in flow code, never inside a task
         'run_id',  # per-run id; deliberately excluded so an identical run replays instead of re-executing
         'conversation_id',  # per-conversation id; same rationale as run_id
-        'capability_loaded',  # derived from loaded_capability_ids plus the static capability set, which are projected
+        'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
+        'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks
+        '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -3003,6 +3090,34 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     await agent.run('run')
 
 
+async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
+    """`ctx.cancel()` inside a task-wrapped tool raises instead of replay-diverging.
+
+    A cache hit replays the recorded task output without re-executing the tool, so an in-task
+    cancellation would silently not happen again. Outside a flow the tool runs inline and
+    cancellation keeps working.
+    """
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    durability: PrefectDurability[object] = PrefectDurability()
+    agent = Agent(TestModel(), deps_type=object, name='prefect_cancel', tools=[cancel], capabilities=[durability])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='cancellation would silently not happen again'):
+        await run_agent()
+
+    with pytest.raises(RunCancelled):
+        await agent.run('run')
+
+
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
     """The MCP task path guards enqueue too: a `process_tool_call=` hook receives the run context."""
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')
@@ -3553,3 +3668,19 @@ async def test_prefect_durability_continuation_resume_from_history() -> None:
     assert result.usage.output_tokens == 6
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
+    """`PrefectAgent.run_sync()` dispatches through its own flow, not `AbstractAgent.run_sync()`, so it carries its own guard."""
+
+    def call_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delegate', '{}')])
+
+    outer_agent = Agent(FunctionModel(call_tool))
+
+    @outer_agent.tool_plain
+    def delegate() -> str:
+        return simple_prefect_agent.run_sync('hello').output
+
+    with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
+        await outer_agent.run('delegate')

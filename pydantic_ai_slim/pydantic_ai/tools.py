@@ -401,7 +401,8 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -421,7 +422,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.description = description or self.function_schema.description
+        self.description = description if description is not None else self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
         self.docstring_format = docstring_format
@@ -577,7 +578,7 @@ class ToolDefinition:
     (Gemini 2.5+); Anthropic and Bedrock leave it off unless you explicitly set `strict=True`.
 
     Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. See
-    [Strict Mode](https://ai.pydantic.dev/tools-advanced/#strict-mode) for the full per-provider table.
+    [Strict Mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode) for the full per-provider table.
     """
 
     sequential: bool = False
@@ -619,13 +620,8 @@ class ToolDefinition:
 
     Set on `Tool(defer_loading=True)` (or via a custom toolset) to opt this tool into
     deferred loading. This author intent remains stable after the tool is revealed;
-    current visibility is tracked separately in the request context.
-
-    On the `function_tools` of a [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]
-    that [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] has resolved, it means
-    something narrower: send this tool's `tools` entry with the provider's deferral flag in place of
-    its schema. A model that can't express that gets revealed tools plainly and hidden ones not at
-    all, so an adapter renders the flag from this field alone.
+    current wire placement is tracked separately by
+    [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility].
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
