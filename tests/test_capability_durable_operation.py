@@ -216,6 +216,33 @@ def test_tier_one_override_is_automatically_registered() -> None:
     assert ('tier_one', 'provision') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_inherited_tier_one_hook_is_not_registered_or_dispatched() -> None:
+    class TierOneBase(AbstractCapability[Any]):
+        def __init__(self) -> None:
+            self.provisioned = False
+
+        @tier_one_durable_operation
+        async def provision(self, ctx: RunContext[Any]) -> None:
+            self.provisioned = True
+
+    class TierOne(TierOneBase):
+        id = 'tier_one'
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            await self.provision(ctx)
+
+    capability = TierOne()
+    assert collect_capability_operations(capability) == {}
+
+    agent = Agent(TestModel(), name='tier_one', capabilities=[capability, RecordingDurability()])
+    await agent.run('test')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert capability.provisioned
+    assert not any('__capability__' in name for name, _ in durability.calls)
+
+
 def test_temporal_registration_has_stable_name_and_types() -> None:
     agent = Agent(TestModel(), name='temporal_operations', capabilities=[Operations(), TemporalDurability()])
     durability = TemporalDurability.from_agent(agent)
