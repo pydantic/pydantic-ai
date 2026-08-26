@@ -127,6 +127,16 @@ class DurableBeforeModelRequest(AbstractCapability[Any]):
         return request_context
 
 
+class RenamedContextBeforeModelRequest(AbstractCapability[Any]):
+    id = 'renamed_before_model'
+
+    @durable_operation
+    async def before_model_request(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, run_context: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        return request_context
+
+
 class ContextPositions(AbstractCapability[Any]):
     id = 'context_positions'
 
@@ -666,6 +676,12 @@ async def test_run_context_is_located_from_the_schema() -> None:
         'context_positions__capability__context_positions.no_ctx',
         'context_positions__capability__context_positions.summarize',
     ]
+
+
+def test_before_model_request_context_parameter_can_have_any_name() -> None:
+    declaration = collect_capability_operations(RenamedContextBeforeModelRequest())['before_model_request']
+
+    assert declaration.ctx_parameter == 'run_context'
 
 
 def test_dynamic_operation_without_run_context_is_supported() -> None:

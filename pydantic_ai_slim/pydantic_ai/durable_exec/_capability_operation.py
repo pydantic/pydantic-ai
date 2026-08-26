@@ -269,6 +269,13 @@ def collect_capability_operations(  # noqa: C901
             raise UserError(
                 f'Durable operation {function.__qualname__!r} cannot take more than one `RunContext` parameter.'
             )
+        if model_request_hook and ctx_parameters and ctx_parameters[0] != 'ctx':
+            signature = signature.replace(
+                parameters=[
+                    parameter.replace(name=ctx_parameters[0]) if parameter.name == 'ctx' else parameter
+                    for parameter in signature.parameters.values()
+                ]
+            )
         for parameter in signature.parameters.values():
             if parameter.name not in ctx_parameters and parameter.annotation is inspect.Parameter.empty:
                 raise UserError(
@@ -301,6 +308,9 @@ def _capability_operation_schema(
         raise UserError('RunContext cannot be used as a variadic positional parameter (`*args`)')
 
     type_hints = get_type_hints(function, include_extras=True)
+    if ctx_parameter not in type_hints:
+        source_ctx_parameter = next(name for name, annotation in type_hints.items() if _is_call_ctx(annotation))
+        type_hints[ctx_parameter] = type_hints.pop(source_ctx_parameter)
 
     async def schema_target(**kwargs: Any) -> Any:  # pragma: no cover
         return kwargs
