@@ -18,7 +18,7 @@ from pydantic_ai.durable_exec._base import (
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
     CapabilityOperationParams,
-    operation_result_type,
+    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
@@ -196,7 +196,7 @@ class _CapabilityOperationTransport:
 
     def __init__(self, durability: TemporalDurability[Any], declaration: CapabilityMethodDeclaration) -> None:
         self._durability = durability
-        self.result_type = operation_result_type(declaration.result_type)
+        self.result_type = _operation_result_type(declaration.result_type)
 
     def dump(self, params: CapabilityOperationParams) -> tuple[_CapabilityOperationParams, Any]:
         return (

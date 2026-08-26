@@ -42,7 +42,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.usage import usage_delta
 
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -51,10 +50,11 @@ from ._capability_operation import (
     CapabilityOperationParams,
     ModelRequestContextProjection,
     _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
+    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
+    _usage_delta,  # pyright: ignore[reportPrivateUsage]
     bind_arguments,
     call_declaration,
     collect_capability_operations,
-    operation_result_type,
     recover_capability,
 )
 from ._codec import IDENTITY_CODEC, DurabilityCodec
@@ -419,7 +419,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                             result = await bound_handler(durable_ctx, request_context)
                             operation_result = ModelRequestContextProjection.from_context(result)
                         return _CapabilityOperationResult(
-                            operation_result, usage_delta(usage_before, durable_ctx.usage)
+                            operation_result, _usage_delta(usage_before, durable_ctx.usage)
                         )
                     async with self._durable_model_scope(params.model_id, params.run_context) as (_, durable_ctx):
                         semantic_params = CapabilityOperationParams(
@@ -427,7 +427,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         )
                         usage_before = copy.copy(durable_ctx.usage)
                         result = await call_declaration(declaration, recovered, semantic_params)
-                    return _CapabilityOperationResult(result, usage_delta(usage_before, durable_ctx.usage))
+                    return _CapabilityOperationResult(result, _usage_delta(usage_before, durable_ctx.usage))
 
                 operation = DurableOperation(
                     operation_id=CapabilityOperationId(capability_id, operation_name),
@@ -435,7 +435,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     parameter_transport=self._capability_operation_parameter_transport(declaration),
                     cache_identity=CapabilityCacheIdentity(),
                     result_codec=TypedResultCodec(
-                        operation_result_type(declaration.result_type),
+                        _operation_result_type(declaration.result_type),
                         mode='identity' if self._codec is IDENTITY_CODEC else 'json',
                     ),
                     config_role=OperationConfigRole.CAPABILITY,
@@ -513,7 +513,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             _CapabilityOperationResult[Any],
             await self._bound_capability_operations[key](CapabilityOperationParams(ctx, arguments, model_id)),
         )
-        if not usage_delta(usage_before, ctx.usage).has_values():
+        if not _usage_delta(usage_before, ctx.usage).has_values():
             ctx.usage.incr(result.usage_delta)
         return result.value
 

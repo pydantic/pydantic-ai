@@ -20,6 +20,7 @@ from pydantic_ai.durable_exec._capability_operation import (
     ModelRequestContextProjection,
     _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
     _model_request_schema,  # pyright: ignore[reportPrivateUsage]
+    _usage_delta,  # pyright: ignore[reportPrivateUsage]
     call_declaration,
     collect_capability_operations,
     recover_capability,
@@ -37,7 +38,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RunUsage, usage_delta
+from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
 
@@ -853,7 +854,7 @@ def test_usage_delta_ignores_non_numeric_extension_values() -> None:
     after.__dict__['opaque'] = 'after'
     after.details['opaque'] = cast(Any, 'after')
 
-    delta = usage_delta(before, after)
+    delta = _usage_delta(before, after)
 
     assert 'opaque' not in delta.__dict__
     assert 'opaque' not in delta.details
@@ -865,7 +866,7 @@ def test_usage_delta_preserves_numeric_extension_fields() -> None:
     before.__dict__['custom_units'] = 2
     after.__dict__['custom_units'] = 9
 
-    delta = usage_delta(before, after)
+    delta = _usage_delta(before, after)
 
     assert delta.__dict__['custom_units'] == 7
 
@@ -883,7 +884,7 @@ async def test_usage_snapshot_copies_details_before_in_place_handler_mutation() 
 
     assert before.details == {'existing': 2}
     assert before.details is not usage.details
-    assert usage_delta(before, usage).details == {'existing': 3}
+    assert _usage_delta(before, usage).details == {'existing': 3}
 
 
 async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:

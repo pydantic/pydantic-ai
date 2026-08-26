@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -41,8 +42,39 @@ class _CapabilityOperationResult(Generic[R]):
     usage_delta: RunUsage
 
 
-def operation_result_type(result_type: object) -> object:
+def _operation_result_type(result_type: object) -> object:  # pyright: ignore[reportUnusedFunction]
     return cast(Any, _CapabilityOperationResult)[result_type]
+
+
+def _usage_delta(before: RunUsage, after: RunUsage) -> RunUsage:  # pyright: ignore[reportUnusedFunction]
+    details: dict[str, int] = {}
+    for name in before.details.keys() | after.details.keys():
+        before_value = before.details.get(name, 0)
+        after_value = after.details.get(name, 0)
+        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
+            details[name] = after_value - before_value
+
+    delta = RunUsage(
+        requests=after.requests - before.requests,
+        tool_calls=after.tool_calls - before.tool_calls,
+        input_tokens=after.input_tokens - before.input_tokens,
+        cache_write_tokens=after.cache_write_tokens - before.cache_write_tokens,
+        cache_read_tokens=after.cache_read_tokens - before.cache_read_tokens,
+        output_tokens=after.output_tokens - before.output_tokens,
+        input_audio_tokens=after.input_audio_tokens - before.input_audio_tokens,
+        cache_audio_read_tokens=after.cache_audio_read_tokens - before.cache_audio_read_tokens,
+        output_audio_tokens=after.output_audio_tokens - before.output_audio_tokens,
+        details=details,
+        cost=after.cost - (before.cost or 0) if after.cost is not None and after.cost != before.cost else None,
+    )
+
+    field_names = {field.name for field in dataclasses.fields(RunUsage)}
+    for name in (before.__dict__.keys() | after.__dict__.keys()) - field_names:
+        before_value = before.__dict__.get(name, 0)
+        after_value = after.__dict__.get(name, 0)
+        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
+            delta.__dict__[name] = after_value - before_value
+    return delta
 
 
 @dataclass

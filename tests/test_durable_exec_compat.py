@@ -11,7 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._capability_operation import (
     _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
-    operation_result_type,
+    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
 from pydantic_ai.durable_exec._operation import CapabilityOperationId
@@ -448,7 +448,7 @@ def test_json_and_identity_codec_payload_goldens(tp: Any, value: Any, expected: 
 def test_capability_operation_result_payload_golden() -> None:
     delta = RunUsage(requests=1, tool_calls=2, input_tokens=3, details={'cached': 4})
     result = _CapabilityOperationResult(5, delta)
-    result_type = operation_result_type(int)
+    result_type = _operation_result_type(int)
 
     assert JSON_CODEC.dump(result_type, result) == {
         'value': 5,
