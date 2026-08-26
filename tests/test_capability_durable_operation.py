@@ -272,6 +272,29 @@ async def test_run_context_durable_operation_rejects_unknown_bound_name() -> Non
     )
 
 
+async def test_zero_declared_operations_rejects_unknown_bound_name() -> None:
+    capability = AbstractCapability[Any]()
+    capability.id = 'empty'
+    model = TestModel()
+    agent = Agent(model, name='empty_operations', capabilities=[capability, RecordingDurability()])
+    ctx = RunContext(deps=None, model=model, usage=RunUsage(), agent=agent)
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
+
+    async def handler() -> None:
+        pass
+
+    with pytest.raises(UserError) as exc_info:
+        ctx.durable_operation(capability, 'missing', handler)
+
+    assert str(exc_info.value) == (
+        "Unknown durable operation 'missing' for capability 'empty'. "
+        'This capability declares no durable operations. Implement `get_durable_operations()` or mark a method with '
+        '`@durable_operation`.'
+    )
+
+
 async def test_run_context_durable_operation_dispatches_bound_name() -> None:
     class Dynamic(AbstractCapability[Any]):
         id = 'dynamic'

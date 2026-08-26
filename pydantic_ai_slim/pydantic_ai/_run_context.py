@@ -132,13 +132,21 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
                 operation = bound_operation
         if operation is None:
-            if self.__dict__.get('_durability_bound', False) and capability_operations:
-                known_operations = ', '.join(repr(operation_name) for operation_name in sorted(capability_operations))
-                raise UserError(
-                    f'Unknown durable operation {name!r} for capability {capability.id!r}. '
-                    f'Known durable operations for this capability: {known_operations}. '
-                    'Check the operation name passed to `RunContext.durable_operation()`.'
-                )
+            if self.__dict__.get('_durability_bound', False):
+                if capability_operations:
+                    known_operations = ', '.join(
+                        repr(operation_name) for operation_name in sorted(capability_operations)
+                    )
+                    detail = (
+                        f'Known durable operations for this capability: {known_operations}. '
+                        'Check the operation name passed to `RunContext.durable_operation()`.'
+                    )
+                else:
+                    detail = (
+                        'This capability declares no durable operations. Implement `get_durable_operations()` or '
+                        'mark a method with `@durable_operation`.'
+                    )
+                raise UserError(f'Unknown durable operation {name!r} for capability {capability.id!r}. {detail}')
             return DurableOperationHandle(handler)
         return DurableOperationHandle(cast(Callable[P, Awaitable[R]], operation))
 
