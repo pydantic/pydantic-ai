@@ -2221,6 +2221,52 @@ async def test_temporal_dynamic_toolset_rejects_activity_opt_out():
         await durable.call_tool('boom', {}, ctx, tool)
 
 
+async def test_temporalize_dynamic_toolset_runs_args_validator_in_activity() -> None:
+    from pydantic_ai.durable_exec._toolset import get_dynamic_tools
+
+    validated: list[int] = []
+
+    async def tool(value: int) -> int:
+        return value
+
+    def validator(ctx: RunContext[None], value: int) -> None:
+        validated.append(value)
+
+    dynamic = DynamicToolset(
+        lambda ctx: FunctionToolset([Tool(tool, args_validator=validator)]), id='legacy-validation'
+    )
+    durable = temporalize_dynamic_toolset(
+        dynamic,
+        activity_name_prefix='agent__legacy_validation',
+        activity_config={},
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    durable._in_durable_context = lambda: True  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    activity_calls = 0
+
+    async def run_activity(*, activity: Callable[..., Any], args: Sequence[Any], **config: Any) -> Any:
+        nonlocal activity_calls
+        activity_calls += 1
+        if activity_calls == 1:
+            return await get_dynamic_tools(dynamic, ctx)
+        return await ActivityEnvironment().run(activity, *args)
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._dynamic_toolset.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._dynamic_toolset.execute_activity', run_activity),
+    ):
+        run_toolset = await durable.for_run(ctx)
+        tools = await run_toolset.get_tools(ctx)
+        assert tools
+        resolved = next(iter(tools.values()))
+        assert resolved.args_validator_func is not None
+        await resolved.args_validator_func(ctx, value=1)
+
+    assert validated == [1]
+
+
 # --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
 # The per-run instructions cache is written by `get_tools` and read by `get_instructions` each
 # step; this guards against it serving a stale step-1 value on a later step.

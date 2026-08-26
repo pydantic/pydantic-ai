@@ -498,6 +498,22 @@ async def test_validation_error_crosses_call_tool_result_boundary() -> None:
     assert sanitized['type'] == 'builtins.object'
     assert sanitized['repr'].startswith('<object object at 0x')
 
+    class BrokenRepr:
+        def __repr__(self) -> str:
+            raise RuntimeError('broken repr')
+
+    def broken_repr_input(ctx: RunContext[None], value: int) -> None:
+        TypeAdapter(int).validate_python(BrokenRepr())
+
+    broken_toolset = FunctionToolset(tools=[Tool(typed, args_validator=broken_repr_input)])
+    broken_tool = (await broken_toolset.get_tools(ctx))['typed']
+    payload = await wrap_tool_validation_result(run_args_validator(broken_tool, {'value': 1}, ctx))
+    dumped = JSON_CODEC.dump(CallToolResult, payload)
+    assert dumped['errors'][0]['input'] == {
+        'type': f'{BrokenRepr.__module__}.{BrokenRepr.__qualname__}',
+        'repr': '<repr failed>',
+    }
+
     def invalid_args_validator(ctx: RunContext[None], value: int) -> None:
         TypeAdapter(int).validate_python('invalid-from-args-validator')
 

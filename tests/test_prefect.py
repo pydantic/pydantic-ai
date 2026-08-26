@@ -1758,6 +1758,35 @@ def test_dynamic_toolset():
     assert isinstance(result.output, str)
 
 
+async def test_prefectify_dynamic_toolset_runs_args_validator_in_task() -> None:
+    from pydantic_ai import Tool
+    from pydantic_ai.durable_exec.prefect._dynamic_toolset import prefectify_dynamic_toolset
+
+    validated: list[int] = []
+
+    async def tool(value: int) -> int:
+        return value
+
+    def validator(ctx: RunContext[None], value: int) -> None:
+        validated.append(value)
+
+    dynamic = DynamicToolset(
+        lambda ctx: FunctionToolset([Tool(tool, args_validator=validator)]), id='legacy-validation'
+    )
+    durable = prefectify_dynamic_toolset(dynamic, task_config={}, tool_task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def run() -> None:
+        run_toolset = await durable.for_run(ctx)
+        resolved = next(iter((await run_toolset.get_tools(ctx)).values()))
+        assert resolved.args_validator_func is not None
+        await resolved.args_validator_func(ctx, value=1)
+
+    await run()
+    assert validated == [1]
+
+
 async def test_deprecated_agent_wraps_identified_dynamic_toolset():
     """The deprecated `PrefectAgent` runs *identified* dynamic toolsets in Prefect tasks.
 

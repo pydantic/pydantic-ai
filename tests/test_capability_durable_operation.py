@@ -507,6 +507,21 @@ def test_dynamic_operation_without_run_context_is_supported() -> None:
     assert declaration.ctx_parameter is None
 
 
+def test_non_callable_dynamic_operation_is_rejected() -> None:
+    class Invalid(AbstractCapability[Any]):
+        def get_durable_operations(self) -> Mapping[str, object]:
+            return {'invalid': object()}
+
+    with pytest.raises(UserError, match="Durable operation 'invalid' must be an async callable"):
+        collect_capability_operations(Invalid())
+
+
+def test_prepare_run_context_without_agent_marks_durability_bound() -> None:
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    RecordingDurability()._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
+    assert ctx.__dict__['_durability_bound'] is True
+
+
 def test_two_run_context_parameters_are_rejected_at_bind() -> None:
     class DuplicateContext(AbstractCapability[Any]):
         id = 'duplicate_context'
