@@ -47,6 +47,8 @@ class FireworksProvider(_OpenAICompatibleProvider):
         model_name = model_name.lower()
         prefix_to_profile = {
             'llama': meta_model_profile,
+            # MiniMax cannot resolve `$ref` / `$defs` in tool schemas (same as Llama/Qwen).
+            'minimax': meta_model_profile,
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,

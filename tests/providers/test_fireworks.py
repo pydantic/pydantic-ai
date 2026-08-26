@@ -73,6 +73,11 @@ def test_fireworks_provider_model_profile(mocker: MockerFixture):
     assert meta_profile is not None
     assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
+    minimax_profile = provider.model_profile('accounts/fireworks/models/minimax-m3')
+    meta_model_profile_mock.assert_called_with('minimax-m3')
+    assert minimax_profile is not None
+    assert minimax_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+
     qwen_profile = provider.model_profile('accounts/fireworks/models/qwen3-235b-a22b')
     qwen_model_profile_mock.assert_called_with('qwen3-235b-a22b')
     assert qwen_profile is not None
@@ -112,3 +117,7 @@ def test_fireworks_mixed_case_model_name_profile_flags():
     deepseek_mixed_path = provider.model_profile('Accounts/Fireworks/Models/DeepSeek-R1')
     assert deepseek_mixed_path is not None
     assert deepseek_mixed_path.get('supports_thinking') is True
+
+    minimax = provider.model_profile('accounts/fireworks/models/MiniMax-M3')
+    assert minimax is not None
+    assert minimax.get('json_schema_transformer') is InlineDefsJsonSchemaTransformer
