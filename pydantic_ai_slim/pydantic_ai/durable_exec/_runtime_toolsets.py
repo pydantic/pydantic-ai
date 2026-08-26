@@ -28,12 +28,6 @@ from ..toolsets import AbstractToolset
 RuntimeToolsetKind = Literal['function', 'mcp', 'dynamic']
 """A leaf toolset kind that a durable execution engine may need to reject when passed per-run."""
 
-_KIND_LABELS: dict[RuntimeToolsetKind, str] = {
-    'function': 'FunctionToolset',
-    'mcp': 'MCPToolset',
-    'dynamic': 'DynamicToolset',
-}
-
 
 def cancellation_token_unsupported_error(engine: str) -> UserError:
     """The error raised when a same-process cancellation token meets a durable execution boundary."""
@@ -106,16 +100,7 @@ def reject_unsupported_runtime_toolsets(
         toolset.apply(collect)
 
     if bad_toolsets:
-        offenders: list[str] = []
-        for kind in sorted(bad_toolsets):
-            label = _KIND_LABELS[kind]
-            # Use the toolset `id` when set; otherwise fall back to the type name, which
-            # matches the kind label and so adds nothing the user didn't already see.
-            identifiers = [ts.id for ts in bad_toolsets[kind] if ts.id]
-            if identifiers:
-                offenders.append(f'{label} {", ".join(repr(i) for i in identifiers)}')
-            else:
-                offenders.append(label)
+        offenders = [toolset.label for kind in sorted(bad_toolsets) for toolset in bad_toolsets[kind]]
         offenders_text = ', '.join(offenders)
         opt_out = (
             f" Async tools that don't need durable wrapping can opt out with "
