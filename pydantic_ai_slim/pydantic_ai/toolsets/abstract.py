@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
-from .._instructions import normalize_toolset_instructions, toolset_instruction_id
+from .._instructions import instruction_source_key, normalize_toolset_instruction_parts, toolset_instruction_id
 from .._run_context import AgentDepsT, RunContext
+from .._utils import gather
 from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
+from ._instruction_collection import InstructionContribution, make_contribution
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
@@ -176,27 +178,68 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     async def _collect_instruction_contributions(
         self, ctx: RunContext[AgentDepsT]
-    ) -> list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]]:
-        """Collect this authoring toolset's instruction contribution."""
-        result = await self.get_instructions(ctx)
-        return [(self, normalize_toolset_instructions(result, self.id))]
+    ) -> list[InstructionContribution[AgentDepsT]]:
+        """Collect contributions once, preserving the toolset that authored every relayed block.
 
-    def _instruction_source_ids(self) -> set[str]:
-        """The instruction source keys this toolset and anything below it can issue.
-
-        A `WrapperToolset` relaying instructions has to tell a key issued below it from a bare
-        segment its own author declared, and that is a fact about the tree rather than about the
-        text. Mirrors `_collect_instruction_contributions`: a leaf answers for itself, a wrapper adds
-        what it wraps, a combined toolset unions its children.
-
-        Asking what key a toolset owns is not the same as minting one for it, so this reads the id
-        rather than passing it to `toolset_instruction_id`, which rejects a colon. An id is only
-        rejected where it actually becomes a key, which is what lets a toolset carrying one say
-        nothing to the model and keep working; being read must not be what breaks that.
+        Leaves author their own result. Containers that retain their inherited implementation walk
+        their children directly, while a public `get_instructions` override takes over and is called
+        exactly once. A returned key owned below the container is relayed unchanged and attributed
+        to its owner; every other block is authored by the container itself.
         """
+        children = self._instruction_children()
+        if not children:
+            return make_contribution(self, await self.get_instructions(ctx))
+        if not self._authors_own_instructions():
+            return await self._collect_child_instruction_contributions(ctx)
+
+        result = await self.get_instructions(ctx)
+        sources_by_key = self._instruction_sources_by_key()
+        contributions: list[InstructionContribution[AgentDepsT]] = []
+        for part in normalize_toolset_instruction_parts(result):
+            # A key names the toolset that owns it, so a block arriving under one below this
+            # container is being relayed and stays attributed there. Everything else this container
+            # wrote itself, and is resolved against its own key like any other author's.
+            owner = sources_by_key.get(instruction_source_key(part.id)) if part.id is not None else None
+            contributions.extend(make_contribution(owner if owner is not None else self, (part,)))
+        return contributions
+
+    async def _collect_child_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[InstructionContribution[AgentDepsT]]:
+        """Gather child contributions without re-entering a container's public override check."""
+        child_contributions = await gather(
+            *(child._collect_instruction_contributions(ctx) for child in self._instruction_children())
+        )
+        return [contribution for contributions in child_contributions for contribution in contributions]
+
+    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets whose instruction contributions this one passes along."""
+        return ()
+
+    def _authors_own_instructions(self) -> bool:
+        """Whether this container's public authoring hook replaces its children's contributions."""
+        return False
+
+    def _instruction_source_key(self) -> str | None:
+        """Read this toolset's source key without minting or validating an unusable one."""
         if self.id is None or ':' in self.id:
-            return set()
-        return {toolset_instruction_id(self.id)}
+            return None
+        return toolset_instruction_id(self.id)
+
+    def _instruction_sources_by_key(self) -> dict[str, AbstractToolset[AgentDepsT]]:
+        """Map every source key at or below this toolset to the toolset that owns it.
+
+        Children are inserted first and the container is inserted last without overwriting them, so
+        a child remains the owner when a malformed tree repeats its key at a container boundary.
+        The duplicate contribution check reports the ambiguity if both sources actually contribute.
+        """
+        sources: dict[str, AbstractToolset[AgentDepsT]] = {}
+        for child in self._instruction_children():
+            for source_id, source in child._instruction_sources_by_key().items():
+                sources.setdefault(source_id, source)
+        if source_id := self._instruction_source_key():
+            sources.setdefault(source_id, self)
+        return sources
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

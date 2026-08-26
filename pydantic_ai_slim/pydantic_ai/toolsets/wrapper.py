@@ -6,10 +6,9 @@ from typing import Any
 
 from typing_extensions import Self
 
-from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
-from ._instruction_collection import collect_toolset_instructions
+from ._instruction_collection import flatten_instruction_contributions
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -53,24 +52,14 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         """Collect instructions from the wrapped authoring toolset."""
-        return await collect_toolset_instructions(self.wrapped, ctx) or None
+        contributions = await self._collect_child_instruction_contributions(ctx)
+        return flatten_instruction_contributions(contributions) or None
 
-    async def _collect_instruction_contributions(
-        self, ctx: RunContext[AgentDepsT]
-    ) -> list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]]:
-        if type(self).get_instructions is not WrapperToolset.get_instructions:
-            result = await self.get_instructions(ctx)
-            source = self.wrapped
-            while isinstance(source, WrapperToolset):
-                source = source.wrapped
-            parts = normalize_toolset_instructions(
-                result, self.id, passthrough_source_ids=self.wrapped._instruction_source_ids()
-            )
-            return [(source, parts)]
-        return await self.wrapped._collect_instruction_contributions(ctx)
+    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return (self.wrapped,)
 
-    def _instruction_source_ids(self) -> set[str]:
-        return super()._instruction_source_ids() | self.wrapped._instruction_source_ids()
+    def _authors_own_instructions(self) -> bool:
+        return type(self).get_instructions is not WrapperToolset.get_instructions
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)

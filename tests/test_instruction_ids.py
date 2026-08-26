@@ -287,6 +287,19 @@ async def test_a_wrapper_relays_keys_from_every_toolset_it_wraps_at_once():
     ]
 
 
+async def test_a_wrapper_relays_a_declared_segment_under_a_child_key():
+    """Relaying is decided by which source a key belongs to, not by matching the key whole.
+
+    A block the child declared an id for arrives as `'toolset:weather:limits'`, which is not itself a
+    source key. Recognizing only exact keys would read it as something the wrapper declared and
+    resolve it beneath the wrapper's own — rejecting its colons, or misfiling it.
+    """
+    leaf = InstructionsToolset([InstructionPart(content='Limits.', id='limits')], id='weather')
+    agent = Agent(toolsets=[RelayingWrapper(leaf, id='outer')])
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Limits.', id='toolset:weather:limits')]
+
+
 async def test_a_wrapper_relays_a_key_a_wrapper_it_wraps_issued_itself():
     """A wrapper with an `id` that contributes a block of its own is a source like any other.
 

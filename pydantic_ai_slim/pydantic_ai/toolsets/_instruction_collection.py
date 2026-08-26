@@ -1,11 +1,42 @@
 from __future__ import annotations
 
-from pydantic_ai._instructions import instruction_source_key
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Generic
+
+from pydantic_ai._instructions import normalize_toolset_instruction_parts, qualify_toolset_instruction_parts
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 
-from .abstract import AbstractToolset
+if TYPE_CHECKING:
+    from .abstract import AbstractToolset
+
+
+@dataclass(frozen=True)
+class InstructionContribution(Generic[AgentDepsT]):
+    """One source's instruction blocks, with the key they are addressed by."""
+
+    source: AbstractToolset[AgentDepsT]
+    source_id: str | None
+    parts: tuple[InstructionPart, ...]
+
+
+def make_contribution(
+    source: AbstractToolset[AgentDepsT],
+    result: str | InstructionPart | Sequence[str | InstructionPart] | None,
+) -> list[InstructionContribution[AgentDepsT]]:
+    """Build one source's contribution, minting its key only once a block has survived.
+
+    The only way a contribution is made, so the ordering holds everywhere: normalize and strip
+    first, and return nothing at all when there is nothing left. Minting validates the toolset's
+    `id`, and a source that says nothing to the model must never be the reason that fails.
+    """
+    parts = normalize_toolset_instruction_parts(result)
+    if not parts:
+        return []
+    source_id, parts = qualify_toolset_instruction_parts(parts, source.id)
+    return [InstructionContribution(source=source, source_id=source_id, parts=tuple(parts))]
 
 
 async def collect_toolset_instructions(
@@ -17,7 +48,7 @@ async def collect_toolset_instructions(
 
 
 def flatten_instruction_contributions(
-    contributions: list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]],
+    contributions: list[InstructionContribution[AgentDepsT]],
 ) -> list[InstructionPart]:
     """Flatten collected contributions, rejecting two sources that would claim one key.
 
@@ -26,19 +57,14 @@ def flatten_instruction_contributions(
     """
     owners: dict[str, AbstractToolset[AgentDepsT]] = {}
     parts: list[InstructionPart] = []
-    for source, source_parts in contributions:
-        for part in source_parts:
-            if part.id is None:
-                continue
-            # Ownership is claimed over the source key, not the whole id: two toolsets sharing an
-            # `id` make `toolset:<id>` ambiguous even where each declares a different segment under
-            # it, so comparing full ids would let exactly that pair through.
-            source_key = instruction_source_key(part.id)
-            if owners.setdefault(source_key, source) is not source:
+    for contribution in contributions:
+        if contribution.source_id is not None:
+            source_id = contribution.source_id
+            if owners.setdefault(source_id, contribution.source) is not contribution.source:
                 raise UserError(
-                    f'Two toolsets have the same `id` {source_key.partition(":")[2]!r} and both contribute '
-                    f'instructions, so {source_key!r} would address blocks from each. '
+                    f'Two toolsets have the same `id` {source_id.partition(":")[2]!r} and both contribute '
+                    f'instructions, so {source_id!r} would address blocks from each. '
                     'Toolset `id`s must be unique among all toolsets registered with the same agent.'
                 )
-        parts.extend(source_parts)
+        parts.extend(contribution.parts)
     return parts

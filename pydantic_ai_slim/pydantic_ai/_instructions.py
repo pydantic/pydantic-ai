@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import Generic
 
@@ -173,57 +173,49 @@ def normalize_instructions(
     return list(instructions)
 
 
-def normalize_toolset_instructions(
+def qualify_toolset_instruction_parts(
+    parts: list[InstructionPart], toolset_id: str | None
+) -> tuple[str | None, list[InstructionPart]]:
+    """Mint a toolset's source key and resolve each block's declared id against it.
+
+    Returns the key alongside the blocks so a caller never has to ask for it a second time: one
+    answer, minted once, is what stops a reader and a minter drifting apart.
+
+    Each part's [`id`][pydantic_ai.messages.InstructionPart.id] is resolved by `resolve_declared_id`,
+    so a part without one is addressed by `'toolset:<id>'` and a part declaring `'limits'` by
+    `'toolset:<id>:limits'`. Without a key every declared id is dropped: an author writing on a
+    toolset with no `id` has nothing to hang a segment off, and letting the raw value stand would
+    let it claim a key belonging to somebody else — `'agent'`, or a `'toolset:<id>'` naming a
+    toolset it isn't.
+
+    Call this only once blocks have survived normalization. Minting validates the toolset's `id`,
+    and an id that cannot become a key is harmless until the toolset actually says something.
+    """
+    if toolset_id is None:
+        return None, [replace(part, id=None) if part.id is not None else part for part in parts]
+    source_id = toolset_instruction_id(toolset_id)
+    return source_id, [
+        replace(part, id=resolved) if (resolved := resolve_declared_id(source_id, part.id)) != part.id else part
+        for part in parts
+    ]
+
+
+def normalize_toolset_instruction_parts(
     result: str | InstructionPart | Sequence[str | InstructionPart] | None,
-    toolset_id: str | None = None,
-    *,
-    passthrough_source_ids: Collection[str] = (),
 ) -> list[InstructionPart]:
-    """Normalize a toolset `get_instructions` result into non-empty `InstructionPart`s.
+    """Normalize a toolset `get_instructions` result into non-empty parts, ids untouched.
 
-    A toolset may return a single `str` or `InstructionPart`, a sequence of either, or `None`.
-    Plain strings are treated as dynamic (they come from an external/changeable source) and
-    whitespace-only content is dropped. Shared by `_agent_graph._get_instructions` and the
-    deferred-capability loader's owned-toolset instruction collection so the two stay in sync.
-
-    When `toolset_id` is provided, each part's [`id`][pydantic_ai.messages.InstructionPart.id] is
-    resolved against the toolset's key by `resolve_declared_id`, so a part without one is addressed
-    by `'toolset:<id>'` and a part declaring `'limits'` by `'toolset:<id>:limits'`. Composition
-    points pass the id of the toolset they're calling, and only the point that reaches the authoring
-    toolset has one to pass — a wrapper reports no `id`, so nothing resolves an id twice.
-
-    Without one, every declared id is dropped: an author writing on a toolset with no `id` has no
-    source key to hang a declared segment off, and letting the raw value stand would let it claim a
-    key belonging to somebody else — `'agent'`, or a `'toolset:<id>'` naming a toolset it isn't.
-
-    `passthrough_source_ids` names the source keys whose blocks may arrive already keyed. A
-    `WrapperToolset` subclass overriding `get_instructions` typically returns what the toolsets it
-    wraps produced, so those keys have to survive the trip out — that's what keeps a
-    capability-contributed toolset addressable rather than anonymous behind `CapabilityOwnedToolset`.
-    Only keys the wrapped subtree actually owns pass through, and they pass through whether or not
-    the wrapper has an `id`: a key belongs to the toolset it names, so neither a wrapper inventing a
-    key for a toolset it doesn't wrap nor one re-resolving a wrapped toolset's key beneath its own is
-    something to honour. Anything else is read as a segment the wrapper declared.
+    A toolset may return a single `str` or `InstructionPart`, a sequence of either, or `None`. Plain
+    strings are treated as dynamic (they come from an external/changeable source) and whitespace-only
+    content is dropped. Ids are left exactly as the author wrote them, so whoever interprets them can
+    still tell a key issued below from a segment declared here.
     """
     if not result:
         return []
     items = [result] if isinstance(result, (str, InstructionPart)) else result
-    source_id = toolset_instruction_id(toolset_id) if toolset_id is not None else None
     parts: list[InstructionPart] = []
     for item in items:
         part = item if isinstance(item, InstructionPart) else InstructionPart(content=item, dynamic=True)
-        if not part.content.strip():
-            continue
-        if part.id is not None and any(
-            part.id == passthrough_id or part.id.startswith(f'{passthrough_id}:')
-            for passthrough_id in passthrough_source_ids
-        ):
-            resolved_id = part.id
-        elif source_id is not None:
-            resolved_id = resolve_declared_id(source_id, part.id)
-        else:
-            resolved_id = None
-        if resolved_id != part.id:
-            part = replace(part, id=resolved_id)
-        parts.append(part)
+        if part.content.strip():
+            parts.append(part)
     return parts
