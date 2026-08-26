@@ -975,7 +975,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 # `fallback_config` is deliberately empty above, so `False` can only come from
                 # metadata on a concrete tool.
                 assert tool is not None
-                from pydantic_ai.mcp import MCPToolset
+                try:
+                    from pydantic_ai.mcp import MCPToolset
+                except ImportError:  # pragma: no cover
+                    return False
 
                 if not self._allow_inline_mcp_in_durable_context and isinstance(tool.toolset, MCPToolset):
                     raise UserError(

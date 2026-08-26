@@ -2859,6 +2859,30 @@ async def test_prefect_durability_allows_fully_opted_out_runtime_function_toolse
     assert await run_agent() == 'done'
 
 
+def test_prefect_opted_out_function_tool_config_works_without_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise config resolution directly because this module's MCP import prevents simulating a missing extra publicly."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def block_mcp_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('MCP extra is unavailable')
+        return original_import(name, *args, **kwargs)
+
+    tool = ToolsetTool(
+        toolset=FunctionToolset(),
+        tool_def=ToolDefinition(name='inline', metadata={'prefect': False}),
+        max_retries=0,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    durability = cast(BaseDurabilityCapability[Any], PrefectDurability())
+    monkeypatch.setattr(builtins, '__import__', block_mcp_import)
+    resolve = durability._build_resolve_tool_config({})  # pyright: ignore[reportPrivateUsage]
+
+    assert resolve(tool, 'inline') is False
+
+
 async def test_prefect_durability_rejects_partially_opted_out_runtime_function_toolset() -> None:
     # Both tools below are rejected before any tool runs.
     async def opted_out() -> str:  # pragma: no cover
