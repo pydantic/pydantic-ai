@@ -255,6 +255,10 @@ def collect_capability_operations(  # noqa: C901
         if not callable(handler):
             raise UserError(f'Durable operation {operation_name!r} must be an async callable.')
         handler = cast(Callable[..., Awaitable[Any]], handler)
+        if not inspect.iscoroutinefunction(handler):
+            raise UserError(
+                f'Durable operation {operation_name!r} on capability {capability.id!r} must be an async callable.'
+            )
         original = cast(_DurableOperationMarker | None, getattr(handler, '__pydantic_ai_durable_operation__', None))
         function = original.function if original is not None else handler
         bound = function.__get__(capability, type(capability))

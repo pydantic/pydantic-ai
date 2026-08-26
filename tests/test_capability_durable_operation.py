@@ -705,6 +705,23 @@ def test_non_callable_dynamic_operation_is_rejected() -> None:
         collect_capability_operations(Invalid())
 
 
+def test_sync_dynamic_operation_is_rejected_at_bind() -> None:
+    class SyncOperation(AbstractCapability[Any]):
+        id = 'sync_capability'
+
+        def operation(self) -> None:
+            pass
+
+        def get_durable_operations(self) -> Mapping[str, object]:
+            return {'sync_operation': self.operation}
+
+    with pytest.raises(
+        UserError,
+        match="Durable operation 'sync_operation' on capability 'sync_capability' must be an async callable",
+    ):
+        Agent(TestModel(), name='sync_operation', capabilities=[SyncOperation(), RecordingDurability()])
+
+
 def test_prepare_run_context_without_agent_marks_durability_bound() -> None:
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     RecordingDurability()._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
