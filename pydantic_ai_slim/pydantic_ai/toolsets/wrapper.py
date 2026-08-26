@@ -6,7 +6,7 @@ from typing import Any
 
 from typing_extensions import Self
 
-from .._instructions import normalize_toolset_instructions, toolset_instruction_id
+from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from ._instruction_collection import collect_toolset_instructions
@@ -63,26 +63,14 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
             source = self.wrapped
             while isinstance(source, WrapperToolset):
                 source = source.wrapped
-            parts = normalize_toolset_instructions(result, self.id, passthrough_source_ids=self._wrapped_source_ids())
+            parts = normalize_toolset_instructions(
+                result, self.id, passthrough_source_ids=self.wrapped._instruction_source_ids()
+            )
             return [(source, parts)]
         return await self.wrapped._collect_instruction_contributions(ctx)
 
-    def _wrapped_source_ids(self) -> set[str]:
-        """The instruction source keys the toolsets below this wrapper own.
-
-        A subclass overriding `get_instructions` usually returns what it wrapped, keys and all, so
-        those keys have to survive. Which ones those are is a fact about the subtree, not about the
-        text: reading it off the wrapped toolsets means a wrapper can neither mint a key for a
-        toolset it doesn't wrap nor lose one by re-resolving a wrapped toolset's key beneath its own.
-        """
-        source_ids: set[str] = set()
-
-        def visit(toolset: AbstractToolset[AgentDepsT]) -> None:
-            if toolset.id is not None:
-                source_ids.add(toolset_instruction_id(toolset.id))
-
-        self.wrapped.apply(visit)
-        return source_ids
+    def _instruction_source_ids(self) -> set[str]:
+        return super()._instruction_source_ids() | self.wrapped._instruction_source_ids()
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)

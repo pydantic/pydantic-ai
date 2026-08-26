@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, FunctionToolset, ToolsetTool, WrapperToolset
 
 from .conftest import try_import
 
@@ -227,9 +227,16 @@ class RelayingWrapper(WrapperToolset[Any]):
 class RelayingWrapperReturning(WrapperToolset[Any]):
     """A wrapper returning instructions of its own choosing rather than what it wraps."""
 
-    def __init__(self, wrapped: AbstractToolset[Any], instructions: Sequence[str | InstructionPart]):
+    def __init__(
+        self, wrapped: AbstractToolset[Any], instructions: Sequence[str | InstructionPart], id: str | None = None
+    ):
         super().__init__(wrapped)
         self.instructions = instructions
+        self._id = id
+
+    @property
+    def id(self) -> str | None:
+        return self._id
 
     async def get_instructions(
         self, ctx: RunContext[Any]
@@ -250,6 +257,63 @@ async def test_a_named_wrapper_relays_the_wrapped_key_rather_than_nesting_it():
     assert await run_and_capture(agent) == [
         InstructionPart(content='Leaf instructions.', dynamic=True, id='toolset:leaf')
     ]
+
+
+async def test_a_wrapper_relays_a_key_from_under_a_wrapper_it_wraps():
+    """Wrappers nest, so what a wrapper may relay is the whole subtree's keys, not its child's.
+
+    Reading only the toolset directly wrapped — or only the leaves — would leave the outer wrapper
+    treating `'toolset:leaf'` as a segment its own author had declared, which drops the key, or
+    rejects its colon where the outer wrapper has an `id` of its own to qualify it against.
+    """
+    inner = RelayingWrapper(InstructionsToolset('Leaf.', id='leaf'), id='inner')
+    agent = Agent(toolsets=[RelayingWrapper(inner, id='outer')])
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Leaf.', dynamic=True, id='toolset:leaf')]
+
+
+async def test_a_wrapper_relays_keys_from_every_toolset_it_wraps_at_once():
+    """A wrapper's subtree spreads sideways as well as down, so every branch's keys have to survive.
+
+    A capability contributing more than one toolset is the shape this shows up in: the group arrives
+    behind one wrapper, and relaying it must not favour whichever branch happens to come first.
+    """
+    grouped = CombinedToolset([InstructionsToolset('First.', id='first'), InstructionsToolset('Second.', id='second')])
+    agent = Agent(toolsets=[RelayingWrapper(grouped, id='outer')])
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='First.', dynamic=True, id='toolset:first'),
+        InstructionPart(content='Second.', dynamic=True, id='toolset:second'),
+    ]
+
+
+async def test_a_wrapper_relays_a_key_a_wrapper_it_wraps_issued_itself():
+    """A wrapper with an `id` that contributes a block of its own is a source like any other.
+
+    Its key is owned by nothing it wraps, so a subtree's keys have to include the wrappers' own and
+    not just the ones they pass along.
+    """
+    inner = RelayingWrapperReturning(InstructionsToolset(id='leaf'), [InstructionPart(content='Inner.')], id='inner')
+    agent = Agent(toolsets=[RelayingWrapper(inner, id='outer')])
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Inner.', id='toolset:inner')]
+
+
+async def test_wrapping_a_toolset_whose_id_cannot_be_a_key_leaves_it_working():
+    """An id is only rejected where it is turned into a key, and being wrapped isn't that.
+
+    A toolset that says nothing to the model may carry a colon in its `id` — the key is never minted,
+    so there is nothing to be ambiguous. Working out which keys a wrapper may relay reads the ids of
+    everything below it, and reading one must not be what mints it.
+    """
+    agent = Agent(
+        toolsets=[
+            RelayingWrapper(InstructionsToolset(id='remote:weather')),
+            InstructionsToolset('Calendar.', id='calendar'),
+        ]
+    )
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Calendar.', dynamic=True, id='toolset:calendar')]
 
 
 async def test_a_wrapper_cannot_relay_a_key_for_a_toolset_it_does_not_wrap():

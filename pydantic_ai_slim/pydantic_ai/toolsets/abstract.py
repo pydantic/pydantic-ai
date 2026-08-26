@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
-from .._instructions import normalize_toolset_instructions
+from .._instructions import normalize_toolset_instructions, optional_toolset_instruction_id
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
@@ -180,6 +180,17 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """Collect this authoring toolset's instruction contribution."""
         result = await self.get_instructions(ctx)
         return [(self, normalize_toolset_instructions(result, self.id))]
+
+    def _instruction_source_ids(self) -> set[str]:
+        """The instruction source keys this toolset and anything below it can issue.
+
+        A `WrapperToolset` relaying instructions has to tell a key issued below it from a bare
+        segment its own author declared, and that is a fact about the tree rather than about the
+        text. Mirrors `_collect_instruction_contributions`: a leaf answers for itself, a wrapper adds
+        what it wraps, a combined toolset unions its children.
+        """
+        source_id = optional_toolset_instruction_id(self.id)
+        return {source_id} if source_id is not None else set()
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

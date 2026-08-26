@@ -112,6 +112,12 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         return await collect_toolset_instructions(self, ctx) or None
 
+    def _instruction_source_ids(self) -> set[str]:
+        source_ids = super()._instruction_source_ids()
+        for toolset in self.toolsets:
+            source_ids |= toolset._instruction_source_ids()
+        return source_ids
+
     async def _collect_instruction_contributions(
         self, ctx: RunContext[AgentDepsT]
     ) -> list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]]:
