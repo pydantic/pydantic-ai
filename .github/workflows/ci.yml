@@ -209,22 +209,7 @@ jobs:
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
-    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
-    # `github.event.pull_request` is null on push/tag runs, so those need their own clause to
-    # reach Ubicloud -- without it main and release runs silently fall back to `ubuntu-latest`.
-    runs-on: >-
-      ${{
-        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
-        && matrix.install.name == 'all-extras'
-        && (
-          github.event_name == 'push'
-          || github.event.pull_request.head.repo.full_name == github.repository
-          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
-        )
-        && 'ubicloud-premium-4'
-        || 'ubuntu-latest'
-      }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -329,10 +314,7 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
-      # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
-      # instead of 4). `logical` uses all vCPUs; ~39% faster on premium-4, no-op
-      # on ubuntu-latest (already 4). See PR benchmark.
+      # `-n logical`, not `-n auto`: use every logical CPU exposed by the runner.
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -346,20 +328,7 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
-    # Use Ubicloud 4-core runners for maintainers or opted in via 'ci:fast' label
-    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
-    # See the note on the `test` job for why push/tag runs need their own clause.
-    runs-on: >-
-      ${{
-        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
-        && (
-          github.event_name == 'push'
-          || github.event.pull_request.head.repo.full_name == github.repository
-          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
-        )
-        && 'ubicloud-premium-4'
-        || 'ubuntu-latest'
-      }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -439,7 +408,7 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
+      # `-n logical` (see note on the `test` job): use every logical CPU.
       - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
