@@ -633,7 +633,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
         _validate_capability_ids(self._root_capability.capabilities)
-        _validate_instruction_source_ids(self._root_capability)
+        _validate_instruction_source_ids([self._root_capability])
 
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
         # model IDs itself, so eagerly inferring a string here could construct the wrong provider
@@ -774,7 +774,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         static_capabilities: list[AbstractCapability[AgentDepsT]] = []
         self._root_capability.apply(static_capabilities.append)
         _validate_capability_ids(static_capabilities)
-        _validate_instruction_source_ids(self._root_capability)
+        _validate_instruction_source_ids([self._root_capability])
 
         # Extract capability-contributed configuration (after for_agent so caps can provide instructions etc.)
         self._cap_instructions = self._root_capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
@@ -2931,14 +2931,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
         )
-        if len(resolved_layers) > 1:
-            run_capability = CombinedCapability(resolved_layers)
-            # A run's capabilities compose with a retained overriding container exactly as a
-            # registered sibling does, so the same key collision is reachable from here.
-            _validate_instruction_source_ids(run_capability)
-        else:
-            # Nothing composed, so nothing new can collide: construction already validated this one.
-            run_capability = resolved_layers[0]
+        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+        # Not covered by the construction-time check: a run's capabilities compose with a retained
+        # overriding container exactly as a registered sibling does, and `for_run` may hand back a
+        # capability whose `id` differs from the one that was validated, so the resolved tree is
+        # checked even when no additional layer was composed.
+        _validate_instruction_source_ids(resolved_layers)
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -4019,7 +4017,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     return explicit_ids
 
 
-def _validate_instruction_source_ids(root_capability: CombinedCapability[Any]) -> None:
+def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[Any]]) -> None:
     """Reject two instruction sources that would contribute blocks under one `capability:<id>` key.
 
     `_validate_capability_ids` walks the flattened capabilities, but a `CombinedCapability` subclass
@@ -4028,19 +4026,26 @@ def _validate_instruction_source_ids(root_capability: CombinedCapability[Any]) -
     unchecked, and a sibling could share it -- leaving an application unable to tell whose text
     `capability:<id>` addresses, which is the one thing the key exists to make unambiguous.
 
-    Runs at construction, after `for_agent`, and again wherever a run composes new layers onto
-    the agent's: a capability passed to `run()` joins the retained container the same way a
-    registered sibling does, so the collision is reachable from there too.
+    Runs at construction, after `for_agent`, and again on the tree a run actually resolves to.
+    The last of those is not redundant: a capability passed to `run()` joins the retained container
+    the same way a registered sibling does, and `for_run` may hand back a capability carrying a
+    different `id` than the one construction saw.
     """
     sources_by_id: dict[str, AbstractCapability[Any]] = {}
-    for source in root_capability._instruction_sources:  # pyright: ignore[reportPrivateUsage]
-        if source.id is None:
-            continue
-        if (existing := sources_by_id.setdefault(source.id, source)) is not source:
-            raise exceptions.UserError(
-                f'Capability id {existing.id!r} is used by multiple capabilities that contribute '
-                'instructions. Capability ids must be unique within a run.'
-            )
+    for capability in capabilities:
+        sources = (
+            capability._instruction_sources  # pyright: ignore[reportPrivateUsage]
+            if isinstance(capability, CombinedCapability)
+            else (capability,)
+        )
+        for source in sources:
+            if source.id is None:
+                continue
+            if (existing := sources_by_id.setdefault(source.id, source)) is not source:
+                raise exceptions.UserError(
+                    f'Capability id {existing.id!r} is used by multiple capabilities that contribute '
+                    'instructions. Capability ids must be unique within a run.'
+                )
 
 
 def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, source: str) -> None:

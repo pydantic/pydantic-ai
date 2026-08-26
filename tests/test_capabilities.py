@@ -3350,7 +3350,7 @@ def test_overriding_container_id_must_not_collide_with_a_sibling() -> None:
 
     class Group(CombinedCapability[Any]):
         def get_instructions(self) -> str:
-            return 'Group override.'
+            return 'Group override.'  # pragma: no cover -- construction raises before it is asked
 
     with pytest.raises(UserError) as exc_info:
         Agent(
@@ -3385,6 +3385,39 @@ async def test_run_level_capability_id_must_not_collide_with_an_overriding_conta
 
     with pytest.raises(UserError) as exc_info:
         await agent.run('Hello', capabilities=[Capability[Any](instructions='Run-level.', id='dup')])
+
+    assert str(exc_info.value) == snapshot(
+        "Capability id 'dup' is used by multiple capabilities that contribute instructions. "
+        'Capability ids must be unique within a run.'
+    )
+
+
+async def test_for_run_rebinding_into_a_container_id_is_rejected() -> None:
+    """`for_run` can hand back an id construction never saw, so the resolved tree is checked too.
+
+    Construction validates the capabilities it was given. A capability whose `for_run` returns a
+    different instance can introduce a collision after that point -- here against a retained
+    overriding container -- and no further layer is composed, so nothing else would notice.
+    """
+
+    class Group(CombinedCapability[Any]):
+        def get_instructions(self) -> str:
+            return 'Group override.'
+
+    class Mutant(Capability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return Capability[Any](instructions='Mutated.', id='dup')
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            Group(capabilities=[Capability[Any](instructions='Leaf.', id='leaf')], id='dup'),
+            Mutant(instructions='Original.', id='mutant'),
+        ],
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('Hello')
 
     assert str(exc_info.value) == snapshot(
         "Capability id 'dup' is used by multiple capabilities that contribute instructions. "
