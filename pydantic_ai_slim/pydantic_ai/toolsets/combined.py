@@ -7,11 +7,12 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
 from ..messages import InstructionPart
-from ._instruction_collection import collect_toolset_instructions
+from ._instruction_collection import flatten_instruction_contributions
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -110,7 +111,21 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
-        return await collect_toolset_instructions(self, ctx) or None
+        return flatten_instruction_contributions(await self._child_instruction_contributions(ctx)) or None
+
+    async def _child_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]]:
+        """Every child's contribution, gathered concurrently.
+
+        Reached without going back through the override check, which is what lets a subclass
+        delegate to `super().get_instructions()`: routing that through `self` again would land in
+        the subclass's own override, and from there straight back here, forever.
+        """
+        child_contributions = await gather(
+            *(toolset._collect_instruction_contributions(ctx) for toolset in self.toolsets)
+        )
+        return [contribution for contributions in child_contributions for contribution in contributions]
 
     def _instruction_source_ids(self) -> set[str]:
         source_ids = super()._instruction_source_ids()
@@ -122,8 +137,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT]
     ) -> list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]]:
         if type(self).get_instructions is not CombinedToolset.get_instructions:
-            return await super()._collect_instruction_contributions(ctx)
-        child_contributions = await gather(
-            *(toolset._collect_instruction_contributions(ctx) for toolset in self.toolsets)
-        )
-        return [contribution for contributions in child_contributions for contribution in contributions]
+            result = await self.get_instructions(ctx)
+            # Same relay as `WrapperToolset`: a subclass usually hands its children's blocks back
+            # out, and a key belongs to the toolset it names rather than to whoever passes it along.
+            parts = normalize_toolset_instructions(
+                result, self.id, passthrough_source_ids=self._instruction_source_ids()
+            )
+            return [(self, parts)]
+        return await self._child_instruction_contributions(ctx)

@@ -454,6 +454,39 @@ async def test_combined_capability_subclass_get_instructions_override_is_authori
     assert await run_and_capture(agent) == [InstructionPart(content='Override.', id='capability:group')]
 
 
+async def test_a_combined_toolset_subclass_can_delegate_get_instructions_to_super():
+    """Delegating to `super()` is how a subclass extends what it wraps, so it has to terminate.
+
+    The override check routes an overriding subclass through the base's own collection, which asks
+    `self.get_instructions()` — landing back in the override. Reaching the children without passing
+    the check again is what stops that being a loop.
+    """
+
+    class Relaying(CombinedToolset[Any]):
+        async def get_instructions(
+            self, ctx: RunContext[Any]
+        ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+            return await super().get_instructions(ctx)
+
+    agent = Agent(toolsets=[Relaying([InstructionsToolset('Child.', id='child')])])
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Child.', dynamic=True, id='toolset:child')]
+
+
+async def test_a_combined_toolset_subclass_get_instructions_override_is_authoritative():
+    """A public override on a combined toolset replaces its children's contributions."""
+
+    class Overridden(CombinedToolset[Any]):
+        async def get_instructions(
+            self, ctx: RunContext[Any]
+        ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+            return 'Override.'
+
+    agent = Agent(toolsets=[Overridden([InstructionsToolset('Child.', id='child')])])
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Override.', dynamic=True)]
+
+
 def test_instruction_id_segments_reject_colons_at_registration():
     """The delimiter cannot occur inside a source or declared segment."""
 
