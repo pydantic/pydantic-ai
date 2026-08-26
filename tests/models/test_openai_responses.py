@@ -93,7 +93,7 @@ with try_import() as imports_successful:
     from openai.types.responses.response_compaction_item import ResponseCompactionItem
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-    from openai.types.responses.response_output_text import ResponseOutputText
+    from openai.types.responses.response_output_text import AnnotationURLCitation, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -1758,6 +1758,112 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
             and 'annotations' in event.part.provider_details
         )
         for event in events3
+    )
+
+
+async def test_openai_include_raw_annotations_streaming_model_annotation(allow_model_requests: None):
+    """A streamed annotation that arrives as an SDK model, not a dict, still lands as the wire dict.
+
+    At the declared `openai` floor this is the only test that drives the `isinstance(..., BaseModel)`
+    side of that normalization: `ResponseOutputTextAnnotationAddedEvent.annotation` is typed `object`
+    there, so the VCR test above parses one into a plain dict and only ever takes the `else` side.
+    Coverage cannot show the difference — both sides of a one-line conditional converge on the same
+    arc, so the line reads as covered either way. `model_construct` skips validation, so the same
+    construction holds once 3.1 retypes that field into a discriminated union.
+
+    It pins the shape, not the regression. That retype makes the field a model union whose members are
+    distinct classes from the identically shaped ones `ResponseOutputText.annotations` uses, and
+    reverting the normalization leaves this test green at both 3.0.0 and 3.3.1 — the canary, which
+    resolves the real 3.1+ SDK, is what catches that.
+    """
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.6-terra',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Mount Columbia is the tallest.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseOutputTextAnnotationAddedEvent.model_construct(
+            annotation=AnnotationURLCitation(
+                end_index=30,
+                start_index=0,
+                title='Mount Columbia',
+                type='url_citation',
+                url='https://example.com/mount-columbia',
+            ),
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Mount Columbia is the tallest.',
+            type='response.output_text.done',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=5,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.6-terra', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+
+    async with agent.run_stream_events('What is the tallest mountain in Alberta?', model_settings=settings) as events:
+        annotated = [
+            event.delta.provider_details['annotations']
+            for event in [e async for e in events]
+            if isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, TextPartDelta)
+            and event.delta.provider_details
+            and 'annotations' in event.delta.provider_details
+        ]
+
+    assert annotated == snapshot(
+        [
+            [
+                {
+                    'end_index': 30,
+                    'start_index': 0,
+                    'title': 'Mount Columbia',
+                    'type': 'url_citation',
+                    'url': 'https://example.com/mount-columbia',
+                }
+            ]
+        ]
     )
 
 
