@@ -41,6 +41,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.usage import _delta as _usage_delta  # pyright: ignore[reportPrivateUsage]
 
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -50,7 +51,6 @@ from ._capability_operation import (
     ModelRequestContextProjection,
     _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
     _operation_result_type,  # pyright: ignore[reportPrivateUsage]
-    _usage_delta,  # pyright: ignore[reportPrivateUsage]
     bind_arguments,
     call_declaration,
     collect_capability_operations,

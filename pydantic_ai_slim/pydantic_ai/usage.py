@@ -390,6 +390,41 @@ class RunUsage(UsageBase):
         return new_usage
 
 
+def _calculate_delta(before: RunUsage, after: RunUsage) -> RunUsage:
+    """Calculate the usage added between two snapshots."""
+    details: dict[str, int] = {}
+    for name in before.details.keys() | after.details.keys():
+        before_value = before.details.get(name, 0)
+        after_value = after.details.get(name, 0)
+        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
+            details[name] = after_value - before_value
+
+    delta = RunUsage(
+        requests=after.requests - before.requests,
+        tool_calls=after.tool_calls - before.tool_calls,
+        input_tokens=after.input_tokens - before.input_tokens,
+        cache_write_tokens=after.cache_write_tokens - before.cache_write_tokens,
+        cache_read_tokens=after.cache_read_tokens - before.cache_read_tokens,
+        output_tokens=after.output_tokens - before.output_tokens,
+        input_audio_tokens=after.input_audio_tokens - before.input_audio_tokens,
+        cache_audio_read_tokens=after.cache_audio_read_tokens - before.cache_audio_read_tokens,
+        output_audio_tokens=after.output_audio_tokens - before.output_audio_tokens,
+        details=details,
+        cost=after.cost - (before.cost or 0) if after.cost is not None and after.cost != before.cost else None,
+    )
+
+    field_names = {field.name for field in dataclasses.fields(RunUsage)}
+    for name in (before.__dict__.keys() | after.__dict__.keys()) - field_names:
+        before_value = before.__dict__.get(name, 0)
+        after_value = after.__dict__.get(name, 0)
+        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
+            delta.__dict__[name] = after_value - before_value
+    return delta
+
+
+_delta = _calculate_delta
+
+
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
     if incr_usage.cost is not None:
         slf.cost = (slf.cost or 0) + incr_usage.cost

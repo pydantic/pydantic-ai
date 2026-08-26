@@ -41,27 +41,11 @@ class _CapabilityOperationResult(Generic[R]):
     usage_delta: RunUsage
 
 
-def _usage_delta(  # pyright: ignore[reportUnusedFunction]
-    before: RunUsage, after: RunUsage
-) -> RunUsage:
-    delta = RunUsage()
-    for name in (before.__dict__.keys() | after.__dict__.keys()) - {'details', 'cost'}:
-        before_value = getattr(before, name, 0)
-        after_value = getattr(after, name, 0)
-        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
-            setattr(delta, name, after_value - before_value)
-    for name in before.details.keys() | after.details.keys():
-        before_value = before.details.get(name, 0)
-        after_value = after.details.get(name, 0)
-        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
-            delta.details[name] = after_value - before_value
-    if after.cost is not None and after.cost != before.cost:
-        delta.cost = after.cost - (before.cost or 0)
-    return delta
-
-
-def _operation_result_type(result_type: object) -> object:  # pyright: ignore[reportUnusedFunction]
+def _make_operation_result_type(result_type: object) -> object:
     return cast(Any, _CapabilityOperationResult)[result_type]
+
+
+_operation_result_type = _make_operation_result_type
 
 
 @dataclass
