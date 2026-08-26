@@ -7,9 +7,8 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
-from pydantic_ai.durable_exec._capability_operation import durable_operation
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
 from pydantic_ai.durable_exec._operation import CapabilityOperationId
 from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer

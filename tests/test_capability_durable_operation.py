@@ -10,21 +10,30 @@ from prefect import flow
 from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.durable_exec._capability_operation import durable_operation, tier_one_durable_operation
+from pydantic_ai.durable_exec._capability_operation import (
+    CapabilityOperationParams,
+    ModelRequestContextProjection,
+    _model_request_schema,  # pyright: ignore[reportPrivateUsage]
+    call_declaration,
+    collect_capability_operations,
+    recover_capability,
+    tier_one_durable_operation,
+)
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._toolset import Lifecycle
 from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.durable_exec.prefect import PrefectDurability
 from pydantic_ai.durable_exec.temporal import TemporalDurability
-from pydantic_ai.durable_exec.temporal._transports import _CapabilityOperationParams
+from pydantic_ai.durable_exec.temporal._transports import _CapabilityOperationParams, _CapabilityOperationTransport
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
 
@@ -270,6 +279,126 @@ def test_dynamic_hook_and_decorator_produce_the_same_declaration() -> None:
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert ('dynamic', 'operation') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+
+
+def test_sync_non_hook_operation_is_rejected_by_decorator() -> None:
+    def operation() -> None:
+        pass
+
+    with pytest.raises(TypeError, match='can only decorate async methods'):
+        durable_operation(operation)  # pyright: ignore[reportArgumentType]
+
+
+def test_tier_one_base_and_duplicate_override_paths() -> None:
+    class Base(AbstractCapability[Any]):
+        @tier_one_durable_operation
+        async def operation(self, ctx: RunContext[Any]) -> str:
+            return 'base'
+
+        sentinel = True
+
+    assert collect_capability_operations(Base()) == {}
+
+    class Override(Base):
+        async def operation(self, ctx: RunContext[Any]) -> str:
+            return 'override'
+
+    assert set(collect_capability_operations(Override())) == {'operation'}
+
+    class Duplicate(Base):
+        id = 'duplicate'
+
+        async def operation(self, ctx: RunContext[Any]) -> str:
+            return 'override'
+
+        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
+            return {'operation': self.operation}
+
+    with pytest.raises(UserError, match="Duplicate durable operation name 'operation'"):
+        collect_capability_operations(Duplicate())
+
+
+def test_dynamic_operation_requires_run_context() -> None:
+    class MissingContext(AbstractCapability[Any]):
+        async def operation(self, value: int) -> int:
+            return value
+
+        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
+            return {'operation': self.operation}
+
+    with pytest.raises(UserError, match='must take `RunContext`'):
+        collect_capability_operations(MissingContext())
+
+
+async def test_defensive_capability_operation_paths() -> None:
+    capability = Operations()
+    declaration = collect_capability_operations(capability)['calculate']
+    projection_declaration = collect_capability_operations(DurableBeforeModelRequest())['before_model_request']
+    ctx = capability.calls[0][0] if capability.calls else RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(RuntimeError, match='require the durability model scope'):
+        await call_declaration(projection_declaration, capability, CapabilityOperationParams(ctx, {}))
+    with pytest.raises(RuntimeError, match='requires the worker agent'):
+        recover_capability(ctx, 'missing')
+    plain_agent = Agent(TestModel())
+    ctx.agent = plain_agent
+    with pytest.raises(RuntimeError, match='found 0'):
+        recover_capability(ctx, 'missing')
+
+    assert (
+        await capability._calculate(  # pyright: ignore[reportPrivateUsage]
+            RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        )
+        == 2
+    )
+
+    assert isinstance(
+        await _model_request_schema(
+            ctx,
+            ModelRequestContextProjection([], None, ModelRequestParameters(), None, False),
+        ),
+        ModelRequestContextProjection,
+    )
+    assert declaration.result_type is int
+
+
+async def test_bound_dispatch_defensively_rejects_missing_capability_id() -> None:
+    agent = Agent(TestModel(), name='defensive', capabilities=[RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    ctx.agent = agent
+    with pytest.raises(RuntimeError, match='must have an explicit `id`'):
+        await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+            AbstractCapability(), 'missing', ctx, (), {}
+        )
+
+
+async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    capability = Operations()
+    agent = Agent(TestModel(), name='temporal_transport', capabilities=[capability, TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    declaration = durability._capability_declarations[('operations', 'calculate')]  # pyright: ignore[reportPrivateUsage]
+    transport = _CapabilityOperationTransport(durability, declaration)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    ctx.agent = agent
+    params = CapabilityOperationParams(ctx, {'value': 2, 'extra': [], 'scale': 1})
+    wire, deps = transport.dump(params)
+    assert isinstance(wire, _CapabilityOperationParams)
+    loaded = transport.load((wire, deps), runtime=durability)
+    assert loaded.arguments == params.arguments
+
+    summaries: list[str] = []
+
+    async def execute_activity(*, activity: Any, args: Any, **config: Any) -> int:
+        summaries.append(config['summary'])
+        return 2
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    bound = durability._bound_capability_operations[('operations', 'calculate')]  # pyright: ignore[reportPrivateUsage]
+    assert await bound(params) == 2
+    assert summaries == ['capability: operations.calculate']
 
 
 @pytest.fixture

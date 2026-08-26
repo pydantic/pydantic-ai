@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from functools import wraps
-from typing import Any, ParamSpec, TypeVar, cast, overload
+from typing import Any, ParamSpec, TypeVar, cast, get_type_hints, overload
 
 from pydantic_ai._function_schema import (
     FunctionSchema,
@@ -241,7 +241,7 @@ def collect_capability_operations(capability: AbstractCapability[Any]) -> dict[s
             schema,
             ModelRequestContextProjection
             if model_request_hook
-            else _extract_return_schema_type(inspect.signature(bound).return_annotation, bound),
+            else _extract_return_schema_type(get_type_hints(bound, include_extras=True).get('return'), bound),
             model_request_hook,
         )
     return declarations
