@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from functools import wraps
-from typing import Any, ParamSpec, TypeVar, cast, get_type_hints, overload
+from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints, overload
 
 from pydantic_ai._function_schema import (
     FunctionSchema,
@@ -19,6 +19,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import GenerateToolJsonSchema, RunContext
+from pydantic_ai.usage import RunUsage
 
 from ._operation_backend import BoundDurableOperation
 
@@ -32,6 +33,35 @@ class CapabilityOperationParams:
     run_context: RunContext[Any]
     arguments: dict[str, Any]
     model_id: str | None = None
+
+
+@dataclass(frozen=True)
+class _CapabilityOperationResult(Generic[R]):
+    value: R
+    usage_delta: RunUsage
+
+
+def _usage_delta(  # pyright: ignore[reportUnusedFunction]
+    before: RunUsage, after: RunUsage
+) -> RunUsage:
+    delta = RunUsage()
+    for name in (before.__dict__.keys() | after.__dict__.keys()) - {'details', 'cost'}:
+        before_value = getattr(before, name, 0)
+        after_value = getattr(after, name, 0)
+        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
+            setattr(delta, name, after_value - before_value)
+    for name in before.details.keys() | after.details.keys():
+        before_value = before.details.get(name, 0)
+        after_value = after.details.get(name, 0)
+        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
+            delta.details[name] = after_value - before_value
+    if after.cost is not None and after.cost != before.cost:
+        delta.cost = after.cost - (before.cost or 0)
+    return delta
+
+
+def _operation_result_type(result_type: object) -> object:  # pyright: ignore[reportUnusedFunction]
+    return cast(Any, _CapabilityOperationResult)[result_type]
 
 
 @dataclass

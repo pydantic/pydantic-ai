@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable, Generator, Mapping
-from typing import Any, ClassVar
+from decimal import Decimal
+from typing import Any, ClassVar, cast
 
 import pytest
 from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -15,7 +16,9 @@ from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
     ModelRequestContextProjection,
+    _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
     _model_request_schema,  # pyright: ignore[reportPrivateUsage]
+    _usage_delta,  # pyright: ignore[reportPrivateUsage]
     call_declaration,
     collect_capability_operations,
     recover_capability,
@@ -69,6 +72,22 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
     ) -> Any:
         self.calls.append((name, inputs))
         return await fn()
+
+
+class ReplayingDurability(RecordingDurability):
+    def __init__(self) -> None:
+        super().__init__()
+        self.recorded_results: dict[str, Any] = {}
+
+    async def run_durable_unit(
+        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
+    ) -> Any:
+        self.calls.append((name, inputs))
+        if '__capability__' not in name:
+            return await fn()
+        if name not in self.recorded_results:
+            self.recorded_results[name] = await fn()
+        return self.recorded_results[name]
 
 
 class Operations(AbstractCapability[Any]):
@@ -160,6 +179,25 @@ class ModelReadingOperation(AbstractCapability[Any]):
         return ctx.model is self.expected
 
 
+class UsageOperation(AbstractCapability[Any]):
+    id = 'usage_operation'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.record_nested_usage(ctx)
+
+    @durable_operation
+    async def record_nested_usage(self, ctx: RunContext[Any]) -> None:
+        self.calls += 1
+        await Agent(TestModel(custom_output_text='summary')).run('summarize', usage=ctx.usage)
+        ctx.usage.tool_calls += 2
+        ctx.usage.details['summary_tokens'] = ctx.usage.details.get('summary_tokens', 0) + 3
+        ctx.usage.cost = (ctx.usage.cost or 0) + Decimal('0.25')
+        ctx.usage.__dict__['custom_units'] = ctx.usage.__dict__.get('custom_units', 0) + 7
+
+
 async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
     capability = Operations()
     agent = Agent(TestModel(), capabilities=[capability])
@@ -168,6 +206,10 @@ async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
 
     assert capability.result == 2
     assert capability.calls[0][0].agent is agent
+
+
+async def test_no_context_operation_is_direct_outside_a_run() -> None:
+    assert await ContextPositions().no_ctx('outside') == 'outside'
 
 
 async def test_arguments_are_bound_validated_and_used_as_cache_identity() -> None:
@@ -186,6 +228,24 @@ async def test_arguments_are_bound_validated_and_used_as_cache_identity() -> Non
             ({'value': 3, 'extra': [4], 'scale': 2, 'bonus': 5},),
         )
     ]
+
+
+async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
+    capability = UsageOperation()
+    agent = Agent(TestModel(), name='replayed_usage', capabilities=[capability, ReplayingDurability()])
+
+    results = [await agent.run('test'), await agent.run('test')]
+
+    for result in results:
+        usage = result.usage
+        assert (
+            usage.requests,
+            usage.tool_calls,
+            usage.details,
+            usage.cost,
+            cast(int, usage.__dict__['custom_units']),
+        ) == (2, 2, {'summary_tokens': 3}, Decimal('0.25'), 7)
+    assert capability.calls == 1
 
 
 def test_decorated_capability_requires_explicit_stable_id() -> None:
@@ -309,7 +369,7 @@ def test_temporal_registration_has_stable_name_and_types() -> None:
     definition = ActivityDefinition.must_from_callable(registration)  # pyright: ignore[reportUnknownMemberType]
     assert definition.arg_types is not None
     assert definition.arg_types[0] is _CapabilityOperationParams
-    assert definition.ret_type is int
+    assert definition.ret_type == _CapabilityOperationResult[int]
 
 
 def test_unannotated_parameter_is_rejected_at_bind() -> None:
@@ -494,6 +554,19 @@ async def test_bound_dispatch_defensively_rejects_missing_capability_id() -> Non
         )
 
 
+async def test_capability_operation_rejects_realtime_context_model() -> None:
+    capability = Operations()
+    agent = Agent(TestModel(), name='realtime_context_model', capabilities=[capability, RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext(deps=None, agent=agent, model=cast(Any, object()), usage=RunUsage())
+
+    with pytest.raises(UserError, match='require a non-realtime `Model` on `RunContext`'):
+        await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+            capability, 'calculate', ctx, (ctx,), {}
+        )
+
+
 async def test_capability_operation_rejects_unregistered_context_model() -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='unregistered_context_model', capabilities=[capability, RecordingDurability()])
@@ -508,6 +581,19 @@ async def test_capability_operation_rejects_unregistered_context_model() -> None
         await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
             capability, 'calculate', ctx, (ctx,), {}
         )
+
+
+def test_usage_delta_ignores_non_numeric_extension_values() -> None:
+    before = RunUsage()
+    after = RunUsage()
+    before.__dict__['opaque'] = 'before'
+    after.__dict__['opaque'] = 'after'
+    after.details['opaque'] = cast(Any, 'after')
+
+    delta = _usage_delta(before, after)
+
+    assert 'opaque' not in delta.__dict__
+    assert 'opaque' not in delta.details
 
 
 async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -591,6 +677,26 @@ async def test_dbos_capability_operation_end_to_end(dbos: DBOS) -> None:
 
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert 'dbos_operations__capability__operations.calculate' in [step['function_name'] for step in steps]
+
+
+async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> None:
+    capability = UsageOperation()
+    agent = Agent(TestModel(), name='dbos_usage', capabilities=[capability, DBOSDurability()])
+    workflow_id = str(uuid.uuid4())
+
+    @DBOS.workflow(name=f'capability_usage_{workflow_id}')
+    async def workflow() -> tuple[int, int, dict[str, int], Decimal | None, int]:
+        result = await agent.run('test')
+        usage = result.usage
+        return usage.requests, usage.tool_calls, usage.details, usage.cost, cast(int, usage.__dict__['custom_units'])
+
+    with SetWorkflowID(workflow_id):
+        first = await workflow()
+    with SetWorkflowID(workflow_id):
+        replayed = await workflow()
+
+    assert first == replayed == (2, 2, {'summary_tokens': 3}, Decimal('0.25'), 7)
+    assert capability.calls == 1
 
 
 async def test_prefect_capability_operation_end_to_end() -> None:

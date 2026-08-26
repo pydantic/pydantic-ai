@@ -9,6 +9,10 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._capability_operation import (
+    _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
+    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
 from pydantic_ai.durable_exec._operation import CapabilityOperationId
 from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer
@@ -29,6 +33,7 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.usage import RunUsage
 
 JOURNAL_OPERATION_NAMES = {
     'compat__model.request',
@@ -436,6 +441,30 @@ def test_json_and_identity_codec_payload_goldens(tp: Any, value: Any, expected: 
     assert JSON_CODEC.dump(tp, value) == expected
     assert IDENTITY_CODEC.dump(tp, value) is value
     assert IDENTITY_CODEC.load(tp, value) is value
+
+
+def test_capability_operation_result_payload_golden() -> None:
+    delta = RunUsage(requests=1, tool_calls=2, input_tokens=3, details={'cached': 4})
+    result = _CapabilityOperationResult(5, delta)
+    result_type = _operation_result_type(int)
+
+    assert JSON_CODEC.dump(result_type, result) == {
+        'value': 5,
+        'usage_delta': {
+            'input_tokens': 3,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {'cached': 4},
+            'cost': None,
+            'requests': 1,
+            'tool_calls': 2,
+        },
+    }
+    assert IDENTITY_CODEC.dump(result_type, result) is result
 
 
 def test_pre_wrapper_tool_result_upgrade_paths() -> None:
