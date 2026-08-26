@@ -10,6 +10,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai.durable_exec._operation import (
     CallToolId,
     CancelSuspendedResponseId,
+    CapabilityOperationId,
     CompactMessagesId,
     DurableOperation,
     DurableOperationId,
@@ -121,6 +122,8 @@ class TemporalBoundOperation(Generic[P, W, R]):
             activity_config['summary'] = f'get tools: {operation_id.toolset_id}'
         elif isinstance(operation_id, GetInstructionsId):
             activity_config['summary'] = f'get instructions: {operation_id.toolset_id}'
+        elif isinstance(operation_id, CapabilityOperationId):
+            activity_config['summary'] = f'capability: {operation_id.capability_id}.{operation_id.operation}'
         else:
             assert isinstance(operation_id, EventStreamHandlerId)
             event = cast(_EventParams, params).event

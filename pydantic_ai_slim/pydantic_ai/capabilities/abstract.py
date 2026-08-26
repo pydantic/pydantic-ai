@@ -88,6 +88,9 @@ WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
 """Handler type for wrap_output_process."""
 
+DurableOperationHandler: TypeAlias = Callable[..., Awaitable[Any]]
+"""Handler contributed by a capability for durable execution."""
+
 
 CapabilityPosition = Literal['outermost', 'innermost']
 """Position tier for a capability in the middleware chain.
@@ -431,6 +434,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
         """
+        return None
+
+    def get_durable_operations(self) -> dict[str, DurableOperationHandler] | None:
+        """Durable units this capability contributes, keyed by capability-scoped id."""
         return None
 
     # --- Tool preparation hooks ---

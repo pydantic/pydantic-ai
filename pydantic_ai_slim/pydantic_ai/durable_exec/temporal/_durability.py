@@ -22,6 +22,7 @@ from pydantic_ai.durable_exec._base import (
     ToolsetKind,
     _CallToolParams,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import CallToolId, DurableOperationId, ValidateToolArgumentsId
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
@@ -49,6 +50,7 @@ from ._toolset import (
 from ._transports import (
     _CancelParams as _CancelParams,
     _CancelTransport,
+    _CapabilityOperationTransport,
     _CompactMessagesTransport,
     _DynamicCallTransport,
     _DynamicGetToolsTransport,
@@ -272,6 +274,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def deserialize_operation_run_context(self, serialized_run_context: Any, deps: Any) -> RunContext[AgentDepsT]:
         return deserialize_run_context(self.run_context_type, serialized_run_context, deps=deps, agent=self._agent)
+
+    def _capability_operation_parameter_transport(
+        self, declaration: CapabilityMethodDeclaration
+    ) -> _CapabilityOperationTransport:
+        return _CapabilityOperationTransport(self, declaration)
 
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # Discover the deps type from the agent unless explicitly configured.

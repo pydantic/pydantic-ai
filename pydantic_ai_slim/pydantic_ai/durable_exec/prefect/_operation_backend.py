@@ -8,6 +8,7 @@ from prefect.context import FlowRunContext
 
 from pydantic_ai.durable_exec._operation import (
     CallToolId,
+    CapabilityOperationId,
     DurableOperationId,
     EventStreamHandlerId,
     OperationConfigRole,
@@ -37,6 +38,9 @@ class PrefectOperationConfig:
             return self._model
         if role is OperationConfigRole.EVENT:
             return self._event
+        if role is OperationConfigRole.CAPABILITY:
+            assert isinstance(operation_id, CapabilityOperationId)
+            return {}
         assert isinstance(operation_id, CallToolId | ValidateToolArgumentsId)
         config = self._tool(operation_id.toolset_kind, None, '')
         assert config is not False

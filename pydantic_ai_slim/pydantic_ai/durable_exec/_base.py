@@ -42,11 +42,23 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._capability_operation import (
+    CapabilityBoundOperation,
+    CapabilityCacheIdentity,
+    CapabilityMethodDeclaration,
+    CapabilityOperationParams,
+    ModelRequestContextProjection,
+    bind_arguments,
+    call_declaration,
+    collect_capability_operations,
+    recover_capability,
+)
 from ._codec import IDENTITY_CODEC, DurabilityCodec
 from ._operation import (
     CacheIdentity,
     CallToolId,
     CancelSuspendedResponseId,
+    CapabilityOperationId,
     CompactMessagesId,
     DurableOperation,
     DurableOperationConfig,
@@ -58,6 +70,7 @@ from ._operation import (
     ModelRequestId,
     OperationConfigRole,
     ResultCodec,
+    TypedResultCodec,
     ValidateToolArgumentsId,
 )
 from ._operation_backend import DurableOperationBackend, LegacyCallableBackend
@@ -330,6 +343,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
         self._bound_model_operations: tuple[Any, Any, Any, Any] | None = None
         self._bound_event_operation: Any = None
+        self._bound_capability_operations: dict[tuple[str, str], CapabilityBoundOperation] = {}
+        self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
@@ -347,7 +362,87 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound._bind_models(agent)
         bound._toolsets_by_id = {}
         bound._bind_to_agent(agent)
+        bound._bind_capability_operations(agent)
         return bound
+
+    def _bind_capability_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        self._bound_capability_operations = {}
+        self._capability_declarations = {}
+        backend = self._build_operation_backend()
+        for capability in leaf_capabilities(agent.root_capability):
+            declarations = collect_capability_operations(capability)
+            if not declarations:
+                continue
+            capability_id = capability.id
+            if capability_id is None:
+                raise UserError(
+                    f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
+                    '`id` because persisted operation identity and worker-side recovery must remain stable.'
+                )
+            for operation_name, declaration in declarations.items():
+                key = (capability_id, operation_name)
+
+                async def handler(
+                    params: CapabilityOperationParams,
+                    *,
+                    declaration: CapabilityMethodDeclaration = declaration,
+                    capability_id: str = capability_id,
+                ) -> Any:
+                    arguments = self._codec.load(dict[str, Any], self._codec.dump(dict[str, Any], params.arguments))
+                    validated = cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
+                    semantic_params = CapabilityOperationParams(params.run_context, validated)
+                    recovered = recover_capability(params.run_context, capability_id)
+                    with self._durable_run_context_scope(params.run_context) as durable_ctx:
+                        semantic_params = CapabilityOperationParams(durable_ctx, semantic_params.arguments)
+                        if declaration.model_request_hook:
+                            projection = cast(
+                                ModelRequestContextProjection, semantic_params.arguments['request_context']
+                            )
+                            async with self._durable_model_scope(projection.model_id, durable_ctx) as (model, _):
+                                request_context = ModelRequestContext(
+                                    model=model,
+                                    messages=projection.messages,
+                                    model_settings=cast(ModelSettings | None, projection.model_settings),
+                                    model_request_parameters=projection.model_request_parameters,
+                                )
+                                request_context.model_id = projection.model_id
+                                request_context.streaming = projection.streaming
+                                bound_handler = declaration.function.__get__(recovered, type(recovered))
+                                result = await bound_handler(durable_ctx, request_context)
+                            return ModelRequestContextProjection.from_context(result)
+                        return await call_declaration(declaration, recovered, semantic_params)
+
+                operation = DurableOperation(
+                    operation_id=CapabilityOperationId(capability_id, operation_name),
+                    handler=handler,
+                    parameter_transport=self._capability_operation_parameter_transport(declaration),
+                    cache_identity=CapabilityCacheIdentity(),
+                    result_codec=TypedResultCodec(
+                        declaration.result_type, mode='identity' if self._codec is IDENTITY_CODEC else 'json'
+                    ),
+                    config_role=OperationConfigRole.CAPABILITY,
+                )
+                self._bound_capability_operations[key] = backend.bind(operation)
+                self._capability_declarations[key] = declaration
+
+    async def _invoke_capability_operation(
+        self,
+        capability: AbstractCapability[Any],
+        operation: str,
+        ctx: RunContext[Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        capability_id = capability.id
+        if capability_id is None:
+            raise RuntimeError('A durable operation capability must have an explicit `id`.')
+        key = (capability_id, operation)
+        declaration = self._capability_declarations[key]
+        arguments = bind_arguments(declaration, ctx, args, kwargs)
+        return await self._bound_capability_operations[key](CapabilityOperationParams(ctx, arguments))
+
+    def _capability_operation_parameter_transport(self, declaration: CapabilityMethodDeclaration) -> Any:
+        return IdentityParameterTransport[CapabilityOperationParams]()
 
     def _validate_declarative_contract(self) -> None:
         """Fail at binding when an engine's declarative durability configuration is incomplete."""
@@ -583,6 +678,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return self._model_unit_config()
         if role is OperationConfigRole.EVENT:
             return self._event_unit_config()
+        if role is OperationConfigRole.CAPABILITY:
+            return None
         kind = self._legacy_toolset_kind(operation_id)
         return self._normalize_unit_config(self._toolset_base_config(kind))
 
@@ -616,6 +713,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _legacy_operation_name(self, operation_id: DurableOperationId) -> str:
         """Map declaration identities to the exact kwargs accepted by the legacy naming hook."""
         match operation_id:
+            case CapabilityOperationId(capability_id=capability_id, operation=operation):
+                return f'{self.name}__capability__{capability_id}.{operation}'
             case ModelRequestId(model_id=model_id, streaming=streaming, model_name=model_name):
                 kind = 'model.request_stream' if streaming else 'model.request'
                 label = 'Model Request (Streaming)' if streaming else 'Model Request'

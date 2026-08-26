@@ -15,9 +15,11 @@ from pydantic_ai.durable_exec._base import (
     _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
     _GetToolsParams,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.durable_exec._capability_operation import CapabilityOperationParams
 from pydantic_ai.durable_exec._operation import (
     CallToolId,
     CancelSuspendedResponseId,
+    CapabilityOperationId,
     CompactMessagesId,
     DurableOperation,
     DurableOperationId,
@@ -101,7 +103,9 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
         name: str,
         config: StepConfig,
     ) -> tuple[BoundDurableOperation[P, W, R], Sequence[Callable[..., object]]]:
-        if isinstance(
+        if isinstance(operation.operation_id, CapabilityOperationId):
+            step, dispatch = self._bind_capability(operation, name, config)
+        elif isinstance(
             operation.operation_id, (ModelRequestId, CompactMessagesId, CancelSuspendedResponseId, EventStreamHandlerId)
         ):
             step, dispatch = self._bind_model_or_event(operation, name, config)
@@ -110,6 +114,19 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
 
         bound_operation = DBOSBoundOperation(operation, step, dispatch)
         return bound_operation, (step,)
+
+    def _bind_capability(
+        self, operation: DurableOperation[P, W, R], name: str, step_config: StepConfig
+    ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], P], Any]]:
+        async def capability_step(params: CapabilityOperationParams) -> object:
+            return operation.result_codec.dump(await operation.handler(cast(P, params)))
+
+        step = DBOS.step(name=name, **step_config)(capability_step)
+
+        async def dispatch(step: Callable[..., Any], params: P) -> R:
+            return operation.result_codec.load(await step(params))
+
+        return step, dispatch
 
     def _bind_model_or_event(
         self, operation: DurableOperation[P, W, R], name: str, step_config: StepConfig

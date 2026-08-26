@@ -7,8 +7,12 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, ModelResponse, RunContext, TextPart
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._capability_operation import durable_operation
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
+from pydantic_ai.durable_exec._operation import CapabilityOperationId
+from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     Lifecycle,
@@ -45,6 +49,7 @@ JOURNAL_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.get_tools',
     'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
+    'compat__capability__compat.operation',
 }
 
 PREFECT_OPERATION_NAMES = {
@@ -58,6 +63,7 @@ PREFECT_OPERATION_NAMES = {
     'Call MCP Tool: mcp_tool',
     'Call Tool: dynamic_tool',
     'Validate Tool Args: dynamic_tool',
+    'Capability: compat.operation',
 }
 
 TEMPORAL_ACTIVITY_NAMES = {
@@ -76,6 +82,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__get_tools',
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
+    'agent__compat__capability__compat__operation',
 }
 
 DBOS_OPERATION_NAMES = {
@@ -90,7 +97,16 @@ DBOS_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.get_tools',
     'compat__dynamic_toolset__dynamic.call_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
+    'compat__capability__compat.operation',
 }
+
+
+class CompatCapability(AbstractCapability[Any]):
+    id = 'compat'
+
+    @durable_operation
+    async def operation(self, ctx: RunContext[Any]) -> None:
+        pass
 
 
 class JournalDurability(BaseDurabilityCapability[Any]):
@@ -134,7 +150,7 @@ async def test_journal_operation_name_assembly_sequence() -> None:
         TestModel(),
         name='compat',
         toolsets=[function_toolset, dynamic_toolset],
-        capabilities=[JournalDurability(event_stream_handler=_event_handler)],
+        capabilities=[CompatCapability(), JournalDurability(event_stream_handler=_event_handler)],
     )
 
     result = await agent.run('Call every tool')
@@ -187,6 +203,7 @@ def test_default_journal_operation_name_matrix() -> None:
             'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
         ),
         'compat__dynamic_toolset__dynamic.validate_args',
+        durability._legacy_operation_name(CapabilityOperationId('compat', 'operation')),  # pyright: ignore[reportPrivateUsage]
     }
     assert names == JOURNAL_OPERATION_NAMES
 
@@ -211,6 +228,7 @@ def test_prefect_operation_name_matrix() -> None:
         durability._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
+        PrefectOperationNamer().operation_name(CapabilityOperationId('compat', 'operation')),
     }
     assert names == PREFECT_OPERATION_NAMES
 
@@ -224,7 +242,7 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         TestModel(),
         name='compat',
         toolsets=list(_synthetic_toolsets()),
-        capabilities=[PrefectDurability(event_stream_handler=_event_handler)],
+        capabilities=[CompatCapability(), PrefectDurability(event_stream_handler=_event_handler)],
     )
     durability = PrefectDurability.from_agent(agent)
     assert durability is not None
@@ -248,6 +266,7 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         durability._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
         durability._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
+        PrefectOperationNamer().operation_name(CapabilityOperationId('compat', 'operation')),
     }
     assert assembled_names == PREFECT_OPERATION_NAMES
 
@@ -261,7 +280,7 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
         TestModel(),
         name='compat',
         toolsets=list(_synthetic_toolsets()),
-        capabilities=[DBOSDurability(event_stream_handler=_event_handler)],
+        capabilities=[CompatCapability(), DBOSDurability(event_stream_handler=_event_handler)],
     )
     durability = DBOSDurability.from_agent(agent)
     assert durability is not None
@@ -306,7 +325,7 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         TestModel(),
         name='compat',
         toolsets=list(_synthetic_toolsets()),
-        capabilities=[TemporalDurability(event_stream_handler=_event_handler)],
+        capabilities=[CompatCapability(), TemporalDurability(event_stream_handler=_event_handler)],
     )
     durability = TemporalDurability.from_agent(agent)
     assert durability is not None

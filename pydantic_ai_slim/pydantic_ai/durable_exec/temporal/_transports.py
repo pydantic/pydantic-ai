@@ -15,6 +15,10 @@ from pydantic_ai.durable_exec._base import (
     _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
     _GetToolsParams,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.durable_exec._capability_operation import (
+    CapabilityMethodDeclaration,
+    CapabilityOperationParams,
+)
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.exceptions import UserError
@@ -32,6 +36,8 @@ if TYPE_CHECKING:
 
 __all__ = (
     '_CancelParams',
+    '_CapabilityOperationParams',
+    '_CapabilityOperationTransport',
     '_CancelTransport',
     '_CompactMessagesTransport',
     '_DynamicCallTransport',
@@ -175,6 +181,34 @@ class _RequestParams:
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
     model_id: str | None = None
+
+
+@dataclass
+class _CapabilityOperationParams:
+    arguments: dict[str, Any]
+    serialized_run_context: Any
+
+
+class _CapabilityOperationTransport:
+    wire_type = _CapabilityOperationParams
+
+    def __init__(self, durability: TemporalDurability[Any], declaration: CapabilityMethodDeclaration) -> None:
+        self._durability = durability
+        self.result_type = declaration.result_type
+
+    def dump(self, params: CapabilityOperationParams) -> tuple[_CapabilityOperationParams, Any]:
+        return (
+            _CapabilityOperationParams(
+                arguments=params.arguments,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(params.run_context),
+            ),
+            params.run_context.deps,
+        )
+
+    def load(self, payload: tuple[_CapabilityOperationParams, Any], *, runtime: object) -> CapabilityOperationParams:
+        params, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+        return CapabilityOperationParams(ctx, params.arguments)
 
 
 @dataclass

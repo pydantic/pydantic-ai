@@ -43,6 +43,12 @@ class EventStreamHandlerId:
 
 
 @dataclass(frozen=True)
+class CapabilityOperationId:
+    capability_id: str
+    operation: str
+
+
+@dataclass(frozen=True)
 class GetToolsId:
     toolset_kind: ToolsetKind
     toolset_id: str
@@ -69,6 +75,7 @@ DurableOperationId: TypeAlias = (
     ModelRequestId
     | CompactMessagesId
     | CancelSuspendedResponseId
+    | CapabilityOperationId
     | EventStreamHandlerId
     | GetToolsId
     | GetInstructionsId
@@ -110,6 +117,7 @@ class OperationConfigRole(str, Enum):
     TOOL_DISCOVERY = 'tool_discovery'
     TOOL_CALL = 'tool_call'
     TOOL_VALIDATION = 'tool_validation'
+    CAPABILITY = 'capability'
 
 
 class DurableOperationConfig(Generic[ConfigT_co], Protocol):

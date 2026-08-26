@@ -8,6 +8,7 @@ from typing_extensions import assert_never
 from ._operation import (
     CallToolId,
     CancelSuspendedResponseId,
+    CapabilityOperationId,
     CompactMessagesId,
     DurableOperationId,
     EventStreamHandlerId,
@@ -56,6 +57,8 @@ class JournalOperationNamer:
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
         match operation_id:
+            case CapabilityOperationId(capability_id=capability_id, operation=operation):
+                return f'{self._agent_name}__capability__{capability_id}.{operation}'
             case ModelRequestId(model_id=model_id, streaming=streaming):
                 operation = 'model.request_stream' if streaming else 'model.request'
                 return f'{self._agent_name}__{operation}{self._model_suffix(model_id)}'
@@ -85,6 +88,8 @@ class JournalOperationNamer:
 class PrefectOperationNamer:
     def operation_name(self, operation_id: DurableOperationId) -> str:
         match operation_id:
+            case CapabilityOperationId(capability_id=capability_id, operation=operation):
+                return f'Capability: {capability_id}.{operation}'
             case ModelRequestId(streaming=True, model_name=model_name):
                 return f'Model Request (Streaming): {model_name}'
             case ModelRequestId(model_name=model_name):
@@ -128,6 +133,8 @@ class TemporalOperationNamer:
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
         match operation_id:
+            case CapabilityOperationId(capability_id=capability_id, operation=operation):
+                return f'{self._prefix}__capability__{capability_id}__{operation}'
             case ModelRequestId(streaming=True):
                 return f'{self._prefix}__model_request_stream'
             case ModelRequestId():
