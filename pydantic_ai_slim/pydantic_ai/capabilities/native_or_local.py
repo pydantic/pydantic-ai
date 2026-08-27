@@ -14,16 +14,16 @@ from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .abstract import AbstractCapability
 
-NativeToolT = TypeVar('NativeToolT', bound=AbstractNativeTool)
+_NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
 
 async def _resolve_native_tool(
-    native_tool: NativeToolT
-    | Callable[[RunContext[AgentDepsT]], Awaitable[NativeToolT | None] | NativeToolT | None]
+    native_tool: _NativeToolT
+    | Callable[[RunContext[AgentDepsT]], Awaitable[_NativeToolT | None] | _NativeToolT | None]
     | None,
     ctx: RunContext[AgentDepsT],
-    tool_cls: type[NativeToolT],
-) -> NativeToolT:
+    tool_cls: type[_NativeToolT],
+) -> _NativeToolT:
     """Resolve a native tool instance or per-run factory, raising if the factory omits the tool.
 
     A factory returning `None` means "omit this tool" on the native path
@@ -225,8 +225,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         return toolset
 
     def _resolve_native_with_overrides(
-        self, tool_cls: type[NativeToolT], overrides: dict[str, Any]
-    ) -> NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[NativeToolT] | NativeToolT]:
+        self, tool_cls: type[_NativeToolT], overrides: dict[str, Any]
+    ) -> _NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[_NativeToolT] | _NativeToolT]:
         """Resolve the native tool for the fallback subagent, with capability-level overrides applied.
 
         Handles all three `native` shapes: an instance (overridden via `dataclasses.replace`),
@@ -247,7 +247,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
                 f'`True`, or `False`, not {native_factory!r}'
             )
 
-        async def resolve_native(ctx: RunContext[AgentDepsT]) -> NativeToolT:
+        async def resolve_native(ctx: RunContext[AgentDepsT]) -> _NativeToolT:
             native_tool = await _resolve_native_tool(native_factory, ctx, tool_cls)
             assert isinstance(native_tool, tool_cls)
             if not overrides:

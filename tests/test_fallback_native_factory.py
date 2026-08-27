@@ -14,6 +14,8 @@ from pydantic_ai import Agent, BinaryImage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.capabilities import ImageGeneration, XSearch
+from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
+from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     FilePart,
@@ -141,7 +143,6 @@ def test_xsearch_native_false_keeps_fallback_overrides():
 
 async def test_xsearch_subagent_dynamic_native_none_raises():
     """The subagent raises when its dynamic factory returns None instead of enabling default X search."""
-    from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 
     def native_factory(ctx: RunContext[Any]) -> None:
         return None
@@ -239,7 +240,6 @@ def test_image_generation_native_false_keeps_fallback_overrides():
 
 async def test_image_generation_subagent_dynamic_native_none_raises():
     """The subagent raises when its dynamic factory returns None instead of enabling default image generation."""
-    from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
 
     def native_factory(ctx: RunContext[Any]) -> None:
         return None
