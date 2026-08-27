@@ -374,11 +374,17 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
+    A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
+    as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
+    mapping, including one whose own keys happen to look like ours. An item that *can't* be
+    reconstructed — a [`FileUrl`][pydantic_ai.messages.FileUrl] whose URL has no inferable media
+    type, say — raises when the history is dumped, rather than being quietly kept as a plain dict.
+
     A tool return keyed by something other than a string runs the opposite way. Its keys have no
     JSON form, so only a `dump_python` round-trip preserves them — and because such a mapping is
-    carried through as-is, a [multi-modal item][pydantic_ai.messages.MultiModalContent] nested
-    underneath one comes back as a plain dict there, while the JSON round-trip stringifies the key
-    and restores the item. Use string keys in a tool return if you need both.
+    carried through as-is, a multi-modal item nested underneath one comes back as a plain dict
+    there, while the JSON round-trip stringifies the key and restores the item. Use string keys in
+    a tool return if you need both.
 
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
