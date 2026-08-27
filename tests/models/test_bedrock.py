@@ -2087,10 +2087,10 @@ async def test_bedrock_does_not_replay_unbound_foreign_document_citation(
     }
 
 
-async def test_bedrock_does_not_replay_anchored_or_mismatched_anthropic_document_citation(
+async def test_bedrock_rejects_invalid_anthropic_document_citations(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    """Anthropic document citations need an unanchored, exact match against the destination document."""
+    """Anthropic document citations need an unanchored, exact, in-bounds destination document match."""
     model, mock_converse = _bedrock_citation_replay_model(bedrock_provider, mocker)
     document = 'The return window is thirty days from purchase.'
     source = DocumentCitationSource(
@@ -2117,6 +2117,19 @@ async def test_bedrock_does_not_replay_anchored_or_mismatched_anthropic_document
                     citations=[
                         Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=7)),
                         Citation(sources=[source]),
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    excerpts=[document],
+                                    provider_details={
+                                        'type': 'char_location',
+                                        'document_index': 0,
+                                        'start_char_index': 0,
+                                        'end_char_index': len(document) + 1,
+                                    },
+                                )
+                            ]
+                        ),
                     ],
                 )
             ],

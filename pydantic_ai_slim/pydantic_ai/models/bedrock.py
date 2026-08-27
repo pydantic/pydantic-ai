@@ -630,7 +630,12 @@ def _map_anthropic_document_citation_blocks_for_bedrock_replay(
                 continue
             document_text, document_title = citation_documents[document_index]
             cited_text = source.excerpts[0]
-            if document_text is None or document_title is None or document_text[start:end] != cited_text:
+            if (
+                document_text is None
+                or document_title is None
+                or end > len(document_text)
+                or document_text[start:end] != cited_text
+            ):
                 continue
 
             mapped_source: CitationOutputTypeDef = {
