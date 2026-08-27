@@ -539,19 +539,24 @@ def _keeps_credentials(from_url: str, to_url: str) -> bool:
     )
 
 
-def _set_cookie_header(cookies: httpx2.Cookies, request: httpx2.Request, headers: dict[str, str]) -> None:
-    cookies.set_cookie_header(request)
+def _apply_cookie_header(
+    cookies: httpx2.Cookies, cookie_scope_request: httpx2.Request, headers: dict[str, str]
+) -> None:
+    cookies.set_cookie_header(cookie_scope_request)
     if not any(name.lower() == 'cookie' for name in headers):
-        if cookie_header := request.headers.get('cookie'):
+        if cookie_header := cookie_scope_request.headers.get('cookie'):
             headers['Cookie'] = cookie_header
 
 
-def _extract_cookies(cookies: httpx2.Cookies, response: httpx2.Response, request: httpx2.Request) -> None:
+def _update_cookie_jar(
+    cookies: httpx2.Cookies, response: httpx2.Response, cookie_scope_request: httpx2.Request
+) -> None:
     if not response.headers.get('set-cookie'):
         return
 
-    logical_response = httpx2.Response(response.status_code, headers=response.headers, request=request)
-    cookies.extract_cookies(logical_response)
+    cookies.extract_cookies(
+        httpx2.Response(response.status_code, headers=response.headers, request=cookie_scope_request)
+    )
 
 
 async def safe_download(
@@ -574,7 +579,7 @@ async def safe_download(
     5. Validates the hostname against allowed/blocked domain lists
     6. Makes the request to the resolved IP with the Host header set
     7. Manually follows redirects, validating each hop
-    8. Applies server-set cookies against each hop's logical URL rather than the
+    8. Applies server-set cookies against each hop's original hostname rather than the
        resolved-IP URL used for the network request
 
     Args:
@@ -658,18 +663,18 @@ async def safe_download(
 
             # Stream the raw response so gzip members can be decoded and validated before
             # httpx2's automatic content decoder discards member boundaries.
-            # Apply cookies using the logical URL, never the resolved-IP URL. Strict
-            # host-only matching prevents a cookie from reaching another hostname,
-            # while ordinary Domain, Path and Secure cookie rules remain intact.
-            logical_request = httpx2.Request('GET', _build_url(resolved, resolved.hostname))
-            _set_cookie_header(cookies, logical_request, request_headers)
+            # Scope cookies to the original hostname while the network request uses
+            # the verified IP. Strict host-only matching prevents cross-host leaks,
+            # while ordinary Domain, Path and Secure rules remain intact.
+            cookie_scope_request = httpx2.Request('GET', _build_url(resolved, resolved.hostname))
+            _apply_cookie_header(cookies, cookie_scope_request, request_headers)
 
             request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
             response = await _send_request(client, request)
 
-            # HTTPX automatically extracts against the resolved-IP request. Copy cookies
-            # into the logical jar instead, then remove the unsafe IP-scoped copies.
-            _extract_cookies(cookies, response, logical_request)
+            # Store response cookies using the original hostname, then remove the
+            # unsafe copies HTTPX automatically stored against the resolved IP.
+            _update_cookie_jar(cookies, response, cookie_scope_request)
             client.cookies.clear()
 
             # Check if we need to follow a redirect
