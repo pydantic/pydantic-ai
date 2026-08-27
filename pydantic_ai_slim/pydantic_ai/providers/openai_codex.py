@@ -416,6 +416,10 @@ class OpenAICodexAuth(httpx2.Auth):
             # a caller-supplied client may be reused for arbitrary requests.
             yield request
             return
+        # Buffer the outgoing body so the 401 replay can resend it: a one-shot stream (an async
+        # generator upload) would otherwise raise `StreamConsumed` on the second send. Codex
+        # payloads are JSON already held in memory, and foreign-host requests bypass this above.
+        await request.aread()
         # The two classes are deliberately coupled in one module; the provider owns the state and
         # the auth is its wire-side skin. The replay closure carries whatever context the
         # provider's mode (in-memory single-flight, or application credential source) needs.

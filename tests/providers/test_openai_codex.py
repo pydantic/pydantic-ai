@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -532,6 +533,29 @@ async def test_credential_source_shared_rotation_between_providers():
 
     assert source.index == 1  # exactly one rotation despite two independent providers
     assert source.calls == [(False, None), (True, 'v1'), (False, None)]
+
+
+async def test_401_replay_resends_a_one_shot_streaming_body():
+    """The auth flow buffers the outgoing body, so a replay after refresh does not raise `StreamConsumed`."""
+    source = FakeCredentialSource([make_snapshot('v1', token='access-v1'), make_snapshot('v2', token='access-v2')])
+    provider = OpenAICodexProvider(credential_source=source)
+    bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(request.content)
+        if request.headers['authorization'] == 'Bearer access-v2':
+            return httpx2.Response(200)
+        return httpx2.Response(401)
+
+    async def one_shot_body() -> AsyncIterator[bytes]:
+        yield b'{"prompt": '
+        yield b'"hi"}'
+
+    async with authed_client(provider, handler) as client:
+        response = await client.post(CODEX_URL, content=one_shot_body())
+
+    assert response.status_code == 200
+    assert bodies == [b'{"prompt": "hi"}', b'{"prompt": "hi"}']  # the replay carried the full body
 
 
 async def test_credential_source_owns_credentials():
