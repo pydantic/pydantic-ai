@@ -607,10 +607,11 @@ def test_json_schema_test_data_integer_fractional_bounds() -> None:
 
     schema = {
         'type': 'object',
-        'required': ['count', 'other'],
+        'required': ['count', 'other', 'inclusive'],
         'properties': {
             'count': {'type': 'integer', 'exclusiveMinimum': 0.1, 'maximum': 1.1},
             'other': {'type': 'integer', 'exclusiveMinimum': 0.5, 'exclusiveMaximum': 1.5},
+            'inclusive': {'type': 'integer', 'minimum': 0.5, 'exclusiveMaximum': 1.5},
         },
     }
 
@@ -618,8 +619,9 @@ def test_json_schema_test_data_integer_fractional_bounds() -> None:
         data = _JsonSchemaTestData(schema, seed=seed).generate()
         assert isinstance(data['count'], int) and 0.1 < data['count'] <= 1.1
         assert isinstance(data['other'], int) and 0.5 < data['other'] < 1.5
+        assert isinstance(data['inclusive'], int) and 0.5 <= data['inclusive'] < 1.5
 
-    assert _JsonSchemaTestData(schema).generate() == snapshot({'count': 1, 'other': 1})
+    assert _JsonSchemaTestData(schema).generate() == snapshot({'count': 1, 'other': 1, 'inclusive': 1})
 
 
 def test_chars_wrap():
