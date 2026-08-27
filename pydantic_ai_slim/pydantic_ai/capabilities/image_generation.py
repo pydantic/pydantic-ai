@@ -173,7 +173,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect non-None ImageGenerationTool config fields."""
         kwargs: dict[str, Any] = {}
-        provider_settings = dict(self.provider_settings) if self.provider_settings is not None else None
+        provider_settings = dict(self.provider_settings) if self.provider_settings else None
         openai_settings = OpenAIImageGenerationToolSettings()
         if self.action is not None:
             openai_settings['action'] = self.action

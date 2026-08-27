@@ -145,10 +145,18 @@ class TestImageGenerationConfiguration:
         assert resolved_native.provider_settings == {'openai': {'action': 'generate'}}
 
     def test_image_generation_resolves_portable_override(self):
-        cap = ImageGeneration(native=ImageGenerationTool(size='1024x1024'), output_format='jpeg')
+        cap = ImageGeneration(
+            native=ImageGenerationTool(
+                provider_settings={'openai': {'quality': 'high'}},
+                size='1024x1024',
+            ),
+            provider_settings={},
+            output_format='jpeg',
+        )
 
         resolved_native = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
 
+        assert resolved_native.provider_settings == {'openai': {'quality': 'high'}}
         assert resolved_native.size == '1024x1024'
         assert resolved_native.output_format == 'jpeg'
 
