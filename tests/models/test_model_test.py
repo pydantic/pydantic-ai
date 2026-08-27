@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import math
 import re
 from datetime import timezone
 from typing import Annotated, Any, Literal
@@ -664,6 +665,58 @@ def test_json_schema_test_data_overlapping_integer_bounds() -> None:
     assert [_JsonSchemaTestData(schema, seed=seed).generate() for seed in range(3)] == [1, 1, 1]
 
 
+def test_json_schema_test_data_all_numeric_bound_combinations() -> None:
+    """Every combination of numeric bound keywords produces values matching the schema."""
+
+    float_bounds = {
+        'minimum': 2**53,
+        'exclusiveMinimum': 2**53,
+        'maximum': 2**53 + 4,
+        'exclusiveMaximum': 2**53 + 4,
+    }
+    integer_bounds = {
+        'minimum': 0.5,
+        'exclusiveMinimum': 0.1,
+        'maximum': 3.5,
+        'exclusiveMaximum': 3.9,
+    }
+    seeds = [-(10**400), -1, 0, 1, 10**400]
+
+    def matches_bounds(value: int | float, schema: dict[str, Any]) -> bool:
+        return not (
+            ('minimum' in schema and value < schema['minimum'])
+            or ('exclusiveMinimum' in schema and value <= schema['exclusiveMinimum'])
+            or ('maximum' in schema and value > schema['maximum'])
+            or ('exclusiveMaximum' in schema and value >= schema['exclusiveMaximum'])
+        )
+
+    for mask in range(1 << len(float_bounds)):
+        number_schema: dict[str, Any] = {'type': 'number'}
+        integer_schema: dict[str, Any] = {'type': 'integer'}
+        for index, (keyword, bound) in enumerate(float_bounds.items()):
+            if mask & (1 << index):
+                number_schema[keyword] = bound
+                integer_schema[keyword] = integer_bounds[keyword]
+
+        for seed in seeds:
+            number = _JsonSchemaTestData(number_schema, seed=seed).generate()
+            integer = _JsonSchemaTestData(integer_schema, seed=seed).generate()
+
+            assert isinstance(number, float) and math.isfinite(number) and matches_bounds(number, number_schema)
+            assert isinstance(integer, int) and matches_bounds(integer, integer_schema)
+
+    huge_bound_schemas = [
+        {'type': 'number', 'minimum': -(10**400)},
+        {'type': 'number', 'maximum': 10**400},
+        {'type': 'number', 'minimum': -(10**400), 'maximum': 1},
+        {'type': 'number', 'minimum': -1, 'maximum': 10**400},
+    ]
+    for schema in huge_bound_schemas:
+        for seed in seeds:
+            number = _JsonSchemaTestData(schema, seed=seed).generate()
+            assert isinstance(number, float) and math.isfinite(number) and matches_bounds(number, schema)
+
+
 def test_chars_wrap():
     class TestModel(BaseModel):
         a: Annotated[set[str], MinLen(4)]
@@ -735,8 +788,8 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
 
 
-def test_int_inclusive_upper_bound_reachable():
-    """Plain inclusive integer ranges include their ceiling without changing other ranges."""
+def test_int_upper_bound_reachable():
+    """Integer ranges include every valid integer through their effective upper bound."""
 
     class MyOutput(BaseModel):
         integer: Annotated[int, Field(ge=2, le=5)]
@@ -757,7 +810,7 @@ def test_int_inclusive_upper_bound_reachable():
             output.number,
         )
         for output in outputs
-    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 4, 4.0), (5, 5, 2, 2, 2.0)])
+    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 4, 4.0), (5, 5, 5, 2, 2.0)])
 
     def generated_values(minimum: float, maximum: float, seeds: list[int]) -> list[Any]:
         schema = {
@@ -767,6 +820,6 @@ def test_int_inclusive_upper_bound_reachable():
         }
         return [_JsonSchemaTestData(schema, seed=seed).generate()['value'] for seed in seeds]
 
-    assert generated_values(2.5, 5.5, list(range(4))) == [2.5, 3.5, 4.5, 2.5]
-    assert generated_values(2.0, 5.5, list(range(5))) == [2.0, 3.0, 4.0, 5.0, 2.5]
+    assert generated_values(2.5, 5.5, list(range(4))) == [3, 4, 5, 3]
+    assert generated_values(2.0, 5.5, list(range(5))) == [2, 3, 4, 5, 2]
     assert generated_values(0.0, 1e20, [10**20]) == [10**20]

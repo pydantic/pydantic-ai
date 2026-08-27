@@ -533,39 +533,6 @@ class _JsonSchemaTestData:
 
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
-        maximum = schema.get('maximum')
-        minimum = schema.get('minimum')
-        if maximum is None and (exclusive_maximum := schema.get('exclusiveMaximum')) is not None:
-            maximum = exclusive_maximum - 1
-        if minimum is None and (exclusive_minimum := schema.get('exclusiveMinimum')) is not None:
-            minimum = exclusive_minimum + 1
-
-        span = None
-        if minimum is not None and maximum is not None:
-            span = maximum - minimum
-            if (
-                minimum % 1 == 0
-                and maximum % 1 == 0
-                and 'exclusiveMinimum' not in schema
-                and 'exclusiveMaximum' not in schema
-                and span > 0
-            ):
-                minimum = int(minimum)
-                span = int(maximum) - minimum + 1
-            value = minimum if span <= 0 else minimum + self.seed % span
-        elif minimum is not None:
-            value = minimum + self.seed
-        elif maximum is not None:
-            value = maximum - self.seed
-        else:
-            value = self.seed
-
-        if value % 1 == 0 and self._number_is_valid(value, schema):
-            return int(value)
-        if span is not None and span > 0 and 'exclusiveMinimum' not in schema and 'exclusiveMaximum' not in schema:
-            # Preserve the existing behavior for positive-span schemas with fractional inclusive bounds.
-            return value
-
         minimums = [math.ceil(schema['minimum'])] if 'minimum' in schema else []
         if 'exclusiveMinimum' in schema:
             minimums.append(math.floor(schema['exclusiveMinimum']) + 1)
@@ -573,9 +540,33 @@ class _JsonSchemaTestData:
         if 'exclusiveMaximum' in schema:
             maximums.append(math.ceil(schema['exclusiveMaximum']) - 1)
 
-        if minimums:
-            return max(minimums)
-        return min(maximums)
+        minimum = max(minimums) if minimums else None
+        maximum = min(maximums) if maximums else None
+        if minimum is not None and maximum is not None:
+            span = maximum - minimum + 1
+            return minimum if span <= 0 else minimum + self.seed % span
+        elif minimum is not None:
+            candidate_minimum = schema.get('minimum')
+            if candidate_minimum is None:
+                candidate_minimum = schema['exclusiveMinimum'] + 1
+            return self._one_sided_int(candidate_minimum, 1, minimum, schema)
+        elif maximum is not None:
+            candidate_maximum = schema.get('maximum')
+            if candidate_maximum is None:
+                candidate_maximum = schema['exclusiveMaximum'] - 1
+            return self._one_sided_int(candidate_maximum, -1, maximum, schema)
+        else:
+            return self.seed
+
+    def _one_sided_int(self, bound: int | float, direction: int, fallback: int, schema: dict[str, Any]) -> int:
+        """Preserve a valid seed-based integer candidate, or use the effective bound."""
+        try:
+            value = bound + direction * self.seed
+            if value % 1 == 0 and self._number_is_valid(value, schema):
+                return int(value)
+        except OverflowError:
+            pass
+        return fallback
 
     def _number_gen(self, schema: dict[str, Any]) -> float:
         """Generate a number from a JSON Schema number."""
@@ -587,42 +578,84 @@ class _JsonSchemaTestData:
         if minimum is None and (exclusive_minimum := schema.get('exclusiveMinimum')) is not None:
             minimum = exclusive_minimum + 1
 
-        if minimum is not None and maximum is not None:
-            span = maximum - minimum
-            value = minimum if span <= 0 else minimum + self.seed % span
-        elif minimum is not None:
-            value = minimum + self.seed
-        elif maximum is not None:
-            value = maximum - self.seed
-        else:
-            value = self.seed
+        try:
+            if minimum is not None and maximum is not None:
+                span = maximum - minimum
+                value = minimum if span <= 0 else minimum + self.seed % span
+            elif minimum is not None:
+                value = minimum + self.seed
+            elif maximum is not None:
+                value = maximum - self.seed
+            else:
+                value = self.seed
+            float_value = self._finite_float(value)
+        except OverflowError:
+            float_value = None
 
-        if self._number_is_valid(value, schema):
-            return float(value)
+        if float_value is not None and self._number_is_valid(float_value, schema):
+            return float_value
 
+        return self._number_fallback(schema)
+
+    def _number_fallback(self, schema: dict[str, Any]) -> float:
+        """Generate a finite float after the seed-based candidate failed."""
         lower_bounds = [schema[key] for key in ('minimum', 'exclusiveMinimum') if key in schema]
         upper_bounds = [schema[key] for key in ('maximum', 'exclusiveMaximum') if key in schema]
         if lower_bounds and upper_bounds:
             lower = max(lower_bounds)
             upper = min(upper_bounds)
-            if lower < 0 < upper:
-                value = lower / 2 + upper / 2
-            else:
-                value = lower + (upper - lower) / 2
-            if not self._number_is_valid(value, schema):
-                value = lower
-                if not self._number_is_valid(value, schema):
-                    value = math.nextafter(lower, upper)
+            candidates = [lower, upper]
+            try:
+                if lower < 0 < upper:
+                    candidates.insert(0, lower / 2 + upper / 2)
+                else:
+                    candidates.insert(0, lower + (upper - lower) / 2)
+            except OverflowError:
+                pass
+            lower_float = self._finite_float(lower)
+            if lower_float is not None:
+                candidates.append(math.nextafter(lower_float, math.inf))
+            upper_float = self._finite_float(upper)
+            if upper_float is not None:
+                candidates.append(math.nextafter(upper_float, -math.inf))
+            candidates.append(0.0)
         elif lower_bounds:
-            value = math.nextafter(max(lower_bounds), math.inf)
+            lower = max(lower_bounds)
+            candidates = [lower]
+            lower_float = self._finite_float(lower)
+            if lower_float is not None:
+                candidates.append(math.nextafter(lower_float, math.inf))
+            candidates.append(0.0)
+        elif upper_bounds:
+            upper = min(upper_bounds)
+            candidates = [upper]
+            upper_float = self._finite_float(upper)
+            if upper_float is not None:
+                candidates.append(math.nextafter(upper_float, -math.inf))
+            candidates.append(0.0)
         else:
-            value = math.nextafter(min(upper_bounds), -math.inf)
+            maximum_float = math.nextafter(math.inf, 0)
+            return -maximum_float if self.seed < 0 else maximum_float
 
-        return float(value)
+        for candidate in candidates:
+            float_candidate = self._finite_float(candidate)
+            if float_candidate is not None and self._number_is_valid(float_candidate, schema):
+                return float_candidate
+
+        # The schema has no finite floating-point solution, so return an invalid value without raising.
+        return math.nan
 
     @staticmethod
-    def _number_is_valid(value: float, schema: dict[str, Any]) -> bool:
-        return not (
+    def _finite_float(value: int | float) -> float | None:
+        try:
+            float_value = float(value)
+        except OverflowError:
+            return None
+        return float_value if math.isfinite(float_value) else None
+
+    @staticmethod
+    def _number_is_valid(value: int | float, schema: dict[str, Any]) -> bool:
+        return (not isinstance(value, float) or math.isfinite(value)) and not (
             ('minimum' in schema and value < schema['minimum'])
             or ('exclusiveMinimum' in schema and value <= schema['exclusiveMinimum'])
             or ('maximum' in schema and value > schema['maximum'])
