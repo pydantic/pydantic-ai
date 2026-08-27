@@ -7503,6 +7503,7 @@ def test_anthropic_advisor_tool_request_shape():
 
 
 def test_advisor_tool_provider_field_deprecation() -> None:
+    """Unit test because this pins local compatibility precedence, not provider behavior."""
     m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test-key'))
     with pytest.warns(PydanticAIDeprecationWarning, match=r'field `caching` is deprecated'):
         legacy_tool = AdvisorTool(model='claude-opus-4-8', caching='5m')

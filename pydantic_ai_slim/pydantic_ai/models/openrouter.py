@@ -20,11 +20,7 @@ from ..messages import (
     UserContent,
     VideoUrl,
 )
-from ..native_tools import (
-    AbstractNativeTool,
-    AdvisorTool,
-    WebSearchTool,
-)
+from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider

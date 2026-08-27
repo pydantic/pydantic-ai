@@ -951,6 +951,7 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
 
 
 def test_image_generation_tool_provider_field_deprecation() -> None:
+    """Unit test because this pins local compatibility precedence, not provider behavior."""
     with pytest.warns(
         PydanticAIDeprecationWarning, match=r'fields `action`, `model` are deprecated'
     ) as warning_records:
@@ -967,6 +968,7 @@ def test_image_generation_tool_provider_field_deprecation() -> None:
 
 
 def test_web_search_tool_provider_field_deprecation() -> None:
+    """Unit test because this pins local compatibility precedence, not provider behavior."""
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
     with pytest.warns(PydanticAIDeprecationWarning, match=r'field `external_web_access` is deprecated'):
         legacy_tool = WebSearchTool(external_web_access=False)

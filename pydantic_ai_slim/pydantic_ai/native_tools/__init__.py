@@ -62,7 +62,7 @@ def _warn_deprecated_provider_fields(tool_name: str, system: str, fields: Sequen
     label = 'field' if len(fields) == 1 else 'fields'
     verb = 'is' if len(fields) == 1 else 'are'
     warnings.warn(
-        f'`{tool_name}` {label} {formatted_fields} {verb} deprecated; '
+        f'`{tool_name}` {label} {formatted_fields} {verb} deprecated and will be removed in v3; '
         f'use `provider_settings={{"{system}": {{...}}}}` instead.',
         PydanticAIDeprecationWarning,
         stacklevel=4,
@@ -833,9 +833,9 @@ class FileSearchTool(AbstractNativeTool):
     """
 
     max_num_results: int | None = None
-    """The maximum number of results to return.
+    """The portable maximum number of results to return.
 
-    Supported by:
+    Currently supported by:
 
     * xAI (mapped to collections search `limit`, defaults to 10 server-side)
     """

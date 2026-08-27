@@ -1033,6 +1033,7 @@ async def test_xai_file_search_options_forwarded(allow_model_requests: None):
 
 
 async def test_xai_file_search_provider_field_deprecation(allow_model_requests: None):
+    """Use a mock to pin mixed nested/legacy precedence in one captured request."""
     response = create_response(content='result', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning, UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import (
     ImageAspectRatio,
@@ -174,8 +175,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         kwargs: dict[str, Any] = {}
         provider_settings = dict(self.provider_settings) if self.provider_settings is not None else None
         openai_settings = OpenAIImageGenerationToolSettings()
-        if self.provider_settings and (configured_openai := self.provider_settings.get('openai')):
-            openai_settings.update(configured_openai)
         if self.action is not None:
             openai_settings['action'] = self.action
         if self.background is not None:
@@ -196,8 +195,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             kwargs['size'] = self.size
         if self.aspect_ratio is not None:
             kwargs['aspect_ratio'] = self.aspect_ratio
-        if provider_settings is not None or openai_settings:
-            kwargs['provider_settings'] = {**(provider_settings or {}), 'openai': openai_settings}
+        if self.provider_settings and (configured_openai := self.provider_settings.get('openai')):
+            openai_settings.update(configured_openai)
+        if provider_settings is not None:
+            if openai_settings:
+                provider_settings['openai'] = openai_settings
+            kwargs['provider_settings'] = provider_settings
+        elif openai_settings:
+            kwargs['provider_settings'] = {'openai': openai_settings}
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:
@@ -214,14 +219,17 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             return base
         if provider_settings := overrides.get('provider_settings'):
             base_provider_settings = base.provider_settings or {}
-            overrides['provider_settings'] = {
-                **base_provider_settings,
-                'openai': {
+            merged_provider_settings = {**base_provider_settings, **provider_settings}
+            if openai_settings := provider_settings.get('openai'):
+                merged_provider_settings['openai'] = {
                     **base_provider_settings.get('openai', {}),
-                    **provider_settings['openai'],
-                },
-            }
-        return replace(base, **overrides)
+                    **openai_settings,
+                }
+            overrides['provider_settings'] = merged_provider_settings
+        # Deprecated fields on `base` already warned when it was constructed; `replace()` must not warn again.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+            return replace(base, **overrides)
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         if self.fallback_model is None:
