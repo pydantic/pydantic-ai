@@ -95,7 +95,9 @@ if TYPE_CHECKING:
     )
     from mypy_boto3_bedrock_runtime.type_defs import (
         CachePointBlockTypeDef,
+        CitationLocationTypeDef,
         CitationOutputTypeDef,
+        CitationsContentBlockOutputTypeDef,
         CitationsDeltaTypeDef,
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -421,15 +423,19 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 def _map_citation_source(
     citation: CitationOutputTypeDef | CitationsDeltaTypeDef,
 ) -> WebCitationSource | DocumentCitationSource:
-    details = dict(citation)
+    details: dict[str, Any] = {}
+    if (source := citation.get('source')) is not None:
+        details['source'] = source
+    if (location := citation.get('location')) is not None:
+        details['location'] = location
     title = citation.get('title')
     excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
-    details.pop('title', None)
-    details.pop('sourceContent', None)
     location = citation.get('location')
     web = location.get('web') if isinstance(location, Mapping) else None
     if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
         details.pop('location', None)
+        if isinstance(domain := web.get('domain'), str):
+            details['domain'] = domain
         return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
     return DocumentCitationSource(title=title, excerpts=excerpts, provider_details=details or None)
 
@@ -439,6 +445,213 @@ def _map_citations(
 ) -> list[Citation] | None:
     sources = [_map_citation_source(citation) for citation in citations]
     return [Citation(sources=sources, anchor=anchor)] if sources else None
+
+
+def _map_bedrock_citation_location_for_replay(
+    source: DocumentCitationSource,
+) -> CitationLocationTypeDef | None:
+    location = (source.provider_details or {}).get('location')
+    if not _utils.is_str_dict(location):
+        return None
+
+    if len(location) != 1:
+        return None
+    location_kind, location_data = next(iter(location.items()))
+    index_name = {
+        'documentChar': 'documentIndex',
+        'documentPage': 'documentIndex',
+        'documentChunk': 'documentIndex',
+        'searchResultLocation': 'searchResultIndex',
+    }.get(location_kind)
+    if index_name is None or not _utils.is_str_dict(location_data):
+        return None
+    allowed_keys = {index_name, 'start', 'end'}
+    if set(location_data) != allowed_keys:
+        return None
+    replay_location = {key: location_data[key] for key in allowed_keys}
+    if (
+        any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in replay_location.values())
+        or replay_location['end'] <= replay_location['start']
+    ):
+        return None
+    # The SDK models the four range locations as distinct TypedDicts despite their identical integer field grammar.
+    return cast('CitationLocationTypeDef', {location_kind: replay_location})
+
+
+def _map_bedrock_citation_source_for_replay(
+    source: WebCitationSource | DocumentCitationSource,
+) -> CitationOutputTypeDef | None:
+    # Bedrock returns web citations in this shape, but Claude rejects the same `citationsContent` block in assistant
+    # history and Nova fails to process it. Keep the output-only shape on the Pydantic AI message.
+    if isinstance(source, WebCitationSource):
+        return None
+
+    location = _map_bedrock_citation_location_for_replay(source)
+    if location is None:
+        return None
+
+    citation: CitationOutputTypeDef = {'location': location}
+    if source.title is not None:
+        citation['title'] = source.title
+    if source.excerpts:
+        citation['sourceContent'] = [{'text': excerpt} for excerpt in source.excerpts]
+
+    if source.document_id is not None:
+        citation['source'] = source.document_id
+    source_name = (source.provider_details or {}).get('source')
+    if isinstance(source_name, str):
+        citation['source'] = source_name
+    return citation
+
+
+def _map_bedrock_citation_blocks_for_replay(
+    citations: list[Citation] | None,
+    text: str,
+) -> list[ContentBlockOutputTypeDef] | None:
+    if not citations:
+        return None
+
+    candidates: list[tuple[ContentCitationAnchor, Citation]] = []
+    for citation in citations:
+        anchor = citation.anchor
+        if (
+            isinstance(anchor, ContentCitationAnchor)
+            and anchor.end <= len(text)
+            and any(_map_bedrock_citation_source_for_replay(source) is not None for source in citation.sources)
+        ):
+            candidates.append((anchor, citation))
+    candidates.sort(key=lambda item: (item[0].start, item[0].end))
+    anchored_citations: list[tuple[ContentCitationAnchor, Citation]] = []
+    for anchor, citation in candidates:
+        if anchored_citations and anchor != anchored_citations[-1][0] and anchor.start < anchored_citations[-1][0].end:
+            # Bedrock content blocks cannot overlap without duplicating generated text. Keep the earlier, more specific
+            # range and omit the conflicting citation rather than broadening either source's attribution.
+            continue
+        anchored_citations.append((anchor, citation))
+
+    return _map_bedrock_anchored_citation_blocks_for_replay(anchored_citations, text)
+
+
+def _map_bedrock_anchored_citation_blocks_for_replay(
+    anchored_citations: list[tuple[ContentCitationAnchor, Citation]],
+    text: str,
+) -> list[ContentBlockOutputTypeDef] | None:
+    blocks: list[ContentBlockOutputTypeDef] = []
+    position = 0
+    index = 0
+    while index < len(anchored_citations):
+        anchor = anchored_citations[index][0]
+        if anchor.start > position:
+            blocks.append({'text': text[position : anchor.start]})
+
+        grouped_sources: list[WebCitationSource | DocumentCitationSource] = []
+        while index < len(anchored_citations) and anchored_citations[index][0] == anchor:
+            grouped_sources.extend(anchored_citations[index][1].sources)
+            index += 1
+
+        mapped_sources = [
+            mapped_source
+            for source in grouped_sources
+            if (mapped_source := _map_bedrock_citation_source_for_replay(source)) is not None
+        ]
+        citations_content: CitationsContentBlockOutputTypeDef = {
+            'content': [{'text': text[anchor.start : anchor.end]}],
+            'citations': mapped_sources,
+        }
+        blocks.append({'citationsContent': citations_content})
+        position = anchor.end
+
+    if position < len(text):
+        blocks.append({'text': text[position:]})
+    return blocks or None
+
+
+def _bedrock_citation_documents(messages: Sequence[MessageUnionTypeDef]) -> list[tuple[str | None, str | None]]:
+    """Return destination document text and names in the index order used by Bedrock citations."""
+    result: list[tuple[str | None, str | None]] = []
+
+    def add_document(block: Mapping[str, Any]) -> None:
+        document = block.get('document')
+        if not _utils.is_str_dict(document):
+            return
+        source = document.get('source')
+        text: str | None = None
+        if _utils.is_str_dict(source):  # pragma: no branch
+            # Bedrock document sources are always mappings; the value may be text, bytes, or an S3 location.
+            if isinstance(source_text := source.get('text'), str):
+                text = source_text
+            elif document.get('format') == 'txt' and isinstance(source_bytes := source.get('bytes'), bytes):
+                try:
+                    text = source_bytes.decode()
+                except UnicodeDecodeError:
+                    pass
+        name = document.get('name')
+        result.append((text, name if isinstance(name, str) else None))
+
+    for message in messages:
+        for block in message['content']:
+            add_document(block)
+            tool_result = block.get('toolResult')
+            if isinstance(tool_result, Mapping):
+                for nested_block in tool_result.get('content', []):
+                    if isinstance(nested_block, Mapping):  # pragma: no branch
+                        # The SDK types each tool-result content item as a mapping.
+                        add_document(nested_block)
+    return result
+
+
+def _map_anthropic_document_citation_blocks_for_bedrock_replay(
+    citations: list[Citation] | None,
+    text: str,
+    citation_documents: list[tuple[str | None, str | None]],
+) -> list[ContentBlockOutputTypeDef] | None:
+    mapped_sources: list[CitationOutputTypeDef] = []
+    for citation in citations or []:
+        if citation.anchor is not None:
+            continue
+        for source in citation.sources:
+            if not isinstance(source, DocumentCitationSource) or len(source.excerpts) != 1:
+                continue
+            details = source.provider_details or {}
+            document_index = details.get('document_index')
+            start = details.get('start_char_index')
+            end = details.get('end_char_index')
+            if (
+                details.get('type') != 'char_location'
+                or not isinstance(document_index, int)
+                or isinstance(document_index, bool)
+                or not 0 <= document_index < len(citation_documents)
+                or not isinstance(start, int)
+                or isinstance(start, bool)
+                or not isinstance(end, int)
+                or isinstance(end, bool)
+                or not 0 <= start < end
+            ):
+                continue
+            document_text, document_title = citation_documents[document_index]
+            cited_text = source.excerpts[0]
+            if (
+                document_text is None
+                or document_title is None
+                or end > len(document_text)
+                or document_text[start:end] != cited_text
+            ):
+                continue
+
+            mapped_source: CitationOutputTypeDef = {
+                'location': {
+                    'documentChar': {'documentIndex': document_index, 'start': start, 'end': end},
+                },
+                'sourceContent': [{'text': cited_text}],
+                # The title identifies the destination document binding, so use its actual Bedrock name rather than
+                # carrying an optional source-provider title across the boundary.
+                'title': document_title,
+            }
+            mapped_sources.append(mapped_source)
+
+    if not mapped_sources:
+        return None
+    return [{'citationsContent': {'content': [{'text': text}], 'citations': mapped_sources}}]
 
 
 def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
@@ -1359,9 +1572,27 @@ class BedrockConverseModel(Model[BaseClient]):
             elif isinstance(message, ModelResponse):
                 flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
+                include_citations = settings.get('include_citations', False)
+                citation_documents = _bedrock_citation_documents(bedrock_messages) if include_citations else []
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        content.append({'text': item.content})
+                        provider_name = item.provider_name or message.provider_name
+                        if not include_citations:
+                            citation_blocks = None
+                        elif provider_name == self.system:
+                            citation_blocks = _map_bedrock_citation_blocks_for_replay(
+                                item.citations,
+                                item.content,
+                            )
+                        elif provider_name == 'anthropic':
+                            citation_blocks = _map_anthropic_document_citation_blocks_for_bedrock_replay(
+                                item.citations,
+                                item.content,
+                                citation_documents,
+                            )
+                        else:
+                            citation_blocks = None
+                        content.extend(citation_blocks or [{'text': item.content}])
                     elif isinstance(item, ThinkingPart):
                         if (
                             item.provider_name == self.system

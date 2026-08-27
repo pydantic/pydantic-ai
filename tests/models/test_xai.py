@@ -39,6 +39,7 @@ from pydantic_ai import (
     MarkerCitationAnchor,
     MCPServerTool,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -79,6 +80,7 @@ from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+from .citation_utils import citations_from_messages
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -1487,6 +1489,32 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
             anchor=MarkerCitationAnchor(start=23, end=26),
         ),
     ]
+
+
+async def test_xai_inline_citations_replay_as_text(allow_model_requests: None) -> None:
+    """Persisted xAI citations remain application metadata and are omitted from the next xAI request."""
+    text = 'See [[1]](https://example.com).'
+    first_response = create_response(content=text)
+    first_response.proto.outputs[0].message.citations.append(
+        chat_pb2.InlineCitation(
+            start_index=4,
+            end_index=len(text) - 1,
+            web_citation=chat_pb2.WebCitation(url='https://example.com'),
+        )
+    )
+    mock_client = MockXai.create_mock([first_response, create_response(content='Done.')])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    first_result = await Agent(model).run('Cite a source.')
+    assert citations_from_messages(first_result.all_messages())
+
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
+    second_result = await Agent(model).run('Continue.', message_history=history)
+    assert second_result.output == 'Done.'
+
+    second_request = get_mock_chat_create_kwargs(mock_client)[1]
+    [prior_assistant] = [message for message in second_request['messages'] if message['role'] == 'ROLE_ASSISTANT']
+    assert prior_assistant == {'role': 'ROLE_ASSISTANT', 'content': [{'text': text}]}
 
 
 async def test_xai_stream_inline_citations(allow_model_requests: None) -> None:

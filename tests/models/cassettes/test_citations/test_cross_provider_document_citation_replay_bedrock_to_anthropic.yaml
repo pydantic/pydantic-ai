@@ -1,0 +1,150 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "According to the document, what is the return window? Answer
+      in one sentence and cite the document."}, {"document": {"name": "Document 1", "format": "txt", "source": {"text": "The
+      return window is thirty days from purchase."}, "citations": {"enabled": true}}}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MmJlZTY1NjctOThjYy00OTE4LTkwZjMtZGFmOTM3NzM4NGI3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '353'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '622'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2131
+      output:
+        message:
+          content:
+          - citationsContent:
+              citations:
+              - location:
+                  documentChar:
+                    documentIndex: 0
+                    end: 47
+                    start: 0
+                sourceContent:
+                - text: The return window is thirty days from purchase.
+                title: Document 1
+              content:
+              - text: The return window is thirty days from purchase.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 583
+        outputTokens: 28
+        serverToolUsage: {}
+        totalTokens: 611
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '766'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: According to the document, what is the return window? Answer in one sentence and cite the document.
+          type: text
+        - source:
+            data: The return window is thirty days from purchase.
+            media_type: text/plain
+            type: text
+          type: document
+        role: user
+      - content:
+        - citations:
+          - cited_text: The return window is thirty days from purchase.
+            document_index: 0
+            document_title: Document 1
+            end_char_index: 47
+            start_char_index: 0
+            type: char_location
+          text: The return window is thirty days from purchase.
+          type: text
+        role: assistant
+      - content:
+        - text: Continue.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '770'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-37b886f4f1f7d2bda40ca8284895bb1f-f76fa0f735a21ed4-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: "I've already provided a complete answer to your question. The document states that \"The return window is thirty
+          days from purchase,\" which I cited in my response. \n\nIs there something else you'd like to know about the return
+          policy or another question I can help you with?"
+        type: text
+      id: msg_011CeTGHAuVqgyaCBqmLqWxZ
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 88
+        output_tokens: 59
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

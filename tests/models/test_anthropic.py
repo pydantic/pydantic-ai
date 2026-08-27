@@ -24,6 +24,7 @@ from pydantic_ai import (
     CachePoint,
     Citation,
     CitationSource,
+    ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
@@ -31,6 +32,7 @@ from pydantic_ai import (
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -177,6 +179,7 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
+        _map_bedrock_document_citation_for_anthropic_replay,  # pyright: ignore[reportPrivateUsage]
         _map_citations,  # pyright: ignore[reportPrivateUsage]
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
@@ -299,8 +302,544 @@ def test_anthropic_empty_cited_text_is_not_an_excerpt() -> None:
     )
 
     assert _map_citations([citation]) == [
-        Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])
+        Citation(
+            sources=[WebCitationSource(url='https://example.com', title='Example')],
+            provider_details={'encrypted_index': 'opaque-index'},
+        )
     ]
+
+
+async def test_anthropic_citations_replay_after_message_json_round_trip(allow_model_requests: None):
+    """Same-provider citations are replayed in Anthropic's typed historical message format."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'Research the earlier document.',
+                                BinaryContent(data=b'Earlier document.', media_type='text/plain'),
+                            ]
+                        )
+                    ]
+                ),
+                ModelResponse(parts=[TextPart('Earlier answer.')], provider_name='anthropic'),
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'Research the latest document.',
+                                BinaryContent(data=b'Latest document.', media_type='text/plain'),
+                            ]
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'The source supports this claim.',
+                            citations=[
+                                Citation(
+                                    sources=[
+                                        WebCitationSource(
+                                            url='https://example.com/source',
+                                            title='',
+                                            excerpts=['supporting passage'],
+                                        )
+                                    ],
+                                    provider_details={'encrypted_index': 'opaque-web-index'},
+                                ),
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            document_id='file-not-allowed-on-this-input-type',
+                                            title='',
+                                            excerpts=['document passage'],
+                                            provider_details={
+                                                'type': 'char_location',
+                                                'document_index': 1,
+                                                'start_char_index': 10,
+                                                'end_char_index': 26,
+                                            },
+                                        )
+                                    ]
+                                ),
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            title='',
+                                            excerpts=['page passage'],
+                                            provider_details={
+                                                'type': 'page_location',
+                                                'document_index': 1,
+                                                'start_page_number': 2,
+                                                'end_page_number': 3,
+                                            },
+                                        )
+                                    ]
+                                ),
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            title='',
+                                            excerpts=['block passage'],
+                                            provider_details={
+                                                'type': 'content_block_location',
+                                                'document_index': 1,
+                                                'start_block_index': 4,
+                                                'end_block_index': 5,
+                                            },
+                                        )
+                                    ]
+                                ),
+                            ],
+                        )
+                    ],
+                    provider_name='anthropic',
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][3] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'type': 'text',
+                    'text': 'The source supports this claim.',
+                    'citations': [
+                        {
+                            'type': 'web_search_result_location',
+                            'url': 'https://example.com/source',
+                            'title': None,
+                            'cited_text': 'supporting passage',
+                            'encrypted_index': 'opaque-web-index',
+                        },
+                        {
+                            'type': 'char_location',
+                            'cited_text': 'document passage',
+                            'document_index': 1,
+                            'document_title': None,
+                            'start_char_index': 10,
+                            'end_char_index': 26,
+                        },
+                        {
+                            'type': 'page_location',
+                            'cited_text': 'page passage',
+                            'document_index': 1,
+                            'document_title': None,
+                            'start_page_number': 2,
+                            'end_page_number': 3,
+                        },
+                        {
+                            'type': 'content_block_location',
+                            'cited_text': 'block passage',
+                            'document_index': 1,
+                            'document_title': None,
+                            'start_block_index': 4,
+                            'end_block_index': 5,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def _anthropic_replayable_web_citation() -> Citation:
+    return Citation(
+        sources=[
+            WebCitationSource(
+                url='https://example.com/source',
+                title='Source',
+                excerpts=['supporting passage'],
+            )
+        ],
+        provider_details={'encrypted_index': 'opaque-web-index'},
+    )
+
+
+@pytest.mark.parametrize(
+    ('provider_name', 'citations'),
+    [
+        pytest.param(
+            'anthropic',
+            [Citation(sources=[WebCitationSource(url='https://example.com/source')])],
+            id='missing-native-details',
+        ),
+        pytest.param(
+            'anthropic',
+            [Citation(sources=[DocumentCitationSource(title='Report')])],
+            id='missing-document-excerpt',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com/source')],
+                    anchor=ContentCitationAnchor(start=0, end=11),
+                )
+            ],
+            id='anchored-citation',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        WebCitationSource(url='https://example.com/one'),
+                        WebCitationSource(url='https://example.com/two'),
+                    ]
+                )
+            ],
+            id='multiple-sources',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'char_location',
+                                'document_index': -1,
+                                'start_char_index': 0,
+                                'end_char_index': 11,
+                            },
+                        )
+                    ]
+                )
+            ],
+            id='negative-document-index',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'char_location',
+                                'document_index': 0,
+                                'start_char_index': 11,
+                                'end_char_index': 0,
+                            },
+                        )
+                    ]
+                )
+            ],
+            id='reversed-character-range',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'page_location',
+                                'document_index': 0,
+                                'start_page_number': 0,
+                                'end_page_number': 1,
+                            },
+                        )
+                    ]
+                )
+            ],
+            id='zero-page-number',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'content_block_location',
+                                'document_index': 0,
+                                'start_block_index': 2,
+                                'end_block_index': 1,
+                            },
+                        )
+                    ]
+                )
+            ],
+            id='reversed-content-block-range',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={'type': 'search_result_location', 'document_index': 0},
+                        )
+                    ]
+                )
+            ],
+            id='unsupported-citation-type',
+        ),
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Report',
+                            excerpts=['source text'],
+                            provider_details={
+                                'type': 'char_location',
+                                'document_index': 1,
+                                'start_char_index': 0,
+                                'end_char_index': 11,
+                            },
+                        )
+                    ]
+                )
+            ],
+            id='orphan-document-index',
+        ),
+        pytest.param(
+            'openai',
+            [_anthropic_replayable_web_citation()],
+            id='foreign-provider-citations-fall-back',
+        ),
+    ],
+)
+async def test_anthropic_unreconstructable_citations_replay_as_text(
+    allow_model_requests: None, provider_name: str, citations: list[Citation]
+):
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'Research the topic.',
+                                BinaryContent(data=b'Citation source.', media_type='text/plain'),
+                            ]
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'The source supports this claim.',
+                            citations=citations,
+                        )
+                    ],
+                    provider_name=provider_name,
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'type': 'text', 'text': 'The source supports this claim.'}],
+    }
+
+
+async def test_anthropic_replays_each_reconstructable_citation(allow_model_requests: None):
+    """One unusable citation does not hide an independently valid native citation."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'The source supports this claim.',
+                    citations=[
+                        _anthropic_replayable_web_citation(),
+                        Citation(sources=[WebCitationSource(url='https://example.com/incomplete')]),
+                    ],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]['content'][0]['citations'] == [
+        {
+            'type': 'web_search_result_location',
+            'url': 'https://example.com/source',
+            'title': 'Source',
+            'cited_text': 'supporting passage',
+            'encrypted_index': 'opaque-web-index',
+        }
+    ]
+
+
+async def test_anthropic_replays_bedrock_text_document_citation(allow_model_requests: None):
+    """Bedrock character coordinates replay only when they match the same persisted text document."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    document = 'The return window is thirty days from purchase.'
+    answer = 'The return window is thirty days.'
+    history = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    ['What is the return window?', BinaryContent(data=document.encode(), media_type='text/plain')]
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    answer,
+                    citations=[
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    title='Document 1',
+                                    excerpts=[document],
+                                    provider_details={
+                                        'location': {
+                                            'documentChar': {
+                                                'documentIndex': 0,
+                                                'start': 0,
+                                                'end': len(document),
+                                            }
+                                        }
+                                    },
+                                )
+                            ],
+                            anchor=ContentCitationAnchor(start=0, end=len(answer)),
+                        )
+                    ],
+                )
+            ],
+            provider_name='bedrock',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == {
+        'role': 'assistant',
+        'content': [
+            {
+                'type': 'text',
+                'text': answer,
+                'citations': [
+                    {
+                        'type': 'char_location',
+                        'cited_text': document,
+                        'document_index': 0,
+                        'document_title': 'Document 1',
+                        'start_char_index': 0,
+                        'end_char_index': len(document),
+                    }
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ('citation', 'documents'),
+    [
+        pytest.param(
+            Citation(sources=[DocumentCitationSource(title='Document')]),
+            ['source'],
+            id='no-content-anchor',
+        ),
+        pytest.param(
+            Citation(
+                sources=[WebCitationSource(url='https://example.com')],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='web-source',
+        ),
+        pytest.param(
+            Citation(
+                sources=[DocumentCitationSource(title='Document', excerpts=['source'])],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='no-bedrock-location',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        excerpts=['source'], provider_details={'location': {'documentChar': 'invalid'}}
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='invalid-bedrock-location',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        excerpts=['source'],
+                        provider_details={'location': {'documentChar': {'documentIndex': 1, 'start': 0, 'end': 6}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='unbound-document-index',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        excerpts=['different'],
+                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 6}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='excerpt-does-not-match-document-range',
+        ),
+    ],
+)
+def test_anthropic_does_not_replay_unbound_bedrock_document_citation(
+    citation: Citation, documents: list[str | None]
+) -> None:
+    assert _map_bedrock_document_citation_for_anthropic_replay(citation, 'answer', documents) == []
 
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
@@ -408,7 +947,8 @@ async def test_anthropic_stream_citations(allow_model_requests: None):
                             title='Example',
                             excerpts=['web excerpt'],
                         )
-                    ]
+                    ],
+                    provider_details={'encrypted_index': 'opaque-index'},
                 ),
                 Citation(
                     sources=[

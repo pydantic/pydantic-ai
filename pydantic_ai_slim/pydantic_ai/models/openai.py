@@ -1977,6 +1977,62 @@ def _map_responses_citations(
     return citations or None
 
 
+def _map_responses_citation_for_replay(
+    citation: Citation, text: str, *, allow_file_citation: bool
+) -> responses.response_output_text_param.Annotation | None:
+    if len(citation.sources) != 1:
+        return None
+
+    source = citation.sources[0]
+    if isinstance(source, WebCitationSource):
+        if (
+            not isinstance(citation.anchor, MarkerCitationAnchor)
+            or source.title is None
+            or not 0 <= citation.anchor.start < citation.anchor.end <= len(text)
+        ):
+            return None
+        return responses.response_output_text_param.AnnotationURLCitation(
+            type='url_citation',
+            url=source.url,
+            title=source.title,
+            start_index=citation.anchor.start,
+            end_index=citation.anchor.end,
+        )
+
+    if (
+        not allow_file_citation
+        or not isinstance(source, DocumentCitationSource)
+        or citation.anchor is not None
+        or source.document_id is None
+        or source.title is None
+    ):
+        return None
+    index = (citation.provider_details or {}).get('index')
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+        return None
+    return responses.response_output_text_param.AnnotationFileCitation(
+        type='file_citation', file_id=source.document_id, filename=source.title, index=index
+    )
+
+
+def _map_responses_citations_for_replay(
+    citations: list[Citation] | None, text: str, *, allow_file_citations: bool
+) -> list[responses.response_output_text_param.Annotation]:
+    if not citations:
+        return []
+
+    return [
+        mapped_citation
+        for citation in citations
+        if (
+            mapped_citation := _map_responses_citation_for_replay(
+                citation, text, allow_file_citation=allow_file_citations
+            )
+        )
+        is not None
+    ]
+
+
 def _map_chat_citations(annotations: Sequence[BaseModel], text: str) -> list[Citation] | None:
     citations: list[Citation] = []
     for annotation in annotations:
@@ -3444,7 +3500,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         message,
                         client_tool_search_active=client_tool_search_active,
                     )
-                for item in response_parts:
+                for part_index, item in enumerate(response_parts):
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
@@ -3457,17 +3513,29 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     should_send_item_id = send_item_ids and from_same_provider
 
                     if isinstance(item, TextPart):
+                        annotations = _map_responses_citations_for_replay(
+                            item.citations,
+                            item.content,
+                            allow_file_citations=from_same_provider,
+                        )
                         phase = (item.provider_details or {}).get('phase')
                         send_phase = (
                             profile.get('openai_supports_phase', False)
                             and item.provider_name == self.system
                             and phase in ('commentary', 'final_answer')
                         )
-                        if item.id and should_send_item_id:
-                            if message_item is None or message_item['id'] != item.id:  # pragma: no branch
+                        message_id = (
+                            item.id
+                            if item.id and should_send_item_id
+                            else f'msg_pydantic_ai_{message_index}_{part_index}'
+                            if annotations
+                            else None
+                        )
+                        if message_id:
+                            if message_item is None or message_item['id'] != message_id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
-                                    id=item.id,
+                                    id=message_id,
                                     content=[],
                                     type='message',
                                     status='completed',
@@ -3477,7 +3545,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             message_item['content'] = [
                                 *message_item['content'],
                                 responses.ResponseOutputTextParam(
-                                    text=item.content, type='output_text', annotations=[]
+                                    text=item.content,
+                                    type='output_text',
+                                    annotations=annotations,
                                 ),
                             ]
                             if send_phase:
@@ -3582,7 +3652,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif (  # pragma: no cover
+                            elif (
                                 item.tool_name == FileSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
