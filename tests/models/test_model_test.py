@@ -602,6 +602,26 @@ def test_narrow_exclusive_bounds_tool_args():
     assert calls == snapshot([{'temperature': 0.0}])
 
 
+def test_json_schema_test_data_integer_fractional_bounds() -> None:
+    """Integer schemas can carry fractional bounds, which must still yield an integer."""
+
+    schema = {
+        'type': 'object',
+        'required': ['count', 'other'],
+        'properties': {
+            'count': {'type': 'integer', 'exclusiveMinimum': 0.1, 'maximum': 1.1},
+            'other': {'type': 'integer', 'exclusiveMinimum': 0.5, 'exclusiveMaximum': 1.5},
+        },
+    }
+
+    for seed in range(3):
+        data = _JsonSchemaTestData(schema, seed=seed).generate()
+        assert isinstance(data['count'], int) and 0.1 < data['count'] <= 1.1
+        assert isinstance(data['other'], int) and 0.5 < data['other'] < 1.5
+
+    assert _JsonSchemaTestData(schema).generate() == snapshot({'count': 1, 'other': 1})
+
+
 def test_chars_wrap():
     class TestModel(BaseModel):
         a: Annotated[set[str], MinLen(4)]

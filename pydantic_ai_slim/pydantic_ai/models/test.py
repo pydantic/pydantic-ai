@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import math
 import re
 import string
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable
@@ -549,13 +550,22 @@ class _JsonSchemaTestData:
 
         if minimum is not None and maximum is not None:
             span = maximum - minimum
-            if span == 0:
-                # The `+/- 1` adjustments for exclusive bounds collapsed the range to a single
-                # valid value, e.g. `Field(gt=0, lt=2)` for an integer or `Field(ge=0, lt=1)` for a float.
-                return minimum
-            elif span < 0:
-                # The `+/- 1` adjustments for exclusive bounds overshot a narrow float range,
-                # e.g. `Field(gt=0, lt=1)`; pick the midpoint of the original range instead.
+            if span <= 0:
+                # The `+/- 1` adjustments for exclusive bounds collapsed (`span == 0`) or
+                # inverted (`span < 0`) a narrow range, e.g. `Field(gt=0, lt=2)` on an integer
+                # or `Field(gt=0, lt=1)` on a float. Fall back to the declared bounds.
+                if schema.get('type') == 'integer':
+                    # Round the lower bound inwards to the smallest integer the schema allows.
+                    # The adjusted bounds may be fractional, so `minimum` itself is not usable.
+                    inclusive_min = schema.get('minimum')
+                    if inclusive_min is not None:
+                        return math.ceil(inclusive_min)
+                    return math.floor(schema['exclusiveMinimum']) + 1
+                if span == 0:
+                    # Each adjusted bound is valid by construction, so the collapsed value
+                    # satisfies both original bounds.
+                    return minimum
+                # Inverted float range: the midpoint of the declared bounds is strictly inside it.
                 low = schema.get('minimum', schema.get('exclusiveMinimum', minimum))
                 high = schema.get('maximum', schema.get('exclusiveMaximum', maximum))
                 return low + (high - low) / 2
