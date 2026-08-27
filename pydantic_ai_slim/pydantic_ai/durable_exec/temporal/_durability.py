@@ -26,6 +26,7 @@ from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDecla
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import CallToolId, DurableOperationId, ValidateToolArgumentsId
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
+from pydantic_ai.durable_exec._sandbox import live_sandbox_error
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
@@ -139,6 +140,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'activity'
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
+    _live_sandbox_error = live_sandbox_error(
+        run_location='to an agent run inside a Temporal workflow',
+        sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
+    )
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""

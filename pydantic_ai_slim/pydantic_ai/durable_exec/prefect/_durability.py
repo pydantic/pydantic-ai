@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, cast
 
-from prefect.context import FlowRunContext
+from prefect.context import FlowRunContext, TaskRunContext
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
@@ -49,6 +49,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'task'
     _durable_container_noun = 'flow'
     _tool_config_key = 'prefect'
+    # Prefect tools run in-process, so flows keep the framework default sandbox.
 
     def __init__(
         self,
@@ -106,7 +107,10 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
     @property
     def in_durable_context(self) -> bool:
-        return FlowRunContext.get() is not None
+        # Prefect propagates the flow-run context into task runs, so flow context alone would
+        # also be true inside tasks — where sandbox connections are legal and must not be
+        # blocked. Only bare flow code (outside any task) is the durable container.
+        return FlowRunContext.get() is not None and TaskRunContext.get() is None
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
         def tool_config(kind: ToolsetKind, tool: object | None, tool_name: str) -> TaskConfig | Literal[False]:

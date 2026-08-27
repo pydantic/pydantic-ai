@@ -13,6 +13,7 @@ from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
+from pydantic_ai.durable_exec._sandbox import live_sandbox_error
 from pydantic_ai.durable_exec._toolset import Lifecycle
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
@@ -69,6 +70,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     # before this capability existed). It can't be supported without changing durable history: a step
     # is registered once per name, and DBOS tool-call step names deliberately carry no tool name
     # (every tool in a toolset shares one step), so per-tool config would be first-tool-wins.
+    _live_sandbox_error = live_sandbox_error(
+        run_location='to a DBOS durable agent run',
+        sandbox_constraint=(
+            'run arguments are pickled as workflow inputs for recovery, and a live handle does not survive '
+            'pickling or recovery'
+        ),
+    )
 
     def __init__(
         self,
@@ -115,7 +123,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
-        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
+        super().__init__(
+            models=models,
+            event_stream_handler=event_stream_handler,
+            name=name,
+        )
         self._model_step_config = model_step_config or {}
         self._event_stream_handler_step_config = event_stream_handler_step_config or {}
         self._mcp_step_config = mcp_step_config or {}

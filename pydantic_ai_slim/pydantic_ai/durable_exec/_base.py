@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import copy
+import logging
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Mapping,
+    Sequence,
+)
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, cast
@@ -12,7 +22,7 @@ from pydantic_core import PydanticSerializationError
 from typing_extensions import Self
 
 from pydantic_ai import FunctionToolset, ToolsetTool
-from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai._run_context import RunPreparationContext, set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -37,6 +47,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -112,6 +123,7 @@ if TYPE_CHECKING:
     pass
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -292,6 +304,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _durable_unit_noun: ClassVar[str]
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
+    _live_sandbox_error: ClassVar[str | None] = None
 
     # --- Declarative engine surface -------------------------------------------------------------
     # Everything below is DATA an engine sets rather than behavior it overrides. The base's
@@ -433,7 +446,21 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                             durable_ctx, semantic_params.arguments, params.model_id
                         )
                         usage_before = copy.copy(durable_ctx.usage)
-                        result = await call_declaration(declaration, recovered, semantic_params)
+                        if declaration.name == 'destroy_sandbox':
+                            try:
+                                result = await call_declaration(declaration, recovered, semantic_params)
+                            except Exception:
+                                ref = semantic_params.arguments['ref']
+                                logger.warning(
+                                    'Failed to tear down sandbox %r for provider %r; '
+                                    'the platform must reap it on its own idle timeout.',
+                                    ref.sandbox_id,
+                                    ref.provider,
+                                    exc_info=True,
+                                )
+                                result = None
+                        else:
+                            result = await call_declaration(declaration, recovered, semantic_params)
                     return _CapabilityOperationResult(result, _usage_delta(usage_before, durable_ctx.usage))
 
                 operation = DurableOperation(
@@ -505,6 +532,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if capability_id is None:
             raise RuntimeError('A durable operation capability must have an explicit `id`.')
         key = (capability_id, operation)
+        if key not in self._capability_declarations:
+            raise UserError(
+                f'Capability {capability_id!r} was added per run and its durable operation {operation!r} was not '
+                f'registered when the {self.engine_name} agent was bound.'
+            )
         declaration = self._capability_declarations[key]
         arguments = bind_arguments(declaration, ctx, args, kwargs)
         model = ctx.model
@@ -1661,6 +1693,39 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         return toolset.visit_and_replace(swap)
 
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        if self.in_durable_context and any(collect_capability_operations(capability) for capability in capabilities):
+            raise UserError(
+                f'Capabilities added per run cannot contribute {self.engine_name} durable operations because '
+                f'their {self._durable_unit_noun}s were not registered when the agent was bound.'
+            )
+
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        # In workflow/flow code connecting would be I/O, so fail with directions; inside a
+        # durable unit `in_durable_context` is False and the real capability connects.
+        if self.in_durable_context:
+            raise UserError(
+                f'Sandbox operations are not available in {self.engine_name} '
+                f'{self._durable_container_noun} code: connecting to the sandbox is I/O, which must '
+                f'happen inside a {self._durable_unit_noun}. Use `ctx.sandbox` from a tool, a '
+                '`process_tool_call` hook, or an `event_stream_handler` instead.'
+            )
+        return None
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        """Reject non-policy live sandbox run arguments before entering a durable container."""
+        sandbox_identity = ctx.sandbox.durable_identity() if ctx.sandbox is not None else None
+        if (
+            self._live_sandbox_error is not None
+            and self.in_durable_context
+            and sandbox_identity is not None
+            and not isinstance(sandbox_identity, (SandboxRef, UnavailableSandbox))
+        ):
+            raise UserError(self._live_sandbox_error)
+        return nullcontext()
+
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: durable dispatch must be the last wrapper around the model handler so every
         # other capability's contribution is already applied inside the durable unit.
@@ -1862,7 +1927,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         root_capability = run_context.root_capability
         # The boundary carries both.
         if agent is not None and root_capability is not None:  # pragma: no branch
-            resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
+            resolution_ctx = ModelResolutionContext(
+                agent=agent,
+                deps=run_context.deps,
+                run_id=run_context.run_id,
+                conversation_id=run_context.conversation_id,
+            )
             # Exceptions raised by user resolvers in the chain propagate unchanged;
             # only the `infer_model` backstop below gets the translated error.
             resolved = await root_capability.resolve_model_id(resolution_ctx, model_id=model_id)

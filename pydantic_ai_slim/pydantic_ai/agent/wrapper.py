@@ -16,6 +16,7 @@ from .._json_schema import JsonSchema
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
+from ..sandboxes import SandboxBackend, SandboxRef
 from ..settings import ModelSettings
 from ..template import TemplateStr
 from ..tools import (
@@ -78,6 +79,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     @description.setter
     def description(self, value: TemplateStr[AgentDepsT] | str | None) -> None:
         self.wrapped.description = value
+
+    def render_description(self, deps: AgentDepsT = None) -> str | None:
+        return self.wrapped.render_description(deps)
 
     @property
     def deps_type(self) -> type:
@@ -161,6 +165,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -186,6 +191,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -211,6 +217,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -301,6 +308,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional sandbox backend or [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] for this run; overrides capability contributions. See the [sandbox docs](../sandbox.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -325,6 +333,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             capabilities=capabilities,
+            sandbox=sandbox,
             spec=spec,
         ) as run:
             yield run

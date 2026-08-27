@@ -104,6 +104,7 @@ from pydantic_ai.realtime import (
     RealtimeSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
@@ -159,6 +160,7 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from .sandbox_fakes import ConnectOnlySandboxCapability, FakeSandboxHandle, LifecycleSandboxCapability
 
 
 def test_durability_codecs() -> None:
@@ -2357,6 +2359,115 @@ async def test_cache_policy_empty_inputs():
     assert result is None
 
 
+def _ctx_with_sandbox(sandbox_id: str | None) -> RunContext[None]:
+    if sandbox_id is None:
+        return RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    return RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox(FakeSandboxHandle(sandbox_id)),
+    )
+
+
+async def test_cache_policy_includes_sandbox_identity():
+    """Two runs identical except for their attached sandbox must not share a cache entry."""
+    projected = _replace_run_context({'ctx': _ctx_with_sandbox('sandbox-1')})['ctx']
+    # Provider-qualified: `sandbox_id` is only unique within a provider.
+    assert projected['sandbox'] == ('fake', 'sandbox-1')
+    # The fresh framework default is equivalent to the previous no-sandbox input.
+    assert 'sandbox' not in _replace_run_context({'ctx': _ctx_with_sandbox(None)})['ctx']
+    unavailable = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox(UnavailableSandbox('disabled')),
+    )
+    assert 'sandbox' not in _replace_run_context({'ctx': unavailable})['ctx']
+
+
+def test_cache_policy_sandbox_key_permutations():
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    keys = {
+        cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'ctx': _ctx_with_sandbox(sandbox_id)},
+            flow_parameters={},
+        )
+        for sandbox_id in ('sandbox-1', 'sandbox-2', None)
+    }
+    assert len(keys) == 3
+
+    # Same id under a different provider is a different environment -> different key.
+    class OtherProviderSandbox(FakeSandboxHandle):
+        provider = 'other'
+
+    other = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox(cast(SandboxBackend, OtherProviderSandbox('sandbox-1'))),
+    )
+    assert cache_policy.compute_key(
+        task_ctx=mock_task_ctx, inputs={'ctx': other}, flow_parameters={}
+    ) != cache_policy.compute_key(
+        task_ctx=mock_task_ctx, inputs={'ctx': _ctx_with_sandbox('sandbox-1')}, flow_parameters={}
+    )
+
+    # Same sandbox identity produces the same key: the live handle itself is not hashed.
+    assert cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'ctx': _ctx_with_sandbox('sandbox-1')},
+        flow_parameters={},
+    ) == cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'ctx': _ctx_with_sandbox('sandbox-1')},
+        flow_parameters={},
+    )
+
+
+async def test_cache_policy_includes_deferred_sandbox_identity_without_connecting():
+    async def refuse_to_connect(ref: SandboxRef) -> SandboxBackend:
+        raise AssertionError('computing a cache key must not connect the sandbox')  # pragma: no cover
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox.from_ref(SandboxRef(provider='fake', sandbox_id='deferred-sandbox'), refuse_to_connect),
+    )
+    projected = _replace_run_context({'ctx': ctx})['ctx']
+    assert projected['sandbox'] == ('fake', 'deferred-sandbox')
+
+
+async def test_prefect_flow_forwards_sandbox_to_tools():
+    backend = FakeSandboxHandle('flow-sandbox')
+    seen: list[Sandbox] = []
+
+    def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('observe_sandbox', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(call_tool_then_finish), name='sandbox_flow_agent')
+
+    @agent.tool
+    def observe_sandbox(ctx: RunContext[object]) -> str:
+        seen.append(ctx.sandbox)
+        return 'ok'
+
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    @flow
+    async def run_agent() -> str:
+        return (await prefect_agent.run('Use the sandbox tool.', sandbox=backend)).output
+
+    assert await run_agent() == 'done'
+    assert len(seen) == 1
+    assert seen[0].backend is backend
+
+
 def test_cache_key_run_context_projection_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Prefect cache-key hashing.
 
@@ -2389,16 +2500,23 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
         'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks
+        '_run_state_key',  # in-process `object()` identity sentinel, unique per run by construction; including it would fork every cache key and disable caching
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
+    }
+    # Fields carried into the projection under a derived key rather than verbatim.
+    projected_via_derived_key = {
+        'sandbox',  # explicit backends project as (provider, sandbox_id); framework defaults are skipped
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
+    assert 'sandbox' in set(_replace_run_context({'ctx': _ctx_with_sandbox('sb')})['ctx'])
+
     all_fields = set(RunContext.__dataclass_fields__)
 
     overlap = projected & cache_irrelevant
     assert not overlap, f'Fields both projected and marked irrelevant: {overlap}'
 
-    uncategorized = all_fields - (projected | cache_irrelevant)
+    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
@@ -2735,6 +2853,110 @@ async def test_prefect_durability_simple_agent() -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello Prefect'
+
+
+async def test_prefect_durability_keeps_the_default_unavailable_sandbox() -> None:
+    """`PrefectDurability` leaves default sandbox resolution alone: with nothing attached, a tool
+    in a durable flow gets the same default-unavailable sandbox a plain run would.
+    """
+
+    async def observe_sandbox(ctx: RunContext[object]) -> str:
+        with pytest.raises(UserError, match=r'^No sandbox is attached to this run'):
+            await ctx.sandbox.run(['echo', 'hello'])
+        return ctx.sandbox.provider
+
+    agent = Agent(
+        TestModel(),
+        name='durability_default_sandbox',
+        tools=[observe_sandbox],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Use the sandbox tool.')).output
+
+    assert await run_durable_agent() == '{"observe_sandbox":"unavailable"}'
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    supplier = LifecycleSandboxCapability()
+    agent = Agent(
+        TestModel(),
+        name='prefect_supplied_sandbox',
+        capabilities=[PrefectDurability(), supplier],
+    )
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Use the sandbox tool.')).output
+
+    assert await run_durable_agent() == snapshot('success (no tool calls)')
+    assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
+
+    # Outside a flow the very same agent runs the supplier's lifecycle normally; no tool touches
+    # the sandbox, so the lazily connecting facade never connects.
+    assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
+    assert supplier.events == snapshot(
+        ['create:created-1', 'teardown:created-1', 'create:created-2', 'teardown:created-2']
+    )
+
+
+async def test_prefect_durability_rejects_a_per_run_sandbox_supplier() -> None:
+    """A supplier passed via `capabilities=` on the run raises instead of being silently
+    ignored: the durability capability binds suppliers to the agent's tree at `for_agent`
+    time, so it cannot route this one."""
+    supplier = LifecycleSandboxCapability()
+    agent = Agent(TestModel(), name='prefect_per_run_supplied_sandbox', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello', capabilities=[supplier])).output
+
+    with pytest.raises(UserError) as exc_info:
+        await run_durable_agent()
+    assert str(exc_info.value) == snapshot(
+        "Capability 'test-sandbox' was added per run and its durable operation 'create_sandbox' was not "
+        'registered when the Prefect agent was bound.'
+    )
+    assert supplier.events == []
+
+
+async def test_prefect_durability_connects_a_sandbox_ref_inside_a_task() -> None:
+    """The path the supplier rejection prescribes — pass a `SandboxRef` — must actually work.
+
+    Prefect propagates the flow-run context into task runs, so a durable-context check based on
+    flow context alone would also be true inside the tool's task and block the connection there,
+    the one place it is legal. The connect-only capability recognizing the ref inside the task
+    is what this pins.
+    """
+    connector = ConnectOnlySandboxCapability()
+
+    def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('run_in_sandbox', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool_then_finish),
+        name='prefect_sandbox_ref_agent',
+        capabilities=[PrefectDurability(), connector],
+    )
+
+    @agent.tool
+    async def run_in_sandbox(ctx: RunContext[object]) -> str:
+        return (await ctx.sandbox.run(['echo', ctx.sandbox.sandbox_id])).stdout
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('Use the sandbox.', sandbox=SandboxRef(provider='fake', sandbox_id='ops-sandbox'))
+        return result.output
+
+    assert await run_durable_agent() == 'done'
+    assert connector.sandbox_ids == ['ops-sandbox']
+    assert connector.backends[0].commands == [['echo', 'ops-sandbox']]
 
 
 def test_resolve_tool_task_config_reads_metadata() -> None:

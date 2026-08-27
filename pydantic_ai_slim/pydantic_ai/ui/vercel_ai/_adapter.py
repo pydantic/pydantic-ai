@@ -104,6 +104,7 @@ if TYPE_CHECKING:
     from ...capabilities import AbstractCapability
     from ...models import KnownModelName, Model
     from ...output import OutputSpec
+    from ...sandboxes import SandboxBackend, SandboxRef
     from ...settings import ModelSettings
     from ...tools import DeferredToolApprovalResult
     from ...toolsets import AbstractToolset
@@ -227,6 +228,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
+        sandbox: SandboxBackend | SandboxRef | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
@@ -261,6 +263,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             infer_name=infer_name,
             toolsets=toolsets,
             capabilities=capabilities,
+            sandbox=sandbox,
             on_complete=on_complete,
             on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,

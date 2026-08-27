@@ -23,9 +23,11 @@ from .exceptions import UserError
 if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
+    from .agent.abstract import AbstractAgent
     from .capabilities.abstract import AbstractCapability
-    from .models import AbstractModel
+    from .models import AbstractModel, Model
     from .realtime import RealtimeModelSettings, RealtimeSession
+    from .sandboxes import Sandbox
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -36,6 +38,63 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 
 RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+
+
+def _default_sandbox() -> Sandbox:
+    # Imported here rather than at module scope: `pydantic_ai.sandboxes` exports the
+    # `ManagedSandbox` capability, which needs `RunPreparationContext` from this module, and this
+    # factory only runs when a `RunContext` is constructed — long after imports have settled.
+    from .sandboxes import Sandbox, UnavailableSandbox
+
+    return Sandbox.wrap(
+        UnavailableSandbox(
+            reason='No sandbox is attached: this `RunContext` was created outside an agent run. '
+            'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or supply one '
+            "from a capability's `create_sandbox`."
+        )
+    )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class RunPreparationContext(Generic[AgentDepsT]):
+    """Information available while an agent run is being prepared."""
+
+    agent: AbstractAgent[AgentDepsT, Any]
+    """The agent being run."""
+
+    deps: AgentDepsT
+    """Dependencies supplied for the run."""
+
+    model: Model | None
+    """The model explicitly supplied to the run or through an override, if any.
+
+    Model resolution has not happened yet, so the agent's configured model and capability
+    contributions are not reflected here.
+    """
+
+    sandbox: Sandbox | None
+    """The sandbox explicitly supplied to the run, if any.
+
+    This may be a deferred facade created from a
+    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]. Capability sandbox resolution has not
+    happened yet. When this is `None`, a capability may contribute a sandbox; if none does, the
+    run falls back to the framework default.
+    """
+
+    messages: list[_messages.ModelMessage]
+    """The provided message history, or an empty list for a new conversation."""
+
+    usage: RunUsage
+    """LLM usage associated with the run."""
+
+    run_id: str
+    """Unique identifier for the agent run."""
+
+    conversation_id: str
+    """Unique identifier for the conversation this run belongs to."""
+
+    _run_state_key: object = field(default_factory=object, repr=False, compare=False)
+    """Private identity shared by all contexts belonging to one run execution."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -150,6 +209,21 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
     with, for the whole session (realtime settings are fixed at connect time).
     """
+    sandbox: Sandbox = field(default_factory=_default_sandbox)
+    """The [`Sandbox`][pydantic_ai.sandboxes.Sandbox] attached to this run.
+
+    This is always the rich Pydantic AI facade; use
+    [`sandbox.backend`][pydantic_ai.sandboxes.Sandbox.backend] to access provider-specific
+    functionality. Set once per run, in order of precedence: the `sandbox=` run argument
+    (caller-owned), a capability's
+    [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] contribution, or
+    an [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] whose operations explain
+    how to attach one — no run ever gets implicit access to the host machine. Resolution happens
+    before `for_run`, so anything that receives a `RunContext` sees the final sandbox. Treat it
+    as read-only. On a bare/synthetic `RunContext` that isn't backed by a run, this is an
+    `UnavailableSandbox` whose operations explain that sandboxes are attached at run time. See
+    the [sandbox docs](../sandbox.md).
+    """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
 
@@ -159,6 +233,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
     to add messages rather than mutating it directly.
     """
+
+    _run_state_key: object = field(default_factory=object, repr=False, compare=False)
+    """Private identity shared by all contexts belonging to one run execution."""
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -564,6 +641,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+def get_run_state_key(ctx: RunPreparationContext[Any] | RunContext[Any]) -> object:
+    """Return the framework-owned identity for one run execution."""
+    # This module owns the private field and exposes only this internal accessor to sibling modules.
+    return ctx._run_state_key  # pyright: ignore[reportPrivateUsage]
+
+
 _run_context_init = RunContext.__init__
 
 
@@ -588,8 +671,6 @@ def _run_context_init_with_capability_loaded(
 # keyword is invisible to `replace()`, and `@wraps` keeps `inspect.signature` resolving to the real
 # one. `TemporalRunContext` defines its own `__init__` and is unaffected either way.
 RunContext.__init__ = _run_context_init_with_capability_loaded
-
-
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(
     'pydantic_ai.current_run_context',
     default=None,

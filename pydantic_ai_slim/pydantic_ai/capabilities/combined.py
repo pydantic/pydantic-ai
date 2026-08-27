@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
     from pydantic_graph import End
 
 
@@ -261,6 +264,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        # Reversed to match supplier precedence, so the capability that produced a ref is also
+        # the first one asked to re-open it; capabilities decline refs they don't recognize.
+        # Deferred capabilities are skipped: their contributions are inert until loaded.
+        # `create_sandbox`/`destroy_sandbox` deliberately have no combined dispatch — the run
+        # resolves them through `resolve_run_sandbox`, which keeps the supplier's identity.
+        for capability in reversed(self.capabilities):
+            if capability.defer_loading is True:
+                continue
+            backend = await capability.get_sandbox(ctx, ref)
+            if backend is not None:
+                return backend
+        return None
+
     # --- Tool preparation hooks ---
 
     async def prepare_tools(
@@ -284,6 +301,29 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return tool_defs
 
     # --- Run lifecycle hooks ---
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        # Deferred capabilities are always excluded, even when already loaded from resumed history.
+        capabilities = [
+            capability
+            for capability in self.capabilities
+            if capability.defer_loading is not True
+            and type(capability).wrap_entire_run is not AbstractCapability.wrap_entire_run
+        ]
+        if not capabilities:
+            return nullcontext()
+        return self._wrap_entire_run(ctx, capabilities)
+
+    @asynccontextmanager
+    async def _wrap_entire_run(
+        self,
+        ctx: RunPreparationContext[AgentDepsT],
+        capabilities: Sequence[AbstractCapability[AgentDepsT]],
+    ) -> AsyncGenerator[None]:
+        async with AsyncExitStack() as stack:
+            for capability in capabilities:
+                await stack.enter_async_context(capability.wrap_entire_run(ctx))
+            yield
 
     async def before_run(
         self,

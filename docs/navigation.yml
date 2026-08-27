@@ -77,6 +77,11 @@ navigation:
         slug: "core-concepts/hooks"
         aliases:
           - "hooks"
+      - page: "Sandboxes"
+        path: "sandbox.md"
+        slug: "core-concepts/sandbox"
+        aliases:
+          - "sandbox"
       - page: "Capabilities"
         path: "capabilities/overview.md"
         slug: "capabilities/overview"
@@ -1064,6 +1069,11 @@ navigation:
             slug: "api/pydantic-ai/run"
             aliases:
               - "api/run"
+          - page: "sandboxes"
+            path: "api/sandboxes.md"
+            slug: "api/pydantic-ai/sandboxes"
+            aliases:
+              - "api/sandboxes"
           - page: "settings"
             path: "api/settings.md"
             slug: "api/pydantic-ai/settings"
