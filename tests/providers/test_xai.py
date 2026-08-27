@@ -35,10 +35,14 @@ def test_xai_provider_need_api_key(env: TestEnv) -> None:
         XaiProvider()
 
 
-def test_xai_pass_xai_client() -> None:
+@pytest.mark.anyio
+async def test_xai_pass_xai_client() -> None:
     xai_client = AsyncClient(api_key='api-key')
-    provider = XaiProvider(xai_client=xai_client)
-    assert provider.client == xai_client
+    try:
+        provider = XaiProvider(xai_client=xai_client)
+        assert provider.client is xai_client
+    finally:
+        await xai_client.close()
 
 
 @pytest.fixture
@@ -92,6 +96,28 @@ def test_xai_model_profile_grok_4_5():
     assert profile.get('grok_reasoning_efforts') == frozenset({'low', 'medium', 'high'})
     assert profile.get('supports_thinking', False) is True
     assert profile.get('thinking_always_enabled', False) is True
+
+
+def test_xai_model_profile_grok_4_6():
+    provider = XaiProvider(api_key='api-key')
+    profile = provider.model_profile('grok-4.6')
+    assert isinstance(profile, dict)
+    assert profile.get('grok_supports_builtin_tools', False) is True
+    # Live-verified against the xAI API: Grok 4.6 rejects `reasoning_effort='none'` like Grok 4.5.
+    assert profile.get('grok_reasoning_efforts') == frozenset({'low', 'medium', 'high'})
+    assert profile.get('supports_thinking', False) is True
+    assert profile.get('thinking_always_enabled', False) is True
+
+
+def test_xai_model_profile_grok_build_0_1():
+    provider = XaiProvider(api_key='api-key')
+    profile = provider.model_profile('grok-build-0.1')
+    assert isinstance(profile, dict)
+    assert profile.get('grok_supports_builtin_tools', False) is True
+    # Live-verified: the API rejects `reasoning_effort` outright on this model — `Model grok-build-0.1
+    # does not support parameter reasoningEffort` — so it gets no efforts and no thinking at all.
+    assert profile.get('grok_reasoning_efforts') == frozenset()
+    assert profile.get('supports_thinking', False) is False
 
 
 def test_xai_provider_recreates_client_on_new_loop():

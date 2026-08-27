@@ -143,7 +143,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     capability: AbstractCapability[AgentDepsT] = capability,
                     cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] = cap_settings,
                 ) -> ModelSettings:
-                    cap_ctx = _ctx_for_available_cap(capability, ctx)
+                    cap_ctx = _ctx_for_active_cap(capability, ctx)
                     if cap_ctx is None:
                         return ModelSettings()
                     if callable(cap_settings):
@@ -244,7 +244,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     capability: AbstractCapability[AgentDepsT] = capability,
                     native_tool: AgentNativeTool[AgentDepsT] = native_tool,
                 ) -> Any:
-                    cap_ctx = _ctx_for_available_cap(capability, ctx)
+                    cap_ctx = _ctx_for_active_cap(capability, ctx)
                     if cap_ctx is None:
                         return None
                     if callable(native_tool):
@@ -286,7 +286,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 tool_defs = await capability.prepare_tools(cap_ctx, tool_defs)
         return tool_defs
 
@@ -296,7 +296,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 tool_defs = await capability.prepare_output_tools(cap_ctx, tool_defs)
         return tool_defs
 
@@ -330,8 +330,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> None:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 await capability.before_run(cap_ctx)
+
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        for capability in self.capabilities:
+            capability._prepare_run_context(ctx)
 
     async def after_run(
         self,
@@ -340,7 +344,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 result = await capability.after_run(cap_ctx, result=result)
         return result
 
@@ -352,7 +356,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_available_cap(capability, ctx) is not None:
+            if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_run_wrap(capability, ctx, chain)
         return await chain()
 
@@ -363,7 +367,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: BaseException,
     ) -> AgentRunResult[Any]:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_available_cap(capability, ctx)
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -381,7 +385,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 node = await capability.before_node_run(cap_ctx, node=node)
         return node
 
@@ -393,7 +397,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 result = await capability.after_node_run(cap_ctx, node=node, result=result)
         return result
 
@@ -409,7 +413,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_available_cap(capability, ctx) is not None:
+            if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_node_run_wrap(capability, ctx, chain)
         return await chain(node)
 
@@ -421,7 +425,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_available_cap(capability, ctx)
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -440,7 +444,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> AsyncIterable[AgentStreamEvent]:
         wrapped_streams = [stream]
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 stream = capability.wrap_run_event_stream(cap_ctx, stream=stream)
                 wrapped_streams.append(stream)
         try:
@@ -457,7 +461,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 request_context = await capability.before_model_request(cap_ctx, request_context)
         return request_context
 
@@ -469,7 +473,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         response: ModelResponse,
     ) -> ModelResponse:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 response = await capability.after_model_request(
                     cap_ctx, request_context=request_context, response=response
                 )
@@ -484,7 +488,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_available_cap(capability, ctx) is not None:
+            if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_model_request_wrap(capability, ctx, chain)
         return await chain(request_context)
 
@@ -496,7 +500,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> ModelResponse:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_available_cap(capability, ctx)
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -516,7 +520,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: str | dict[str, Any],
     ) -> str | dict[str, Any]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 args = await capability.before_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -529,7 +533,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 args = await capability.after_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -544,7 +548,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> dict[str, Any]:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_available_cap(capability, ctx) is not None:
+            if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_tool_validate_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
@@ -558,7 +562,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: ValidationError | ModelRetry,
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_available_cap(capability, ctx)
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -582,7 +586,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
     ) -> dict[str, Any]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 args = await capability.before_tool_execute(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -596,7 +600,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: Any,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 result = await capability.after_tool_execute(
                     cap_ctx, call=call, tool_def=tool_def, args=args, result=result
                 )
@@ -613,7 +617,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_available_cap(capability, ctx) is not None:
+            if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_tool_execute_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
@@ -627,7 +631,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_available_cap(capability, ctx)
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -648,7 +652,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: RawOutput,
     ) -> RawOutput:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 output = await capability.before_output_validate(cap_ctx, output_context=output_context, output=output)
         return output
 
@@ -660,7 +664,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: Any,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 output = await capability.after_output_validate(cap_ctx, output_context=output_context, output=output)
         return output
 
@@ -674,7 +678,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_available_cap(capability, ctx) is not None:
+            if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_output_validate_wrap(capability, ctx, output_context, chain)
         return await chain(output)
 
@@ -687,7 +691,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: ValidationError | ModelRetry,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_available_cap(capability, ctx)
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -711,7 +715,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: Any,
     ) -> Any:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 output = await capability.before_output_process(cap_ctx, output_context=output_context, output=output)
         return output
 
@@ -723,7 +727,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: Any,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 output = await capability.after_output_process(cap_ctx, output_context=output_context, output=output)
         return output
 
@@ -737,7 +741,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_available_cap(capability, ctx) is not None:
+            if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_output_process_wrap(capability, ctx, output_context, chain)
         return await chain(output)
 
@@ -750,7 +754,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_available_cap(capability, ctx)
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -771,7 +775,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         remaining = requests
         any_handled = False
         for capability in self.capabilities:
-            cap_ctx = _ctx_for_available_cap(capability, ctx)
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             result = await capability.handle_deferred_tool_calls(cap_ctx, requests=remaining)
@@ -914,23 +918,36 @@ def bind_capabilities_tier(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return replace(ctx, capability_loaded=_capability_loaded(capability, ctx))
+    return _replace_capability_context(ctx, capability_active=_capability_active(capability, ctx))
 
 
-def _ctx_for_available_cap(
+def _ctx_for_active_cap(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> RunContext[AgentDepsT] | None:
-    capability_loaded = _capability_loaded(capability, ctx)
-    if capability.defer_loading is True and not capability_loaded:
+    capability_active = _capability_active(capability, ctx)
+    if capability.defer_loading is True and not capability_active:
         return None
-    return replace(ctx, capability_loaded=capability_loaded)
+    return _replace_capability_context(ctx, capability_active=capability_active)
 
 
-def _capability_loaded(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
+def _replace_capability_context(ctx: RunContext[AgentDepsT], *, capability_active: bool) -> RunContext[AgentDepsT]:
+    capability_ctx = replace(ctx, capability_active=capability_active)
+    for name in ('_durable_operations', '_run_capabilities_by_id'):
+        if name in ctx.__dict__:
+            capability_ctx.__dict__[name] = ctx.__dict__[name]
+    return capability_ctx
+
+
+def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether this capability may act on the current step.
+
+    Activity, not loading: an always-on capability is active for the whole run without ever being
+    loaded, which is why the deferred branch below is the only one that consults history.
+    """
     if capability.defer_loading is not True:
         return True
 
     # Deferred capabilities are required to have an explicit `id` (enforced in
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
-    return capability.id is not None and capability.id in ctx.available_capability_ids
+    return capability.id is not None and capability.id in ctx.active_capability_ids

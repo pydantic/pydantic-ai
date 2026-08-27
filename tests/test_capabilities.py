@@ -5,6 +5,7 @@ import contextvars
 import inspect
 import re
 import threading
+import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -137,7 +138,7 @@ from pydantic_ai.toolsets._capability_owned import (
     tool_defs_from_pre_definition_load_returns,
 )
 from pydantic_ai.toolsets._deferred_capability_loader import (
-    LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -749,8 +750,6 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-haiku-4-5-20251001',
                         'anthropic:claude-mythos-5',
                         'anthropic:claude-mythos-preview',
-                        'anthropic:claude-opus-4-1',
-                        'anthropic:claude-opus-4-1-20250805',
                         'anthropic:claude-opus-4-5',
                         'anthropic:claude-opus-4-5-20251101',
                         'anthropic:claude-opus-4-6',
@@ -913,8 +912,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-fable-5',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
-                        'gateway/anthropic:claude-opus-4-1',
-                        'gateway/anthropic:claude-opus-4-1-20250805',
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-5-20251101',
                         'gateway/anthropic:claude-opus-4-6',
@@ -1053,9 +1050,16 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.4-mini-2026-03-17',
                         'gateway/openai:gpt-5.4-nano',
                         'gateway/openai:gpt-5.4-nano-2026-03-17',
+                        'gateway/openai:gpt-5.5',
+                        'gateway/openai:gpt-5.5-2026-04-23',
+                        'gateway/openai:gpt-5.5-pro',
+                        'gateway/openai:gpt-5.5-pro-2026-04-23',
+                        'gateway/openai:gpt-5.6-cyber',
                         'gateway/openai:gpt-5.6-luna',
                         'gateway/openai:gpt-5.6-sol',
                         'gateway/openai:gpt-5.6-terra',
+                        'gateway/openai:gpt-daybreak-blue-latest',
+                        'gateway/openai:gpt-daybreak-red-latest',
                         'gateway/openai:o1',
                         'gateway/openai:o1-2024-12-17',
                         'gateway/openai:o1-pro',
@@ -1232,9 +1236,16 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5.4-mini-2026-03-17',
                         'openai-chat:gpt-5.4-nano',
                         'openai-chat:gpt-5.4-nano-2026-03-17',
+                        'openai-chat:gpt-5.5',
+                        'openai-chat:gpt-5.5-2026-04-23',
+                        'openai-chat:gpt-5.5-pro',
+                        'openai-chat:gpt-5.5-pro-2026-04-23',
+                        'openai-chat:gpt-5.6-cyber',
                         'openai-chat:gpt-5.6-luna',
                         'openai-chat:gpt-5.6-sol',
                         'openai-chat:gpt-5.6-terra',
+                        'openai-chat:gpt-daybreak-blue-latest',
+                        'openai-chat:gpt-daybreak-red-latest',
                         'openai-chat:o1',
                         'openai-chat:o1-2024-12-17',
                         'openai-chat:o1-pro',
@@ -1305,9 +1316,16 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5.4-mini-2026-03-17',
                         'openai:gpt-5.4-nano',
                         'openai:gpt-5.4-nano-2026-03-17',
+                        'openai:gpt-5.5',
+                        'openai:gpt-5.5-2026-04-23',
+                        'openai:gpt-5.5-pro',
+                        'openai:gpt-5.5-pro-2026-04-23',
+                        'openai:gpt-5.6-cyber',
                         'openai:gpt-5.6-luna',
                         'openai:gpt-5.6-sol',
                         'openai:gpt-5.6-terra',
+                        'openai:gpt-daybreak-blue-latest',
+                        'openai:gpt-daybreak-red-latest',
                         'openai:o1',
                         'openai:o1-2024-12-17',
                         'openai:o1-pro',
@@ -1391,6 +1409,8 @@ def test_model_json_schema_with_capabilities():
                         'xai:grok-4.3-latest',
                         'xai:grok-4.5',
                         'xai:grok-4.5-latest',
+                        'xai:grok-4.6',
+                        'xai:grok-build-0.1',
                         'xai:grok-code-fast-1',
                         'zai:autoglm-phone-multilingual',
                         'zai:glm-4-32b-0414-128k',
@@ -1411,6 +1431,7 @@ def test_model_json_schema_with_capabilities():
                         'zai:glm-5-turbo',
                         'zai:glm-5.1',
                         'zai:glm-5.2',
+                        'zai:glm-5.3',
                         'zai:glm-5v-turbo',
                     ],
                     'type': 'string',
@@ -2868,7 +2889,7 @@ def test_combined_capability_get_model_settings_deferred():
     class DynamicSettingsCap(AbstractCapability):
         def get_model_settings(self) -> Callable[[RunContext], _ModelSettings]:
             def settings(ctx: RunContext) -> _ModelSettings:
-                seen_dynamic_loaded.append(ctx.capability_loaded)
+                seen_dynamic_loaded.append(ctx.capability_active)
                 return _ModelSettings(temperature=0.2)
 
             return settings
@@ -2913,7 +2934,7 @@ async def test_deferred_hooks_do_not_fire_until_capability_is_loaded() -> None:
 
     @hooks.on.before_model_request
     async def record(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
-        seen_loaded.append(ctx.capability_loaded)
+        seen_loaded.append(ctx.capability_active)
         return request_context
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -4764,6 +4785,36 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert retry.content == snapshot("No capability found with id 'missing'.")
 
 
+async def test_load_capability_inherits_agent_tool_retries() -> None:
+    """`load_capability` honors the agent's tool retry budget."""
+    deferred = Capability[object](
+        id='deferred',
+        description='Deferred.',
+        defer_loading=True,
+    )
+    calls = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    args={'id': 'missing'},
+                    tool_call_id=f'load-missing-{calls}',
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[deferred], retries={'tools': 3})
+
+    with pytest.raises(UnexpectedModelBehavior):
+        await agent.run('load missing')
+
+    assert calls == 4
+
+
 async def test_load_capability_retries_for_already_available_capability() -> None:
     always_on = Capability[object](
         id='always-on',
@@ -4776,7 +4827,7 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='always-on')
+    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='always-on')
     retry_messages: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -4818,7 +4869,7 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='deferred')
+    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='deferred')
     retry_messages: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -11229,7 +11280,7 @@ async def _registered_capability_context(
             self, ctx: RunContext, request_context: ModelRequestContext
         ) -> ModelRequestContext:
             captured_capabilities.update(ctx.capabilities)
-            captured_available_ids.update(ctx.available_capability_ids)
+            captured_available_ids.update(ctx.active_capability_ids)
             return request_context
 
     agent = Agent(
@@ -12338,15 +12389,35 @@ class TestHooksCapability:
     async def test_sync_function_auto_wrapping(self):
         hooks = Hooks()
         call_log: list[str] = []
+        hook_thread_ids: list[int] = []
 
         @hooks.on.before_model_request
         def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('sync_hook')
+            hook_thread_ids.append(threading.get_ident())
             return request_context
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
         await agent.run('hello')
         assert call_log == ['sync_hook']
+        # The sync hook runs in a thread, so it can't block the event loop.
+        assert hook_thread_ids[0] != threading.get_ident()
+
+    async def test_sync_function_returning_awaitable(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('log_request')
+            return request_context
+
+        @hooks.on.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> Awaitable[ModelRequestContext]:
+            return log_request(ctx, request_context)
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['log_request']
 
     async def test_timeout(self):
         hooks = Hooks()
@@ -12364,6 +12435,22 @@ class TestHooksCapability:
         assert exc_info.value.timeout == 0.01
         assert isinstance(exc_info.value, AgentRunError)
         assert isinstance(exc_info.value, TimeoutError)
+
+    async def test_timeout_sync_hook(self):
+        """A sync hook runs in a worker thread, which is abandoned when its deadline expires."""
+        hooks = Hooks()
+
+        @hooks.on.before_model_request(timeout=0.01)
+        def slow_sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            time.sleep(0.1)
+            # The abandoned thread runs to completion, so this line is covered; only its result is discarded.
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(HookTimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value.hook_name == 'before_model_request'
+        assert exc_info.value.func_name == 'slow_sync_hook'
 
     async def test_has_wrap_node_run(self):
         hooks = Hooks()
@@ -13122,6 +13209,33 @@ class TestContextVarPropagation:
 
         for hook_name, value in reader.seen:
             assert value == 'from-before-run', f'{hook_name} did not see contextvar'
+
+    async def test_sync_before_run_hook_contextvar_does_not_propagate(self):
+        """Context vars set in a sync `before_run` hook do not propagate."""
+        hooks = Hooks()
+
+        @hooks.on.before_run
+        def set_contextvar(ctx: RunContext[Any]) -> None:
+            _test_cv.set('from-sync-hook')
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[hooks, reader])
+        await agent.run('hello')
+
+        # Documented consequence of sync hooks running in a thread pool: the write lands in
+        # the worker thread's copied context, so neither the run nor the caller ever sees it.
+        assert reader.seen
+        for hook_name, value in reader.seen:
+            assert value is None, f'{hook_name} unexpectedly saw contextvar'
+        assert _test_cv.get(None) is None
 
     async def test_contextvar_visible_in_on_run_error(self):
         """Context vars set in wrap_run are visible in on_run_error."""

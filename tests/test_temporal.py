@@ -13,14 +13,17 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from decimal import Decimal
+from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import anyio
 import httpx
+import httpx2
 import pytest
+from packaging.version import Version
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import PydanticSerializationError
 
@@ -70,7 +73,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._run_context import AnchoredEvidence
+from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
@@ -88,6 +91,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._operation import CallToolId
 from pydantic_ai.durable_exec._sandbox import contributes_sandbox, run_sandbox_supplier, sandbox_suppliers
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -107,7 +111,6 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
-    create_async_http_client,
     infer_model,
     infer_model_profile,
 )
@@ -206,6 +209,7 @@ try:
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import (
         TemporalModel,
+        _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import (
@@ -215,6 +219,9 @@ try:
         heartbeating,
         resolve_tool_activity_config,
         toolset_temporal_activities,
+    )
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
     )
 
     from .temporal_sandbox_workflow import PydanticAIPluginSandboxWorkflow
@@ -269,7 +276,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsInt, IsStr, message, message_part, try_import
+    from .conftest import IsDatetime, IsInt, IsList, IsStr, message, message_part, try_import
 
 with try_import() as anthropic_imports_successful:
     import anthropic
@@ -308,7 +315,7 @@ def blockbuster_enabled() -> bool:
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = create_async_http_client()
+http_client = httpx2.AsyncClient()
 
 
 # Scoped to `session` rather than `module`: the `http_client` and the module-level agents that
@@ -340,6 +347,22 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Generator[No
     assert isinstance(exc_info.value.__cause__, ApplicationError)
     assert exc_info.value.__cause__.type == exc_type.__name__
     assert exc_info.value.__cause__.message == exc_message
+
+
+@contextmanager
+def workflow_activity_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
+    """Assert an activity failure preserves the user exception through Temporal's cause chain."""
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        yield
+    causes: list[BaseException] = []
+    error: BaseException | None = exc_info.value
+    while error is not None:
+        causes.append(error)
+        error = error.__cause__
+    assert any(
+        isinstance(cause, ApplicationError) and cause.type == exc_type.__name__ and cause.message == exc_message
+        for cause in causes
+    ), f'{exc_type.__name__}({exc_message!r}) not found in the workflow failure cause chain: {causes}'
 
 
 TEMPORAL_PORT = 7243
@@ -2218,6 +2241,52 @@ async def test_temporal_dynamic_toolset_rejects_activity_opt_out():
         await durable.call_tool('boom', {}, ctx, tool)
 
 
+async def test_temporalize_dynamic_toolset_runs_args_validator_in_activity() -> None:
+    from pydantic_ai.durable_exec._toolset import get_dynamic_tools
+
+    validated: list[int] = []
+
+    # This test dispatches only the validator activity, not the tool body.
+    async def tool(value: int) -> int: ...  # pragma: no branch
+
+    def validator(ctx: RunContext[None], value: int) -> None:
+        validated.append(value)
+
+    dynamic = DynamicToolset(
+        lambda ctx: FunctionToolset([Tool(tool, args_validator=validator)]), id='legacy-validation'
+    )
+    durable = temporalize_dynamic_toolset(
+        dynamic,
+        activity_name_prefix='agent__legacy_validation',
+        activity_config={},
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    durable._in_durable_context = lambda: True  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    activity_calls = 0
+
+    async def run_activity(*, activity: Callable[..., Any], args: Sequence[Any], **config: Any) -> Any:
+        nonlocal activity_calls
+        activity_calls += 1
+        if activity_calls == 1:
+            return await get_dynamic_tools(dynamic, ctx)
+        return await ActivityEnvironment().run(activity, *args)
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._dynamic_toolset.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._dynamic_toolset.execute_activity', run_activity),
+    ):
+        run_toolset = await durable.for_run(ctx)
+        tools = await run_toolset.get_tools(ctx)
+        assert tools
+        resolved = next(iter(tools.values()))
+        assert resolved.args_validator_func is not None
+        await resolved.args_validator_func(ctx, value=1)
+
+    assert validated == [1]
+
+
 # --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
 # The per-run instructions cache is written by `get_tools` and read by `get_instructions` each
 # step; this guards against it serving a stale step-1 value on a later step.
@@ -2485,7 +2554,7 @@ async def test_model_construction_in_workflow_passes_sandbox(
     assert result == expected_model_class
 
 
-# Regression test for the `genai_prices`/`httpx2` passthrough entries in `_workflow_runner`.
+# Regression test for the `httpx2` stack passthrough entries in `_workflow_runner`.
 # `ModelResponse.cost()` lazily imports genai-prices on first call; inside a workflow that trips the
 # sandbox unless those modules are passed through (see #6215).
 @workflow.defn
@@ -3513,13 +3582,26 @@ async def test_logfire_plugin(client: Client):
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
 
-    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
-    # We can't check if the metrics URL was actually set correctly because it's on a `temporalio.bridge.runtime.Runtime` that we can't read from.
+    with patch.object(
+        temporal_logfire, 'OpenTelemetryConfig', wraps=temporal_logfire.OpenTelemetryConfig
+    ) as open_telemetry_config:
+        new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is not None
+    assert open_telemetry_config.call_args.kwargs['metric_periodicity'] == timedelta(seconds=60)
+
+    plugin = LogfirePlugin(setup_logfire, metric_periodicity=timedelta(minutes=5))
+    with patch.object(
+        temporal_logfire, 'OpenTelemetryConfig', wraps=temporal_logfire.OpenTelemetryConfig
+    ) as open_telemetry_config:
+        await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    assert open_telemetry_config.call_args.kwargs['metric_periodicity'] == timedelta(minutes=5)
 
     plugin = LogfirePlugin(setup_logfire, metrics=False)
-    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
-    assert new_client.service_client.config.runtime is None
+    custom_runtime = temporal_logfire.Runtime(telemetry=temporal_logfire.TelemetryConfig())
+    new_client = await Client.connect(
+        client.service_client.config.target_host, plugins=[plugin], runtime=custom_runtime
+    )
+    assert new_client.service_client.config.runtime is custom_runtime
 
     plugin = LogfirePlugin(lambda: setup_logfire(send_to_logfire=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
@@ -4193,6 +4275,20 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             )
 
 
+def payload_limit_detail(size: int) -> str:
+    """Temporal's own sentence inside the guard's message, which differs across the range we support.
+
+    `temporalio` 1.31 moved the payload-size check out of the Python SDK and into Temporal's Rust core,
+    which reports the breach without the byte counts the SDK's own check appended. Both shapes are inside
+    the `>=1.24` range the `temporal` extra declares, so which one to expect is read off the installed
+    SDK rather than pinned.
+    """
+    exceeded = '[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit'
+    if Version(version('temporalio')) >= Version('1.31'):
+        return exceeded
+    return f'{exceeded}. Size: {size} bytes, Limit: 2097152 bytes'
+
+
 async def _call_oversized_image_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('get_oversized_image', {})])
@@ -4241,9 +4337,7 @@ async def test_oversized_tool_return_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            snapshot(
-                "Tool 'get_oversized_image' returned a result too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2133494 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads"
-            ),
+            f"Tool 'get_oversized_image' returned a result too large for Temporal. {payload_limit_detail(2133494)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedToolReturnWorkflow.run,
@@ -4295,9 +4389,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            snapshot(
-                "The response from model 'function:oversized-response-model' is too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2134150 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads"
-            ),
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134150)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -4630,6 +4722,35 @@ async def test_temporal_run_context_without_anchored_evidence_still_answers_avai
     assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
 
 
+@pytest.mark.parametrize('carried', [True, False, None])
+async def test_temporal_run_context_accepts_the_legacy_capability_loaded_key(carried: bool | None):
+    """A payload written under the old field name still lands on `capability_active`.
+
+    An activity can be dispatched by one worker version and replayed by another, and
+    `serialize_run_context` is a documented override point, so both a mid-deployment payload and a
+    subclass written against the old name reach here. Without the mapping the value would sit in
+    `__dict__` under a name nothing reads, and the guard would report `capability_active` as a
+    field that never crossed the boundary.
+
+    `None` is the case that matters most and is easiest to miss: it is what every activity dispatched
+    *outside* capability dispatch carries, so a mapping keyed on the value rather than on the key's
+    presence breaks the common path while passing for `True`.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), capability_active=carried)
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    renamed = {'capability_active': 'capability_loaded', 'active_capability_ids': 'available_capability_ids'}
+    legacy_payload = {renamed.get(name, name): value for name, value in wire.items()}
+    assert 'capability_loaded' in legacy_payload
+    assert 'available_capability_ids' in legacy_payload
+
+    reconstructed = TemporalRunContext.deserialize_run_context(legacy_payload, deps=None)
+
+    assert reconstructed.capability_active is carried
+    # The second rename rides the same mapping: without it the guard would report
+    # `active_capability_ids` as a field that never crossed the boundary.
+    assert reconstructed.active_capability_ids == set()
+
+
 def test_temporal_run_context_sandbox_unavailable():
     """`ctx.sandbox` must raise with guidance inside an activity: a live handle can't cross the boundary."""
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
@@ -4801,6 +4922,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'deps',  # passed separately to deserialize_run_context
         'agent',  # reattached after deserialize by deserialize_run_context
         'model',  # live Model instance, not serializable
+        '_model_id',  # carried separately by operations that rebuild ctx.model worker-side
         'tracer',  # live tracer, not serializable
         'tool_manager',  # live ToolManager, not serializable (documented on the field)
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
@@ -4926,7 +5048,7 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
 async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_activity():
     """The definition form must answer, not raise, for a tool a capability contributed.
 
-    `is_tool_available` consults `available_capability_ids` for any tool carrying a
+    `is_tool_available` consults `active_capability_ids` for any tool carrying a
     `capability_id`, and the `capabilities` registry deliberately doesn't cross the boundary. The
     docs send toolset authors to the definition form precisely because it works inside `get_tools`,
     which under Temporal runs in an activity — so the ids travel as a snapshot.
@@ -4944,7 +5066,7 @@ async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_a
         TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
     )
 
-    assert reconstructed.available_capability_ids == {'guarded'}
+    assert reconstructed.active_capability_ids == {'guarded'}
     loaded = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
     assert reconstructed.is_tool_available(loaded) is True
 
@@ -5031,7 +5153,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     # one, which reads the registry — and that is guarded, so it raises rather than quietly
     # reporting no capabilities are active.
     with pytest.raises(UserError, match="'capabilities' is not available"):
-        _ = reconstructed.available_capability_ids
+        _ = reconstructed.active_capability_ids
     # Same for the on-demand set that `is_tool_available` consults: an older subclass doesn't carry
     # it either, so the base property reads the guarded registry and raises rather than reporting an
     # empty set, which would silently answer "no capability is deferred" for every tool.
@@ -6198,6 +6320,117 @@ async def test_temporal_model_cancel_suspended_response_outside_workflow():
     assert cancelled == [response]
 
 
+@dataclass
+class CancelTenantDeps:
+    tenant_id: str
+
+
+factory_cancel_calls: list[tuple[CancelTenantDeps, str]] = []
+factory_cancelled_responses: list[ModelResponse] = []
+
+
+def cancel_provider_factory(ctx: RunContext[object], provider_name: str) -> Any:
+    assert isinstance(ctx.deps, CancelTenantDeps)
+    factory_cancel_calls.append((ctx.deps, provider_name))
+    return object()
+
+
+class FactoryCancelRecordingModel(TestModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        factory_cancelled_responses.append(response)
+
+
+factory_cancel_temporal_model = TemporalModel(
+    TestModel(),
+    activity_name_prefix='test__factory_cancel',
+    activity_config=BASE_ACTIVITY_CONFIG,
+    deps_type=CancelTenantDeps,
+    provider_factory=cancel_provider_factory,
+)
+
+
+@workflow.defn
+class FactoryCancelWorkflow:
+    @workflow.run
+    async def run(self, response: ModelResponse) -> None:
+        deps = CancelTenantDeps(tenant_id='tenant-a')
+        ctx = RunContext[CancelTenantDeps](deps=deps, model=TestModel(), usage=RunUsage(), run_id='factory-cancel')
+        await execute_temporal_activity(
+            activity=factory_cancel_temporal_model.cancel_suspended_response_activity,
+            args=[
+                _ModelCancelParams(
+                    response=response,
+                    model_id='runtime-provider:model',
+                    serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+                    deps=deps,
+                )
+            ],
+            **BASE_ACTIVITY_CONFIG,
+        )
+
+
+async def test_temporal_model_cancel_suspended_response_uses_provider_factory(client: Client) -> None:
+    """A real worker preserves structured deps used to select the cancellation client."""
+    factory_cancel_calls.clear()
+    factory_cancelled_responses.clear()
+    factory_model = FactoryCancelRecordingModel()
+
+    def infer_runtime_model(model_id: str, provider_factory: Callable[[str], object] | None = None):
+        assert provider_factory is not None
+        provider_factory('runtime-provider')
+        return factory_model
+
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', side_effect=infer_runtime_model):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[FactoryCancelWorkflow],
+            activities=factory_cancel_temporal_model.temporal_activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            await client.execute_workflow(
+                FactoryCancelWorkflow.run,
+                args=[response],
+                id=f'{FactoryCancelWorkflow.__name__}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+
+    assert factory_cancel_calls == [(CancelTenantDeps(tenant_id='tenant-a'), 'runtime-provider')]
+    assert factory_cancelled_responses == [response]
+
+
+async def test_temporal_model_cancel_suspended_response_accepts_legacy_payload() -> None:
+    """An old cancel payload keeps the environment-inference behavior."""
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    params = TypeAdapter(_ModelCancelParams).validate_python(
+        {'response': response, 'model_id': 'runtime-provider:model'}
+    )
+    assert params.serialized_run_context is None
+    assert params.deps is None
+
+    cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response)
+
+    environment_model = RecordingModel()
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__legacy_cancel',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        deps_type=str,
+        provider_factory=Mock(),
+    )
+    with patch('pydantic_ai.durable_exec.temporal._model.models.infer_model', return_value=environment_model) as infer:
+        await ActivityEnvironment().run(temporal_model.cancel_suspended_response_activity, params)
+
+    infer.assert_called_once_with('runtime-provider:model')
+    assert cancelled == [response]
+
+
 # Module-level so the `@workflow.defn` below can bind to it (mirrors `simple_temporal_agent`). The
 # activity records into this list; since activities always run outside the workflow sandbox in the
 # worker process, the workflow can dispatch the teardown while the assertion still observes it here.
@@ -6226,6 +6459,25 @@ class CancelSuspendedResponseWorkflow:
         await cancel_temporal_model.cancel_suspended_response(response)
 
 
+replay_legacy_cancel_payload = True
+
+
+@workflow.defn
+class CancelSuspendedResponseReplayWorkflow:
+    @workflow.run
+    async def run(self, response: ModelResponse) -> None:
+        params = _ModelCancelParams(response=response)
+        if not replay_legacy_cancel_payload:
+            ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='cancel-replay')
+            params.serialized_run_context = TemporalRunContext.serialize_run_context(ctx)
+            params.deps = ctx.deps
+        await execute_temporal_activity(
+            activity=cancel_temporal_model.cancel_suspended_response_activity,
+            args=[params],
+            **BASE_ACTIVITY_CONFIG,
+        )
+
+
 async def test_temporal_model_cancel_suspended_response_in_workflow(client: Client):
     """Inside a workflow, `cancel_suspended_response` tears the server-side job down via an activity.
 
@@ -6252,6 +6504,39 @@ async def test_temporal_model_cancel_suspended_response_in_workflow(client: Clie
     # The teardown ran in the activity worker against the wrapped model, with the response faithfully
     # round-tripped through both serialization boundaries.
     assert model_cancel_calls == [response]
+
+
+async def test_temporal_model_cancel_suspended_response_replays_legacy_history(client: Client) -> None:
+    """A history recorded with the old cancel payload replays with the one-argument command intact."""
+    global replay_legacy_cancel_payload
+
+    replay_legacy_cancel_payload = True
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    workflow_id = f'{CancelSuspendedResponseReplayWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancelSuspendedResponseReplayWorkflow],
+        activities=cancel_temporal_model.temporal_activities,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        await client.execute_workflow(
+            CancelSuspendedResponseReplayWorkflow.run,
+            args=[response],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+
+    replay_legacy_cancel_payload = False
+    try:
+        await Replayer(
+            workflows=[CancelSuspendedResponseReplayWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        ).replay_workflow(history)
+    finally:
+        replay_legacy_cancel_payload = True
 
 
 async def test_temporal_model_request_stream_outside_workflow():
@@ -7433,14 +7718,17 @@ def _supplier_sandbox_agent(name: str, supplier: CreateOnlySandboxCapability) ->
 
 
 _lifecycle_sandbox_capability = LifecycleSandboxCapability()
+_lifecycle_sandbox_capability.id = 'lifecycle-sandbox'
 _lifecycle_durable_agent = _supplier_sandbox_agent('lifecycle_sandbox_durability_agent', _lifecycle_sandbox_capability)
 
 _teardownless_sandbox_capability = CreateOnlySandboxCapability()
+_teardownless_sandbox_capability.id = 'teardownless-sandbox'
 _teardownless_durable_agent = _supplier_sandbox_agent(
     'teardownless_sandbox_durability_agent', _teardownless_sandbox_capability
 )
 
 _unteardownable_sandbox_capability = FailingTeardownSandboxCapability()
+_unteardownable_sandbox_capability.id = 'unteardownable-sandbox'
 _unteardownable_durable_agent = _supplier_sandbox_agent(
     'unteardownable_sandbox_durability_agent', _unteardownable_sandbox_capability
 )
@@ -7451,6 +7739,7 @@ def _exploding_sandbox_tool_model(messages: list[ModelMessage], info: AgentInfo)
 
 
 _failing_lifecycle_sandbox_capability = LifecycleSandboxCapability()
+_failing_lifecycle_sandbox_capability.id = 'failing-lifecycle-sandbox'
 _failing_sandbox_durable_agent: Agent[None, str] = Agent(
     FunctionModel(_exploding_sandbox_tool_model),
     name='failing_sandbox_durability_agent',
@@ -7527,7 +7816,9 @@ async def test_temporal_durability_runs_the_sandbox_lifecycle_in_activities(clie
 
 
 _declining_sandbox_capability = DecliningSandboxCapability()
+_declining_sandbox_capability.id = 'declining-sandbox'
 _fallthrough_lifecycle_capability = LifecycleSandboxCapability()
+_fallthrough_lifecycle_capability.id = 'fallthrough-lifecycle-sandbox'
 _fallthrough_durable_agent: Agent[None, str] = Agent(
     FunctionModel(_supplied_sandbox_model),
     name='fallthrough_sandbox_durability_agent',
@@ -7877,8 +8168,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities (request, request_stream, cancel) + 1 for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 4
+    # 4 base activities + call/validation activities for the agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 6
 
 
 def test_durability_temporal_activities_with_toolsets():
@@ -7891,8 +8182,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
-    assert len(bound.temporal_activities) == 5
+    # 4 base activities + call/validation activities for both function toolsets
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_duplicate_toolset_id_rejected():
@@ -7925,8 +8216,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + 1 for <agent> FunctionToolset + 1 (not 2) for the shared toolset
-    assert len(bound.temporal_activities) == 5
+    # 4 base activities + call/validation activities for <agent> and the shared toolset (once)
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_activity_config_not_mutated():
@@ -7953,17 +8244,13 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadsTooLarge',
         'PayloadSizeError',
     ]
 
 
 def test_temporal_agent_retry_policy_non_retryable_errors():
-    """The deprecated wrapper builds its own list, so its entries need their own assertion.
-
-    `TemporalAgent` doesn't go through `with_non_retryable_errors`, and every line of its
-    inline list runs on any construction — so without this, dropping `PayloadSizeError`
-    would leave coverage at 100% while restoring the infinite retry of #7110.
-    """
+    """The deprecated wrapper normalizes its base activity retry policy with `with_non_retryable_errors`."""
     temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='retry_policy_probe_agent'),
     )
@@ -7973,6 +8260,9 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
     assert retry_policy.non_retryable_error_types == [
         'UserError',
         'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
+        'PayloadsTooLarge',
         'PayloadSizeError',
     ]
 
@@ -8007,6 +8297,7 @@ def test_temporal_agent_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadsTooLarge',
         'PayloadSizeError',
     ]
 
@@ -8049,6 +8340,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadsTooLarge',
         'PayloadSizeError',
     ]
 
@@ -8063,6 +8355,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadsTooLarge',
         'PayloadSizeError',
     ]
 
@@ -8085,6 +8378,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadsTooLarge',
         'PayloadSizeError',
     ]
 
@@ -8745,6 +9039,111 @@ class HandlerDurableAgentWorkflow:
         return result.output
 
 
+_ENQUEUE_GUARD_ERROR = (
+    '`ctx.enqueue()` is not supported inside a durable activity: the durable runtime replays '
+    "the activity's recorded result without re-running your code, so the enqueued messages "
+    'would be dropped. Enqueue messages from workflow-level code instead.'
+)
+_enqueue_handler_boundaries: set[str] = set()
+_enqueue_cancellation_rejected = False
+
+
+async def _enqueue_guard_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        with pytest.raises(UserError, match='enqueued messages would be dropped'):
+            ctx.enqueue('later')
+        boundary = 'model' if isinstance(event, (PartStartEvent, PartDeltaEvent)) else 'agent'
+        _enqueue_handler_boundaries.add(boundary)
+
+
+_enqueue_guard_tool_queue: list[str] = []
+_enqueue_guard_model_queue: list[str] = []
+
+
+async def _enqueue_guard_tool(ctx: RunContext[Deps]) -> str:
+    # An enqueued message keeps the run going, so drain a one-shot queue to make the
+    # outside-workflow run below terminate.
+    while _enqueue_guard_tool_queue:
+        ctx.enqueue(_enqueue_guard_tool_queue.pop())
+    return 'done'
+
+
+def _enqueue_guard_model_request(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+    ctx = get_current_run_context()
+    assert ctx is not None
+    # An enqueued message keeps the run going, so drain a one-shot queue to make the
+    # outside-workflow run below terminate after a second request.
+    while _enqueue_guard_model_queue:
+        ctx.enqueue(_enqueue_guard_model_queue.pop())
+    return ModelResponse(parts=[TextPart('done')])
+
+
+class _EnqueueOnCancelModel(ScriptedContinuationModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        global _enqueue_cancellation_rejected
+        ctx = get_current_run_context()
+        assert ctx is not None
+        with pytest.raises(UserError, match='enqueued messages would be dropped'):
+            ctx.enqueue('later')
+        _enqueue_cancellation_rejected = True
+
+
+_enqueue_handler_agent = Agent(
+    TestModel(),
+    name='temporal_handler_enqueue',
+    tools=[_durability_handler_tool],
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_enqueue_guard_handler)
+    ],
+)
+_enqueue_tool_agent = Agent(
+    TestModel(),
+    deps_type=Deps,
+    name='temporal_tool_enqueue',
+    tools=[_enqueue_guard_tool],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_enqueue_model_agent = Agent(
+    FunctionModel(_enqueue_guard_model_request),
+    name='temporal_model_enqueue',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_enqueue_cancel_model = _EnqueueOnCancelModel()
+_enqueue_cancel_agent = Agent(
+    _enqueue_cancel_model,
+    name='temporal_cancel_enqueue',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class EnqueueGuardHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _enqueue_handler_agent.run('run')).output
+
+
+@workflow.defn
+class EnqueueGuardToolWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        await _enqueue_tool_agent.run('run', deps=Deps(country='test'))
+
+
+@workflow.defn
+class EnqueueGuardModelWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        await _enqueue_model_agent.run('run')
+
+
+@workflow.defn
+class EnqueueGuardCancellationWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        await _enqueue_cancel_agent.run('run', usage_limits=UsageLimits(total_tokens_limit=50))
+
+
 async def test_temporal_durability_event_stream_handler(client: Client) -> None:
     _durability_handler_events.clear()
     bound = TemporalDurability.from_agent(_handler_durable_agent)
@@ -8775,6 +9174,107 @@ async def test_temporal_durability_event_stream_handler(client: Client) -> None:
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     assert any(isinstance(event, PartStartEvent) for event in events)
     assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_temporal_event_stream_handler_rejects_enqueue(client: Client) -> None:
+    _enqueue_handler_boundaries.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EnqueueGuardHandlerWorkflow],
+        plugins=[AgentPlugin(_enqueue_handler_agent)],
+    ):
+        await client.execute_workflow(
+            EnqueueGuardHandlerWorkflow.run,
+            id=EnqueueGuardHandlerWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert _enqueue_handler_boundaries == {'model', 'agent'}
+
+
+async def test_temporal_tool_rejects_enqueue(client: Client) -> None:
+    _enqueue_guard_tool_queue[:] = ['later']
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EnqueueGuardToolWorkflow],
+        plugins=[AgentPlugin(_enqueue_tool_agent)],
+    ):
+        with workflow_activity_raises(UserError, _ENQUEUE_GUARD_ERROR):
+            await client.execute_workflow(
+                EnqueueGuardToolWorkflow.run,
+                id=EnqueueGuardToolWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    # Outside a workflow the capability is transparent, so the tool runs inline and enqueueing works.
+    _enqueue_guard_tool_queue[:] = ['later']
+    await _enqueue_tool_agent.run('run', deps=Deps(country='test'))
+    assert not _enqueue_guard_tool_queue
+
+
+async def test_temporal_non_streaming_model_request_rejects_enqueue(client: Client) -> None:
+    _enqueue_guard_model_queue[:] = ['later']
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EnqueueGuardModelWorkflow],
+        plugins=[AgentPlugin(_enqueue_model_agent)],
+    ):
+        with workflow_activity_raises(UserError, _ENQUEUE_GUARD_ERROR):
+            await client.execute_workflow(
+                EnqueueGuardModelWorkflow.run,
+                id=EnqueueGuardModelWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    # Outside a workflow the capability is transparent, so the model runs inline and enqueueing works.
+    _enqueue_guard_model_queue[:] = ['later']
+    assert (await _enqueue_model_agent.run('run')).output == 'done'
+    assert not _enqueue_guard_model_queue
+
+
+async def test_temporal_cancellation_rejects_enqueue(client: Client) -> None:
+    global _enqueue_cancellation_rejected
+    _enqueue_cancellation_rejected = False
+    _enqueue_cancel_model.reset(
+        responses=[
+            scripted_response(
+                texts=['still going'],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['over budget'],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EnqueueGuardCancellationWorkflow],
+        plugins=[AgentPlugin(_enqueue_cancel_agent)],
+    ):
+        with workflow_raises(
+            UsageLimitExceeded,
+            (
+                'Exceeded the total_tokens_limit of 50 (total_tokens=165). Consider raising the limit, or see the docs '
+                'on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+            ),
+        ):
+            await client.execute_workflow(
+                EnqueueGuardCancellationWorkflow.run,
+                id=EnqueueGuardCancellationWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    assert _enqueue_cancellation_rejected
 
 
 _iter_handler_events: list[tuple[AgentStreamEvent, bool]] = []
@@ -9074,6 +9574,87 @@ def test_durability_tool_metadata_disables_activity():
     assert 'meta_toolset' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs():
+    """Capability-owned config preserves every legacy `metadata={'temporal': False}` outcome."""
+
+    # Metadata resolution inspects these tools but deliberately never executes them.
+    async def async_tool() -> str: ...  # pragma: no branch
+
+    def sync_tool() -> str: ...  # pragma: no branch
+
+    toolset = FunctionToolset[None](id='opt_out_tools')
+    toolset.add_function(async_tool, metadata={'temporal': False})
+    toolset.add_function(sync_tool, metadata={'temporal': False})
+    agent = Agent(
+        TestModel(),
+        name='opt_outs',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+
+    assert (
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            CallToolId('function', 'opt_out_tools'), tools['async_tool'], 'async_tool'
+        )
+        is False
+    )
+    with pytest.raises(UserError, match='non-async tools are run in threads'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            CallToolId('function', 'opt_out_tools'), tools['sync_tool'], 'sync_tool'
+        )
+
+    with pytest.raises(UserError, match='dynamic-toolset tools cannot run inside the workflow'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            CallToolId('dynamic', 'dynamic_opt_out'), tools['async_tool'], 'async_tool'
+        )
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_opt_out')
+    mcp_tool = ToolsetTool(
+        toolset=mcp_toolset,
+        tool_def=ToolDefinition(name='mcp_tool', metadata={'temporal': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    with pytest.raises(UserError, match='MCP tools require the use of IO'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            CallToolId('mcp', 'mcp_opt_out'), mcp_tool, 'mcp_tool'
+        )
+
+
+async def test_durability_mcp_instructions_use_operation_activity_summary(monkeypatch: pytest.MonkeyPatch):
+    """The common MCP instructions operation retains Temporal's legacy activity summary."""
+    mcp_toolset = MCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        id='instructions_summary',
+        include_instructions=True,
+    )
+    agent = Agent(
+        TestModel(),
+        name='instructions_summary',
+        toolsets=[mcp_toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    wrapped = durability._toolsets_by_id['instructions_summary']  # pyright: ignore[reportPrivateUsage]
+    dispatched_summaries: list[str] = []
+
+    async def execute_activity(*args: Any, **config: Any) -> str:
+        dispatched_summaries.append(config['summary'])
+        return 'server instructions'
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        assert await wrapped.get_instructions(ctx) == 'server instructions'
+    assert dispatched_summaries == ['get instructions: instructions_summary']
+
+
 def test_resolve_tool_activity_config_reads_metadata():
     """Tool metadata takes priority while defaults and caller-owned retry policies stay intact."""
     configured_retry_policy = RetryPolicy(maximum_attempts=3, non_retryable_error_types=['CustomError'])
@@ -9110,6 +9691,7 @@ def test_resolve_tool_activity_config_reads_metadata():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadsTooLarge',
         'PayloadSizeError',
     ]
 
@@ -9172,6 +9754,7 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadsTooLarge',
         'PayloadSizeError',
     ]
 
@@ -9471,7 +10054,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                 BasicSpan(content='RunWorkflow:ComplexDurableAgentLogfireWorkflow'),
                 BasicSpan(
                     content='durability_complex_agent_logfire run',
-                    children=[
+                    children=IsList(
                         BasicSpan(
                             content='StartActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__get_tools',
                             children=[
@@ -9852,7 +10435,8 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                    ],
+                        check_order=False,
+                    ),
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexDurableAgentLogfireWorkflow'),
             ],
@@ -10154,9 +10738,6 @@ class DurabilityWebSearchAgentWorkflow:
         return result.output
 
 
-@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
-)
 async def test_durability_web_search_in_workflow(allow_model_requests: None, client: Client):
     """Capability-path equivalent of `test_web_search_agent_run_in_workflow`.
 
@@ -11872,7 +12453,13 @@ async def heartbeat_probe_agent_tool() -> str:
     return 'probe agent tool ran'
 
 
-_heartbeat_function_toolset = FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_tools')
+async def _heartbeat_probe_args_validator(ctx: RunContext[None]) -> None:
+    await asyncio.sleep(0.01)
+
+
+_heartbeat_function_toolset = FunctionToolset[None](
+    tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_tools'
+)
 _heartbeat_mcp_toolset = MCPToolset(
     StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
     id='hb_mcp',
@@ -11885,7 +12472,9 @@ _heartbeat_mcp_toolset = MCPToolset(
 
 async def _heartbeat_dynamic_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
     await asyncio.sleep(0.01)
-    return FunctionToolset[None](tools=[heartbeat_probe_tool], id='hb_dynamic_inner')
+    return FunctionToolset[None](
+        tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_dynamic_inner'
+    )
 
 
 async def _heartbeat_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -11907,12 +12496,18 @@ class _HeartbeatProbeModel(FunctionModel):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await asyncio.sleep(0.01)
 
+    async def compact_messages(
+        self, request_context: ModelRequestContext, *, instructions: str | None = None
+    ) -> ModelResponse:
+        await asyncio.sleep(0.01)
+        return ModelResponse(parts=[TextPart('compacted')])
+
 
 _heartbeat_agent = Agent(
     _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
     name='heartbeat_probe_agent',
     deps_type=type(None),
-    tools=[heartbeat_probe_agent_tool],
+    tools=[Tool(heartbeat_probe_agent_tool, args_validator=_heartbeat_probe_args_validator)],
     toolsets=[
         _heartbeat_function_toolset,
         _heartbeat_mcp_toolset,
@@ -11972,8 +12567,28 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__toolset__<agent>__validate_args': [
+                CallToolParams(
+                    name='heartbeat_probe_agent_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=agent_tool_def,
+                ),
+                None,
+            ],
             f'{prefix}__model_request': [request_params, None],
             f'{prefix}__model_request_stream': [request_params, None],
+            f'{prefix}__model_compact_messages': [
+                _CompactMessagesParams(
+                    messages=request_params.messages,
+                    model_settings=None,
+                    model_request_parameters=request_params.model_request_parameters,
+                    streaming=False,
+                    instructions='Keep decisions',
+                    serialized_run_context=serialized_run_context,
+                ),
+                None,
+            ],
             f'{prefix}__model_cancel_suspended_response': [
                 _CancelParams(
                     response=ModelResponse(parts=[TextPart('suspended')]),
@@ -11997,6 +12612,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__toolset__hb_tools__validate_args': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
             f'{prefix}__mcp_server__hb_mcp__get_tools': [get_tools_params, None],
             f'{prefix}__mcp_server__hb_mcp__get_instructions': [get_tools_params, None],
             f'{prefix}__mcp_server__hb_mcp__call_tool': [
@@ -12010,6 +12634,15 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             ],
             f'{prefix}__dynamic_toolset__hb_dynamic__get_tools': [get_tools_params, None],
             f'{prefix}__dynamic_toolset__hb_dynamic__call_tool': [
+                CallToolParams(
+                    name='heartbeat_probe_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=function_tool_def,
+                ),
+                None,
+            ],
+            f'{prefix}__dynamic_toolset__hb_dynamic__validate_args': [
                 CallToolParams(
                     name='heartbeat_probe_tool',
                     tool_args={},
@@ -12379,6 +13012,73 @@ async def test_durability_call_tool_activity_without_tool_def_re_prepares_tool()
 
     assert unwrap_tool_call_result(result) == 'legacy'
     assert prepare_run_steps == [3]
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Tool 'missing' not found in toolset 'legacy_ts'. Removing or renaming tools during an agent run"
+        ),
+    ):
+        await call_tool_activity(
+            CallToolParams(
+                name='missing',
+                tool_args={},
+                serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+                tool_def=None,
+            ),
+            None,
+        )
+
+
+async def test_durability_common_call_activity_accepts_legacy_params_without_tool_def():
+    """The common operation activity keeps accepting payloads scheduled before `tool_def` existed."""
+
+    async def legacy_tool() -> str:
+        return 'legacy'
+
+    toolset = FunctionToolset[None]([legacy_tool], id='common_legacy_ts')
+    agent = Agent(
+        TestModel(),
+        name='common_legacy_params',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    registrations_by_name = {
+        ActivityDefinition.must_from_callable(registration).name: registration  # pyright: ignore[reportUnknownMemberType]
+        for registration in durability.temporal_activities
+    }
+    call_tool_activity = registrations_by_name['agent__common_legacy_params__toolset__common_legacy_ts__call_tool']
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123', run_step=3)
+
+    result = await call_tool_activity(
+        CallToolParams(
+            name='legacy_tool',
+            tool_args={},
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            tool_def=None,
+        ),
+        None,
+    )
+    assert unwrap_tool_call_result(result) == 'legacy'
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Tool 'missing' not found in toolset 'common_legacy_ts'. Removing or renaming tools during an agent run"
+        ),
+    ):
+        await call_tool_activity(
+            CallToolParams(
+                name='missing',
+                tool_args={},
+                serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+                tool_def=None,
+            ),
+            None,
+        )
 
 
 _renamed_tool_names: list[list[str]] = []

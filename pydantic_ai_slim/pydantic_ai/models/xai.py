@@ -109,18 +109,20 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
-XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest']
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']
 """Possible xAI model names.
 
-`grok-4.5`/`grok-4.5-latest` are bridged with a local `Literal` because `xai_sdk`'s `ChatModel` doesn't
-list them yet (as of 1.17.0). Drop the literal once the `xai-sdk` floor is bumped past the release that
-adds them to `ChatModel`.
+The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the
+floor the `xai` extra declares: `grok-build-0.1` arrived in 1.15.0, `grok-4.5`/`grok-4.5-latest` in
+1.17.1, and `grok-4.6` in 1.18.0. Drop each once the floor is bumped past the release that adds it
+to `ChatModel`. https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
 """
 
 # `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
 # `'grok'` alias (when `GrokProvider` existed) so persisted messages from before the rename still
 # route their thinking and native-tool parts back to this provider.
 _XAI_PROVIDER_NAMES = frozenset({'xai', 'grok'})
+_ATTACHMENT_SEARCH_TOOL_NAME = 'attachment_search'
 
 
 def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) -> GrokReasoningEffort | None:
@@ -230,6 +232,14 @@ class XaiModelSettings(ModelSettings, total=False):
     """Whether to include the collections search results in the response.
 
     Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
+    """
+
+    xai_include_attachment_search_output: bool
+    """Whether to include the attachment search results in the response.
+
+    Defaults to `False`.
+
+    Corresponds to `INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT` in the xAI SDK.
     """
 
     xai_reasoning_effort: GrokReasoningEffort
@@ -583,6 +593,17 @@ class XaiModel(Model[AsyncClient]):
                     arguments=item.args_as_json_str(),
                 ),
             )
+        elif item.tool_name == _ATTACHMENT_SEARCH_TOOL_NAME:
+            function_name = (item.provider_details or {}).get('function_name', _ATTACHMENT_SEARCH_TOOL_NAME)
+            return chat_types.chat_pb2.ToolCall(
+                id=item.tool_call_id,
+                type=chat_types.chat_pb2.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
+                status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
+                function=chat_types.chat_pb2.FunctionCall(
+                    name=function_name,
+                    arguments=item.args_as_json_str(),
+                ),
+            )
         return None
 
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
@@ -710,7 +731,7 @@ class XaiModel(Model[AsyncClient]):
 
         return tool_defs, tool_choice
 
-    async def _create_chat(
+    async def _create_chat(  # noqa: C901
         self,
         messages: list[ModelMessage],
         model_settings: XaiModelSettings,
@@ -777,11 +798,13 @@ class XaiModel(Model[AsyncClient]):
         if model_settings.get('xai_include_inline_citations'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
         if model_settings.get('xai_include_x_search_output') or any(
-            isinstance(bt, XSearchTool) and bt.include_output for bt in model_request_parameters.native_tools
+            isinstance(tool, XSearchTool) and tool.include_output for tool in model_request_parameters.native_tools
         ):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_collections_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_attachment_search_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
@@ -1304,6 +1327,8 @@ def _get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
         return XSearchTool.kind
     elif tool_type == 'collections_search_tool':
         return FileSearchTool.kind
+    elif tool_type == 'attachment_search_tool':
+        return _ATTACHMENT_SEARCH_TOOL_NAME
     else:
         # Unknown tool type - use function name
         return tool_call.function.name
@@ -1324,6 +1349,7 @@ def _map_server_side_tools_used_to_name(server_side_tool: usage_pb2.ServerSideTo
         usage_pb2.SERVER_SIDE_TOOL_MCP: MCPServerTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: XSearchTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: FileSearchTool.kind,
+        usage_pb2.SERVER_SIDE_TOOL_ATTACHMENT_SEARCH: _ATTACHMENT_SEARCH_TOOL_NAME,
         usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE: 'view_image',
         usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO: 'view_x_video',
     }

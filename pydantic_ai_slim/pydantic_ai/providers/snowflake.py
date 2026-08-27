@@ -5,8 +5,6 @@ import re
 from collections.abc import Callable
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -24,7 +22,10 @@ except ImportError as _import_error:
         'you can use the `snowflake` optional group — `pip install "pydantic-ai-slim[snowflake]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
 class SnowflakeModelProfile(OpenAIModelProfile, total=False):
@@ -134,7 +135,7 @@ class SnowflakeProvider(_OpenAICompatibleProvider):
         token: str | None = None,
         base_url: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -144,7 +145,7 @@ class SnowflakeProvider(_OpenAICompatibleProvider):
         token: str | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new Snowflake provider.
 
@@ -160,7 +161,7 @@ class SnowflakeProvider(_OpenAICompatibleProvider):
             openai_client: An existing `AsyncOpenAI` client to use. Its `base_url` must already
                 point at the Cortex REST API. If provided, `account`, `token`, `base_url`, and
                 `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert account is None, 'Cannot provide both `openai_client` and `account`'

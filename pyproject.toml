@@ -49,7 +49,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,retries,logfire]=={{ version }}",
+    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,logfire]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -76,6 +76,7 @@ duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
 tavily = ["pydantic-ai-slim[tavily]=={{ version }}"]
 exa = ["pydantic-ai-slim[exa]=={{ version }}"]
 web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
+retries = ["pydantic-ai-slim[retries]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
 mcp-tasks = ["pydantic-ai-slim[mcp-tasks]=={{ version }}"]
@@ -85,13 +86,13 @@ google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
 xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
 
 [project.urls]
-Homepage = "https://ai.pydantic.dev"
+Homepage = "https://pydantic.dev/docs/ai/"
 Source = "https://github.com/pydantic/pydantic-ai"
-Documentation = "https://ai.pydantic.dev"
+Documentation = "https://pydantic.dev/docs/ai/"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.scripts]
-pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
+pai = "pydantic_ai._cli:cli_exit" # TODO(v3): remove this alias; clai has been on PyPI since 2025-05. https://pypi.org/project/clai/#history
 
 [tool.uv.sources]
 pydantic-ai = { workspace = true }
@@ -173,11 +174,6 @@ build-constraint-dependencies = [
 ]
 
 [tool.uv.exclude-newer-package]
-# Test-only, and the wire types it carries are the reference the MCP SDK v1/v2 compat readers are
-# checked against — released 2026-07-28, days inside the rolling window. Drop this line once the
-# window has moved past it. Timezone-explicit because uv resolves a bare date in the local
-# timezone, which would make `uv lock --check` machine-dependent.
-mcp-types = "2026-07-30T00:00:00Z"
 # These are our own packages, not worth defending from supply chain attacks on them.
 pydantic = false
 pydantic-core = false
@@ -187,11 +183,16 @@ pydantic-handlebars = false
 genai-prices = false
 logfire = false
 logfire-api = false
+# Anthropic 1.0 is built on HTTPX2 and drops legacy HTTPX entirely.
+# TODO(dsfaccini): Remove after 2026-08-27 19:59 UTC. https://github.com/pydantic/pydantic-ai/issues/7658
+# This admits only the reviewed 1.0.0 artifacts; later Anthropic artifacts remain quarantined.
+anthropic = "2026-08-20T19:58:59Z"
 
 [dependency-groups]
 dev = [
     "anyio>=4.7.0",
     "asgi-lifespan>=2.1.0",
+    "httpx>=0.27",
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
@@ -224,7 +225,12 @@ dev = [
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
     "blockbuster>=1.5.26,<1.6",
 ]
-lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
+lint = [
+    "griffecli>=2.1.0,<3",
+    "mypy>=1.11.2",
+    "pyright>=1.1.408",
+    "ruff>=0.14.14",
+]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
 exclude = ["/pydantic_ai_slim/pydantic_ai/.agents"]
@@ -247,15 +253,20 @@ include = [
     "tests/**/*.py",
     "docs/**/*.py",
     ".github/scripts/ci_duration.py",
+    ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
+    ".github/scripts/semantic_owner_router.py",
+    ".github/scripts/test_semantic_owner_router.py",
     ".github/scripts/agentic_workflow_guard.py",
     ".github/scripts/test_agentic_workflow_guard.py",
     ".github/scripts/agent_spend_report.py",
     ".github/scripts/test_agent_spend_report.py",
+    ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
 ]
 
@@ -308,11 +319,15 @@ quote-style = "single"
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
 ".github/scripts/ci_duration.py" = ["D"]
+".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
+".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
+".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
 ".github/scripts/test_agent_spend_report.py" = ["D"]
+".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 
 [tool.pyright]
@@ -330,10 +345,13 @@ include = [
     "examples",
     "clai",
     ".github/scripts/ci_duration.py",
+    ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
+    ".github/scripts/semantic_owner_router.py",
 ]
 # The monitor policy tests deliberately exercise private helpers and loose GitHub
 # webhook dictionaries through monkeypatching; pytest covers them, while the
@@ -348,6 +366,7 @@ executionEnvironments = [
     # the test file, not under the project root) the same way the runtime
     # `sys.path.insert(...)` at the top of the test does.
     { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = ".github/scripts/test_check_api_compatibility.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
@@ -383,7 +402,13 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
+    # `enable_otlp` is set as `tests/test_dbos.py` does.
+    # TODO(dsfaccini): Drop this once DBOS moves to the `opentelemetry-instrumentation-logging`
+    # handler. https://github.com/dbos-inc/dbos-transact-py/issues/821
+    "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
+    # Fixed upstream in 0.4.0: https://github.com/voyage-ai/voyageai-python/pull/60 — drop when we bump past 0.3.7.
     "ignore: Core Pydantic V1 functionality:UserWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",

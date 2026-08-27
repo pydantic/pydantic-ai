@@ -128,6 +128,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         new_self.__adopt_wrapped_identity()
         return new_self
 
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        self.wrapped._prepare_run_context(ctx)
+
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:

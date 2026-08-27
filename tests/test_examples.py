@@ -247,6 +247,10 @@ def test_docs_examples(
     mocker.patch('httpx.Client.post', side_effect=http_request)
     mocker.patch('httpx.AsyncClient.get', side_effect=async_http_request)
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
+    mocker.patch('httpx2.Client.get', side_effect=http_request)
+    mocker.patch('httpx2.Client.post', side_effect=http_request)
+    mocker.patch('httpx2.AsyncClient.get', side_effect=async_http_request)
+    mocker.patch('httpx2.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 

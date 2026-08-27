@@ -1,6 +1,6 @@
 import re
 
-import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -12,6 +12,7 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
@@ -69,6 +70,7 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     deepseek_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     google_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
     grok_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
+    groq_mock = mocker.patch(f'{ns}.groq_model_profile', wraps=groq_model_profile)
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     openai_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
 
@@ -102,6 +104,13 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     assert profile is not None
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
+    # Test groq provider — the suffix after the first `/` keeps its own `openai/gpt-oss` prefix,
+    # which is what `groq_model_profile` gates on
+    profile = provider.model_profile('groq/openai/gpt-oss-120b')
+    groq_mock.assert_called_with('openai/gpt-oss-120b')
+    assert profile is not None
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
     # Test mistral provider
     profile = provider.model_profile('mistral/mistral-large')
     mistral_mock.assert_called_with('mistral-large')
@@ -122,7 +131,7 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
 
 
 def test_vercel_with_http_client():
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = VercelProvider(api_key='test-key', http_client=http_client)
     assert provider.client.api_key == 'test-key'
     assert str(provider.client.base_url) == 'https://ai-gateway.vercel.sh/v1/'

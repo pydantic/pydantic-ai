@@ -10,6 +10,7 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableMCPToolset,
+    Instructions,
     ToolConfig,
     unwrap_tool_call_result,
     wrap_tool_call_result,
@@ -118,9 +119,7 @@ def temporalize_mcp_toolset(
             **config,
         )
 
-    async def get_instructions_operation(
-        ctx: RunContext[AgentDepsT],
-    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+    async def get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
         config: ActivityConfig = {'summary': f'get instructions: {toolset.id}', **activity_config}
         return await execute_activity(
             activity=get_instructions_activity_def,

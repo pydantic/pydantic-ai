@@ -4,7 +4,7 @@ from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
 
 from pydantic import ValidationError
 from typing_extensions import deprecated
@@ -86,12 +86,15 @@ WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]
 RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
 
+DurableOperationDispatcher: TypeAlias = Callable[
+    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
+]
+
 WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 """Handler type for wrap_output_validate."""
 
 WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
 """Handler type for wrap_output_process."""
-
 
 CapabilityPosition = Literal['outermost', 'innermost']
 """Position tier for a capability in the middleware chain.
@@ -188,6 +191,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    def _get_durable_operation_bindings(self) -> dict[int, dict[str, DurableOperationDispatcher]]:
+        return cast(
+            dict[int, dict[str, DurableOperationDispatcher]],
+            self.__dict__.get('_pydantic_ai_durable_operation_bindings', {}),
+        )
+
+    def _set_durable_operation_bindings(self, bindings: dict[int, dict[str, DurableOperationDispatcher]]) -> None:
+        object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
+
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
@@ -210,7 +222,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     run — including the fresh instance a [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
     override may return — rather than a specific object.
 
-    Required when `defer_loading=True`. If omitted for an always-available
+    Required when `defer_loading=True`. If omitted for an always-on
     capability, the run derives a local id from the class name.
     """
 
@@ -310,11 +322,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Install private per-run state before lifecycle hooks."""
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
         Called once per run, before `get_*()` re-extraction and before any hooks fire.
         Override to return a fresh instance for per-run state isolation.
+        Under durable execution, worker processes re-derive this instance from the deserialized
+        run context, so all per-run state must be derivable from `ctx`.
         Default: return `self` (shared across runs).
         """
         return self
@@ -505,7 +522,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
         On a deferred capability this runs only once the capability is loaded, and then receives
-        every function tool, as an always-available capability does. There is nothing to govern
+        every function tool, as an always-on capability does. There is nothing to govern
         before that: an unloaded capability's tools are neither advertised to the model nor
         callable, so no filtering here could change what the model can reach.
         """

@@ -16,7 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
-import httpx
+import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
@@ -186,10 +186,10 @@ async def test_google_default_tools_use_validated_mode(
     """
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx.Request) -> None:
+    async def capture_request(request: httpx2.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
     agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain
@@ -251,10 +251,10 @@ async def test_google_validated_accepts_strict_incompatible_schema(
     """
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx.Request) -> None:
+    async def capture_request(request: httpx2.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
     agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain
@@ -349,10 +349,10 @@ async def test_google_validated_accepts_what_auto_accepts(
     """
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx.Request) -> None:
+    async def capture_request(request: httpx2.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
     agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain(strict=strict)
