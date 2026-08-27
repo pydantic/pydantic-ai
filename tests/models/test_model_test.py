@@ -709,12 +709,16 @@ def test_json_schema_test_data_all_numeric_bound_combinations() -> None:
         {'type': 'number', 'minimum': -(10**400)},
         {'type': 'number', 'maximum': 10**400},
         {'type': 'number', 'minimum': -(10**400), 'maximum': 1},
+        {'type': 'number', 'minimum': -(10**400), 'maximum': 0.5},
         {'type': 'number', 'minimum': -1, 'maximum': 10**400},
     ]
     for schema in huge_bound_schemas:
         for seed in seeds:
             number = _JsonSchemaTestData(schema, seed=seed).generate()
             assert isinstance(number, float) and math.isfinite(number) and matches_bounds(number, schema)
+
+    invalid_number: Any = _JsonSchemaTestData({'type': 'number', 'minimum': 10**400}).generate()
+    assert math.isnan(invalid_number)
 
 
 def test_chars_wrap():
