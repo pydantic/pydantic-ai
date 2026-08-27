@@ -4784,6 +4784,12 @@ def _serialized_ref_context(*, capability_id: str | None = 'connector') -> dict[
     return TemporalRunContext.serialize_run_context(ctx)
 
 
+def _serialized_provider_context(capability_id: str = 'provider') -> dict[str, Any]:
+    serialized = TemporalRunContext.serialize_run_context(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    serialized['_sandbox_state'] = {'capability_id': capability_id}
+    return serialized
+
+
 async def test_temporal_run_context_round_trips_sandbox_ref():
     from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
 
@@ -4859,6 +4865,62 @@ async def test_temporal_run_context_sandbox_ref_connection_errors_surface():
         TemporalRunContext, _serialized_ref_context(capability_id=None), deps=None, agent=agent
     )
     with pytest.raises(UserError, match=r'^sandbox disabled by policy$'):
+        await reconstructed.sandbox.run(['true'])
+
+
+async def test_temporal_run_context_provider_sandbox_requires_an_agent():
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    reconstructed = deserialize_run_context(TemporalRunContext, _serialized_provider_context(), deps=None, agent=None)
+    with pytest.raises(UserError, match='no agent is attached to this Temporal activity'):
+        await reconstructed.sandbox.run(['true'])
+
+
+async def test_temporal_run_context_provider_sandbox_routing_errors_surface():
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
+
+    class Provider(AbstractCapability[Any]):
+        id = 'provider'
+
+        def __init__(self, outcome: SandboxBackend | Exception | None) -> None:
+            self.outcome = outcome
+
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            assert ref is None
+            if isinstance(self.outcome, Exception):
+                raise self.outcome
+            return self.outcome
+
+    missing_agent = Agent(TestModel(), name='missing_provider_agent')
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, _serialized_provider_context(), deps=None, agent=missing_agent
+    )
+    with pytest.raises(UserError, match="expected one capability with id 'provider', found 0"):
+        await reconstructed.sandbox.run(['true'])
+
+    deferred = Provider(None)
+    deferred.defer_loading = True
+    deferred_agent = Agent(TestModel(), name='deferred_provider_agent', capabilities=[deferred])
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, _serialized_provider_context(), deps=None, agent=deferred_agent
+    )
+    with pytest.raises(UserError, match="through deferred capability 'provider'"):
+        await reconstructed.sandbox.run(['true'])
+
+    error = RuntimeError('connection failed')
+    failing_agent = Agent(TestModel(), name='failing_provider_agent', capabilities=[Provider(error)])
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, _serialized_provider_context(), deps=None, agent=failing_agent
+    )
+    with pytest.raises(UserError, match="Capability 'provider' failed to connect its sandbox") as exc_info:
+        await reconstructed.sandbox.run(['true'])
+    assert exc_info.value.__cause__ is error
+
+    declining_agent = Agent(TestModel(), name='declining_provider_agent', capabilities=[Provider(None)])
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, _serialized_provider_context(), deps=None, agent=declining_agent
+    )
+    with pytest.raises(UserError, match=r'`get_sandbox` hook returned `None` without a `SandboxRef`'):
         await reconstructed.sandbox.run(['true'])
 
 
@@ -7700,11 +7762,20 @@ class SandboxSupplyingTemporalDurability(TemporalDurability[Any]):
         return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover
 
 
-def test_temporal_durability_base_sandbox_routing_is_not_a_user_supplier():
+async def test_temporal_durability_base_sandbox_routing_is_not_a_user_supplier():
     """The base `acquire_sandbox` override only routes the real winner's lifecycle into activities,
     so it must not read as a supplier itself; a subclass override is a genuine supplier."""
     assert contributes_sandbox(TemporalDurability()) is False
     assert contributes_sandbox(SandboxSupplyingTemporalDurability()) is True
+    assert TemporalDurability().has_get_sandbox is False
+
+    class ConnectingTemporalDurability(TemporalDurability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            return None
+
+    connecting = ConnectingTemporalDurability()
+    assert connecting.has_get_sandbox is True
+    assert await connecting.get_sandbox(RunContext(deps=None, model=TestModel(), usage=RunUsage()), None) is None
 
 
 # --- Durability with a sandbox-supplying capability ---
@@ -8499,6 +8570,11 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
             id='model_activity_config',
         ),
         pytest.param(
+            {'capability_activity_config': {'start_to_close': timedelta(seconds=1)}},
+            'Invalid Temporal `ActivityConfig` in `capability_activity_config`',
+            id='capability_activity_config',
+        ),
+        pytest.param(
             {'event_stream_handler_activity_config': {'summry': 'oops', 'task_q': 'oops'}},
             'Invalid Temporal `ActivityConfig` in `event_stream_handler_activity_config`',
             id='event_stream_handler_activity_config',
@@ -8907,7 +8983,8 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
     def base_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
         return CombinedCapability([_BaseOne(), _BaseTwo(), _SkipRequest()])
 
-    def extra_factory(ctx: RunContext[None]) -> AbstractCapability[None]:
+    # The assertion below is that Temporal rejects this runtime factory before calling it.
+    def extra_factory(ctx: RunContext[None]) -> AbstractCapability[None]:  # pragma: no cover
         return CombinedCapability([_ExtraOne(), _ExtraTwo()])
 
     agent = Agent(

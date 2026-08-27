@@ -130,25 +130,8 @@ class LifecycleSandboxCapability(AcquireOnlySandboxCapability):
         self.events.append(f'release:{ref.sandbox_id}')
 
 
-class PerRunLifecycleSandboxCapability(LifecycleSandboxCapability):
-    """Rebuild the lifecycle supplier from `RunContext` while sharing test observations."""
-
-    def __init__(self, events: list[str] | None = None) -> None:
-        super().__init__()
-        if events is not None:
-            self.events = events
-
-    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
-        return PerRunLifecycleSandboxCapability(self.events)
-
-
 class DecliningSandboxCapability(AbstractCapability[Any]):
-    """A supplier that overrides `acquire_sandbox` but declines every run.
-
-    Declining is a first-class supplier shape (contribute only for some runs), so tests use
-    the call count to pin that the fall-through to the next supplier happened exactly once,
-    in the right place.
-    """
+    """A supplier that overrides `acquire_sandbox` but declines every run."""
 
     def __init__(self) -> None:
         self.acquire_calls = 0

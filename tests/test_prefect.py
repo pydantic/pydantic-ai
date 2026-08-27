@@ -3050,16 +3050,11 @@ async def test_prefect_durability_keeps_the_bound_sandbox_lifecycle_owner(blockb
     """A supplier returned by `for_run()` does not replace the bound sandbox lifecycle owner."""
     assert blockbuster_enabled is False
 
-    class ReplacementLifecycle(LifecycleSandboxCapability):
-        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            raise AssertionError('the for_run replacement must not create the sandbox')
-
-        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            raise AssertionError('the for_run replacement must not release the sandbox')
+    replacement = LifecycleSandboxCapability()
 
     class BoundLifecycle(LifecycleSandboxCapability):
         async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
-            return ReplacementLifecycle()
+            return replacement
 
     supplier = BoundLifecycle()
     agent = Agent(TestModel(), name='prefect_per_run_sandbox', capabilities=[PrefectDurability(), supplier])
@@ -3070,6 +3065,7 @@ async def test_prefect_durability_keeps_the_bound_sandbox_lifecycle_owner(blockb
 
     assert await run_durable_agent() == 'success (no tool calls)'
     assert supplier.events == ['acquire:created-1', 'release:created-1']
+    assert replacement.events == []
 
 
 async def test_prefect_durability_connects_a_sandbox_ref_inside_a_task() -> None:

@@ -797,16 +797,16 @@ async def test_ref_resolution_skips_deferred_capabilities():
     assert connector.sandbox_ids == ['fake-1']
 
 
-@pytest.mark.parametrize('with_provider', [False, True], ids=['no-provider', 'declining-provider'])
-async def test_sandbox_ref_requires_recognizing_capability(with_provider: bool):
-    """No provider, or one provider declining a foreign ref, produces the attachment error."""
-
-    @dataclass
-    class OtherProviderCapability(AbstractCapability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
-            return FakeSandbox('other') if ref is not None and ref.provider == 'other' else None
-
-    capabilities = [OtherProviderCapability()] if with_provider else []
+@pytest.mark.parametrize('provider_kind', ['none', 'connect-only', 'lifecycle', 'stateful'])
+async def test_sandbox_ref_requires_recognizing_capability(provider_kind: str):
+    """No provider, or any provider declining a foreign ref, produces the attachment error."""
+    provider = {
+        'none': None,
+        'connect-only': ConnectOnlySandboxCapability(),
+        'lifecycle': AcquireOnlySandboxCapability(),
+        'stateful': SandboxCapability(),
+    }[provider_kind]
+    capabilities = [provider] if provider is not None else []
     agent = make_connecting_probe_agent([], capabilities=capabilities)
     with pytest.raises(
         UserError,
@@ -1090,6 +1090,50 @@ async def test_get_only_capability_supplies_an_already_live_sandbox_without_a_re
     await agent.run('go')
     assert seen == [('fake', 'fake-always-live', backend)]
     assert refs == [None]
+
+
+@pytest.mark.parametrize('failure', ['raise', 'return-none'])
+async def test_get_only_capability_connection_failure_is_explained(failure: str):
+    error = RuntimeError('connection failed')
+
+    @dataclass
+    class FailingLiveSandboxCapability(AbstractCapability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            assert ref is None
+            if failure == 'raise':
+                raise error
+            return None
+
+    capability = FailingLiveSandboxCapability()
+    capability.id = 'failing-live-sandbox'
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[capability])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        return (await ctx.sandbox.run(['true'])).stdout
+
+    expected = (
+        "Capability 'failing-live-sandbox' failed to connect its sandbox."
+        if failure == 'raise'
+        else "Capability 'failing-live-sandbox' provides sandbox hooks but its `get_sandbox` hook returned "
+        '`None` without a `SandboxRef`.'
+    )
+    with pytest.raises(UserError, match=re.escape(expected)) as exc_info:
+        await agent.run('go')
+    assert exc_info.value.__cause__ is (error if failure == 'raise' else None)
+
+
+async def test_declining_sandbox_capability_leaves_the_default_unavailable():
+    decliner = DecliningSandboxCapability()
+    result = await Agent(TestModel(), capabilities=[decliner]).run('go')
+    assert result.output == 'success (no tool calls)'
+    assert decliner.acquire_calls == 1
+
+
+def test_sandbox_hook_introspection_for_composed_capabilities():
+    connector = ConnectOnlySandboxCapability()
+    assert CombinedCapability([AbstractCapability[Any](), connector]).has_get_sandbox
+    assert WrapperCapability(wrapped=connector).has_get_sandbox
 
 
 async def test_lifecycle_capability_also_connects_ref_run_arguments():

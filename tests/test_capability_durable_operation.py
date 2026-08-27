@@ -797,6 +797,20 @@ async def test_bound_dispatch_defensively_rejects_missing_capability_id() -> Non
         )
 
 
+async def test_bound_dispatch_rejects_an_unregistered_capability_operation() -> None:
+    agent = Agent(TestModel(), name='defensive', capabilities=[RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    capability = Operations()
+    capability.id = 'runtime-operation'
+    ctx = RunContext(deps=None, agent=agent, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(UserError, match="Capability 'runtime-operation' was added per run"):
+        await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+            capability, 'calculate', ctx, (ctx, 1), {}
+        )
+
+
 async def test_capability_operation_rejects_realtime_context_model() -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='realtime_context_model', capabilities=[capability, RecordingDurability()])
