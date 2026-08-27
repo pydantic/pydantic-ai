@@ -708,11 +708,24 @@ async def test_cross_provider_citation_replay_google_to_bedrock(
     bedrock_model = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
     )
-    second_result = await Agent(bedrock_model).run(
-        'Without searching again, briefly describe the sources attached to the previous answer.',
-        message_history=history,
-    )
+    captured_request: dict[str, Any] = {}
+
+    def capture_request(params: dict[str, Any], **_: Any) -> None:
+        captured_request.update(params)
+
+    event = 'provide-client-params.bedrock-runtime.Converse'
+    bedrock_model.client.meta.events.register_last(event, capture_request)
+    try:
+        second_result = await Agent(bedrock_model).run(
+            'Without searching again, briefly describe the sources attached to the previous answer.',
+            message_history=history,
+        )
+    finally:
+        bedrock_model.client.meta.events.unregister(event, capture_request)
+
     assert second_result.output
+    [prior_assistant] = [message for message in captured_request['messages'] if message['role'] == 'assistant']
+    assert prior_assistant == {'role': 'assistant', 'content': [{'text': first_result.output}]}
 
 
 @pytest.mark.vcr(match_on=['method', 'scheme', 'host', 'port', 'path', 'query', 'body'])
