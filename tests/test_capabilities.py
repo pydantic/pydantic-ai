@@ -5507,24 +5507,6 @@ def test_apply_wrapper_capability():
     assert visited == [wrapper]
 
 
-def test_get_instructions_returns_declared_blocks():
-    """`get_instructions()` is public API, so it answers independently of the id-carrying collection path.
-
-    The framework reads instructions through `_collect_instructions()` so blocks keep their ids; this
-    pins the plain accessor a caller outside the framework reaches for, including that a capability
-    with nothing to say answers `None` rather than an empty list.
-    """
-    capability = Capability[Any](instructions=['First block.', 'Second block.'])
-    assert capability.get_instructions() == ['First block.', 'Second block.']
-    assert Capability[Any]().get_instructions() is None
-
-
-def test_wrapper_capability_get_instructions_delegates():
-    """A wrapper that adds no instructions of its own reports the ones it wraps, unchanged."""
-    inner = Capability[Any](instructions='Wrapped instructions.')
-    assert WrapperCapability(wrapped=inner).get_instructions() == ['Wrapped instructions.']
-
-
 def test_apply_wrapper_over_combined_capability():
     """WrapperCapability.apply() also visits children when the wrapped capability is a container."""
 

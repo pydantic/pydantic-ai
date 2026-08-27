@@ -528,11 +528,11 @@ async def test_a_combined_toolset_subclass_get_instructions_override_is_authorit
 
 
 def _keep_every_tool(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
-    return True  # pragma: no cover -- these containers are exercised for instructions, not tools
+    return True
 
 
 def _keep_every_tool_def(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-    return tool_defs  # pragma: no cover -- as above
+    return tool_defs
 
 
 DELEGATING_TOOLSET_CONTAINERS: list[tuple[str, Callable[[AbstractToolset[Any]], AbstractToolset[Any]]]] = [
@@ -586,6 +586,24 @@ async def test_every_toolset_container_relays_through_a_delegating_subclass(
     agent = Agent(toolsets=[container(InstructionsToolset('Leaf.', id='leaf'))])
 
     assert await run_and_capture(agent) == [InstructionPart(content='Leaf.', dynamic=True, id='toolset:leaf')]
+
+
+def test_get_instructions_returns_declared_blocks():
+    """`get_instructions()` is public API, so it answers independently of the id-carrying collection path.
+
+    The framework reads instructions through `_collect_instructions()` so blocks keep their ids; this
+    pins the plain accessor a caller outside the framework reaches for, including that a capability
+    with nothing to say answers `None` rather than an empty list.
+    """
+    capability = Capability[Any](instructions=['First block.', 'Second block.'])
+    assert capability.get_instructions() == ['First block.', 'Second block.']
+    assert Capability[Any]().get_instructions() is None
+
+
+def test_wrapper_capability_get_instructions_delegates():
+    """A wrapper that adds no instructions of its own reports the ones it wraps, unchanged."""
+    inner = Capability[Any](instructions='Wrapped instructions.')
+    assert WrapperCapability(wrapped=inner).get_instructions() == ['Wrapped instructions.']
 
 
 def test_instruction_id_segments_reject_colons_at_registration():
