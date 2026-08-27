@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    RetryFeedbackPart,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
@@ -1234,6 +1235,24 @@ async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_re
         ModelRequest(parts=[UserPromptPart(content='start')]),
         ModelResponse(parts=[TextPart(content='ok')]),
         ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup'])]),
+    ]
+
+    with pytest.raises(UserError, match=r'prepare_messages'):
+        await model.request(history, None, ModelRequestParameters())
+
+
+async def test_unrendered_retry_feedback_raises_user_error_not_assertion(allow_model_requests: None) -> None:
+    """`RetryFeedbackPart` reaches an adapter the same way, and gets told the same thing.
+
+    It is the other part that only becomes sendable at `prepare_messages` time — rendered into the
+    system voice there rather than projected into an exchange — so the public `Model.request` that
+    skips that step leaves it raw in front of the adapter just as an availability delta.
+    """
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='x'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='how many?')]),
+        ModelResponse(parts=[TextPart(content='lots')]),
+        ModelRequest(parts=[RetryFeedbackPart(content='the answer has to be a number', cause='model_retry')]),
     ]
 
     with pytest.raises(UserError, match=r'prepare_messages'):

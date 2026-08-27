@@ -2180,10 +2180,12 @@ exactly as written.
 def _wrap_in_system_tags(content: str) -> str:
     """Tag text as the harness speaking, for a channel with no system role of its own.
 
-    Every spelling of a closing tag inside `content` is escaped first: the text can hold values the
-    model itself produced (retry feedback renders nested validation input) or names a remote MCP
-    server chose, and an unescaped close would end the statement early and let whatever follows read
-    as if it stood outside it.
+    Every spelling of a closing tag inside `content` is escaped first, because not all of it is
+    operator-authored. Retry feedback drops the value the model sent, but a validation error's `loc`
+    is a key the model invented for a mapping output, and a `value_error`'s `msg` is whatever a
+    validator raised — commonly the offending value interpolated in. A tool-availability announcement
+    carries names a remote MCP server chose. An unescaped close would end the statement early and let
+    whatever follows read as if it stood outside it.
     """
     return f'<system>{_SYSTEM_CLOSE_TAG_OPENER.sub("&lt;", content)}</system>'
 
@@ -2195,11 +2197,8 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     parts those are is `_standing_system_prompt_count`'s
     question, and it is not simply "everything in the first request".
 
-    The wrapped content is not all operator-authored: a `RetryFeedbackPart` renders validation
-    feedback whose nested error values are text the model itself produced, and a delta announcement
-    names tools a remote MCP server chose the names of. A closing tag inside that content would end
-    the statement early and let whatever follows read as if it stood outside it, so every spelling of
-    the tag is escaped before wrapping.
+    The wrapped content is not all operator-authored — `_wrap_in_system_tags` says which parts of it
+    aren't, and escapes every spelling of a closing tag before wrapping for that reason.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2380,6 +2379,11 @@ def _render_retry_feedback_messages(messages: list[ModelMessage]) -> list[ModelM
                 replacement_parts.append(part)
                 continue
             replacement_parts.append(SystemPromptPart(content=_render_retry_feedback(part), timestamp=part.timestamp))
+        # Anthropic requires the tool results answering the previous turn to open the message, so the
+        # rendered feedback sorts to the back — the same normalization
+        # `_announce_tool_availability_delta_messages` does after the same kind of replacement. A
+        # request can hold both: `_enqueue` accepts feedback alongside a tool return.
+        replacement_parts.sort(key=_tool_results_first_sort_key)
         transformed.append(replace(message, parts=replacement_parts))
 
     return transformed if changed else messages

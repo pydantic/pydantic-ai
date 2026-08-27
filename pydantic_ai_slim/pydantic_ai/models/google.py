@@ -1121,7 +1121,7 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
-                    elif isinstance(part, RetryFeedbackPart):  # pragma: no cover
+                    elif isinstance(part, RetryFeedbackPart):
                         raise _unrendered_retry_feedback_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         raise _unsynthesized_tool_availability_delta_error()

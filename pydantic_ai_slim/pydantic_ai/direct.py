@@ -99,7 +99,7 @@ async def model_request(
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return await model_instance.request(
-        list(messages),
+        model_instance.prepare_messages(list(messages), mrp),
         model_settings,
         mrp,
     )
@@ -218,7 +218,7 @@ def model_request_stream(
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return model_instance.request_stream(
-        list(messages),
+        model_instance.prepare_messages(list(messages), mrp),
         model_settings,
         mrp,
     )

@@ -1650,9 +1650,16 @@ def _validation_error_description(
     - `'nested'` — the JSON a structured-output retry complains about is already in the model's
       context, so top-level errors drop it while a nested error keeps the offending sub-value a long
       generated document doesn't make obvious.
-    - `'none'` — the text is bound for the system voice, where a value the *model* wrote must not
-      land: the model chooses it, so echoing it there would let a response steer the highest-privilege
-      channel it is later shown. `loc` still names the field, and the model already has what it sent.
+    - `'none'` — the text is bound for the system voice, so the value the model sent is dropped: it is
+      the largest model-chosen string here and the one with no other purpose, and echoing it would let
+      a response steer the highest-privilege channel it is later shown. `loc` and `msg` still go, and
+      neither is guaranteed model-free — `loc` is a model-chosen key for a mapping output or an
+      `extra_forbidden` error, and a `value_error`'s `msg` carries whatever text the validator raised,
+      which a `field_validator` commonly interpolates the offending value into. What that residue can
+      do is bounded rather than removed: `_wrap_in_system_tags` escapes a closing tag out of the whole
+      rendered string, so on a model with no mid-conversation system message it cannot end the
+      statement early. On one that takes a real system message there is no tag to break, and the text
+      sits in the system role — tracked at https://github.com/pydantic/pydantic-ai/issues/7806.
     """
     if include_input == 'all':
         exclude = {'__all__': {'ctx'}}
@@ -1789,9 +1796,10 @@ class RetryFeedbackPart:
     """Details of why the response couldn't be used.
 
     If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a
-    list of error details, and the offending values are dropped when the part is rendered — a value
-    the model chose must not reach the system voice, where a later turn would read it with the
-    harness's authority.
+    list of error details. Rendering drops each error's `input` — the value the model sent — so the
+    largest model-chosen string never reaches the system voice. `loc` and `msg` still render, and
+    neither is guaranteed model-free: `loc` is a model-chosen key for a mapping output type, and a
+    validator that raises `ValueError(f'{value!r} …')` puts the value in `msg`.
 
     A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
     is rendered verbatim. Interpolating model output into that message puts the model's words in the

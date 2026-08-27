@@ -22,6 +22,7 @@ from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
+    BaseToolReturnPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -992,7 +993,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             isinstance(part, RetryFeedbackPart)
             or (
                 isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
-                and part.tool_kind is not None
+                # Three claims ride the carrier — a typed part's `tool_kind`, a non-`'success'`
+                # `outcome`, and retry feedback — and each is lost below the floor, so each has to
+                # arm the warning. An `outcome` on an untyped return is the one that would otherwise
+                # slip through: `tool_kind` is `None` there, but the outcome still degrades on reload.
+                and (part.tool_kind is not None or (isinstance(part, BaseToolReturnPart) and part.outcome != 'success'))
             )
             for msg in messages
             for part in msg.parts

@@ -29,6 +29,8 @@ graph RL
 
 ::: pydantic_ai.messages.ToolSearchReturnPart
 
+::: pydantic_ai.messages.RetryFeedbackPart
+
 ::: pydantic_ai.messages.ToolAvailabilityDeltaPart
 
 ::: pydantic_ai.messages.ToolAvailabilityDeltaEvent
