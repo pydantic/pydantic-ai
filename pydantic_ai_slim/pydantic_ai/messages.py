@@ -4340,6 +4340,12 @@ deserializable in processes that have imported the module defining it; see
 """
 
 
+def _is_redefinition(existing: type, cls: type) -> bool:
+    # The same class being defined again -- a re-run notebook cell, `importlib.reload`, or a
+    # re-executed example -- replaces its registration; only genuinely distinct classes conflict.
+    return existing.__module__ == cls.__module__ and existing.__qualname__ == cls.__qualname__
+
+
 @dataclass(repr=False, kw_only=True)
 class CustomEvent:
     """An application-defined event emitted into the agent's event stream.
@@ -4360,13 +4366,13 @@ class CustomEvent:
 
 
     @dataclass(kw_only=True)
-    class SyncProgressEvent(CustomEvent):
+    class OperationProgressEvent(CustomEvent):
         done: int
         total: int
     ```
 
     Subclasses must be dataclasses. Each subclass registers itself under its `name` -- derived from
-    the class name (`SyncProgressEvent` -> `'sync_progress'`) unless overridden with a `name` class
+    the class name (`OperationProgressEvent` -> `'operation_progress'`) unless overridden with a `name` class
     argument -- so instances round-trip through serialization back to the subclass, and consumers can
     use `isinstance` checks instead of matching name strings. Deserializing an event whose name isn't
     registered in the current process yields an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent].
@@ -4415,7 +4421,7 @@ class CustomEvent:
         if not _register:
             return
         event_name = name or to_snake(cls.__name__.removesuffix('Event'))
-        if (existing := CUSTOM_EVENT_TYPES.get(event_name)) is not None:
+        if (existing := CUSTOM_EVENT_TYPES.get(event_name)) is not None and not _is_redefinition(existing, cls):
             raise TypeError(
                 f'Duplicate custom event name {event_name!r}: already registered by {existing.__qualname__}. '
                 f"Pass an explicit name, e.g. `class {cls.__name__}(CustomEvent, name='...')`."
