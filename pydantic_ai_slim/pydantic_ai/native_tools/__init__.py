@@ -14,13 +14,15 @@ from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
-    'NativeToolSettings',
-    'WebSearchToolSettings',
+    'AnthropicWebSearchToolSettings',
+    'OpenRouterWebSearchToolSettings',
+    'WebSearchProviderSettings',
     'WebSearchTool',
     'WebSearchUserLocation',
     'XSearchTool',
     'CodeExecutionTool',
-    'WebFetchToolSettings',
+    'AnthropicWebFetchToolSettings',
+    'WebFetchProviderSettings',
     'WebFetchTool',
     'ImageGenerationModelName',
     'ImageGenerationTool',
@@ -29,7 +31,8 @@ __all__ = (
     'MCPServerTool',
     'FileSearchTool',
     'AdvisorModelName',
-    'AdvisorToolSettings',
+    'OpenRouterAdvisorToolSettings',
+    'AdvisorProviderSettings',
     'AdvisorTool',
     'NATIVE_TOOL_TYPES',
     'SUPPORTED_NATIVE_TOOLS',
@@ -129,15 +132,37 @@ class AbstractNativeTool(ABC):
         return handler(tools_type)
 
 
-class NativeToolSettings(TypedDict, total=False):
-    """Base settings for provider-specific native tool options."""
+class AnthropicWebSearchToolSettings(TypedDict, total=False):
+    """Anthropic-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
-    # Provider settings need to survive serialization through this shared base type.
-    __pydantic_config__ = pydantic.ConfigDict(extra='allow')  # pyright: ignore[reportGeneralTypeIssues]
+    response_inclusion: Literal['full', 'excluded']
+    """Whether results consumed by completed code execution calls remain in the response."""
 
 
-class WebSearchToolSettings(NativeToolSettings, total=False):
-    """Base settings for provider-specific web search options."""
+class OpenRouterWebSearchToolSettings(TypedDict, total=False):
+    """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
+
+    engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity']
+    """The search engine OpenRouter should use."""
+
+    mode: Literal['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced']
+    """The engine-specific search mode."""
+
+    max_results: int
+    """The maximum results returned by each search call."""
+
+    max_total_results: int
+    """The maximum results returned across all search calls in one request."""
+
+    max_characters: int
+    """The maximum content characters returned for each result."""
+
+
+class WebSearchProviderSettings(TypedDict, total=False):
+    """Provider-specific web search settings, indexed by the model system."""
+
+    anthropic: AnthropicWebSearchToolSettings
+    openrouter: OpenRouterWebSearchToolSettings
 
 
 @dataclass(kw_only=True)
@@ -159,13 +184,8 @@ class WebSearchTool(AbstractNativeTool):
     * OpenRouter
     """
 
-    settings: WebSearchToolSettings | None = None
-    """Provider-specific web search settings.
-
-    Pass the typed settings class for the model provider, such as
-    [`AnthropicWebSearchToolSettings`][pydantic_ai.models.anthropic.AnthropicWebSearchToolSettings]
-    or [`OpenRouterWebSearchToolSettings`][pydantic_ai.models.openrouter.OpenRouterWebSearchToolSettings].
-    """
+    provider_settings: WebSearchProviderSettings | None = None
+    """Provider-specific web search settings, indexed by the model system."""
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
     """The `search_context_size` parameter controls how much context is retrieved from the web to help the tool formulate a response.
@@ -392,8 +412,20 @@ class CodeExecutionTool(AbstractNativeTool):
     """The kind of tool."""
 
 
-class WebFetchToolSettings(NativeToolSettings, total=False):
-    """Base settings for provider-specific web fetch options."""
+class AnthropicWebFetchToolSettings(TypedDict, total=False):
+    """Anthropic-specific settings for [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]."""
+
+    use_cache: bool
+    """Whether Anthropic may return cached web content."""
+
+    response_inclusion: Literal['full', 'excluded']
+    """Whether results consumed by completed code execution calls remain in the response."""
+
+
+class WebFetchProviderSettings(TypedDict, total=False):
+    """Provider-specific web fetch settings, indexed by the model system."""
+
+    anthropic: AnthropicWebFetchToolSettings
 
 
 @dataclass(kw_only=True)
@@ -408,12 +440,8 @@ class WebFetchTool(AbstractNativeTool):
     * Google
     """
 
-    settings: WebFetchToolSettings | None = None
-    """Provider-specific web fetch settings.
-
-    Pass the typed settings class for the model provider, such as
-    [`AnthropicWebFetchToolSettings`][pydantic_ai.models.anthropic.AnthropicWebFetchToolSettings].
-    """
+    provider_settings: WebFetchProviderSettings | None = None
+    """Provider-specific web fetch settings, indexed by the model system."""
 
     max_uses: int | None = None
     """If provided, the tool will stop fetching URLs after the given number of uses.
@@ -710,8 +738,17 @@ class FileSearchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
-class AdvisorToolSettings(NativeToolSettings, total=False):
-    """Base settings for provider-specific advisor options."""
+class OpenRouterAdvisorToolSettings(TypedDict, total=False):
+    """OpenRouter-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
+
+    forward_transcript: bool
+    """Whether OpenRouter should include the conversation transcript in the advisor request."""
+
+
+class AdvisorProviderSettings(TypedDict, total=False):
+    """Provider-specific advisor settings, indexed by the model system."""
+
+    openrouter: OpenRouterAdvisorToolSettings
 
 
 @dataclass(kw_only=True)
@@ -728,12 +765,8 @@ class AdvisorTool(AbstractNativeTool):
     * OpenRouter
     """
 
-    settings: AdvisorToolSettings | None = None
-    """Provider-specific advisor settings.
-
-    Pass the typed settings class for the model provider, such as
-    [`OpenRouterAdvisorToolSettings`][pydantic_ai.models.openrouter.OpenRouterAdvisorToolSettings].
-    """
+    provider_settings: AdvisorProviderSettings | None = None
+    """Provider-specific advisor settings, indexed by the model system."""
 
     model: AdvisorModelName
     """The advisor model to consult, i.e. the `model` field of the provider's advisor tool definition.

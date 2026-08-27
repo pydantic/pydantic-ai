@@ -27,11 +27,10 @@ These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTo
     For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation, so your agent works across providers without code changes.
 
 Provider-independent options are fields on the native tool. When a provider has extra options,
-pass its typed settings dictionary to the tool's `settings` field. This mirrors
-[model settings](agent.md#model-run-settings): the shared tool accepts a base settings type, while
-provider modules expose typed subclasses whose keys carry a provider prefix (`anthropic_use_cache`,
-`openrouter_engine`). Each provider reads only its own keys, so one settings dict can combine
-options for several providers, and settings for a provider the model doesn't match are ignored.
+pass them to the tool's `provider_settings` field under the model system key. The outer dictionary
+has a closed set of known systems, and each value has its own `TypedDict`, so type checkers and IDEs
+can validate and complete both levels. Each model reads only its own system entry; other entries are
+ignored.
 See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),
 [OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
 [OpenRouter advisor settings](models/openrouter.md#advisor).
@@ -181,8 +180,8 @@ _(This example is complete, it can be run "as is")_
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `settings.anthropic_response_inclusion` | ❌ | ✅ | ❌ | ❌ | ❌ |
-| `settings.openrouter_engine`, `openrouter_mode`, `openrouter_max_results`, `openrouter_max_total_results`, `openrouter_max_characters` | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `provider_settings.anthropic.response_inclusion` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `provider_settings.openrouter.engine`, `mode`, `max_results`, `max_total_results`, `max_characters` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 * Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
 
@@ -684,8 +683,8 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ✅ | ❌ |
 | `enable_citations` | ✅ | ❌ |
 | `max_content_tokens` | ✅ | ❌ |
-| `settings.anthropic_use_cache` | ✅ | ❌ |
-| `settings.anthropic_response_inclusion` | ✅ | ❌ |
+| `provider_settings.anthropic.use_cache` | ✅ | ❌ |
+| `provider_settings.anthropic.response_inclusion` | ✅ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
@@ -840,7 +839,7 @@ With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in
 | `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
 | `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
-| `settings.openrouter_forward_transcript` | ❌ | ✅ (forward the parent conversation to the advisor) |
+| `provider_settings.openrouter.forward_transcript` | ❌ | ✅ (forward the parent conversation to the advisor) |
 
 ## MCP Server Tool
 

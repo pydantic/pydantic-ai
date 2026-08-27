@@ -55,16 +55,15 @@ with try_import() as imports_successful:
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import (
-        OpenRouterAdvisorToolSettings,
         OpenRouterModel,
         OpenRouterModelSettings,
-        OpenRouterWebSearchToolSettings,
         _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
         _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.test import TestModel
+    from pydantic_ai.native_tools import OpenRouterAdvisorToolSettings, OpenRouterWebSearchToolSettings
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -1055,11 +1054,10 @@ async def test_openrouter_supported_native_tools() -> None:
 
 
 async def test_openrouter_web_search_tool_request(allow_model_requests: None) -> None:
-    """`WebSearchTool` maps portable and provider settings without mixing their namespaces.
+    """`WebSearchTool` maps portable and OpenRouter settings without reading another system's entry.
 
     A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
-    VCR test despite the module-level `vcr` mark. The undeclared key emulates untyped input and
-    proves provider settings cannot override the portable field.
+    VCR test despite the module-level `vcr` mark.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
@@ -1068,17 +1066,16 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
         capabilities=[
             NativeTool(
                 WebSearchTool(
-                    settings=cast(
-                        OpenRouterWebSearchToolSettings,
-                        {
-                            'openrouter_engine': 'exa',
-                            'openrouter_mode': 'auto',
-                            'openrouter_max_results': 5,
-                            'openrouter_max_total_results': 8,
-                            'openrouter_max_characters': 5_000,
-                            'search_context_size': 'low',
-                        },
-                    ),
+                    provider_settings={
+                        'openrouter': OpenRouterWebSearchToolSettings(
+                            engine='exa',
+                            mode='auto',
+                            max_results=5,
+                            max_total_results=8,
+                            max_characters=5_000,
+                        ),
+                        'anthropic': {'response_inclusion': 'excluded'},
+                    },
                     search_context_size='high',
                     user_location={'city': 'London', 'country': 'GB', 'region': 'England', 'timezone': 'Europe/London'},
                     allowed_domains=['pydantic.dev'],
@@ -1336,7 +1333,7 @@ async def test_openrouter_advisor_tool_settings(allow_model_requests: None) -> N
             NativeTool(
                 AdvisorTool(
                     model='anthropic/claude-opus-4.8',
-                    settings=OpenRouterAdvisorToolSettings(openrouter_forward_transcript=True),
+                    provider_settings={'openrouter': OpenRouterAdvisorToolSettings(forward_transcript=True)},
                 )
             )
         ],

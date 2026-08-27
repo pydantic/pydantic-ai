@@ -59,9 +59,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
         AnthropicModelSettings,
-        AnthropicWebFetchToolSettings,
-        AnthropicWebSearchToolSettings,
     )
+    from pydantic_ai.native_tools import AnthropicWebFetchToolSettings, AnthropicWebSearchToolSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if not imports_successful():  # pragma: lax no cover
@@ -196,9 +195,9 @@ def test_anthropic_20260318_web_tools_enable_implicit_code_execution(tool_kind: 
     """
     tool: AbstractNativeTool
     if tool_kind == 'search':
-        tool = WebSearchTool(settings=AnthropicWebSearchToolSettings(anthropic_response_inclusion='full'))
+        tool = WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
     else:
-        tool = WebFetchTool(settings=AnthropicWebFetchToolSettings(anthropic_use_cache=False))
+        tool = WebFetchTool(provider_settings={'anthropic': AnthropicWebFetchToolSettings(use_cache=False)})
 
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
     params = ModelRequestParameters(native_tools=[tool])
@@ -221,7 +220,11 @@ async def test_anthropic_20260318_web_search_response_inclusion(
     agent = Agent(
         model,
         capabilities=[
-            NativeTool(WebSearchTool(settings=AnthropicWebSearchToolSettings(anthropic_response_inclusion='excluded')))
+            NativeTool(
+                WebSearchTool(
+                    provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='excluded')}
+                )
+            )
         ],
     )
 
@@ -254,8 +257,8 @@ async def test_anthropic_20260318_web_search_response_inclusion(
 @pytest.mark.parametrize(
     ('setting_name', 'expected_setting'),
     [
-        ('anthropic_use_cache', {'use_cache': False}),
-        ('anthropic_response_inclusion', {'response_inclusion': 'excluded'}),
+        ('use_cache', {'use_cache': False}),
+        ('response_inclusion', {'response_inclusion': 'excluded'}),
     ],
 )
 def test_anthropic_web_fetch_settings_map_to_20260318(setting_name: str, expected_setting: dict[str, object]):
@@ -268,11 +271,11 @@ def test_anthropic_web_fetch_settings_map_to_20260318(setting_name: str, expecte
         anthropic_client=_mock_anthropic_client(AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws')
     )
     m = AnthropicModel('claude-sonnet-4-5', provider=provider)
-    if setting_name == 'anthropic_use_cache':
-        settings = AnthropicWebFetchToolSettings(anthropic_use_cache=False)
+    if setting_name == 'use_cache':
+        settings = AnthropicWebFetchToolSettings(use_cache=False)
     else:
-        settings = AnthropicWebFetchToolSettings(anthropic_response_inclusion='excluded')
-    params = ModelRequestParameters(native_tools=[WebFetchTool(settings=settings)])
+        settings = AnthropicWebFetchToolSettings(response_inclusion='excluded')
+    params = ModelRequestParameters(native_tools=[WebFetchTool(provider_settings={'anthropic': settings})])
 
     tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], params, AnthropicModelSettings()
@@ -305,9 +308,9 @@ async def test_anthropic_20260318_web_fetch_settings(
         capabilities=[
             NativeTool(
                 WebFetchTool(
-                    settings=AnthropicWebFetchToolSettings(
-                        anthropic_use_cache=False, anthropic_response_inclusion='excluded'
-                    )
+                    provider_settings={
+                        'anthropic': AnthropicWebFetchToolSettings(use_cache=False, response_inclusion='excluded')
+                    }
                 )
             )
         ],

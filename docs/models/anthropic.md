@@ -610,28 +610,33 @@ the matching typed settings to each native tool:
 ```python {title="anthropic_web_tool_options.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.models.anthropic import (
+from pydantic_ai.native_tools import (
     AnthropicWebFetchToolSettings,
     AnthropicWebSearchToolSettings,
+    WebFetchTool,
+    WebSearchTool,
 )
-from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
         NativeTool(
             WebSearchTool(
-                settings=AnthropicWebSearchToolSettings(
-                    anthropic_response_inclusion='excluded'
-                )
+                provider_settings={
+                    'anthropic': AnthropicWebSearchToolSettings(
+                        response_inclusion='excluded'
+                    )
+                }
             )
         ),
         NativeTool(
             WebFetchTool(
-                settings=AnthropicWebFetchToolSettings(
-                    anthropic_use_cache=False,
-                    anthropic_response_inclusion='excluded',
-                )
+                provider_settings={
+                    'anthropic': AnthropicWebFetchToolSettings(
+                        use_cache=False,
+                        response_inclusion='excluded',
+                    )
+                }
             )
         ),
     ],

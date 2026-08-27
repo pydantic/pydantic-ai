@@ -61,9 +61,7 @@ from ..native_tools import (
     MCPServerTool,
     MemoryTool,
     WebFetchTool,
-    WebFetchToolSettings,
     WebSearchTool,
-    WebSearchToolSettings,
 )
 from ..native_tools._tool_search import (
     ToolSearchArgs,
@@ -395,27 +393,6 @@ _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
-
-
-class AnthropicWebSearchToolSettings(WebSearchToolSettings, total=False):
-    """Anthropic-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
-
-    # ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER PROVIDERS' SETTINGS.
-
-    anthropic_response_inclusion: Literal['full', 'excluded']
-    """Whether results consumed by completed code execution calls remain in the response."""
-
-
-class AnthropicWebFetchToolSettings(WebFetchToolSettings, total=False):
-    """Anthropic-specific settings for [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]."""
-
-    # ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER PROVIDERS' SETTINGS.
-
-    anthropic_use_cache: bool
-    """Whether Anthropic may return cached web content."""
-
-    anthropic_response_inclusion: Literal['full', 'excluded']
-    """Whether results consumed by completed code execution calls remain in the response."""
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
@@ -1472,8 +1449,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering: bool,
     ) -> BetaWebSearchTool20260318Param | BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
-        settings = cast(AnthropicWebSearchToolSettings, tool.settings or {})
-        if (response_inclusion := settings.get('anthropic_response_inclusion')) is not None:
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        if (response_inclusion := settings.get('response_inclusion')) is not None:
             return BetaWebSearchTool20260318Param(
                 name='web_search',
                 type='web_search_20260318',
@@ -1510,9 +1487,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         str | None,
     ]:
         citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
-        settings = cast(AnthropicWebFetchToolSettings, tool.settings or {})
-        use_cache = settings.get('anthropic_use_cache')
-        response_inclusion = settings.get('anthropic_response_inclusion')
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        use_cache = settings.get('use_cache')
+        response_inclusion = settings.get('response_inclusion')
         if use_cache is not None or response_inclusion is not None:
             web_fetch_tool = BetaWebFetchTool20260318Param(
                 name='web_fetch',
