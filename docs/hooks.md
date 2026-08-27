@@ -265,25 +265,28 @@ For pure application-level handler registration without other hooks, the dedicat
 | `run_event_stream` | `run_event_stream=` | `wrap_run_event_stream` |
 | `event` | `event=` | _(per-event convenience)_ |
 
-`run_event_stream` wraps the full event stream as an async generator. `event` is a convenience — it fires for each individual event during a streamed run. Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when queued messages enter run history. During a [realtime session](realtime/capabilities.md), both hooks also fire, and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members flow through the same stream:
+`run_event_stream` wraps the full event stream as an async generator. `event` observes individual events at the same dispatch point as capability [`on_event`][pydantic_ai.capabilities.on_event] listeners. Pass event classes to filter the callback with static typing, or use bare `@hooks.on.event` to observe every event. Callbacks can be synchronous or asynchronous and return `None`.
+
+Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when queued messages enter run history. An `event` callback also participates in inline-dispatched capability decision events, so application code can set decision fields before the emitter continues. During a [realtime session](realtime/capabilities.md), both hooks fire, and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members flow through the same stream:
 
 ```python {title="hooks_event.py"}
-from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai import Agent, PartStartEvent, RunContext
 from pydantic_ai.capabilities import Hooks
 
 hooks = Hooks()
 event_count = 0
 
 
-@hooks.on.event
-async def count_events(ctx: RunContext, event: AgentStreamEvent) -> AgentStreamEvent:
+@hooks.on.event(PartStartEvent)
+async def count_events(ctx: RunContext, event: PartStartEvent) -> None:
     global event_count
     event_count += 1
-    return event
 
 
 agent = Agent('test', capabilities=[hooks])
 ```
+
+Returning a replacement event from `hooks.on.event` is deprecated. Use `hooks.on.run_event_stream` to transform, replace, or filter events.
 
 ## Tool hook filtering
 

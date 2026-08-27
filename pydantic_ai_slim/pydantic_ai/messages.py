@@ -13,7 +13,19 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, get_args, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    TypeAlias,
+    TypeGuard,
+    cast,
+    get_args,
+    overload,
+)
 from urllib.parse import urlparse
 
 import pydantic
@@ -4473,7 +4485,32 @@ class CapabilityEvent:
 
     Capability authors define dataclass subclasses with a namespace shared by their event family.
     The emitting capability's run id is stamped by [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
+
+    Events dispatch at their stream position by default. Decision events can instead pass
+    `dispatch='inline'` as a class argument so listeners run before
+    [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event] returns:
+
+    ```python
+    from dataclasses import dataclass
+
+    from pydantic_ai import CapabilityEvent
+
+
+    @dataclass(kw_only=True)
+    class BeforeCompactionEvent(CapabilityEvent, namespace='compaction', dispatch='inline'):
+        cancelled: bool = False
+        cancel_reason: str | None = None
+
+        def cancel(self, reason: str | None = None) -> None:
+            self.cancelled = True
+            self.cancel_reason = reason
+    ```
+
+    The dispatch mode is inherited by subclasses of a concrete event class.
     """
+
+    event_dispatch: ClassVar[Literal['stream', 'inline']] = 'stream'
+    """When capability and application listeners receive the event."""
 
     kind: str = ''
     """The namespaced event kind, injected as the default on registered subclasses."""
@@ -4497,9 +4534,19 @@ class CapabilityEvent:
             raise TypeError('`CapabilityEvent` is a base class; define a dataclass subclass with a `namespace`.')
 
     def __init_subclass__(
-        cls, *, namespace: str | None = None, name: str | None = None, _register: bool = True, **kwargs: Any
+        cls,
+        *,
+        namespace: str | None = None,
+        name: str | None = None,
+        dispatch: Literal['stream', 'inline'] | None = None,
+        _register: bool = True,
+        **kwargs: Any,
     ) -> None:
         super().__init_subclass__(**kwargs)
+        if dispatch not in (None, 'stream', 'inline'):
+            raise TypeError("`dispatch` must be either 'stream' or 'inline'.")
+        if dispatch is not None:
+            cls.event_dispatch = dispatch
         if not _register:
             return
         if namespace is None:

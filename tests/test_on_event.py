@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 
@@ -37,7 +37,7 @@ class DirectoryListedEvent(CapabilityEvent, namespace='on_event_files'):
 
 
 @dataclass(kw_only=True)
-class BeforeThingEvent(CapabilityEvent, namespace='on_event_decision'):
+class BeforeThingEvent(CapabilityEvent, namespace='on_event_decision', dispatch='inline'):
     cancelled: bool = False
 
     def cancel(self) -> None:
@@ -84,6 +84,27 @@ def test_sync_marker_rejected() -> None:
 
         @on_event(FileReadEvent)  # pyright: ignore[reportArgumentType]
         def invalid(self: Any, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            pass
+
+
+def test_dispatch_mode_is_inherited_and_validated() -> None:
+    @dataclass(kw_only=True)
+    class InlineBaseEvent(CapabilityEvent, namespace='on_event_inherited', dispatch='inline'):
+        pass
+
+    @dataclass(kw_only=True)
+    class InlineChildEvent(InlineBaseEvent):
+        pass
+
+    assert InlineChildEvent.event_dispatch == 'inline'
+
+    with pytest.raises(TypeError, match="`dispatch` must be either 'stream' or 'inline'"):
+
+        class InvalidDispatchEvent(  # pyright: ignore[reportGeneralTypeIssues, reportUnusedClass]
+            CapabilityEvent,
+            namespace='on_event_invalid',
+            dispatch='later',  # pyright: ignore[reportArgumentType]
+        ):
             pass
 
 
@@ -135,23 +156,47 @@ async def test_listener_enqueue_reaches_next_model_request() -> None:
 
 
 async def test_mutable_decision_event_is_inline() -> None:
-    observed: list[bool] = []
+    observed: list[tuple[bool, bool]] = []
     emitter = Capability[Any](id='emitter')
 
     @emitter.tool
     async def read_file(ctx: RunContext[Any]) -> str:
+        stream_event = await ctx.emit_event(FileReadEvent(path='later'))
         event = await ctx.emit_event(BeforeThingEvent())
-        observed.append(event.cancelled)
+        observed.append((stream_event.path == 'changed', event.cancelled))
         return 'cancelled' if event.cancelled else 'continued'
 
     @dataclass
     class Canceller(AbstractCapability[Any]):
+        @on_event(FileReadEvent)
+        async def change(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            event.path = 'changed'
+
         @on_event(BeforeThingEvent)
         async def cancel(self, ctx: RunContext[Any], event: BeforeThingEvent) -> None:
             event.cancel()
 
     await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Canceller()]).run('go')
-    assert observed == [True]
+    assert observed == [(False, True)]
+
+
+async def test_emitted_event_dispatches_before_tool_result() -> None:
+    order: list[str] = []
+    files = Capability[Any](id='files')
+
+    @files.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(FileReadEvent(path='AGENTS.md'))
+        return 'contents'
+
+    @dataclass
+    class Listener(AbstractCapability[Any]):
+        @on_event(FileReadEvent, FunctionToolResultEvent)
+        async def record(self, ctx: RunContext[Any], event: FileReadEvent | FunctionToolResultEvent) -> None:
+            order.append(type(event).__name__)
+
+    await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[files, Listener()]).run('go')
+    assert order == ['FileReadEvent', 'FunctionToolResultEvent']
 
 
 async def test_framework_events_auto_enable_streaming() -> None:
@@ -173,66 +218,61 @@ async def test_framework_events_auto_enable_streaming() -> None:
     assert any(isinstance(event, PartDeltaEvent) for event in seen)
 
 
-async def test_emitted_event_delivered_exactly_once_in_stream_events() -> None:
-    seen: list[CustomEvent] = []
+async def test_inline_event_delivered_exactly_once_in_stream_events() -> None:
+    seen: list[BeforeThingEvent] = []
 
     @dataclass
     class Emitter(AbstractCapability[Any]):
-        _emits_app_events: ClassVar[bool] = True
-
         async def before_run(self, ctx: RunContext[Any]) -> None:
-            await ctx.emit_event(CustomEvent(name='once'))
+            await ctx.emit_event(BeforeThingEvent())
 
     @dataclass
     class Listener(AbstractCapability[Any]):
-        @on_event(CustomEvent)
-        async def record(self, ctx: RunContext[Any], event: CustomEvent) -> None:
+        @on_event(BeforeThingEvent)
+        async def record(self, ctx: RunContext[Any], event: BeforeThingEvent) -> None:
             seen.append(event)
 
-    async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        async for text in _text_stream():
-            yield text
-
-    agent = Agent(FunctionModel(stream_function=model), capabilities=[Emitter(), Listener()])
+    agent = Agent(FunctionModel(stream_function=_text_stream), capabilities=[Emitter(), Listener()])
     async with agent.run_stream_events('go') as stream:
         async for _ in stream:
             pass
-    assert [event.name for event in seen] == ['once']
+    assert len(seen) == 1
 
 
-async def _text_stream() -> AsyncIterator[str]:
+async def _text_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
     yield 'done'
 
 
-async def test_capability_order_and_reentrant_emission() -> None:
-    order: list[str] = []
+async def test_nested_emit_from_inline_listener_is_cause_first() -> None:
+    listener_log: list[str] = []
+    stream_log: list[str] = []
 
     @dataclass
     class Listener(AbstractCapability[Any]):
-        label: str
-
-        @on_event(CustomEvent)
-        async def custom(self, ctx: RunContext[Any], event: CustomEvent) -> None:
-            order.append(f'{self.label}:{event.name}')
-            if self.label == 'first' and event.name == 'outer':
-                await ctx.emit_event(NestedEvent(value='inner'))
+        @on_event(BeforeThingEvent)
+        async def cause(self, ctx: RunContext[Any], event: BeforeThingEvent) -> None:
+            listener_log.append('cause')
+            await ctx.emit_event(NestedEvent(value='effect'))
 
         @on_event(NestedEvent)
         async def nested(self, ctx: RunContext[Any], event: NestedEvent) -> None:
-            order.append(f'{self.label}:{event.value}')
+            listener_log.append(event.value)
 
-    root = CombinedCapability([Listener('first', id='first'), Listener('second', id='second')])
-    buffer: list[AgentStreamEvent] = []
-    ctx = RunContext[Any](
-        deps=None,
-        model=FunctionModel(stream_function=_tool_then_text),
-        usage=None,  # type: ignore[arg-type]
-        root_capability=root,
-        capabilities={'first': root.capabilities[0], 'second': root.capabilities[1]},
-        _event_stream_buffer=buffer,
-    )
-    await ctx.emit_event(CustomEvent(name='outer'))
-    assert order == ['first:outer', 'first:inner', 'second:inner', 'second:outer']
+    @dataclass
+    class Emitter(AbstractCapability[Any]):
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            await ctx.emit_event(BeforeThingEvent())
+
+    agent = Agent(FunctionModel(stream_function=_text_stream), capabilities=[Emitter(), Listener()])
+    async with agent.run_stream_events('go') as stream:
+        async for event in stream:
+            if isinstance(event, BeforeThingEvent):
+                stream_log.append('cause')
+            elif isinstance(event, NestedEvent):
+                stream_log.append(event.value)
+
+    assert listener_log == ['cause', 'effect']
+    assert stream_log == ['cause', 'effect']
 
 
 async def test_deferred_listener_only_runs_when_loaded() -> None:

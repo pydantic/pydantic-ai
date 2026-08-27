@@ -41,29 +41,27 @@ CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
 
 
 async def dispatch_event_inline(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
-    """Dispatch an emitted event before buffering it and mark it for stream deduplication."""
+    """Dispatch an inline capability event and mark it for stream deduplication."""
+    if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'inline':
+        return
     capability = ctx.root_capability
     if capability is not None and capability.has_on_event:
         await capability.on_event(ctx, event=event)
-        ctx._inline_dispatched_event_ids.add(id(event))  # pyright: ignore[reportPrivateUsage]
+    ctx._inline_dispatched_event_ids.add(id(event))  # pyright: ignore[reportPrivateUsage]
 
 
 async def dispatch_event_stream(
     ctx: RunContext[Any], stream: AsyncIterable[_messages.AgentStreamEvent]
 ) -> AsyncIterator[_messages.AgentStreamEvent]:
-    """Dispatch framework events and deduplicate events already dispatched inline."""
+    """Dispatch events at their stream positions and deduplicate inline events."""
     capability = ctx.root_capability
-    if capability is None or not capability.has_on_event:
-        async for event in stream:
-            yield event
-        return
     async for event in stream:
         event_id = id(event)
         if event_id in ctx._inline_dispatched_event_ids:  # pyright: ignore[reportPrivateUsage]
             ctx._inline_dispatched_event_ids.discard(event_id)  # pyright: ignore[reportPrivateUsage]
-        else:
+        elif capability is not None and capability.has_on_event:
             await capability.on_event(ctx, event=event)
-        yield event
+        yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -206,6 +204,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     _inline_dispatched_event_ids: set[int] = field(default_factory=set[int], repr=False)
     """IDs of buffered events already dispatched inline, shared across the run."""
+
+    _event_stream_replacements: dict[int, _messages.AgentStreamEvent] = field(
+        default_factory=dict[int, _messages.AgentStreamEvent], repr=False
+    )
+    """Legacy `hooks.on.event` replacements, shared across the run."""
 
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -538,6 +541,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [`tool_name`][pydantic_ai.tools.RunContext.tool_name] are stamped on a copy of the event so
         consumers can attribute it to the originating tool call.
 
+        By default, capability and application listeners run when the event's stream position is
+        consumed, and this method returns without awaiting them. For tool-execution emissions this
+        happens before the next model request. An event emitted during `before_model_request` may
+        reach listeners only after that request begins, with the same as-soon-as-possible timing as
+        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. A
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] class declared with
+        `dispatch='inline'` is buffered first, then dispatched before this method returns so the
+        emitter can read decision fields set by listeners.
+
         Args:
             event: The event name, or a constructed [`CustomEvent`][pydantic_ai.messages.CustomEvent] or
                 [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] to emit.
@@ -585,8 +597,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
             event = _messages.CustomEvent(name=event, data=data)
         if event.tool_call_id is None and self.tool_call_id is not None:
             event = dataclasses.replace(event, tool_call_id=self.tool_call_id, tool_name=self.tool_name)
-        await dispatch_event_inline(self, event)
         self._emit_event(event)
+        await dispatch_event_inline(self, event)
         return event
 
     def enqueue(

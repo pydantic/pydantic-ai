@@ -259,7 +259,9 @@ class RepoContext(AbstractCapability[Any]):
 
 Filtering is explicit: the decorator uses `isinstance` against the classes passed to it. A bare `@on_event` receives the full [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] union, including model response deltas, tool call and result events, deferred and enqueued-message events, [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and capability events.
 
-Listeners run sequentially in capability order, and marked methods within one capability run in definition order. The emitting capability also receives its own events. An event emitted with [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] is delivered inline before the await returns, so a listener can change mutable decision fields:
+Listeners run sequentially in capability order, and marked methods within one capability run in definition order. The emitting capability also receives its own events. By default, listeners run when the event reaches its position in the stream, so listener ordering always matches stream ordering and listener work does not add to the emitter's latency. For events emitted during tool execution, listeners run before the next model request. An event emitted during `before_model_request` may only reach listeners after that request begins, with the same as-soon-as-possible timing as [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue].
+
+Decision events that need listener mutations before the emitter continues declare `dispatch='inline'` on the event class:
 
 ```python {title="cancellable_capability_event.py"}
 from dataclasses import dataclass
@@ -270,11 +272,15 @@ from pydantic_ai.capabilities import AbstractCapability, on_event
 
 
 @dataclass(kw_only=True)
-class BeforeCompactionEvent(CapabilityEvent, namespace='compaction'):
+class BeforeCompactionEvent(
+    CapabilityEvent, namespace='compaction', dispatch='inline'
+):
     cancelled: bool = False
+    cancel_reason: str | None = None
 
-    def cancel(self) -> None:
+    def cancel(self, reason: str | None = None) -> None:
         self.cancelled = True
+        self.cancel_reason = reason
 
 
 class KeepFullHistory(AbstractCapability[Any]):
@@ -285,7 +291,7 @@ class KeepFullHistory(AbstractCapability[Any]):
         event.cancel()
 ```
 
-After `event = await ctx.emit_event(BeforeCompactionEvent())`, the emitter can inspect `event.cancelled`. Emitting another event from a listener is supported and dispatches it immediately; listeners must avoid emission cycles. Framework-generated events dispatch as the run event stream advances, inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers. Consequently, `on_event` automatically enables streaming for an otherwise non-streaming `agent.run()` only when at least one listener is present.
+For inline dispatch, Pydantic AI buffers the event before invoking listeners. After `event = await ctx.emit_event(BeforeCompactionEvent())`, the emitter can inspect `event.cancelled`, and an event emitted by a listener appears after the decision event in the stream. Inline events are still delivered exactly once. Stream-dispatch listeners run inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers. An `on_event` listener automatically enables streaming for an otherwise non-streaming `agent.run()`.
 
 ## Provider-adaptive tools
 

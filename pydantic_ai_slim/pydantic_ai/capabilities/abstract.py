@@ -672,8 +672,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         to methods marked with [`on_event`][pydantic_ai.capabilities.on_event], in definition order.
 
         Override this method for fully dynamic handling. Call `super().on_event(...)` to retain marked
-        method dispatch. Emitting an event from a listener dispatches it reentrantly; listeners must not
-        create emission cycles. A capability receives events it emits itself.
+        method dispatch. A capability receives events it emits itself. Events emitted by a listener
+        enter the stream after the event being handled.
         """
         for method in collect_on_event_methods(type(self)):
             if not method.event_types or isinstance(event, method.event_types):

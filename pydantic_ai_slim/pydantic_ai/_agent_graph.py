@@ -335,6 +335,10 @@ class GraphAgentState:
     the graph drains it into the agent event stream around node events."""
     inline_dispatched_event_ids: set[int] = dataclasses.field(default_factory=set[int])
     """IDs of emitted events already delivered inline, pending stream deduplication."""
+    event_stream_replacements: dict[int, _messages.AgentStreamEvent] = dataclasses.field(
+        default_factory=dict[int, _messages.AgentStreamEvent]
+    )
+    """Legacy `hooks.on.event` replacements to apply at the consumer-facing stream position."""
     mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = dataclasses.field(
         default_factory=dict[str, dict[str, ToolDefinition]]
     )
@@ -2370,6 +2374,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _inline_dispatched_event_ids=ctx.state.inline_dispatched_event_ids,
+        _event_stream_replacements=ctx.state.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
