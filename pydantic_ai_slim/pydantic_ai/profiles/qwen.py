@@ -10,8 +10,7 @@ _QWEN_3_5_RE = re.compile(r'qwen-?3[\.\-]5')
 
 def qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model."""
-    # Both the Cerebras-style `qwen-3-coder` and the official Hugging Face `qwen3-coder` spellings are used.
-    if model_name.startswith(('qwen-3-coder', 'qwen3-coder')):
+    if model_name.startswith('qwen-3-coder'):
         return OpenAIModelProfile(
             json_schema_transformer=InlineDefsJsonSchemaTransformer,
             openai_supports_tool_choice_required=False,

@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -25,7 +23,10 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
 class VLLMProvider(_OpenAICompatibleProvider):
@@ -60,30 +61,60 @@ class VLLMProvider(_OpenAICompatibleProvider):
         model_name = model_name.lower()
         # Match both parts of Hugging Face repo IDs, preserving org-based families such as `mistralai/Mixtral`.
         bare_name = model_name.rpartition('/')[2]
+        # The Qwen profile uses the provider spelling `qwen-3-coder`, while Hugging Face uses `qwen3-coder`.
+        profile_name = bare_name.replace('qwen3-coder', 'qwen-3-coder', 1)
         profile = None
         for prefix, profile_func in prefix_to_profile.items():
             if model_name.startswith(prefix) or bare_name.startswith(prefix):
-                profile = profile_func(bare_name)
+                profile = profile_func(profile_name)
+                break
+        # vLLM maps `reasoning_effort` to the chat-template switch used by these reasoning families.
+        # Qwen3-Coder is excluded because its official model card documents non-thinking-only behavior.
+        # Explicit Qwen3 `-Thinking` checkpoints are always-on.
+        # Qwen3.8 is excluded because its effort ladder does not match the unified OpenAI-style values.
+        # See https://docs.vllm.ai/en/stable/features/reasoning_outputs/ and
+        # https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct and
+        # https://huggingface.co/Qwen/Qwen3-235B-A22B-Thinking-2507 and
+        # https://huggingface.co/Qwen/Qwen3.8-27B.
+        supports_qwen3_thinking = (
+            bare_name.startswith('qwen3')
+            and not bare_name.startswith(('qwen3-coder', 'qwen3.8'))
+            and '-instruct' not in bare_name
+        )
+        supports_thinking = supports_qwen3_thinking or bare_name.startswith(('gemma-4', 'deepseek-v4-'))
+        thinking_profile = None
+        if supports_thinking:
+            thinking_profile = ModelProfile(
+                supports_thinking=True,
+                thinking_always_enabled=bare_name.startswith('qwen3') and '-thinking' in bare_name,
+            )
+
+        # vLLM supports required tool choice and strict schemas for every supported model, including Qwen3-Coder.
+        # See https://docs.vllm.ai/en/stable/features/tool_calling/.
+        qwen3_coder_profile = None
+        if bare_name.startswith('qwen3-coder'):
+            qwen3_coder_profile = OpenAIModelProfile(
+                openai_supports_tool_choice_required=True,
+                openai_supports_strict_tool_definition=True,
+            )
 
         # `json_schema_transformer` is a fallback (the family profile wins if it set one). The other overrides
         # win on top of the family profile:
-        # - vLLM renamed `reasoning_content` to `reasoning`; reading still supports either field.
-        #   See https://github.com/vllm-project/vllm/issues/27752.
         # - The Chat Completions API supports `json_schema`/`json_object` response formats via server-side
         #   guided decoding. That is pure token masking, so the model only sees the schema if it is also
         #   injected into the instructions. See https://github.com/pydantic/pydantic-ai/issues/3490.
         # - File content parts and native tool return schemas are not supported.
         # - Some chat templates served by vLLM reject more than one leading system message.
         #   See https://github.com/pydantic/pydantic-ai/issues/5812.
-        # `openai_supports_tool_choice_required` and `openai_supports_strict_tool_definition` default to
-        # `True` and are deliberately not set here, so family opt-outs (gpt-oss for the former, Qwen3-Coder
-        # for both) survive the merge: vLLM ignores `tool_choice='required'` for gpt-oss, for example.
+        # The gpt-oss family opt-out for `openai_supports_tool_choice_required` survives the merge because
+        # vLLM ignores `tool_choice='required'` for gpt-oss.
         # See https://github.com/vllm-project/vllm/issues/44216.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
+            thinking_profile,
+            qwen3_coder_profile,
             OpenAIModelProfile(
-                openai_chat_thinking_field='reasoning',
                 openai_chat_supports_document_input=False,
                 openai_chat_supports_multiple_system_messages=False,
                 supports_tool_return_schema=False,
@@ -103,7 +134,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -112,7 +143,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new vLLM provider.
 
@@ -124,7 +155,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             if base_url is not None:

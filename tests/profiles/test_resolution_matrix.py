@@ -1406,7 +1406,6 @@ def test_vllm_gpt_oss_hf_namespace():
             ),
             'openai_supports_tool_choice_required': False,
             'ignore_streamed_leading_whitespace': True,
-            'openai_chat_thinking_field': 'reasoning',
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
             'native_output_requires_schema_in_instructions': True,
@@ -1422,7 +1421,7 @@ def test_vllm_qwen_hf_namespace():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
-            'openai_chat_thinking_field': 'reasoning',
+            'supports_thinking': True,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
             'supports_json_schema_output': True,
@@ -1439,7 +1438,6 @@ def test_vllm_unknown_falls_back_to_overlay_only():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'openai_chat_thinking_field': 'reasoning',
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
             'supports_json_schema_output': True,
@@ -1855,21 +1853,6 @@ def test_heroku_returns_openai_transformer():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
-        }
-    )
-
-
-def test_heroku_qwen3_coder_official_spelling():
-    """The official `qwen3-coder` spelling resolves to the coder profile, with its tool-flag opt-outs."""
-    from pydantic_ai.providers.heroku import HerokuProvider
-
-    profile = HerokuProvider.model_profile('qwen3-coder-480b')
-    assert _normalize(profile) == snapshot(
-        {
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'openai_supports_tool_choice_required': False,
-            'openai_supports_strict_tool_definition': False,
-            'ignore_streamed_leading_whitespace': True,
         }
     )
 
