@@ -550,9 +550,9 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
 
         Args:
             credentials: The subscription credentials to inject. If omitted, they are loaded
-                **read-only** from the Codex CLI's `auth.json` (honors `CODEX_HOME`) — see
-                [`from_codex_cli`][pydantic_ai.providers.openai_codex.OpenAICodexProvider.from_codex_cli].
-                Pydantic AI never falls back to `OPENAI_API_KEY`.
+                **read-only** from the Codex CLI's `auth.json` (honors `CODEX_HOME`), which never
+                writes the file: refreshed tokens live in memory and go to `on_credentials_refresh`
+                if provided. Pydantic AI never falls back to `OPENAI_API_KEY`.
             credential_source: Application-owned, revision-aware credential resolution for
                 multi-replica deployments; see
                 [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource].
@@ -627,24 +627,6 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     def _set_http_client(self, http_client: _OpenAIHTTPClient) -> None:
         http_client.auth = self._auth  # pyright: ignore[reportAttributeAccessIssue]
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
-
-    @classmethod
-    def from_codex_cli(
-        cls,
-        *,
-        on_credentials_refresh: Callable[[OpenAICodexCredentials], Awaitable[None]] | None = None,
-        http_client: _OpenAIHTTPClient | None = None,
-    ) -> OpenAICodexProvider:
-        """Load credentials **read-only** from the Codex CLI (`~/.codex/auth.json`, honors `CODEX_HOME`).
-
-        Convenience for local development after running `codex login`. This never writes the CLI's
-        file — refreshed tokens live in memory and go to `on_credentials_refresh` if provided.
-        """
-        return cls(
-            credentials=_read_codex_cli_credentials(),
-            on_credentials_refresh=on_credentials_refresh,
-            http_client=http_client,
-        )
 
     async def _prepare_request_credentials(
         self,

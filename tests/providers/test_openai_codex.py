@@ -147,7 +147,7 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
     auth_json.write_text(original)
     env.set('CODEX_HOME', str(tmp_path))
 
-    provider = OpenAICodexProvider.from_codex_cli()
+    provider = OpenAICodexProvider()
 
     assert provider.credentials.account_id == 'acc'
     assert provider.name == 'openai-codex'

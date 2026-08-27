@@ -21,7 +21,7 @@ agent = Agent('openai-codex:gpt-5.6-luna')
 ...
 ```
 
-The `'openai-codex:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] backed by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider], which loads the CLI's credentials **read-only**: it honors `CODEX_HOME`, never writes the file, and never falls back to `OPENAI_API_KEY`. The same load is available explicitly as [`OpenAICodexProvider.from_codex_cli()`][pydantic_ai.providers.openai_codex.OpenAICodexProvider.from_codex_cli].
+The `'openai-codex:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] backed by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider], which loads the CLI's credentials **read-only**: it honors `CODEX_HOME`, never writes the file, and never falls back to `OPENAI_API_KEY`. Constructing [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider] without `credentials` performs the same load.
 
 ## Application-owned credentials
 
