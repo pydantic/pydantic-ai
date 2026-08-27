@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import math
 import re
 import string
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable
@@ -485,7 +484,7 @@ class _JsonSchemaTestData:
         elif type_ == 'integer':
             return self._int_gen(schema)
         elif type_ == 'number':
-            return self._number_gen(schema)
+            return float(self._int_gen(schema))
         elif type_ == 'boolean':
             return self._bool_gen()
         elif type_ == 'array':
@@ -531,136 +530,50 @@ class _JsonSchemaTestData:
 
         return self._char()
 
-    def _int_gen(self, schema: dict[str, Any]) -> int:
+    def _int_gen(self, schema: dict[str, Any]) -> int | float:
         """Generate an integer from a JSON Schema integer."""
-        minimums = [math.ceil(schema['minimum'])] if 'minimum' in schema else []
-        if 'exclusiveMinimum' in schema:
-            minimums.append(math.floor(schema['exclusiveMinimum']) + 1)
-        maximums = [math.floor(schema['maximum'])] if 'maximum' in schema else []
-        if 'exclusiveMaximum' in schema:
-            maximums.append(math.ceil(schema['exclusiveMaximum']) - 1)
+        maximum = schema.get('maximum')
+        minimum = schema.get('minimum')
+        if minimum is not None and maximum == minimum:
+            return minimum
 
-        minimum = max(minimums) if minimums else None
-        maximum = min(maximums) if maximums else None
+        if maximum is None:
+            exc_max = schema.get('exclusiveMaximum')
+            if exc_max is not None:
+                maximum = exc_max - 1
+
+        if minimum is None:
+            exc_min = schema.get('exclusiveMinimum')
+            if exc_min is not None:
+                minimum = exc_min + 1
+
         if minimum is not None and maximum is not None:
-            span = maximum - minimum + 1
-            return minimum if span <= 0 else minimum + self.seed % span
+            span = maximum - minimum
+            if span == 0:
+                # Exclusive-bound adjustments can collapse a valid narrow range.
+                return minimum
+            elif span < 0:
+                # Integer-sized adjustments can invert a valid float range, so use its midpoint.
+                lower = schema.get('minimum', schema.get('exclusiveMinimum', minimum))
+                upper = schema.get('maximum', schema.get('exclusiveMaximum', maximum))
+                return lower + (upper - lower) / 2
+            if (
+                schema.get('type') == 'integer'
+                and minimum % 1 == 0
+                and maximum % 1 == 0
+                and 'exclusiveMinimum' not in schema
+                and 'exclusiveMaximum' not in schema
+                and span > 0
+            ):
+                minimum = int(minimum)
+                span = int(maximum) - minimum + 1
+            return minimum + self.seed % span
         elif minimum is not None:
-            candidate_minimum = schema.get('minimum')
-            if candidate_minimum is None:
-                candidate_minimum = schema['exclusiveMinimum'] + 1
-            return self._one_sided_int(candidate_minimum, 1, minimum, schema)
+            return minimum + self.seed
         elif maximum is not None:
-            candidate_maximum = schema.get('maximum')
-            if candidate_maximum is None:
-                candidate_maximum = schema['exclusiveMaximum'] - 1
-            return self._one_sided_int(candidate_maximum, -1, maximum, schema)
+            return maximum - self.seed
         else:
             return self.seed
-
-    def _one_sided_int(self, bound: int | float, direction: int, fallback: int, schema: dict[str, Any]) -> int:
-        """Preserve a valid seed-based integer candidate, or use the effective bound."""
-        try:
-            value = bound + direction * self.seed
-            if value % 1 == 0 and self._number_is_valid(value, schema):
-                return int(value)
-        except OverflowError:
-            pass
-        return fallback
-
-    def _number_gen(self, schema: dict[str, Any]) -> float:
-        """Generate a number from a JSON Schema number."""
-        maximum = schema.get('maximum')
-        if maximum is None and (exclusive_maximum := schema.get('exclusiveMaximum')) is not None:
-            maximum = exclusive_maximum - 1
-
-        minimum = schema.get('minimum')
-        if minimum is None and (exclusive_minimum := schema.get('exclusiveMinimum')) is not None:
-            minimum = exclusive_minimum + 1
-
-        try:
-            if minimum is not None and maximum is not None:
-                span = maximum - minimum
-                value = minimum if span <= 0 else minimum + self.seed % span
-            elif minimum is not None:
-                value = minimum + self.seed
-            elif maximum is not None:
-                value = maximum - self.seed
-            else:
-                value = self.seed
-            float_value = self._finite_float(value)
-        except OverflowError:
-            float_value = None
-
-        if float_value is not None and self._number_is_valid(float_value, schema):
-            return float_value
-
-        return self._number_fallback(schema)
-
-    def _number_fallback(self, schema: dict[str, Any]) -> float:
-        """Generate a finite float after the seed-based candidate failed."""
-        lower_bounds = [schema[key] for key in ('minimum', 'exclusiveMinimum') if key in schema]
-        upper_bounds = [schema[key] for key in ('maximum', 'exclusiveMaximum') if key in schema]
-        if lower_bounds and upper_bounds:
-            lower = max(lower_bounds)
-            upper = min(upper_bounds)
-            candidates = [lower, upper]
-            try:
-                if lower < 0 < upper:
-                    candidates.insert(0, lower / 2 + upper / 2)
-                else:
-                    candidates.insert(0, lower + (upper - lower) / 2)
-            except OverflowError:
-                pass
-            lower_float = self._finite_float(lower)
-            if lower_float is not None:
-                candidates.append(math.nextafter(lower_float, math.inf))
-            upper_float = self._finite_float(upper)
-            if upper_float is not None:
-                candidates.append(math.nextafter(upper_float, -math.inf))
-            candidates.append(0.0)
-        elif lower_bounds:
-            lower = max(lower_bounds)
-            candidates = [lower]
-            lower_float = self._finite_float(lower)
-            if lower_float is not None:
-                candidates.append(math.nextafter(lower_float, math.inf))
-            candidates.append(0.0)
-        elif upper_bounds:
-            upper = min(upper_bounds)
-            candidates = [upper]
-            upper_float = self._finite_float(upper)
-            if upper_float is not None:
-                candidates.append(math.nextafter(upper_float, -math.inf))
-            candidates.append(0.0)
-        else:
-            maximum_float = math.nextafter(math.inf, 0)
-            return -maximum_float if self.seed < 0 else maximum_float
-
-        for candidate in candidates:
-            float_candidate = self._finite_float(candidate)
-            if float_candidate is not None and self._number_is_valid(float_candidate, schema):
-                return float_candidate
-
-        # The schema has no finite floating-point solution, so return an invalid value without raising.
-        return math.nan
-
-    @staticmethod
-    def _finite_float(value: int | float) -> float | None:
-        try:
-            float_value = float(value)
-        except OverflowError:
-            return None
-        return float_value if math.isfinite(float_value) else None
-
-    @staticmethod
-    def _number_is_valid(value: int | float, schema: dict[str, Any]) -> bool:
-        return (not isinstance(value, float) or math.isfinite(value)) and not (
-            ('minimum' in schema and value < schema['minimum'])
-            or ('exclusiveMinimum' in schema and value <= schema['exclusiveMinimum'])
-            or ('maximum' in schema and value > schema['maximum'])
-            or ('exclusiveMaximum' in schema and value >= schema['exclusiveMaximum'])
-        )
 
     def _bool_gen(self) -> bool:
         """Generate a boolean from a JSON Schema boolean."""
