@@ -12833,6 +12833,13 @@ class TestHooksCapability:
                 seen_by_second.append(event.payload)
                 return ReplacementEvent(payload=f'{event.payload}+second')
 
+        seen_by_third: list[Any] = []
+
+        @hooks.on.event
+        async def observe_third(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
+            if isinstance(event, ReplacementEvent):
+                seen_by_third.append(event.payload)
+
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
             capabilities=[hooks],
@@ -12841,9 +12848,53 @@ class TestHooksCapability:
             async with agent.run_stream_events('hello') as stream:
                 events = [event async for event in stream]
         assert 'first' in seen_by_second
+        assert 'first+second' in seen_by_third
         assert any(isinstance(event, ReplacementEvent) and event.payload == 'first+second' for event in events), (
             'the composed replacement should reach the stream'
         )
+
+    async def test_on_event_legacy_replacement_of_inline_event_chains_without_stream_rewrite(self):
+        """Replacing an inline decision event chains to later callbacks but never rewrites the stream."""
+
+        @dataclass(kw_only=True)
+        class InlineDecisionEvent(CapabilityEvent, namespace='capabilities_inline_replace', dispatch='inline'):
+            cancelled: bool = False
+
+        emitter = Capability[Any](id='emitter')
+        emitted: list[InlineDecisionEvent] = []
+
+        @emitter.tool
+        async def decide(ctx: RunContext[Any]) -> str:
+            emitted.append(await ctx.emit_event(InlineDecisionEvent()))
+            return 'done'
+
+        hooks = Hooks[Any]()
+
+        @hooks.on.event
+        async def replace(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent | None:
+            if isinstance(event, InlineDecisionEvent):
+                return ReplacementEvent(payload='inline-replaced')
+
+        seen_after: list[str] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
+            if isinstance(event, ReplacementEvent):
+                seen_after.append(str(event.payload))
+
+        async def call_decide(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                yield 'done'
+            else:
+                yield {0: DeltaToolCall(name='decide', json_args='{}', tool_call_id='call_1')}
+
+        agent = Agent(FunctionModel(stream_function=call_decide), capabilities=[emitter, hooks])
+        with pytest.warns(PydanticAIDeprecationWarning, match='returning a replacement event'):
+            async with agent.run_stream_events('hello') as stream:
+                events = [event async for event in stream]
+        assert seen_after == ['inline-replaced']
+        # The inline event still reaches the stream itself; the replacement is not stored.
+        assert any(isinstance(event, InlineDecisionEvent) for event in events)
 
     async def test_prepare_tools_hook(self):
         """on.prepare_tools filters tool definitions."""

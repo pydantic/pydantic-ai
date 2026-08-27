@@ -10,7 +10,7 @@ import pydantic
 import pytest
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext, UnknownCapabilityEvent
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessEventStream, WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext
@@ -265,7 +265,7 @@ async def test_app_tool_cannot_emit_capability_event():
     @agent.tool
     async def read_file(ctx: RunContext[Any]) -> str:
         await ctx.emit_event(FileReadEvent(path='tool.txt'))
-        return 'ok'
+        return 'ok'  # pragma: no cover - the emit above raises
 
     with pytest.raises(UserError, match='Capability events belong to capabilities'):
         await _collect(agent)
@@ -293,7 +293,7 @@ async def test_capability_cannot_emit_custom_event():
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             await ctx.emit_event(BridgeEvent())
-            return request_context
+            return request_context  # pragma: no cover - the emit above raises
 
     agent = Agent(FunctionModel(stream_function=_only_text), capabilities=[BadCapability()])
     with pytest.raises(UserError, match='Capabilities should define and emit `CapabilityEvent`'):
@@ -339,3 +339,57 @@ def test_subclass_post_init_override_keeps_guards():
     with pytest.raises(ValueError, match='serializes under its registered kind'):
         GuardedOverrideEvent(kind='other.kind')
     assert GuardedOverrideEvent().value == 1
+
+
+async def test_process_event_stream_handler_can_emit_custom_event():
+    """`ProcessEventStream` runs app callbacks, so they keep `CustomEvent` permission."""
+    emitted = False
+
+    async def handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal emitted
+        async for _ in stream:
+            if not emitted:
+                emitted = True
+                await ctx.emit_event(BridgeEvent())
+
+    events = await _collect(
+        Agent(FunctionModel(stream_function=_only_text), capabilities=[ProcessEventStream(handler)])
+    )
+    assert [event for event in events if isinstance(event, CustomEvent)] == [BridgeEvent()]
+
+
+async def test_pre_set_capability_id_is_preserved():
+    """A capability re-emitting an event on another instance's behalf keeps the original attribution."""
+
+    @dataclass
+    class RelayCapability(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            await ctx.emit_event(FileReadEvent(path='relayed.txt', capability_id='original_instance'))
+            return request_context
+
+    events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[RelayCapability()]))
+    assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == ['original_instance']
+
+
+async def test_emission_with_unresolvable_tool_name_attributes_nothing():
+    """A context whose `tool_name` no longer resolves in the tool manager attributes no capability.
+
+    This can happen when a context copy outlives a dynamic toolset change; the emission still
+    succeeds for a `CustomEvent`, un-attributed.
+    """
+    import dataclasses as dc
+
+    agent: Agent[None, str] = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        stale = dc.replace(ctx, tool_name='vanished')
+        await stale.emit_event(BridgeEvent())
+        return 'ok'
+
+    events = await _collect(agent)
+    bridge = [event for event in events if isinstance(event, BridgeEvent)]
+    assert len(bridge) == 1
+    assert bridge[0].tool_name == 'vanished'

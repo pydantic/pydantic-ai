@@ -489,6 +489,38 @@ def test_unknown_event_name_with_nested_data_preserved():
     assert event == snapshot(UnknownCustomEvent(name='quick_status', data={'stage': 'fetching'}))
 
 
+def test_unknown_event_data_key_collision_round_trips():
+    """An unknown wire dict carrying both payload fields and its own `data` key keeps both.
+
+    The envelope nests the original `data` value inside the gathered payload, and re-serialization
+    restores the exact original wire dict.
+    """
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = {'event_kind': 'custom', 'name': 'unseen_collision', 'data': 1, 'extra': 2}
+    with pytest.warns(UserWarning, match="Unknown event name 'unseen_collision'"):
+        event = adapter.validate_python(wire)
+    assert event == snapshot(UnknownCustomEvent(name='unseen_collision', data={'extra': 2, 'data': 1}))
+    redumped = adapter.dump_python(event)
+    assert {k: v for k, v in redumped.items() if k in wire} == wire
+
+
+def test_unknown_event_instance_revalidates():
+    """An already-constructed unknown instance passes through validation unchanged, without warning."""
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    event = UnknownCustomEvent(name='unseen_instance', data={'x': 1})
+    assert adapter.validate_python(event) == event
+
+
+def test_unknown_event_non_mapping_data_round_trips():
+    """A non-mapping `data` payload is kept under `data` on serialization instead of being flattened."""
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    event = UnknownCustomEvent(name='unseen_scalar', data=5)
+    dumped = adapter.dump_python(event)
+    assert dumped['data'] == 5
+    with pytest.warns(UserWarning, match="Unknown event name 'unseen_scalar'"):
+        assert adapter.validate_python(dumped) == event
+
+
 def test_registration_after_adapter_not_seen():
     """The union is built per `TypeAdapter`: an adapter built before a class was registered degrades
     its events to `UnknownCustomEvent` (the import-order caveat), while a fresh adapter recovers them."""
@@ -522,3 +554,59 @@ def test_subclass_post_init_override_keeps_guards():
     with pytest.raises(ValueError, match='serializes under its registered name'):
         GuardedCustomEvent(name='other')
     assert GuardedCustomEvent().value == 1
+
+
+async def test_iter_completed_or_buffered_plain_list_buffer():
+    """A run revived from persisted graph state holds a plain `list` buffer, which can't signal
+    appends, so task completion is awaited in plain completion order.
+
+    Unit test: the revived-state path isn't reachable through the public API without a
+    persistence backend.
+    """
+    from pydantic_ai._tool_execution import _iter_completed_or_buffered  # pyright: ignore[reportPrivateUsage]
+
+    async def result() -> int:
+        return 1
+
+    items = [item async for item in _iter_completed_or_buffered({asyncio.create_task(result())}, [])]
+    assert [item.result() for item in items if isinstance(item, asyncio.Task)] == [1]
+
+
+async def test_iter_completed_or_buffered_drains_pre_buffered_events():
+    """Events already buffered before iteration starts are yielded ahead of any task completion.
+
+    Unit test: through the public API the buffer is drained at stream edges before tool execution
+    starts, so the pre-drain branch only sees content when an event lands in the same loop tick.
+    """
+    from pydantic_ai._run_context import EventStreamBuffer
+    from pydantic_ai._tool_execution import _iter_completed_or_buffered  # pyright: ignore[reportPrivateUsage]
+
+    async def result() -> int:
+        return 1
+
+    buffer = EventStreamBuffer([ProgressEvent(payload='pre-buffered')])
+    items = [item async for item in _iter_completed_or_buffered({asyncio.create_task(result())}, buffer)]
+    assert isinstance(items[0], ProgressEvent)
+    assert [item.result() for item in items if isinstance(item, asyncio.Task)] == [1]
+
+
+async def test_output_function_emission_is_delivered():
+    """An event emitted from an output function surfaces while output tool calls are processed.
+
+    `end_strategy='exhaustive'` routes output calls through the completion-or-buffer race, the
+    same live-delivery path tool calls use.
+    """
+    from pydantic_ai.output import ToolOutput
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"value": "ok"}', tool_call_id='call_out')}
+
+    async def produce(ctx: RunContext[Any], value: str) -> str:
+        await ctx.emit_event(ProgressEvent(payload='from output'))
+        return value
+
+    agent: Agent[Any, str] = Agent(
+        FunctionModel(stream_function=stream), output_type=ToolOutput(produce), end_strategy='exhaustive'
+    )
+    events = await _collect_events(agent)
+    assert any(isinstance(event, ProgressEvent) and event.payload == 'from output' for event in events)

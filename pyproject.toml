@@ -482,7 +482,7 @@ exclude_lines = [
     '@deprecated',
     '@typing.overload',
     '@abstractmethod',
-    '\(Protocol\):$',
+    '\(Protocol\b.*\):$',
     'typing.assert_never',
     '$\s*assert_never\(',
     'if __name__ == .__main__.:',

@@ -4513,6 +4513,38 @@ async def test_capability_event_is_not_forwarded():
     )
 
 
+async def test_capability_event_forwarded_by_subclass_override():
+    """A protocol adapter subclass can forward capability events by overriding `handle_capability_event`."""
+
+    @dataclass(kw_only=True)
+    class AgUiForwardedEvent(CapabilityEvent, namespace='ag_ui_forwarded'):
+        value: int
+
+    class ForwardingStream(AGUIEventStream[Any]):
+        async def handle_capability_event(self, event: CapabilityEvent) -> AsyncIterator[BaseEvent]:
+            yield CustomEvent(type=EventType.CUSTOM, name=event.kind, value={'capability_id': event.capability_id})
+
+    async def event_generator():
+        yield AgUiForwardedEvent(value=1, capability_id='test')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = ForwardingStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert [event for event in events if event['type'] == 'CUSTOM'] == snapshot(
+        [
+            {
+                'type': 'CUSTOM',
+                'timestamp': IsInt(),
+                'name': 'ag_ui_forwarded.ag_ui_forwarded',
+                'value': {'capability_id': 'test'},
+            }
+        ]
+    )
+
+
 async def test_typed_custom_event_maps_to_ag_ui_custom_event():
     """A typed `CustomEvent` subclass maps its own fields as the AG-UI `CustomEvent` value."""
 

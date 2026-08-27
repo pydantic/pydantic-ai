@@ -137,9 +137,9 @@ def _gather_unknown_payload(
 def _flatten_unknown(value: Any, serializer: pydantic_core.core_schema.SerializerFunctionWrapHandler) -> Any:
     """Serializer for the unknown-event envelope: re-flatten `data` so the typed event can be recovered."""
     dumped: Any = serializer(value)
-    if is_str_dict(dumped):
-        if is_str_dict(data := dumped.pop('data', None)):
-            return {**data, **dumped}
-        dumped['data'] = data
+    if not is_str_dict(dumped):  # pragma: no cover - the family serializer always produces a dict
         return dumped
+    if is_str_dict(data := dumped.pop('data', None)):
+        return {**data, **dumped}
+    dumped['data'] = data
     return dumped
