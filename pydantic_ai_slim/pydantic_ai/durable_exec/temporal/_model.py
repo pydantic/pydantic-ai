@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import ConfigDict, with_config
+from pydantic import ConfigDict, PydanticSchemaGenerationError, TypeAdapter, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
@@ -52,6 +52,8 @@ __all__ = [
 class _CancelParams:
     response: ModelResponse
     model_id: str | None = None
+    serialized_run_context: Any = None
+    deps: Any = None
 
 
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
@@ -142,18 +144,28 @@ class TemporalModel(WrapperModel):
             request_stream_activity
         )
 
+        try:
+            deps_type_adapter = TypeAdapter(deps_type)
+        except PydanticSchemaGenerationError:
+            deps_type_adapter = TypeAdapter(deps_type, config=ConfigDict(defer_build=True))
+
         async def cancel_suspended_response_activity(params: _CancelParams) -> None:
             # Resolve the model that produced the response (mirrors `request_activity`'s use of
             # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
             # raw HTTP call to the provider, so it must run in an activity rather than the workflow
-            # sandbox.
-            #
-            # No `deps`/`run_context` is passed, so a `provider_factory` doesn't get consulted and a
-            # runtime model string is inferred from the environment instead of from the client that
-            # produced the response. That's a real gap, tracked in #6992: closing it means adding a
-            # second activity argument, which changes the scheduled activity command and so can't be
-            # done without a story for workflows already in flight.
-            model_for_request = self._resolve_model_id(params.model_id)
+            # sandbox. The run context and deps travel inside the single params payload to preserve
+            # the activity command shape for replay; old payloads omit them and keep the previous
+            # environment-inference behavior.
+            run_context = None
+            if params.serialized_run_context is not None:
+                deps = deps_type_adapter.validate_python(params.deps) if params.deps is not None else None
+                run_context = deserialize_run_context(
+                    self.run_context_type,
+                    params.serialized_run_context,
+                    deps=deps,
+                    agent=self._agent,
+                )
+            model_for_request = self._resolve_model_id(params.model_id, run_context)
             await model_for_request.cancel_suspended_response(params.response)
 
         self.cancel_suspended_response_activity = activity.defn(
@@ -254,6 +266,7 @@ class TemporalModel(WrapperModel):
             return await super().cancel_suspended_response(response)
 
         model_id = self._current_model_id()
+        run_context = get_current_run_context()
         model_name = model_id or self.model_id
         activity_config: ActivityConfig = {
             'summary': f'cancel suspended response: {model_name}',
@@ -261,7 +274,16 @@ class TemporalModel(WrapperModel):
         }
         await execute_activity(
             activity=self.cancel_suspended_response_activity,
-            args=[_CancelParams(response=response, model_id=model_id)],
+            args=[
+                _CancelParams(
+                    response=response,
+                    model_id=model_id,
+                    serialized_run_context=(
+                        self.run_context_type.serialize_run_context(run_context) if run_context is not None else None
+                    ),
+                    deps=run_context.deps if run_context is not None else None,
+                )
+            ],
             **activity_config,
         )
 
