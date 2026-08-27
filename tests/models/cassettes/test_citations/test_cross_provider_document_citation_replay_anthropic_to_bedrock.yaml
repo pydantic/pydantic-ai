@@ -1,0 +1,141 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '410'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: According to the document, what is the return window? Answer in one sentence and cite the document.
+          type: text
+        - citations:
+            enabled: true
+          source:
+            data: The return window is thirty days from purchase.
+            media_type: text/plain
+            type: text
+          type: document
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '739'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-254b4e39fa6d36ec78c39321c380f15e-ed89a7892f2f5fac-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - citations:
+        - cited_text: The return window is thirty days from purchase.
+          document_index: 0
+          document_title: null
+          end_char_index: 47
+          start_char_index: 0
+          type: char_location
+        text: The return window is thirty days from purchase.
+        type: text
+      id: msg_011CeTHwL17uy263Wp2hd9qV
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 569
+        output_tokens: 28
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "According to the document, what is the return window? Answer
+      in one sentence and cite the document."}, {"document": {"name": "Document 1", "format": "txt", "source": {"text": "The
+      return window is thirty days from purchase."}, "citations": {"enabled": true}}}]}, {"role": "assistant", "content":
+      [{"citationsContent": {"content": [{"text": "The return window is thirty days from purchase."}], "citations": [{"location":
+      {"documentChar": {"documentIndex": 0, "start": 0, "end": 47}}, "sourceContent": [{"text": "The return window is thirty
+      days from purchase."}], "title": "Document 1"}]}}]}, {"role": "user", "content": [{"text": "Continue."}]}], "system":
+      [], "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MDUyNWIwMDctZmNkYi00ODI4LTlhMzctZTFjZjI0N2I5OGJm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '736'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '687'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3200
+      output:
+        message:
+          content:
+          - text: |-
+              I'm happy to help! However, I need more information about what you'd like me to continue with. Could you please clarify:
+
+              - Would you like more details about the return policy?
+              - Do you have another question about the document?
+              - Is there something specific you'd like me to elaborate on?
+
+              Please let me know how I can assist you further!
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 616
+        outputTokens: 80
+        serverToolUsage: {}
+        totalTokens: 696
+    status:
+      code: 200
+      message: OK
+version: 1

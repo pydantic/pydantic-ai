@@ -11,6 +11,7 @@ from threading import Barrier, Lock
 from time import sleep
 from types import SimpleNamespace
 from typing import Any, Literal, cast
+from unittest.mock import Mock
 
 import anyio
 import anyio.from_thread
@@ -30,6 +31,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -1724,7 +1726,11 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
     """Same-provider citations are replayed as one typed Bedrock `citationsContent` block."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        settings=ModelSettings(include_citations=True),
+    )
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
@@ -1755,15 +1761,8 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
                                                 },
                                             },
                                         ),
-                                        WebCitationSource(
-                                            url='https://ai.pydantic.dev',
-                                            title='Pydantic AI',
-                                            provider_details={
-                                                'source': 'Web Search',
-                                                'domain': 'ai.pydantic.dev',
-                                            },
-                                        ),
-                                        WebCitationSource(url='https://example.com/no-optional-fields'),
+                                        # Bedrock emits web citations but its models reject them in assistant history.
+                                        WebCitationSource(url='https://ai.pydantic.dev', title='Pydantic AI'),
                                     ],
                                     anchor=ContentCitationAnchor(start=0, end=len(text)),
                                 )
@@ -1791,13 +1790,7 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
                                 'sourceContent': [{'text': 'Returns are accepted within thirty days.'}],
                                 'source': 'Document 1',
                                 'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
-                            },
-                            {
-                                'title': 'Pydantic AI',
-                                'source': 'Web Search',
-                                'location': {'web': {'url': 'https://ai.pydantic.dev', 'domain': 'ai.pydantic.dev'}},
-                            },
-                            {'location': {'web': {'url': 'https://example.com/no-optional-fields'}}},
+                            }
                         ],
                     }
                 }
@@ -1806,168 +1799,27 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
     )
 
 
-def _bedrock_replayable_citation() -> Citation:
-    return Citation(
-        sources=[
-            WebCitationSource(
-                url='https://ai.pydantic.dev',
-                title='Pydantic AI',
-                provider_details={'domain': 'ai.pydantic.dev'},
-            )
-        ],
-        anchor=ContentCitationAnchor(start=0, end=8),
-    )
-
-
 @pytest.mark.parametrize(
-    ('provider_name', 'citations'),
+    'provider_details',
     [
+        pytest.param({}, id='missing-location'),
+        pytest.param({'location': {'documentChar': {'documentIndex': -1}}}, id='negative-index'),
+        pytest.param({'location': {'documentChar': {'documentIndex': 0, 'start': 8, 'end': 0}}}, id='reversed-range'),
         pytest.param(
-            'bedrock',
-            [
-                Citation(
-                    sources=[DocumentCitationSource(title='Returns policy')],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                )
-            ],
-            id='incomplete',
+            {'location': {'documentChar': {}, 'documentPage': {'documentIndex': 0}}}, id='multiple-location-kinds'
         ),
-        pytest.param(
-            'anthropic',
-            [_bedrock_replayable_citation()],
-            id='foreign',
-        ),
-        pytest.param(
-            'bedrock',
-            [
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            title='Returns policy',
-                            provider_details={
-                                'location': {'documentChar': {'documentIndex': -1, 'start': 0, 'end': 8}}
-                            },
-                        )
-                    ],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                )
-            ],
-            id='negative-index',
-        ),
-        pytest.param(
-            'bedrock',
-            [
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            title='Returns policy',
-                            provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 8, 'end': 0}}},
-                        )
-                    ],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                )
-            ],
-            id='reversed-range',
-        ),
-        pytest.param(
-            'bedrock',
-            [
-                Citation(
-                    sources=[WebCitationSource(url='https://ai.pydantic.dev', provider_details={'domain': 1})],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                )
-            ],
-            id='invalid-web-domain',
-        ),
-        pytest.param(
-            'bedrock',
-            [
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            title='Returns policy',
-                            provider_details={
-                                'location': {
-                                    'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8},
-                                    'documentPage': {'documentIndex': 0, 'start': 0, 'end': 1},
-                                }
-                            },
-                        )
-                    ],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                )
-            ],
-            id='multiple-location-kinds',
-        ),
-        pytest.param(
-            'bedrock',
-            [
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            title='Returns policy',
-                            provider_details={'location': {'unsupported': {'documentIndex': 0}}},
-                        )
-                    ],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                )
-            ],
-            id='unsupported-location-kind',
-        ),
-        pytest.param(
-            'bedrock',
-            [
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            title='Returns policy',
-                            provider_details={
-                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8, 'extra': 1}}
-                            },
-                        )
-                    ],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                )
-            ],
-            id='unexpected-location-field',
-        ),
-        pytest.param(
-            'bedrock',
-            [
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            title='Returns policy',
-                            provider_details={
-                                'source': 1,
-                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8}},
-                            },
-                        )
-                    ],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                )
-            ],
-            id='invalid-source-name',
-        ),
-        pytest.param(
-            'bedrock',
-            [
-                _bedrock_replayable_citation(),
-                Citation(
-                    sources=[DocumentCitationSource(title='Incomplete source')],
-                    anchor=ContentCitationAnchor(start=0, end=8),
-                ),
-            ],
-            id='valid-and-invalid-citations-all-fall-back',
-        ),
+        pytest.param({'location': {'unsupported': {'documentIndex': 0}}}, id='unsupported-location-kind'),
+        pytest.param({'location': {'documentChar': 'invalid'}}, id='invalid-location-data'),
+        pytest.param({'location': {'documentChar': {'documentIndex': 0}}}, id='incomplete-location-data'),
+        pytest.param({'location': {'documentChar': {'extra': 1}}}, id='unexpected-location-field'),
+        pytest.param({'location': {'documentChar': {}}, 'source': 1}, id='empty-location-and-invalid-source'),
     ],
 )
-async def test_bedrock_citations_replay_as_text_when_incomplete_or_foreign(
+async def test_bedrock_citation_replay_drops_sources_without_valid_location(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
     mocker: MockerFixture,
-    provider_name: str,
-    citations: list[Citation],
+    provider_details: dict[str, Any],
 ) -> None:
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     mock_converse = mocker.patch.object(model.client, 'converse')
@@ -1981,7 +1833,24 @@ async def test_bedrock_citations_replay_as_text_when_incomplete_or_foreign(
         ModelMessagesTypeAdapter.dump_json(
             [
                 ModelRequest(parts=[UserPromptPart('What is the return window?')]),
-                ModelResponse(parts=[TextPart('Returns.', citations=citations)], provider_name=provider_name),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'Returns.',
+                            citations=[
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            title='Returns policy', provider_details=provider_details or None
+                                        )
+                                    ],
+                                    anchor=ContentCitationAnchor(start=0, end=8),
+                                )
+                            ],
+                        )
+                    ],
+                    provider_name='bedrock',
+                ),
                 ModelRequest(parts=[UserPromptPart('Continue.')]),
             ]
         )
@@ -1992,6 +1861,302 @@ async def test_bedrock_citations_replay_as_text_when_incomplete_or_foreign(
     assert mock_converse.call_args.kwargs['messages'][1] == {
         'role': 'assistant',
         'content': [{'text': 'Returns.'}],
+    }
+
+
+def _foreign_citation_history(
+    text: str, citations: list[Citation], *, provider_name: str = 'google'
+) -> list[ModelMessage]:
+    """Persist a foreign cited response before replaying it through Bedrock."""
+    return ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('What is the answer?')]),
+                ModelResponse(parts=[TextPart(text, citations=citations)], provider_name=provider_name),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+
+def _bedrock_citation_replay_model(
+    bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> tuple[BedrockConverseModel, Mock]:
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        settings=ModelSettings(include_citations=True),
+    )
+    mock_converse: Mock = mocker.patch.object(
+        model.client,
+        'converse',
+        return_value={
+            'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
+            'stopReason': 'end_turn',
+            'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
+            'ResponseMetadata': {'HTTPStatusCode': 200},
+        },
+    )
+    return model, mock_converse
+
+
+@pytest.mark.parametrize(
+    'sibling_anchor',
+    [
+        pytest.param(MarkerCitationAnchor(start=9, end=12), id='marker'),
+        pytest.param(ContentCitationAnchor(start=4, end=12), id='overlapping-content'),
+    ],
+)
+async def test_bedrock_does_not_broaden_attribution_for_unsupported_sibling_citation(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    sibling_anchor: MarkerCitationAnchor | ContentCitationAnchor,
+) -> None:
+    """An incompatible sibling is omitted without widening an exact citation to the whole `TextPart`."""
+    model, mock_converse = _bedrock_citation_replay_model(bedrock_provider, mocker)
+    text = 'Returns. [1]'
+    history = _foreign_citation_history(
+        text,
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Returns policy',
+                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=8),
+            ),
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Rendered marker',
+                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 9, 'end': 12}}},
+                    )
+                ],
+                anchor=sibling_anchor,
+            ),
+        ],
+        provider_name='bedrock',
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert mock_converse.call_args.kwargs['messages'][1] == {
+        'role': 'assistant',
+        'content': [
+            {
+                'citationsContent': {
+                    'content': [{'text': 'Returns.'}],
+                    'citations': [
+                        {
+                            'title': 'Returns policy',
+                            'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8}},
+                        }
+                    ],
+                }
+            },
+            {'text': ' [1]'},
+        ],
+    }
+
+
+async def test_bedrock_does_not_replay_foreign_web_citations(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Bedrock models reject web `citationsContent` blocks in assistant history."""
+    model, mock_converse = _bedrock_citation_replay_model(bedrock_provider, mocker)
+    text = 'Prefix cited answer suffix.'
+    history = _foreign_citation_history(
+        text,
+        [
+            Citation(
+                sources=[
+                    WebCitationSource(url='https://first.example.com', title='First'),
+                    WebCitationSource(url='https://second.example.com', title='Second'),
+                ],
+                anchor=ContentCitationAnchor(start=7, end=19),
+            )
+        ],
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert mock_converse.call_args.kwargs['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'text': text}],
+    }
+
+
+@pytest.mark.parametrize(
+    ('provider_name', 'citations'),
+    [
+        pytest.param(
+            'anthropic',
+            [
+                Citation(
+                    sources=[
+                        WebCitationSource(
+                            url='https://example.com', title='Example', excerpts=['An example source excerpt.']
+                        )
+                    ],
+                    provider_details={'encrypted_index': 'opaque-anthropic-state'},
+                )
+            ],
+            id='unanchored',
+        ),
+        pytest.param(
+            'openai',
+            [
+                Citation(
+                    sources=[
+                        WebCitationSource(
+                            url='https://example.com', title='Example', excerpts=['An example source excerpt.']
+                        )
+                    ],
+                    anchor=MarkerCitationAnchor(start=0, end=7),
+                )
+            ],
+            id='marker-anchor',
+        ),
+    ],
+)
+async def test_bedrock_does_not_replay_foreign_unanchored_or_marker_citations(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    provider_name: str,
+    citations: list[Citation],
+) -> None:
+    """Unsupported foreign citations remain application metadata, regardless of anchor kind."""
+    model, mock_converse = _bedrock_citation_replay_model(bedrock_provider, mocker)
+
+    await model.request(
+        _foreign_citation_history('Answer.', citations, provider_name=provider_name), None, ModelRequestParameters()
+    )
+
+    assert mock_converse.call_args.kwargs['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'text': 'Answer.'}],
+    }
+
+
+async def test_bedrock_does_not_replay_unbound_foreign_document_citation(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Portable metadata alone does not prove a document citation's destination binding."""
+    model, mock_converse = _bedrock_citation_replay_model(bedrock_provider, mocker)
+    history = _foreign_citation_history(
+        'Document answer.',
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        document_id='document-123',
+                        title='Policy',
+                        excerpts=['The cited document excerpt.'],
+                        provider_details={
+                            'type': 'char_location',
+                            'document_index': 0,
+                            'start_char_index': 10,
+                            'end_char_index': 36,
+                        },
+                    )
+                ]
+            )
+        ],
+        provider_name='anthropic',
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert mock_converse.call_args.kwargs['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'text': 'Document answer.'}],
+    }
+
+
+async def test_bedrock_replays_bound_anthropic_text_document_citation(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """An Anthropic character citation maps to the same persisted Bedrock text document."""
+    model, mock_converse = _bedrock_citation_replay_model(bedrock_provider, mocker)
+    document = 'The return window is thirty days from purchase.'
+    answer = 'Returns are accepted for thirty days.'
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'What is the return window?',
+                                BinaryContent(data=document.encode(), media_type='text/plain'),
+                            ]
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            answer,
+                            citations=[
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            excerpts=[document],
+                                            provider_details={
+                                                'type': 'char_location',
+                                                'document_index': 0,
+                                                'start_char_index': 0,
+                                                'end_char_index': len(document),
+                                            },
+                                        )
+                                    ]
+                                )
+                            ],
+                        )
+                    ],
+                    provider_name='anthropic',
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert mock_converse.call_args.kwargs['messages'][0] == {
+        'role': 'user',
+        'content': [
+            {'text': 'What is the return window?'},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'text': document},
+                    'citations': {'enabled': True},
+                }
+            },
+        ],
+    }
+    assert mock_converse.call_args.kwargs['messages'][1] == {
+        'role': 'assistant',
+        'content': [
+            {
+                'citationsContent': {
+                    'content': [{'text': answer}],
+                    'citations': [
+                        {
+                            'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': len(document)}},
+                            'title': 'Document 1',
+                            'sourceContent': [{'text': document}],
+                        }
+                    ],
+                }
+            }
+        ],
     }
 
 

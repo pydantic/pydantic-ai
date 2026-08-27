@@ -84,25 +84,42 @@ Serializing and reloading [message history](message-history.md#storing-and-loadi
 [`TextPart.citations`][pydantic_ai.messages.TextPart.citations], but that does not guarantee that the next model receives
 the structured citation data.
 
-| Destination API | What the model receives from citation-bearing history | Notes |
-| --- | --- | --- |
-| Anthropic Messages, same provider | Native web and document citations | Replayed only when every citation on the text part contains the required Anthropic data |
-| Amazon Bedrock Converse, same provider | A native `citationsContent` block | Replayed only when the complete block can be reconstructed |
-| OpenAI Responses, same provider | Native URL and file annotations | Requires the native output item ID and `openai_send_reasoning_ids=True` |
-| Google Gemini / Vertex AI, OpenAI Chat, OpenRouter, or xAI | Text only | These APIs have no confirmed assistant-history input matching Pydantic AI's normalized citations |
-| Any different provider | Text only | Provider identifiers, locations, grouping, and offset meanings are not safely interchangeable |
+| Citation origin ↓ / history destination → | Anthropic Messages | Amazon Bedrock Converse | OpenAI Responses | Gemini / Vertex AI | OpenAI Chat / OpenRouter / xAI |
+| --- | --- | --- | --- | --- | --- |
+| Anthropic | Native web and document | Character citation for the same text document[^document-bridge] | Text only | Text only | Text only |
+| Amazon Bedrock Converse | Character citation for the same text document[^document-bridge] | Native document[^bedrock-replay] | Text only | Text only | Text only |
+| OpenAI Responses | Text only | Text only | Native URL and file | Text only | Text only |
+| OpenAI Chat / OpenRouter | Text only | Text only | Marker-anchored URL[^openai-marker-replay] | Text only | Text only |
+| Gemini / Vertex AI | Text only | Text only | Text only | Text only | Text only |
+| xAI | Text only | Text only | Text only | Text only | Text only |
+
+[^document-bridge]: Requires the same persisted text document, a valid character range, and an excerpt that exactly
+    matches that range. Other document location kinds are not translated.
+[^bedrock-replay]: Requires `include_citations=True` so citations are enabled on the destination document. Tested
+    Bedrock Claude returned a validation error for web citation blocks in assistant history, while Nova returned
+    repeated server errors for the same shape.
+[^openai-marker-replay]: Requires exactly one URL source with a title and a valid
+    [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor]. Pydantic AI supplies the output-item ID required
+    by OpenAI Responses. Foreign file IDs and content anchors are not translated.
 
 "Text only" describes what is sent to the model; the citations remain on the stored Pydantic AI messages for the
-application to use. Same-provider replay is all-or-nothing for each text part. If any citation is incomplete, malformed,
-or belongs to another provider, the adapter sends that whole part as ordinary text rather than silently changing which
-claims appear sourced.
+application to use. Where the destination API has a compatible citation input, its adapter reconstructs the most
+precise structured citation it can without inventing provider data. Anthropic web citations cannot be reconstructed
+from another provider because Anthropic requires its own opaque `encrypted_index`. OpenAI only translates a foreign
+URL citation when its range already identifies a rendered marker; treating a supported-content range as a marker would
+change its meaning. Pydantic AI never appends citation data to the assistant's text as a fallback.
+
+!!! note "Citation metadata crosses the provider boundary"
+    Cross-provider replay can send source URLs, titles, document identifiers, and excerpts to the destination provider
+    as part of message history. Treat citation excerpts like other model-visible history when deciding what data may be
+    shared with that provider.
 
 !!! warning "Do not assume the model remembers a citation"
     A follow-up such as "Tell me more about source [1]" may reach a model that sees the rendered `[1]` marker but not
     its URL, excerpt, or document location. If the model needs the source, include the relevant source content in the
     new user prompt or let it retrieve the source again.
 
-Pydantic AI does not append a synthetic source list or an explanatory citation message to history. Doing so could
+Pydantic AI does not append a synthetic source list or an explanatory citation message to assistant text. Doing so could
 change the meaning of the conversation and teach the model to imitate an application-specific citation format.
 
 ### Prompt caching and structured output

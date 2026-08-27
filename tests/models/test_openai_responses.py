@@ -231,8 +231,8 @@ def test_openai_file_citation_uses_document_identifier():
     ]
 
 
-async def test_openai_responses_citations_replay_only_for_same_provider(allow_model_requests: None):
-    """A persisted OpenAI response reconstructs annotations; a foreign response remains plain text."""
+async def test_openai_responses_replays_native_and_foreign_marker_citations(allow_model_requests: None):
+    """Responses accepts native annotations and a foreign URL citation that points to a rendered marker."""
     mock_client = MockOpenAIResponses.create_mock([response_message([]), response_message([])])
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
     same_provider_history = ModelMessagesTypeAdapter.validate_json(
@@ -302,18 +302,21 @@ async def test_openai_responses_citations_replay_only_for_same_provider(allow_mo
                 ModelResponse(
                     parts=[
                         TextPart(
-                            'The source supports this claim.',
-                            id='msg-foreign',
-                            provider_name='anthropic',
+                            'Answer ([example.com](https://example.com))',
+                            provider_name='openrouter',
                             citations=[
                                 Citation(
                                     sources=[WebCitationSource(url='https://example.com/source', title='Source')],
-                                    anchor=MarkerCitationAnchor(start=0, end=10),
-                                )
+                                    anchor=MarkerCitationAnchor(start=7, end=43),
+                                ),
+                                Citation(
+                                    sources=[DocumentCitationSource(document_id='foreign-file', title='report.pdf')],
+                                    provider_details={'index': 0},
+                                ),
                             ],
                         )
                     ],
-                    provider_name='anthropic',
+                    provider_name='openrouter',
                 ),
                 ModelRequest(parts=[UserPromptPart('Continue.')]),
             ]
@@ -322,13 +325,30 @@ async def test_openai_responses_citations_replay_only_for_same_provider(allow_mo
 
     await model.request(
         foreign_provider_history,
-        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        OpenAIResponsesModelSettings(),
         ModelRequestParameters(),
     )
 
     assert get_mock_responses_kwargs(mock_client)[1]['input'][1] == {
         'role': 'assistant',
-        'content': 'The source supports this claim.',
+        'id': 'msg_pydantic_ai_1_0',
+        'content': [
+            {
+                'text': 'Answer ([example.com](https://example.com))',
+                'type': 'output_text',
+                'annotations': [
+                    {
+                        'type': 'url_citation',
+                        'url': 'https://example.com/source',
+                        'title': 'Source',
+                        'start_index': 7,
+                        'end_index': 43,
+                    }
+                ],
+            }
+        ],
+        'type': 'message',
+        'status': 'completed',
     }
 
 
@@ -354,19 +374,6 @@ async def test_openai_responses_citations_replay_only_for_same_provider(allow_mo
                 )
             ],
             id='multiple-sources',
-        ),
-        pytest.param(
-            [
-                Citation(
-                    sources=[WebCitationSource(url='https://example.com/valid', title='Valid')],
-                    anchor=MarkerCitationAnchor(start=0, end=10),
-                ),
-                Citation(
-                    sources=[WebCitationSource(url='https://example.com/invalid', title='Invalid')],
-                    anchor=MarkerCitationAnchor(start=20, end=40),
-                ),
-            ],
-            id='valid-and-invalid-citations-all-fall-back',
         ),
         pytest.param(
             [
@@ -416,6 +423,51 @@ async def test_openai_responses_unreconstructable_citations_replay_with_empty_an
 
     assert get_mock_responses_kwargs(mock_client)[0]['input'][1]['content'] == [
         {'text': 'The source supports this claim.', 'type': 'output_text', 'annotations': []}
+    ]
+
+
+async def test_openai_responses_replays_each_reconstructable_citation(allow_model_requests: None):
+    """One unusable citation does not hide an independently valid annotation."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    history = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'The source supports this claim.',
+                    id='msg-historical',
+                    provider_name='openai',
+                    citations=[
+                        Citation(
+                            sources=[WebCitationSource(url='https://example.com/valid', title='Valid')],
+                            anchor=MarkerCitationAnchor(start=0, end=10),
+                        ),
+                        Citation(
+                            sources=[WebCitationSource(url='https://example.com/invalid', title='Invalid')],
+                            anchor=MarkerCitationAnchor(start=20, end=40),
+                        ),
+                    ],
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'][0]['content'][0]['annotations'] == [
+        {
+            'type': 'url_citation',
+            'url': 'https://example.com/valid',
+            'title': 'Valid',
+            'start_index': 0,
+            'end_index': 10,
+        }
     ]
 
 

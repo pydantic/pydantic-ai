@@ -681,6 +681,181 @@ async def test_native_citation_replay_after_persisted_history(
     assert second_result.output
 
 
+@pytest.mark.vcr(match_on=['method', 'scheme', 'host', 'port', 'path', 'query', 'body'])
+async def test_cross_provider_citation_replay_google_to_bedrock(
+    allow_model_requests: None,
+    gemini_api_key: str,
+    request: pytest.FixtureRequest,
+    request_capture: RequestCapture,
+) -> None:
+    """A persisted Gemini grounding citation falls back to unchanged text in Bedrock history."""
+    if not google_available() or not bedrock_available():  # pragma: no cover
+        pytest.skip('google and bedrock dependencies are required')
+
+    request_capture.client.timeout = httpx2.Timeout(30)
+    google_model = GoogleModel(
+        'gemini-2.5-flash',
+        provider=GoogleProvider(api_key=gemini_api_key, http_client=request_capture.client),
+    )
+    first_result = await Agent(google_model, capabilities=[NativeTool(WebSearchTool(max_uses=1))]).run(
+        "Use web search to find Pydantic AI's documentation and cite it."
+    )
+    citations = citations_from_messages(first_result.all_messages())
+    assert citations
+    assert all(isinstance(citation.anchor, ContentCitationAnchor) for citation in citations)
+
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
+    bedrock_model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
+    )
+    second_result = await Agent(bedrock_model).run(
+        'Without searching again, briefly describe the sources attached to the previous answer.',
+        message_history=history,
+    )
+    assert second_result.output
+
+
+@pytest.mark.vcr(match_on=['method', 'scheme', 'host', 'port', 'path', 'query', 'body'])
+async def test_cross_provider_document_citation_replay_bedrock_to_anthropic(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    request: pytest.FixtureRequest,
+    request_capture: RequestCapture,
+) -> None:
+    """A Bedrock text-document citation remains bound to the same document when replayed to Anthropic."""
+    if not bedrock_available() or not anthropic_available():  # pragma: no cover
+        pytest.skip('bedrock and anthropic dependencies are required')
+
+    document = b'The return window is thirty days from purchase.'
+    bedrock_model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
+    )
+    first_result = await Agent(bedrock_model, model_settings=ModelSettings(include_citations=True)).run(
+        [
+            'According to the document, what is the return window? Answer in one sentence and cite the document.',
+            BinaryContent(data=document, media_type='text/plain'),
+        ]
+    )
+    [citation] = citations_from_messages(first_result.all_messages())
+    [source] = citation.sources
+    assert isinstance(source, DocumentCitationSource)
+    assert source.excerpts == [document.decode()]
+
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+    )
+    second_result = await Agent(anthropic_model).run('Continue.', message_history=history)
+    assert second_result.output
+
+    second_request = request_capture.bodies()[-1]
+    [prior_assistant] = [message for message in second_request['messages'] if message['role'] == 'assistant']
+    [prior_text] = prior_assistant['content']
+    [replayed_citation] = prior_text['citations']
+    assert replayed_citation == {
+        'type': 'char_location',
+        'cited_text': document.decode(),
+        'document_index': 0,
+        'document_title': 'Document 1',
+        'start_char_index': 0,
+        'end_char_index': len(document),
+    }
+
+
+@pytest.mark.vcr(match_on=['method', 'scheme', 'host', 'port', 'path', 'query', 'body'])
+async def test_cross_provider_document_citation_replay_anthropic_to_bedrock(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    request: pytest.FixtureRequest,
+    request_capture: RequestCapture,
+) -> None:
+    """An Anthropic text-document citation remains bound to the same document when replayed to Bedrock."""
+    if not anthropic_available() or not bedrock_available():  # pragma: no cover
+        pytest.skip('anthropic and bedrock dependencies are required')
+
+    document = b'The return window is thirty days from purchase.'
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+    )
+    first_result = await Agent(anthropic_model, model_settings=ModelSettings(include_citations=True)).run(
+        [
+            'According to the document, what is the return window? Answer in one sentence and cite the document.',
+            BinaryContent(data=document, media_type='text/plain'),
+        ]
+    )
+    [citation] = citations_from_messages(first_result.all_messages())
+    [source] = citation.sources
+    assert isinstance(source, DocumentCitationSource)
+    assert source.excerpts == [document.decode()]
+
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
+    bedrock_model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
+    )
+    second_result = await Agent(bedrock_model, model_settings=ModelSettings(include_citations=True)).run(
+        'Continue.', message_history=history
+    )
+    assert second_result.output
+
+
+@pytest.mark.vcr(match_on=['method', 'scheme', 'host', 'port', 'path', 'query', 'body'])
+async def test_openai_responses_citation_replay_with_synthetic_item_id(
+    allow_model_requests: None,
+    openai_api_key: str,
+    request_capture: RequestCapture,
+) -> None:
+    """A foreign rendered-marker citation reaches Responses through a generated output-item ID."""
+    if not openai_available():  # pragma: no cover
+        pytest.skip('openai dependency is required')
+
+    history = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Answer ([example.com](https://example.com))',
+                    provider_name='openrouter',
+                    citations=[
+                        Citation(
+                            sources=[WebCitationSource(url='https://example.com', title='Example')],
+                            anchor=MarkerCitationAnchor(start=7, end=43),
+                        )
+                    ],
+                )
+            ],
+            provider_name='openrouter',
+        )
+    ]
+    model = OpenAIResponsesModel(
+        'gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    result = await Agent(model).run('Reply exactly DONE.', message_history=history)
+
+    assert result.output == snapshot('DONE')
+    assert request_capture.bodies()[0]['input'][0] == {
+        'id': 'msg_pydantic_ai_0_0',
+        'role': 'assistant',
+        'status': 'completed',
+        'type': 'message',
+        'content': [
+            {
+                'type': 'output_text',
+                'text': 'Answer ([example.com](https://example.com))',
+                'annotations': [
+                    {
+                        'type': 'url_citation',
+                        'url': 'https://example.com',
+                        'title': 'Example',
+                        'start_index': 7,
+                        'end_index': 43,
+                    }
+                ],
+            }
+        ],
+    }
+
+
 _OPENROUTER_CITATION_CONTEXT_PROBE_PROMPT = """\
 Use web search to verify what Pydantic AI is, then reply with exactly:
 Pydantic AI is a Python agent framework.
@@ -736,7 +911,7 @@ async def test_citation_context_without_native_replay(
 ) -> None:
     """Response citations remain local while the follow-up request receives plain assistant text."""
     if provider == 'google-gemini':
-        if not google_available():
+        if not google_available():  # pragma: no cover
             pytest.skip('google dependencies not installed')
         # Google derives its SDK deadline from the injected client's read timeout and rejects
         # httpx's five-second default because the Gemini API minimum is ten seconds.
@@ -750,7 +925,7 @@ async def test_citation_context_without_native_replay(
         first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
         first_agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
     else:
-        if not openrouter_available():
+        if not openrouter_available():  # pragma: no cover
             pytest.skip('openrouter dependencies not installed')
         model = OpenRouterModel(
             'deepseek/deepseek-chat',

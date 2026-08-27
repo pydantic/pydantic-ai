@@ -179,6 +179,7 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
+        _map_bedrock_document_citation_for_anthropic_replay,  # pyright: ignore[reportPrivateUsage]
         _map_citations,  # pyright: ignore[reportPrivateUsage]
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
@@ -618,14 +619,6 @@ def _anthropic_replayable_web_citation() -> Citation:
             id='orphan-document-index',
         ),
         pytest.param(
-            'anthropic',
-            [
-                _anthropic_replayable_web_citation(),
-                Citation(sources=[WebCitationSource(url='https://example.com/incomplete')]),
-            ],
-            id='valid-and-invalid-citations-all-fall-back',
-        ),
-        pytest.param(
             'openai',
             [_anthropic_replayable_web_citation()],
             id='foreign-provider-citations-fall-back',
@@ -672,6 +665,181 @@ async def test_anthropic_unreconstructable_citations_replay_as_text(
         'role': 'assistant',
         'content': [{'type': 'text', 'text': 'The source supports this claim.'}],
     }
+
+
+async def test_anthropic_replays_each_reconstructable_citation(allow_model_requests: None):
+    """One unusable citation does not hide an independently valid native citation."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'The source supports this claim.',
+                    citations=[
+                        _anthropic_replayable_web_citation(),
+                        Citation(sources=[WebCitationSource(url='https://example.com/incomplete')]),
+                    ],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]['content'][0]['citations'] == [
+        {
+            'type': 'web_search_result_location',
+            'url': 'https://example.com/source',
+            'title': 'Source',
+            'cited_text': 'supporting passage',
+            'encrypted_index': 'opaque-web-index',
+        }
+    ]
+
+
+async def test_anthropic_replays_bedrock_text_document_citation(allow_model_requests: None):
+    """Bedrock character coordinates replay only when they match the same persisted text document."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    document = 'The return window is thirty days from purchase.'
+    answer = 'The return window is thirty days.'
+    history = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    ['What is the return window?', BinaryContent(data=document.encode(), media_type='text/plain')]
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    answer,
+                    citations=[
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    title='Document 1',
+                                    excerpts=[document],
+                                    provider_details={
+                                        'location': {
+                                            'documentChar': {
+                                                'documentIndex': 0,
+                                                'start': 0,
+                                                'end': len(document),
+                                            }
+                                        }
+                                    },
+                                )
+                            ],
+                            anchor=ContentCitationAnchor(start=0, end=len(answer)),
+                        )
+                    ],
+                )
+            ],
+            provider_name='bedrock',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == {
+        'role': 'assistant',
+        'content': [
+            {
+                'type': 'text',
+                'text': answer,
+                'citations': [
+                    {
+                        'type': 'char_location',
+                        'cited_text': document,
+                        'document_index': 0,
+                        'document_title': 'Document 1',
+                        'start_char_index': 0,
+                        'end_char_index': len(document),
+                    }
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ('citation', 'documents'),
+    [
+        pytest.param(
+            Citation(sources=[DocumentCitationSource(title='Document')]),
+            ['source'],
+            id='no-content-anchor',
+        ),
+        pytest.param(
+            Citation(
+                sources=[WebCitationSource(url='https://example.com')],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='web-source',
+        ),
+        pytest.param(
+            Citation(
+                sources=[DocumentCitationSource(title='Document', excerpts=['source'])],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='no-bedrock-location',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        excerpts=['source'], provider_details={'location': {'documentChar': 'invalid'}}
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='invalid-bedrock-location',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        excerpts=['source'],
+                        provider_details={'location': {'documentChar': {'documentIndex': 1, 'start': 0, 'end': 6}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='unbound-document-index',
+        ),
+        pytest.param(
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        excerpts=['different'],
+                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 6}}},
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=6),
+            ),
+            ['source'],
+            id='excerpt-does-not-match-document-range',
+        ),
+    ],
+)
+def test_anthropic_does_not_replay_unbound_bedrock_document_citation(
+    citation: Citation, documents: list[str | None]
+) -> None:
+    assert _map_bedrock_document_citation_for_anthropic_replay(citation, 'answer', documents) == []
 
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])

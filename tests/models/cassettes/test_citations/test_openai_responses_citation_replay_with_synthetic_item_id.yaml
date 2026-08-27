@@ -1,0 +1,141 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '503'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content:
+        - annotations:
+          - end_index: 43
+            start_index: 7
+            title: Example
+            type: url_citation
+            url: https://example.com
+          text: Answer ([example.com](https://example.com))
+          type: output_text
+        id: msg_pydantic_ai_0_0
+        role: assistant
+        status: completed
+        type: message
+      - content: Reply exactly DONE.
+        role: user
+      model: gpt-5.4-mini
+      reasoning:
+        context: all_turns
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1629'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '596'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1787836689
+      created_at: 1787836689
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0a32dcd9fc54c775006a9039118aa087d286ea88c3cb9bf1db
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-mini-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: DONE
+          type: output_text
+        id: msg_0a32dcd9fc54c775006a903911e51487d2b3b3d9a3dec20b3b
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 31
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 36
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -26,6 +26,7 @@ from ..messages import (
     CachePoint,
     Citation,
     CompactionPart,
+    ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
     FilePart,
@@ -238,15 +239,86 @@ def _map_citation_for_replay(citation: Citation, document_count: int) -> BetaTex
 
 
 def _map_citations_for_replay(
-    citations: list[Citation] | None, document_count: int
+    citations: list[Citation] | None,
+    document_count: int,
+    *,
+    provider_name: str | None,
+    text: str,
+    citation_document_texts: list[str | None],
 ) -> list[BetaTextCitationParam] | None:
     if not citations:
         return None
 
-    result = [_map_citation_for_replay(citation, document_count) for citation in citations]
-    if any(citation is None for citation in result):
+    if provider_name == 'bedrock':
+        result = [
+            mapped_citation
+            for citation in citations
+            for mapped_citation in _map_bedrock_document_citation_for_anthropic_replay(
+                citation, text, citation_document_texts
+            )
+        ]
+        return result or None
+    elif provider_name != 'anthropic':
         return None
-    return [citation for citation in result if citation is not None]
+
+    result = [
+        mapped_citation
+        for citation in citations
+        if (mapped_citation := _map_citation_for_replay(citation, document_count)) is not None
+    ]
+    return result or None
+
+
+def _map_bedrock_document_citation_for_anthropic_replay(
+    citation: Citation, text: str, citation_document_texts: list[str | None]
+) -> list[BetaTextCitationParam]:
+    anchor = citation.anchor
+    if not isinstance(anchor, ContentCitationAnchor) or anchor.start != 0 or anchor.end != len(text):
+        return []
+
+    result: list[BetaTextCitationParam] = []
+    for source in citation.sources:
+        if not isinstance(source, DocumentCitationSource) or len(source.excerpts) != 1:
+            continue
+        location = (source.provider_details or {}).get('location')
+        if not is_str_dict(location) or set(location) != {'documentChar'}:
+            continue
+        char_location = location['documentChar']
+        if not is_str_dict(char_location) or set(char_location) - {'documentIndex', 'start', 'end'}:
+            continue
+        document_index = char_location.get('documentIndex')
+        start = char_location.get('start')
+        end = char_location.get('end')
+        if (
+            not _is_int_at_least(document_index, 0)
+            or document_index >= len(citation_document_texts)
+            or not _is_int_at_least(start, 0)
+            or not _is_int_at_least(end, 0)
+            or end <= start
+        ):
+            continue
+        document_text = citation_document_texts[document_index]
+        cited_text = source.excerpts[0]
+        if document_text is None or document_text[start:end] != cited_text:
+            continue
+        result.append(
+            BetaCitationCharLocationParam(
+                type='char_location',
+                cited_text=cited_text,
+                document_index=document_index,
+                document_title=source.title or None,
+                start_char_index=start,
+                end_char_index=end,
+            )
+        )
+    return result
+
+
+def _citation_document_text(block: Mapping[str, Any]) -> str | None:
+    source = block.get('source')
+    if is_str_dict(source) and source.get('type') == 'text' and isinstance(data := source.get('data'), str):
+        return data
+    return None
 
 
 def _with_document_citations(
@@ -1832,7 +1904,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Anthropic's document indices count every document block across the request history, including tool results.
-        document_count = 0
+        # Retaining text contents also lets us prove that a foreign location still targets the same destination document.
+        citation_document_texts: list[str | None] = []
         # Cross-provider files are dropped silently here, not raised via
         # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
         pending_container_uploads = [
@@ -1937,7 +2010,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             else:
                                 user_content_params.append(content)
                                 if isinstance(content, dict) and content.get('type') == 'document':
-                                    document_count += 1
+                                    citation_document_texts.append(_citation_document_text(content))
                     elif isinstance(request_part, ToolAvailabilityDeltaPart):
                         if not supports_tool_availability_delta:
                             # `prepare_messages` projects the delta onto the local tool-search exchange
@@ -2019,7 +2092,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                             include_citations,
                                         )
                                     )
-                                    document_count += 1
+                                    citation_document_texts.append(None)
                                 else:
                                     raise UserError(
                                         f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
@@ -2033,7 +2106,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                                 tool_result_content.append(file_content_block)
                                 if file_content_block['type'] == 'document':
-                                    document_count += 1
+                                    citation_document_texts.append(_citation_document_text(file_content_block))
                             elif isinstance(item, str):  # pragma: no branch
                                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
@@ -2105,11 +2178,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
-                            citations = (
-                                _map_citations_for_replay(response_part.citations, document_count)
-                                if response_part.provider_name == self.system
-                                or (response_part.provider_name is None and m.provider_name == self.system)
-                                else None
+                            citations = _map_citations_for_replay(
+                                response_part.citations,
+                                len(citation_document_texts),
+                                provider_name=response_part.provider_name or m.provider_name,
+                                text=response_part.content,
+                                citation_document_texts=citation_document_texts,
                             )
                             assistant_content_params.append(
                                 BetaTextBlockParam(text=response_part.content, type='text', citations=citations)
