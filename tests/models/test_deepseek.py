@@ -6,7 +6,7 @@ from datetime import datetime, timezone, tzinfo
 from decimal import Decimal
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel
 
@@ -127,6 +127,7 @@ async def test_deepseek_model_thinking_part(
                         'prompt_cache_miss_tokens': 90,
                         'reasoning_tokens': 59,
                     },
+                    output_reasoning_tokens=59,
                     cost=Decimal('0.00005908'),
                 ),
                 model_name='deepseek-v4-flash',
@@ -185,6 +186,7 @@ async def test_deepseek_model_thinking_stream(
                     input_tokens=90,
                     output_tokens=303,
                     details={'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 90, 'reasoning_tokens': 89},
+                    output_reasoning_tokens=89,
                     cost=Decimal('0.00009744'),
                 ),
                 model_name='deepseek-v4-flash',
@@ -254,10 +256,10 @@ async def test_deepseek_tool_choice_follows_thinking(
     """
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx.Request) -> None:
+    async def capture_request(request: httpx2.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
     model = OpenAIChatModel(
         case.model_name, provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=http_client)
     )

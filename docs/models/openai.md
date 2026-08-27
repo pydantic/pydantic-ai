@@ -461,6 +461,8 @@ agent = Agent(model)
 ...
 ```
 
+Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
+
 `OpenAIChatModel` is also what backs every [OpenAI-compatible provider](#openai-compatible-models) below — they all speak the Chat Completions wire format, so the same model class applies.
 
 ## OpenAI-compatible Models
@@ -553,7 +555,7 @@ agent = Agent(model)
 You can also customize any provider with a custom `http_client`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -569,6 +571,8 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ...
 ```
+
+OpenAI-compatible providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
 DeepSeek's V4 models think by default, and DeepSeek rejects a forced tool choice while thinking is on, answering `Thinking mode does not support this tool_choice`. Pydantic AI therefore sends `tool_choice='auto'` on those requests, which leaves the model free to answer in prose instead of calling the output tool — on `deepseek-v4-pro` that costs a retry often enough to exhaust the retry budget. Turn thinking off when you need [structured output](../output.md) to be reliable, and forcing is used again:
 
@@ -612,10 +616,14 @@ DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which p
 
 - The API is stateless, so [`openai_conversation_id`](#using-durable-conversations), [background mode](#background-mode) and [message compaction](#message-compaction) are unavailable. Pass [message history](../message-history.md) back on each run instead.
 - Leave [`openai_previous_response_id`](#referencing-earlier-responses) unset. Setting it makes Pydantic AI drop the earlier turns it assumes the server already holds, and DeepSeek stores nothing, so the model silently loses the conversation instead of erroring.
-- Of the [native tools](../native-tools.md), DeepSeek runs only [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]; it ignores the other built-in tool types instead of reporting an error.
+- Of the [native tools](../native-tools.md), DeepSeek runs only [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]; it ignores the others instead of reporting an error.
 - Image and document inputs are replaced with placeholder text rather than rejected.
 - Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
 - [`NativeOutput`][pydantic_ai.output.NativeOutput] is available here but not on Chat Completions: DeepSeek honors a strict JSON Schema on the Responses API, while its Chat Completions endpoint rejects one with `This response_format type is unavailable now`.
+
+The one difference Pydantic AI handles for you: DeepSeek merges each function call into its adjacent assistant message. Replaying a turn that interleaves calls with thinking or text would therefore create separate messages with unanswered calls, which DeepSeek rejects with `No tool output found for tool call ...`. Pydantic AI moves the calls after the other items when building the request. This reorders only the request; your [message history](../message-history.md) is unchanged.
+
+Reordering applies only when every function call has a result and the turn contains no provider-owned native tool or compaction items. DeepSeek rejects unresolved calls in any order, while provider-owned items are left unchanged. Set [`OpenAIModelProfile.openai_responses_supports_interleaved_function_calls`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_interleaved_function_calls] on your own profile if you serve DeepSeek's Responses shape from another endpoint, or to turn the reordering off.
 
 ### Alibaba Cloud Model Studio (DashScope)
 
@@ -736,7 +744,7 @@ agent = Agent('azure-responses:gpt-5.2')
 ```
 
 !!! note
-    Azure's Responses API doesn't yet support every feature of OpenAI's Responses API — for example, the web search built-in tool is unavailable, and there are limits around image editing and file uploads. See [Microsoft's Responses API docs](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses) for the current list. This applies whether you use the `azure-responses:` shorthand or construct `OpenAIResponsesModel` with `AzureProvider` directly.
+    Azure's Responses API doesn't yet support every feature of OpenAI's Responses API — for example, native web search is unavailable, and there are limits around image editing and file uploads. See [Microsoft's Responses API docs](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses) for the current list. This applies whether you use the `azure-responses:` shorthand or construct `OpenAIResponsesModel` with `AzureProvider` directly.
 
 Or initialise the model and provider directly:
 

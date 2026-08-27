@@ -61,6 +61,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -156,6 +157,7 @@ LatestGoogleModelNames = Literal[
     'gemini-3.5-flash',
     'gemini-3.5-flash-lite',
     'gemini-3.6-flash',
+    'gemini-3.7-flash',
 ]
 """Latest Gemini models."""
 
@@ -390,15 +392,26 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     return 'pt_then_on_demand'
 
 
-def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
+def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str = 'google') -> ModelAPIError:
     """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        suggested_model_id = None
+        if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
+            message = error.get('message')
+            if (
+                error.get('status') == 'NOT_FOUND'
+                and isinstance(message, str)
+                and message.startswith(f'models/{model_name} is not found ')
+            ):
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         return ModelHTTPError(
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
+            suggested_model_id=suggested_model_id,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
 
@@ -438,6 +451,15 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'L
         'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
     }
     return level_by_effort[thinking]
+
+
+def _resolve_google_thinking_level(
+    thinking: ThinkingEffort, profile: GoogleModelProfile
+) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+    """Map unified thinking to the closest thinking level the model supports."""
+    if thinking == 'minimal' and not profile.get('google_supports_minimal_thinking_level', True):
+        return 'LOW'
+    return _thinking_effort_to_level(thinking)
 
 
 @dataclass(init=False)
@@ -836,7 +858,7 @@ class GoogleModel(Model[Client]):
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
     def _translate_thinking(
         self,
@@ -852,13 +874,14 @@ class GoogleModel(Model[Client]):
         profile = self.profile
         if thinking is False:
             if profile.get('google_supports_thinking_level', False):
-                return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
+                # Gemini represents `thinking=False` as its lowest supported thinking level.
+                return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
             return ThinkingConfigDict(thinking_budget=0)
         if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             return ThinkingConfigDict(
-                include_thoughts=True, thinking_level=cast(Any, _thinking_effort_to_level(thinking))
+                include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
             )
         else:
             if thinking is True:
@@ -1049,7 +1072,7 @@ class GoogleModel(Model[Client]):
         try:
             first_chunk = await peekable_response.peek()
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -1058,6 +1081,7 @@ class GoogleModel(Model[Client]):
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
         )
@@ -1322,6 +1346,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_name: GoogleModelName
     _response: _utils.PeekableAsyncStream[GenerateContentResponse, AsyncIterator[GenerateContentResponse]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
@@ -1558,7 +1583,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name, self._model_id_namespace) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None

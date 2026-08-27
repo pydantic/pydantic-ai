@@ -199,7 +199,10 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
     state at its exact position in a response. This is deliberately provider-agnostic:
     over-counting can prevent rediscovery or claim a schema is visible when it is not,
-    while under-counting only permits a redundant, idempotent search.
+    while under-counting once only permitted a redundant, idempotent search. Now that
+    availability gates execution, an under-count also *refuses* the call — see
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] for when that
+    is wrong and what is tracked to fix it.
 
     Trusts that any `ToolSearchReturnPart` / `NativeToolSearchReturnPart` in the
     history has a validated `ToolSearchReturnContent`:
@@ -224,8 +227,13 @@ def discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[st
     Scans only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window], so both the
     reveal set and the wire ordering derive from what the model can actually see.
     """
+    return _discovered_tool_names_in_order(post_compaction_window(messages))
+
+
+def _discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
+    """Parse discovery evidence from an already-selected message window."""
     discovered: dict[str, None] = {}
-    for msg in post_compaction_window(messages):
+    for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):
@@ -261,7 +269,15 @@ class _SearchTool(ToolsetTool[AgentDepsT]):
     """
 
     corpus: list[ToolDefinition]
-    revealed_tool_names: set[str]
+
+    discovered_tool_names: set[str]
+    """Snapshot of `RunContext.discovered_tool_names` taken when the search tool was built.
+
+    Discovered, not revealed: it is raw history evidence, and no per-request wire state is
+    consulted. Inside the corpus the two coincide anyway — capability-gated tools are excluded
+    from it, so a corpus tool named by history is also available — but the search only needs the
+    weaker fact, that the model has seen this tool before, to sort it behind fresh matches.
+    """
 
 
 @dataclass
@@ -410,7 +426,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=args_validator,
             corpus=corpus,
-            revealed_tool_names=set(ctx.discovered_tool_names),
+            discovered_tool_names=set(ctx.discovered_tool_names),
         )
 
     async def call_tool(
@@ -461,13 +477,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             if score == 0:
                 continue
             scored_matches.append(
-                (tool_def.name not in search_tool.revealed_tool_names, score, {'name': tool_def.name})
+                (tool_def.name not in search_tool.discovered_tool_names, score, {'name': tool_def.name})
             )
 
         if not scored_matches:
             return self._empty_return()
 
-        # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-available
+        # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-discovered
         # tool must never displace an undiscovered match when `max_results` trims — it only
         # fills whatever slots are left over.
         scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)

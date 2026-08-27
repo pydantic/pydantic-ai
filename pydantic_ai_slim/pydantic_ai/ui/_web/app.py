@@ -10,16 +10,18 @@ from typing import Literal, TypeVar
 
 import anyio
 import anyio.to_thread
-import httpx
+import httpx2
 
 from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
+from ._hosts import HostValidationMiddleware, normalized_pattern
 from .api import BUNDLED_UI_SDK_VERSION, ModelsParam, create_api_app
 
 try:
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
     from starlette.requests import Request
     from starlette.responses import HTMLResponse, Response
     from starlette.routing import Mount
@@ -151,7 +153,7 @@ async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
     if content := await anyio.to_thread.run_sync(_read_cached_file, cache_file):
         return content
 
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         response = await client.get(url)
         response.raise_for_status()
         content = response.content
@@ -169,6 +171,7 @@ def create_web_app(
     instructions: str | None = None,
     html_source: str | Path | None = None,
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
+    allowed_hosts: Sequence[str] | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -197,10 +200,24 @@ def create_web_app(
             `7` to match the bundled v7 UI, which needs it for tool-approval streaming (7 emits the
             same wire as 6, since v7's data-stream protocol equals v6's). Only lower it to `5` when
             pairing an older UI via `html_source`.
+        allowed_hosts: Additional hostnames to answer to, e.g. `['ui.example.com']` or
+            `['*.example.com']` (subdomains only, so list the apex separately if you serve it).
+            IP addresses and `localhost` are always allowed; any other `Host` header is refused
+            with a `421`, so that a website cannot reach the UI on your machine by pointing a
+            hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host, only
+            if something in front of the app already authenticates requests.
 
     Returns:
         A configured Starlette application ready to be served
+
+    Raises:
+        UserError: If an `allowed_hosts` entry is not a hostname, `*.example.com`, or `*`.
     """
+    # Normalized here rather than left to the middleware so a bad pattern is reported from this call
+    # instead of from the first request: Starlette builds its middleware stack lazily. Normalizing is
+    # idempotent, so the middleware doing it again over the same list is a no-op.
+    allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
+
     api_app = create_api_app(
         agent=agent,
         models=models,
@@ -212,7 +229,11 @@ def create_web_app(
     )
 
     routes = [Mount('/api', app=api_app)]
-    app = Starlette(routes=routes)
+    # Applied to the whole app rather than just `/api/chat`: a request that reaches us under a
+    # hostname we don't answer to is misdirected whatever it asks for, and guarding every route
+    # means a route added later is covered without anyone having to remember to opt it in.
+    middleware = [Middleware(HostValidationMiddleware, allowed_hosts=allowed_hosts)]
+    app = Starlette(routes=routes, middleware=middleware)
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""

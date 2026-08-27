@@ -7,6 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
+from .. import _utils
 from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
@@ -108,7 +109,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
-            defer_loading: Whether to hide tools from the model until discovered via tool search.
+            defer_loading: Whether to hide tools from the model until they're revealed by tool search,
+                `load_capability`, or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 Applies to all tools, unless overridden when adding a tool.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
@@ -259,7 +261,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
@@ -404,7 +407,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
@@ -528,7 +532,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
-            defer_loading: Whether to hide this tool until it's discovered via tool search.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -684,7 +689,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         timeout = tool.timeout if tool.timeout is not None else self.timeout
         if timeout is not None:
             try:
-                with anyio.fail_after(timeout):
+                with anyio.fail_after(timeout), _utils.abandon_threads_on_cancel():
                     return await tool.call_func(tool_args, ctx)
             except TimeoutError:
                 raise ModelRetry(f'Timed out after {timeout} seconds.') from None

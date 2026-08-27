@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 
 import pytest
 from inline_snapshot import snapshot
@@ -105,6 +106,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
                         output_tokens=14,
                         output_reasoning_tokens=0,
                         details={'reasoning_tokens': 0},
+                        cost=Decimal('0.00004257'),
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
@@ -146,6 +148,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
                         output_tokens=14,
                         output_reasoning_tokens=0,
                         details={'reasoning_tokens': 0},
+                        cost=Decimal('0.000045265'),
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
@@ -196,6 +199,7 @@ Second tool result: `second result`\
                         output_tokens=33,
                         output_reasoning_tokens=11,
                         details={'reasoning_tokens': 11},
+                        cost=Decimal('0.000076285'),
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),

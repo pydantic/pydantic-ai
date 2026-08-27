@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, Field
 from pydantic.errors import PydanticUserError
@@ -63,7 +64,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
+from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -84,6 +85,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 try:
     from prefect import flow, task
     from prefect.context import FlowRunContext, TaskRunContext
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -146,7 +148,7 @@ pytestmark = [
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = create_async_http_client()
+http_client = httpx2.AsyncClient()
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -169,8 +171,13 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 @pytest.fixture(autouse=True, scope='session')
 def setup_prefect_test_harness() -> Iterator[None]:
     """Set up Prefect test harness for all tests."""
-    with prefect_test_harness(server_startup_timeout=60):
-        yield
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
+        with prefect_test_harness(server_startup_timeout=60):
+            yield
 
 
 @pytest.fixture(autouse=True)
@@ -1236,6 +1243,77 @@ async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
     )
 
 
+class CustomLabelFunctionToolset(FunctionToolset):
+    @property
+    def label(self) -> str:
+        return f'custom function toolset {self.id!r}'
+
+
+class CustomLabelMCPToolset(MCPToolset[Any]):
+    @property
+    def label(self) -> str:
+        return 'custom MCP toolset'
+
+
+@dataclass(frozen=True)
+class RuntimeToolsetRejectionCase:
+    id: str
+    toolsets: tuple[AbstractToolset[Any], ...]
+    expected: str
+
+
+RUNTIME_TOOLSET_REJECTION_CASES = [
+    RuntimeToolsetRejectionCase(
+        id='multiple-named',
+        toolsets=(FunctionToolset(id='search-tools'), FunctionToolset(id='billing-tools')),
+        expected=snapshot(
+            "FunctionToolset 'search-tools', FunctionToolset 'billing-tools' cannot be passed to `run(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+        ),
+    ),
+    RuntimeToolsetRejectionCase(
+        id='anonymous',
+        toolsets=(FunctionToolset(),),
+        expected=snapshot(
+            "FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+        ),
+    ),
+    RuntimeToolsetRejectionCase(
+        id='anonymous-mcp',
+        toolsets=(MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
+        expected=snapshot(
+            "MCPToolset cannot be passed to `run(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+        ),
+    ),
+    RuntimeToolsetRejectionCase(
+        id='anonymous-custom-mcp',
+        toolsets=(CustomLabelMCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
+        expected=snapshot(
+            "custom MCP toolset cannot be passed to `run(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+        ),
+    ),
+    RuntimeToolsetRejectionCase(
+        id='mixed-custom-and-anonymous',
+        toolsets=(CustomLabelFunctionToolset(id='named'), FunctionToolset()),
+        expected=snapshot(
+            "custom function toolset 'named', FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in RUNTIME_TOOLSET_REJECTION_CASES])
+async def test_prefect_agent_run_rejection_identifies_every_runtime_toolset(
+    case: RuntimeToolsetRejectionCase,
+) -> None:
+    """The guard raises before any model request, so a VCR test cannot exercise it."""
+    prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_identity_{case.id}'))  # pyright: ignore[reportDeprecated]
+
+    with pytest.raises(UserError) as exc_info:
+        await prefect_agent.run('Hello', toolsets=case.toolsets)
+
+    assert str(exc_info.value) == case.expected
+
+
 @pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
 async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -> None:
     # Prefect wraps both function tools and MCP servers in tasks registered up front, and dynamic toolsets
@@ -1248,7 +1326,7 @@ async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -
     labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
 
     prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))  # pyright: ignore[reportDeprecated]
-    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+    with pytest.raises(UserError, match=f'{labels[kind]} .*cannot be passed to '):
         await prefect_agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
 
@@ -1948,7 +2026,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'partial_output',  # only set for output validators, which run in flow code, never inside a task
         'run_id',  # per-run id; deliberately excluded so an identical run replays instead of re-executing
         'conversation_id',  # per-conversation id; same rationale as run_id
-        'capability_loaded',  # derived from loaded_capability_ids plus the static capability set, which are projected
+        'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
         'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks
@@ -2373,7 +2451,7 @@ async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) 
     async def run_agent() -> None:
         await agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
-    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+    with pytest.raises(UserError, match=f'{labels[kind]} .*cannot be passed to '):
         await run_agent()
 
 
@@ -2414,7 +2492,7 @@ async def test_prefect_durability_rejects_partially_opted_out_runtime_function_t
     async def run_agent() -> None:
         await agent.run('Hello', toolsets=[toolset])
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed'):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed'):
         await run_agent()
 
 
@@ -2432,7 +2510,7 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
             # Run setup raises before any node runs.
             pass  # pragma: no cover
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed to '):
         await run_agent()
 
 
@@ -2449,7 +2527,7 @@ async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
     async def run_agent() -> None:
         await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed to '):
         await run_agent()
 
 
@@ -3661,3 +3739,19 @@ async def test_prefect_durability_continuation_resume_from_history() -> None:
     assert result.usage.output_tokens == 6
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
+    """`PrefectAgent.run_sync()` dispatches through its own flow, not `AbstractAgent.run_sync()`, so it carries its own guard."""
+
+    def call_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delegate', '{}')])
+
+    outer_agent = Agent(FunctionModel(call_tool))
+
+    @outer_agent.tool_plain
+    def delegate() -> str:
+        return simple_prefect_agent.run_sync('hello').output
+
+    with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
+        await outer_agent.run('delegate')

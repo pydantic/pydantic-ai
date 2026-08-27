@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 import pydantic_core
-from httpx import Timeout
 from pydantic import JsonValue
 from typing_extensions import assert_never
 
@@ -112,6 +111,10 @@ except ImportError as e:  # pragma: lax no cover
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
+
+# Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+from httpx import Timeout
 
 
 @contextmanager

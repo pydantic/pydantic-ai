@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -19,7 +17,10 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
 DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro']
@@ -59,6 +60,10 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # For a conversation carrying tools, DeepSeek documents that `reasoning_content` must be
                 # passed back in every subsequent request. See https://api-docs.deepseek.com/guides/thinking_mode.
                 openai_chat_send_back_thinking_parts='field',
+                # DeepSeek's Responses endpoint documents merging each function call into the
+                # assistant message adjacent to it, unlike the official Responses API, so an
+                # assistant item between two calls strands the first one without its output.
+                openai_responses_supports_interleaved_function_calls=False,
                 # DeepSeek rejects a forced tool choice only while thinking is on, answering
                 # `Thinking mode does not support this tool_choice`. `deepseek-reasoner` cannot turn
                 # thinking off, so for it the restriction is unconditional; the v4 models can, so
@@ -91,7 +96,7 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
         *,
         api_key: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -99,7 +104,7 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key and openai_client is None:
