@@ -45,7 +45,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
 from pydantic_ai.usage import UsageLimits
 
 from pydantic_ai_harness import FileSystem, Shell
@@ -1140,7 +1140,6 @@ class TestPermission:
     def test_approval_names_come_from_function_toolsets_only(self) -> None:
         # A non-`FunctionToolset` session toolset cannot expose `requires_approval` without a live
         # run context, so it contributes nothing and its calls start `in_progress`.
-        from pydantic_ai.toolsets import CombinedToolset
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(_approval_agent([]))
         config: AcpSessionConfig[None] = AcpSessionConfig(deps=None, toolsets=[CombinedToolset([])])
@@ -2233,7 +2232,6 @@ class TestWorkspaceRooting:
     """A `session_config` factory roots `FileSystem` at the client's `cwd`, with absolute locations."""
 
     async def test_session_config_roots_filesystem_at_client_cwd(self, tmp_path: Path) -> None:
-        from pydantic_ai_harness.filesystem import FileSystem
 
         write = DeltaToolCall(name='write_file', json_args=json.dumps({'path': 'note.txt', 'content': 'hi'}))
         agent = Agent(_calls_tool_each_turn(write))  # the agent itself has no filesystem tools

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import warnings as _warnings
 from collections.abc import AsyncIterator
+from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 from unittest.mock import MagicMock
@@ -23,20 +25,44 @@ from pydantic_ai import (
     Tool,
     ToolDefinition,
 )
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch
+from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    InstructionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolReturnPart,
+    NativeToolSearchReturnPart,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    ToolSearchReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.messages import ToolReturn as ToolReturnMsg
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
+from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME, ToolSearchToolset, parse_discovered_tools
 from pydantic_ai.toolsets.abstract import ToolsetTool
+from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import NOT_HANDLED, Monty, MountDir, OSAccess, OsFunction
 from typing_extensions import Never, TypedDict
 
 from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolset
+from pydantic_ai_harness.code_mode._capability import (
+    _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_MODIFIER,
     _TOOL_SEARCH_ADDENDUM,
@@ -96,7 +122,6 @@ async def build_ctx(
     Use this for tests that call `call_tool` -- `CodeModeToolset` requires
     `ctx.tool_manager` to be set.
     """
-    from pydantic_ai.tool_manager import ToolManager
 
     await toolset.__aenter__()
     _entered_toolsets.append(toolset)
@@ -780,7 +805,6 @@ class TestCodeMode:
         `BinaryContent` is the case that motivates naming a value by type: it reaches the summary
         as the raw object, so rendering it would put its whole payload in the retry.
         """
-        from pydantic_ai.messages import BinaryContent
 
         def shapes(tag: str, rows: list[int], opts: dict[str, int]) -> dict[str, Any]:
             """Return a mix of payload shapes."""
@@ -953,9 +977,6 @@ class TestCodeMode:
         It has a recorded return, so lumping it in with the successes would tell the model not to
         repeat a call whose tool never executed.
         """
-        from pydantic_ai.capabilities import HandleDeferredToolCalls
-        from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
-        from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 
         def needs_approval(value: int) -> str:
             """A tool that requires approval."""
@@ -965,6 +986,8 @@ class TestCodeMode:
             return DeferredToolResults(
                 approvals={call.tool_call_id: ToolDenied(message='nope') for call in requests.approvals}
             )
+
+        from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
 
         wrapper = CodeMode[object](max_tool_calls=1).get_wrapper_toolset(_build_function_toolset(needs_approval))
         assert isinstance(wrapper, CodeModeToolset)
@@ -1247,15 +1270,6 @@ class TestCodeMode:
 
     async def test_agent_run_preserves_repl_between_code_calls(self) -> None:
         """Code Mode keeps one REPL across model steps in an agent run."""
-        from pydantic_ai.messages import (
-            ModelMessage,
-            ModelRequest,
-            ModelResponse,
-            TextPart,
-            ToolCallPart,
-            ToolReturnPart,
-        )
-        from pydantic_ai.models.function import AgentInfo, FunctionModel
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             response_count = sum(isinstance(message, ModelResponse) for message in messages)
@@ -1384,7 +1398,6 @@ class TestCodeMode:
 
     async def test_native_tool_named_run_code_raises_user_error(self) -> None:
         """A native tool named `run_code` raises UserError (reserved name)."""
-        from pydantic_ai.exceptions import UserError
 
         def run_code() -> str:
             """A tool that collides with the reserved name."""
@@ -1399,7 +1412,6 @@ class TestCodeMode:
 
     async def test_sandboxed_tool_named_run_code_raises_user_error(self) -> None:
         """A sandboxed tool named `run_code` raises UserError (conflicts with meta-tool)."""
-        from pydantic_ai.exceptions import UserError
 
         def run_code() -> str:
             """A tool that collides with the meta-tool name."""
@@ -1730,7 +1742,6 @@ class TestCodeMode:
         assert 'async def search' in description
 
         # Second call must not warn again.
-        import warnings as _warnings
 
         with _warnings.catch_warnings():
             _warnings.simplefilter('error')
@@ -1738,7 +1749,6 @@ class TestCodeMode:
 
     async def test_tool_with_return_schema_does_not_warn(self) -> None:
         """A sandboxed tool WITH a return_schema does not trigger the warning."""
-        import warnings as _warnings
 
         td = ToolDefinition(
             name='get_user',
@@ -1763,15 +1773,6 @@ class TestCodeMode:
         sandbox dispatches to a wrapped tool, and the second model turn observes the
         tool's return value before producing the final text output.
         """
-        from pydantic_ai.messages import (
-            ModelMessage,
-            ModelRequest,
-            ModelResponse,
-            TextPart,
-            ToolCallPart,
-            ToolReturnPart,
-        )
-        from pydantic_ai.models.function import AgentInfo, FunctionModel
 
         observed_tool_calls: list[str] = []
         observed_tool_returns: list[Any] = []
@@ -1835,7 +1836,6 @@ class TestCodeMode:
         `test_tool_search_toolset_deferred_tool_not_in_run_code`; this exercises the
         end-to-end path through `Agent`.)
         """
-        from pydantic_ai.capabilities import Capability
 
         capability = Capability[object](
             id='demo',
@@ -1880,9 +1880,6 @@ class TestCodeMode:
         tool keeps `defer_loading=True` across the reveal (it records what the capability asked
         for), so the fold-in has to key on the run's revealed-tool set instead.
         """
-        from pydantic_ai.capabilities import Capability
-        from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-        from pydantic_ai.models.function import AgentInfo, FunctionModel
 
         capability = Capability[object](
             id='demo',
@@ -2079,7 +2076,6 @@ class TestCodeMode:
 
     async def test_tool_returning_tool_return_is_unwrapped(self) -> None:
         """A wrapped tool that returns a `ToolReturn` has its value unwrapped for the sandbox."""
-        from pydantic_ai.messages import ToolReturn as ToolReturnMsg
 
         def fancy() -> Any:
             """Return a ToolReturn with metadata."""
@@ -2101,7 +2097,6 @@ class TestCodeMode:
 
     async def test_approval_required_surfaces_as_model_retry(self) -> None:
         """Tools that raise ApprovalRequired inside the sandbox surface as ModelRetry."""
-        from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
 
         def needs_approval() -> str:
             """A tool that requires approval."""
@@ -2124,12 +2119,9 @@ class TestCodeMode:
         with the original denial message preserved in the trace.
         """
         try:
-            from pydantic_ai.capabilities import HandleDeferredToolCalls
+            from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
         except ImportError:  # pragma: no cover -- only fires on floor-slim CI, which doesn't gate on coverage
             pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
-
-        from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
-        from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 
         def needs_approval() -> str:
             """A tool that requires approval."""
@@ -2156,12 +2148,9 @@ class TestCodeMode:
         deferral after approval is *not* re-resolved -- it bubbles up to the caller.
         """
         try:
-            from pydantic_ai.capabilities import HandleDeferredToolCalls
+            from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
         except ImportError:  # pragma: no cover -- only fires on floor-slim CI, which doesn't gate on coverage
             pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
-
-        from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
-        from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
 
         def always_needs_approval(ctx: RunContext[object]) -> str:
             """Raises `ApprovalRequired` every time, even after being approved."""
@@ -2224,7 +2213,6 @@ class TestCodeMode:
     async def test_tool_returning_binary_image_is_returned_directly(self) -> None:
         """A tool that returns BinaryContent passes through the sandbox and is
         returned as native multimodal content (not wrapped in a dict)."""
-        from pydantic_ai.messages import BinaryContent
 
         image_bytes = b'\x89PNG\r\n\x1a\n fake image data'
 
@@ -2247,7 +2235,6 @@ class TestCodeMode:
     async def test_tool_returning_binary_image_with_print_uses_list_format(self) -> None:
         """When print output accompanies a multimodal return, the result is a list
         so _split_content can extract the image for native delivery."""
-        from pydantic_ai.messages import BinaryContent
 
         image_bytes = b'\x89PNG fake'
 
@@ -2276,7 +2263,6 @@ class TestCodeMode:
     async def test_tool_returning_list_with_binary_image_and_print(self) -> None:
         """A list result containing multimodal items with print output gets flattened
         so _split_content can find each multimodal item at the top level."""
-        from pydantic_ai.messages import BinaryContent
 
         image_bytes = b'\x89PNG list'
 
@@ -2306,8 +2292,6 @@ class TestCodeMode:
     async def test_tool_returning_tool_return_with_binary_content(self) -> None:
         """A tool that wraps a BinaryContent in a ToolReturn has the image properly unwrapped
         and returned as native multimodal content."""
-        from pydantic_ai.messages import BinaryContent
-        from pydantic_ai.messages import ToolReturn as ToolReturnMsg
 
         image_bytes = b'\x89PNG wrapped'
 
@@ -2337,15 +2321,6 @@ class TestCodeMode:
     @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
     async def test_sandboxed_tool_calls_produce_otel_spans(self, capfire: CaptureLogfire) -> None:
         """Sandboxed tool calls dispatched through ToolManager produce OTel execute_tool spans."""
-        from pydantic_ai.capabilities import Instrumentation
-        from pydantic_ai.messages import (
-            ModelMessage,
-            ModelResponse,
-            TextPart,
-            ToolCallPart,
-        )
-        from pydantic_ai.models.function import AgentInfo, FunctionModel
-        from pydantic_ai.models.instrumented import InstrumentationSettings
 
         call_count = 0
 
@@ -2573,7 +2548,6 @@ class TestCodeMode:
     async def test_sequential_tool_rendered_as_sync_and_resolved_inline(self) -> None:
         """A tool with `sequential=True` is rendered as `def` (sync) and
         resolved inline at FunctionSnapshot via `resume({'return_value': ...})`."""
-        from dataclasses import replace as dc_replace
 
         class _SeqToolset(AbstractToolset[object]):
             """Marks add as sequential; greet stays parallel."""
@@ -2634,7 +2608,6 @@ class TestCodeMode:
     async def test_sequential_tool_barrier_awaits_pending_parallel_tasks(self) -> None:
         """When a sequential tool is called while parallel tasks are pending,
         the pending tasks are awaited first (barrier) before dispatching."""
-        from dataclasses import replace as dc_replace
 
         class _SeqToolset(AbstractToolset[object]):
             def __init__(self) -> None:
@@ -2692,7 +2665,6 @@ class TestCodeMode:
 
     async def test_sequential_tool_error_surfaces_as_model_retry(self) -> None:
         """An error from a sequential tool (resolved inline) surfaces as ModelRetry."""
-        from dataclasses import replace as dc_replace
 
         class _SeqToolset(AbstractToolset[object]):
             def __init__(self) -> None:
@@ -2724,7 +2696,6 @@ class TestCodeMode:
     async def test_global_sequential_mode_forces_sequential_resolution(self) -> None:
         """When the parallel execution mode is `sequential`, tool calls inside the
         sandbox are resolved sequentially via FutureSnapshot. Signatures stay `async def`."""
-        from pydantic_ai.tool_manager import ToolManager
 
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
@@ -2750,9 +2721,6 @@ class TestCodeMode:
     async def test_global_sequential_overrides_per_tool_sequential(self) -> None:
         """When global sequential mode is active AND a tool has `sequential=True`,
         the tool is deferred (not resolved inline) and handled via FutureSnapshot."""
-        from dataclasses import replace as dc_replace
-
-        from pydantic_ai.tool_manager import ToolManager
 
         class _SeqToolset(AbstractToolset[object]):
             def __init__(self) -> None:
@@ -2813,8 +2781,6 @@ class TestToolSearchIntegration:
 
     async def test_search_tool_stays_native(self) -> None:
         """search_tools is kept as a native tool even with tools='all'."""
-        from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME
-        from pydantic_ai.toolsets.combined import CombinedToolset
 
         search_toolset = _StaticToolset([_search_tool_def()])
         func_toolset = _build_function_toolset(add)
@@ -2833,7 +2799,6 @@ class TestToolSearchIntegration:
 
     async def test_search_tools_description_appended(self) -> None:
         """search_tools description gets a modifier appended about run_code functions."""
-        from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME
 
         original_desc = 'There are additional tools. Search here.'
         toolset = _StaticToolset([_search_tool_def(description=original_desc)])
@@ -2877,7 +2842,6 @@ class TestToolSearchIntegration:
         pass-through so those flags reach `Model.prepare_request` unaltered. `search_tools`
         is native alongside `run_code`.
         """
-        from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME, ToolSearchToolset
 
         def later(x: int) -> str:
             """A deferred-loading tool."""
@@ -2901,8 +2865,6 @@ class TestToolSearchIntegration:
 
     async def test_tool_search_toolset_discovered_tool_in_run_code(self) -> None:
         """End-to-end: once `search_tools` has discovered the deferred tool, it folds into `run_code`."""
-        from pydantic_ai.messages import ModelMessage, ModelRequest, ToolSearchReturnPart
-        from pydantic_ai.toolsets._tool_search import ToolSearchToolset, parse_discovered_tools
 
         def later(x: int) -> str:
             """A deferred-loading tool."""
@@ -2944,7 +2906,6 @@ class TestToolSearchIntegration:
 
     def test_code_mode_ordering(self) -> None:
         """CodeMode declares ordering: outermost position, wraps ToolSearch."""
-        from pydantic_ai.capabilities._tool_search import ToolSearch
 
         ordering = CodeMode().get_ordering()
         assert ordering is not None
@@ -2983,8 +2944,6 @@ class TestDynamicCatalog:
         await toolset.get_tools(ctx)
         instructions = await toolset.get_instructions(ctx)
 
-        from pydantic_ai.messages import InstructionPart
-
         # No upstream instructions → the catalog is the only InstructionPart returned.
         assert isinstance(instructions, InstructionPart)
         assert 'async def add' in instructions.content
@@ -2992,7 +2951,6 @@ class TestDynamicCatalog:
         assert instructions.dynamic is True
 
     async def test_get_instructions_appends_to_upstream_string(self) -> None:
-        from pydantic_ai.messages import InstructionPart
 
         class _UpstreamToolset(FunctionToolset[object]):
             async def get_instructions(self, ctx: RunContext[object]) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -3011,7 +2969,6 @@ class TestDynamicCatalog:
         assert 'async def add' in instructions[1].content
 
     async def test_get_instructions_appends_to_upstream_sequence(self) -> None:
-        from pydantic_ai.messages import InstructionPart
 
         class _UpstreamToolset(FunctionToolset[object]):
             async def get_instructions(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -3105,7 +3062,6 @@ class TestDynamicCatalog:
     # -- discovery announcement: local search path ------------------------
 
     async def test_announce_on_local_search_return(self) -> None:
-        from pydantic_ai.messages import ModelRequest, SystemPromptPart, ToolCallPart
 
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
@@ -3127,7 +3083,6 @@ class TestDynamicCatalog:
 
     async def test_no_announce_when_disabled(self) -> None:
         """With `dynamic_catalog=False`, the hooks are inert even on a real search return."""
-        from pydantic_ai.messages import ToolCallPart
 
         cap = CodeMode[object]()
         ctx = build_run_context(None)
@@ -3141,7 +3096,6 @@ class TestDynamicCatalog:
         assert ctx.pending_messages == []
 
     async def test_announce_skipped_when_no_discoveries(self) -> None:
-        from pydantic_ai.messages import ToolCallPart
 
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
@@ -3156,7 +3110,6 @@ class TestDynamicCatalog:
 
     async def test_no_announce_for_non_search_tool(self) -> None:
         """`tool_kind != 'tool-search'` short-circuits before reading the result."""
-        from pydantic_ai.messages import ToolCallPart
 
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
@@ -3172,7 +3125,6 @@ class TestDynamicCatalog:
         assert ctx.pending_messages == []
 
     async def test_no_duplicate_announcement_for_same_tool(self) -> None:
-        from pydantic_ai.messages import ToolCallPart
 
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
@@ -3192,8 +3144,6 @@ class TestDynamicCatalog:
     # -- discovery announcement: native search path -----------------------
 
     async def test_announce_on_native_search_return_part(self) -> None:
-        from pydantic_ai.messages import ModelRequest, ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
-        from pydantic_ai.usage import RequestUsage
 
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
@@ -3217,8 +3167,6 @@ class TestDynamicCatalog:
         assert isinstance(part, SystemPromptPart) and '`weather`' in part.content
 
     async def test_no_announce_for_unrelated_response_parts(self) -> None:
-        from pydantic_ai.messages import ModelResponse, NativeToolReturnPart, TextPart
-        from pydantic_ai.usage import RequestUsage
 
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
@@ -3244,9 +3192,6 @@ class TestDynamicCatalog:
         ],
     )
     def test_extract_discovered_names_handles_malformed(self, content: Any, expected: list[str]) -> None:
-        from pydantic_ai_harness.code_mode._capability import (
-            _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
-        )
 
         assert _extract_discovered_names(content) == expected
 
@@ -3263,20 +3208,6 @@ class TestDynamicCatalog:
              system content is no longer hoisted (pydantic/pydantic-ai#5509) — so the model
              sees the announcement inline and replies.
         """
-        from pydantic_ai.capabilities import ToolSearch
-        from pydantic_ai.messages import (
-            ModelMessage,
-            ModelRequest,
-            ModelResponse,
-            SystemPromptPart,
-            TextPart,
-            ToolCallPart,
-            ToolReturnPart,
-            ToolSearchReturnPart,
-            UserPromptPart,
-        )
-        from pydantic_ai.models.function import AgentInfo, FunctionModel
-        from pydantic_ai.usage import RequestUsage
 
         captured_prompt_texts: list[list[str]] = []
         captured_descriptions: list[str] = []
@@ -3336,16 +3267,6 @@ class TestDynamicCatalog:
 
     async def test_run_code_calls_eager_tool_with_catalog_in_instructions(self) -> None:
         """An eager tool whose signature lives in instructions is still callable via `run_code`."""
-        from pydantic_ai.messages import (
-            ModelMessage,
-            ModelRequest,
-            ModelResponse,
-            TextPart,
-            ToolCallPart,
-            ToolReturnPart,
-        )
-        from pydantic_ai.models.function import AgentInfo, FunctionModel
-        from pydantic_ai.usage import RequestUsage
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             run_code_def = next(td for td in info.function_tools if td.name == 'run_code')
@@ -3607,7 +3528,6 @@ def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
     Carries `tool_kind='tool-search'`, matching what pydantic-ai emits (since 1.95.0);
     CodeMode routes it native off `tool_kind`, not its name.
     """
-    from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME
 
     return ToolDefinition(
         name=_SEARCH_TOOLS_NAME,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 import pydantic_ai_harness
+import pydantic_ai_harness.guardrails as guardrails
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.guardrails import (
     GuardrailResult,
@@ -16,7 +17,6 @@ from pydantic_ai_harness.guardrails import (
 
 
 def test_old_names_warn_and_resolve() -> None:
-    import pydantic_ai_harness.guardrails as guardrails
 
     expected = {
         'GuardResult': GuardrailResult,
@@ -44,7 +44,6 @@ def test_new_names_resolve_from_package_root_without_warning() -> None:
 
 
 def test_unknown_attribute_raises() -> None:
-    import pydantic_ai_harness.guardrails as guardrails
 
     with pytest.raises(AttributeError, match='has no attribute'):
         _ = guardrails.DoesNotExist

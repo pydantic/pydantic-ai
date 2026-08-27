@@ -28,6 +28,7 @@ from pydantic_ai.models.test import TestModel
 from pymongo import AsyncMongoClient
 from pymongo.errors import DuplicateKeyError
 
+import pydantic_ai_harness.step_persistence as sp
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import MongoMediaStore
 from pydantic_ai_harness.step_persistence import (
@@ -446,12 +447,10 @@ class TestMongoStepStoreMedia:
 
 class TestStepPersistenceLazyExport:
     def test_mongo_step_store_lazily_exported(self) -> None:
-        import pydantic_ai_harness.step_persistence as sp
 
         assert sp.MongoStepStore is MongoStepStore
 
     def test_unknown_attribute_raises(self) -> None:
-        import pydantic_ai_harness.step_persistence as sp
 
         with pytest.raises(AttributeError, match='has no attribute'):
             _ = sp.NoSuchStore  # type: ignore[attr-defined]

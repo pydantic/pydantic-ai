@@ -1031,7 +1031,6 @@ class TestSharedVerdicts:
             GuardrailResult(action='approve', replacement='x')
 
     async def test_input_guard_rejects_approve(self):
-        from pydantic_ai_harness import InputGuardrail
 
         agent = Agent(TestModel(), capabilities=[InputGuardrail(guard=lambda prompt: GuardrailResult.approve())])
 
@@ -1039,7 +1038,6 @@ class TestSharedVerdicts:
             await agent.run('hi')
 
     async def test_output_guard_rejects_approve(self):
-        from pydantic_ai_harness import OutputGuardrail
 
         agent = Agent(TestModel(), capabilities=[OutputGuardrail(guard=lambda output: GuardrailResult.approve())])
 

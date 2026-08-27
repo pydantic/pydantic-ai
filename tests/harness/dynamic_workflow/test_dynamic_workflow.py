@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import re
 from typing import Any
 
@@ -26,7 +27,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_core import core_schema
+from pydantic_monty import Monty
 
+from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.dynamic_workflow import (
     DynamicWorkflow,
@@ -974,9 +977,6 @@ async def test_worker_crash_becomes_model_retry(monkeypatch: pytest.MonkeyPatch)
     # sub-agent results, not tear down the agent run. A tiny `request_timeout` plus an
     # infinite loop crashes the worker for real; `MontyCrashedError` cannot be constructed
     # or subclassed from Python, so injection is not an option.
-    import functools
-
-    from pydantic_monty import Monty
 
     monkeypatch.setattr(
         'pydantic_ai_harness.dynamic_workflow._toolset.Monty', functools.partial(Monty, request_timeout=0.5)
@@ -990,9 +990,6 @@ async def test_worker_crash_becomes_model_retry(monkeypatch: pytest.MonkeyPatch)
 async def test_worker_crash_after_budget_exhaustion_returns_terminal_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import functools
-
-    from pydantic_monty import Monty
 
     monkeypatch.setattr(
         'pydantic_ai_harness.dynamic_workflow._toolset.Monty', functools.partial(Monty, request_timeout=0.5)
@@ -1308,9 +1305,6 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
     # In global-sequential mode (durable backends) deferred calls are kept as bare, unscheduled
     # coroutines. On cancellation those must be `close()`d, not cancelled -- covers the
     # coroutine branch of the executor's cleanup, unreachable through DynamicWorkflowToolset.
-    from pydantic_monty import Monty
-
-    from pydantic_ai_harness._monty_exec import MontyExecutor
 
     started = asyncio.Event()
 

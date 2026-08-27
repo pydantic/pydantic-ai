@@ -8,6 +8,7 @@ from pydantic_ai.capabilities import Capability, WebFetch, WebSearch
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 
+import pydantic_ai_harness.researcher
 from pydantic_ai_harness.researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher, researcher_agent
 from pydantic_ai_harness.subagents import SubAgents
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
@@ -27,7 +28,6 @@ def test_researcher_agent_is_model_less_and_composed() -> None:
 
 
 def test_researcher_unknown_export() -> None:
-    import pydantic_ai_harness.researcher
 
     with pytest.raises(AttributeError, match='has no attribute'):
         pydantic_ai_harness.researcher.__getattr__('missing')

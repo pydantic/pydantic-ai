@@ -1381,7 +1381,7 @@ class TestTelemetryAndComposition:
 
     def test_temporal_durability_accepts_static_memory_toolset(self) -> None:
         pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
 
         Agent(
             TestModel(),

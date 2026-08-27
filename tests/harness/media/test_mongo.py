@@ -14,7 +14,15 @@ from bson.binary import Binary
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
 
-from pydantic_ai_harness.media import MediaContext, MediaStore, MongoMediaStore, media_uri_for, parse_media_uri
+import pydantic_ai_harness.media as media
+from pydantic_ai_harness.media import (
+    MediaContext,
+    MediaStore,
+    MongoMediaStore,
+    make_static_public_url,
+    media_uri_for,
+    parse_media_uri,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -257,7 +265,6 @@ class TestMongoMediaStorePublicUrl:
         assert await store.public_url(media_uri_for(b'x')) is None
 
     async def test_with_resolver_uses_it(self) -> None:
-        from pydantic_ai_harness.media import make_static_public_url
 
         store = MongoMediaStore(
             client=_mock_client(),
@@ -277,12 +284,10 @@ class TestMongoMediaStoreProtocol:
 
 class TestMediaLazyExport:
     def test_mongo_media_store_lazily_exported(self) -> None:
-        import pydantic_ai_harness.media as media
 
         assert media.MongoMediaStore is MongoMediaStore
 
     def test_unknown_attribute_raises(self) -> None:
-        import pydantic_ai_harness.media as media
 
         with pytest.raises(AttributeError, match='has no attribute'):
             _ = media.NoSuchStore  # type: ignore[attr-defined]

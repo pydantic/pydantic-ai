@@ -803,7 +803,7 @@ class TestCompositionWarning:
         support under a durable engine is reported separately, by refusing the workflow clock.
         """
         pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
 
         guard = SpendLimits[None](budgets=[Budget(window='total')])
         agent = Agent(

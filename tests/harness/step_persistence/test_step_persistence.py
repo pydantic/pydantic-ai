@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,6 +18,7 @@ import pytest
 from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
 from pydantic_ai._agent_graph import GraphAgentState  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -44,10 +46,12 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     StepStore,
     ToolEffectRecord,
+    annotate_tool_effect,
     continue_run,
     fork_run,
     is_provider_valid,
 )
+from pydantic_ai_harness.step_persistence._context import current_run_id
 from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.anyio
@@ -1468,7 +1472,6 @@ class TestNonToolRetryPrompt:
 class TestListRunsChronologicalOrdering:
     async def test_in_memory_returns_started_at_order(self) -> None:
         """`InMemoryStepStore.list_runs` sorts by `started_at`, not insertion order."""
-        from datetime import datetime, timezone
 
         store = InMemoryStepStore()
         await store.register_run(RunRecord(run_id='z-newer', started_at=datetime(2026, 5, 24, 12, tzinfo=timezone.utc)))
@@ -1478,7 +1481,6 @@ class TestListRunsChronologicalOrdering:
 
     async def test_file_store_returns_started_at_order(self, tmp_path: Path) -> None:
         """`FileStepStore.list_runs` sorts by `started_at`, not by directory name."""
-        from datetime import datetime, timezone
 
         store = FileStepStore(tmp_path)
         # `a-new` is lexicographically first but chronologically last.
@@ -1491,7 +1493,6 @@ class TestListRunsChronologicalOrdering:
 class TestToolEffectMetadataPreservation:
     async def test_completed_preserves_idempotency_key_and_effect_summary(self) -> None:
         """Metadata written during the tool call survives the terminal `completed` record."""
-        from pydantic_ai_harness.step_persistence import annotate_tool_effect
 
         store = InMemoryStepStore()
         agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
@@ -1516,7 +1517,6 @@ class TestToolEffectMetadataPreservation:
 
     async def test_failed_preserves_idempotency_key(self) -> None:
         """Metadata written before a tool raises still appears on the `failed` record."""
-        from pydantic_ai_harness.step_persistence import annotate_tool_effect
 
         store = InMemoryStepStore()
         agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
@@ -1538,7 +1538,6 @@ class TestToolEffectMetadataPreservation:
 
     async def test_annotate_tool_effect_outside_step_persistence_is_a_noop(self) -> None:
         """No `current_run_id` → `annotate_tool_effect` returns without writing."""
-        from pydantic_ai_harness.step_persistence import annotate_tool_effect
 
         store = InMemoryStepStore()
         ctx = build_run_context(deps=None, run_id='r1')
@@ -1548,8 +1547,6 @@ class TestToolEffectMetadataPreservation:
 
     async def test_annotate_tool_effect_noop_when_prior_record_missing(self) -> None:
         """`current_run_id` set + ctx tool fields set, but no prior record → no-op."""
-        from pydantic_ai_harness.step_persistence import annotate_tool_effect
-        from pydantic_ai_harness.step_persistence._context import current_run_id
 
         store = InMemoryStepStore()
         ctx = RunContext[Any](
@@ -1999,8 +1996,6 @@ class TestLiveHistoryInvariant:
 
     async def test_node_boundary_messages_are_one_live_list(self) -> None:
         """All post-`UserPromptNode` boundaries expose the same list object, and it tracks the run."""
-        from pydantic_ai.capabilities import AbstractCapability
-        from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 
         seen: list[list[ModelMessage]] = []
 

@@ -179,10 +179,19 @@ target-version = 'py310'
 exclude = ['template']
 
 [tool.ruff.lint]
-extend-select = ['Q', 'RUF100', 'C90', 'UP', 'I', 'D', 'TID251']
+extend-select = ['Q', 'RUF100', 'C90', 'UP', 'I', 'D', 'TID251', 'PLC0415']
 
 [tool.ruff.lint.per-file-ignores]
 'tests/**/*.py' = ['D']
+# Deferred imports in the package are architectural, not convenience: `__getattr__`
+# lazy exports keep optional extras (pymongo, modal, ...) out of the base install,
+# some break an import cycle, and some defer a heavy data snapshot. PLC0415 cannot
+# tell those from an accidental function-scoped import, so it is off for the package
+# and enforced in tests, where every occurrence was accidental.
+'pydantic_ai_harness/**/*.py' = ['PLC0415']
+# `mcp` and `fastmcp` ship only with the `stackone` extra, so slim CI cannot import
+# them at module scope; these tests defer the import on purpose.
+'tests/stackone/**/*.py' = ['PLC0415']
 
 [tool.ruff.lint.flake8-quotes]
 inline-quotes = 'single'

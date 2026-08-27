@@ -13,6 +13,6 @@ from pydantic_ai_harness.repo_context import RepoContext
 def test_fresh_import_warns_and_aliases_old_path() -> None:
     sys.modules.pop('pydantic_ai_harness.context', None)
     with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `pydantic_ai_harness\.repo_context`'):
-        import pydantic_ai_harness.context
+        import pydantic_ai_harness.context  # noqa: PLC0415  # importing is the assertion
 
     assert pydantic_ai_harness.context.RepoContext is RepoContext

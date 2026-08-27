@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
+from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -241,7 +243,6 @@ class TestKeyPastedFromAFile:
 
     def test_a_service_account_json_is_redacted(self):
         """Its newlines are the two characters backslash-n, not a line break."""
-        import json
 
         pem = f'-----BEGIN PRIVATE KEY-----\n{self._BODY}\n-----END PRIVATE KEY-----\n'
         document = json.dumps({'type': 'service_account', 'private_key': pem})
@@ -443,7 +444,6 @@ class TestForText:
 
     async def test_a_structured_output_reaches_the_detector_through_a_guard(self):
         """The scenario `for_text` exists for, driven through the capability rather than by hand."""
-        from pydantic import BaseModel
 
         class Answer(BaseModel):
             text: str
@@ -462,7 +462,6 @@ class TestForText:
             await agent.run('hi')
 
     async def test_a_structured_output_can_be_skipped_deliberately(self):
-        from pydantic import BaseModel
 
         class Answer(BaseModel):
             text: str

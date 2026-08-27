@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -85,7 +86,6 @@ class TestSqliteStepStoreProtocol:
             await store.register_run(RunRecord(run_id='r1'))
 
     async def test_list_runs_chronological(self, tmp_path: Path) -> None:
-        from datetime import datetime, timedelta, timezone
 
         store = SqliteStepStore(database=tmp_path / 'runs.db')
         base = datetime(2024, 1, 1, tzinfo=timezone.utc)

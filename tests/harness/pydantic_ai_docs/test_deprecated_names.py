@@ -31,7 +31,7 @@ def test_shim_warns_and_aliases_old_names() -> None:
 def test_fresh_import_warns() -> None:
     sys.modules.pop('pydantic_ai_harness.docs', None)
     with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `pydantic_ai_harness\.pydantic_ai_docs`'):
-        import pydantic_ai_harness.docs
+        import pydantic_ai_harness.docs  # noqa: PLC0415  # importing is the assertion
 
     assert issubclass(pydantic_ai_harness.docs.PyaiDocs, PydanticAIDocs)
 
@@ -40,7 +40,7 @@ class TestPreRenameSpecCompatibility:
     def test_serialization_names(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            from pydantic_ai_harness.docs import PyaiDocs
+            from pydantic_ai_harness.docs import PyaiDocs  # noqa: PLC0415  # importing is the assertion
 
         assert PyaiDocs.get_serialization_name() == 'PyaiDocs'
         assert PydanticAIDocs.get_serialization_name() == 'PydanticAIDocs'
@@ -50,7 +50,7 @@ class TestPreRenameSpecCompatibility:
         # deprecated class through `custom_capability_types` must keep it loading.
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            from pydantic_ai_harness.docs import PyaiDocs
+            from pydantic_ai_harness.docs import PyaiDocs  # noqa: PLC0415  # importing is the assertion
 
         agent = Agent.from_spec(
             {'model': 'test', 'capabilities': [{'PyaiDocs': {}}]},
@@ -62,7 +62,7 @@ class TestPreRenameSpecCompatibility:
     def test_experimental_shim_exposes_the_same_class(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            from pydantic_ai_harness.docs import PyaiDocs
-            from pydantic_ai_harness.experimental.docs import PyaiDocs as experimental_pyai_docs
+            from pydantic_ai_harness.docs import PyaiDocs  # noqa: PLC0415  # importing is the assertion
+            from pydantic_ai_harness.experimental.docs import PyaiDocs as experimental_pyai_docs  # noqa: PLC0415
 
         assert experimental_pyai_docs is PyaiDocs

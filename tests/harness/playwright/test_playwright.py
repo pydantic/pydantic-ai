@@ -2067,7 +2067,7 @@ class TestDurabilityRejection:
 
     def test_rejects_temporal_durability_at_construction(self) -> None:
         pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
 
         with pytest.raises(UserError, match='does not support durable execution'):
             Agent(TestModel(), capabilities=[PlaywrightBrowser(), TemporalDurability()])

@@ -38,6 +38,7 @@ from pydantic_ai.usage import RunUsage
 
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction._summarizing_compaction import _SUMMARY_PREFIX
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
     ConversationSearchToolset,
@@ -161,7 +162,6 @@ class TestSnapshotHistorySource:
         # compaction module's own constant makes this test fail the moment the two drift
         # apart. The cross-capability import is deliberately test-only; the source keeps a
         # local literal to avoid runtime coupling.
-        from pydantic_ai_harness.compaction._summarizing_compaction import _SUMMARY_PREFIX
 
         store = InMemoryStepStore()
         artifact = ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}older summarized context')])

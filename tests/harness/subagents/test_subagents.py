@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 
 from pydantic_ai_harness.subagents import SubAgent, SubAgents, SubAgentToolset
@@ -347,7 +348,6 @@ class TestDelegation:
         They are bound to capability instances registered in the parent run; sharing
         them is `shared_capabilities`' job (see the `_inherited_toolsets` docstring).
         """
-        from pydantic_ai.toolsets import FunctionToolset
 
         @dataclass
         class _ToolCapability(AbstractCapability[object]):
