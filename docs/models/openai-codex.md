@@ -28,6 +28,8 @@ The `'openai-codex:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mo
 Applications (including multi-tenant ones) own login and storage themselves: obtain credentials once per user (see [below](#build-your-own-login)), persist them your way, and inject them per user:
 
 ```python
+from pydantic import SecretStr
+
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import (
@@ -42,7 +44,9 @@ async def save_credentials(credentials: OpenAICodexCredentials) -> None:
 
 provider = OpenAICodexProvider(
     credentials=OpenAICodexCredentials(
-        access_token='...', refresh_token='...', account_id='...'
+        access_token=SecretStr('...'),
+        refresh_token=SecretStr('...'),
+        account_id='...',
     ),
     on_credentials_refresh=save_credentials,
 )

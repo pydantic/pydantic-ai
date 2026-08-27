@@ -28,7 +28,7 @@ from urllib.parse import urlencode
 
 import anyio
 import httpx2
-from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, SecretStr, StrictFloat, StrictInt, ValidationError
 from typing_extensions import Self
 
 from pydantic_ai._http import create_async_httpx2_client
@@ -109,45 +109,94 @@ class CredentialsPersistenceError(_CredentialsError):
     """
 
 
-class OpenAICodexCredentials(BaseModel):
+@dataclass
+class OpenAICodexCredentials:
     """Codex subscription credentials.
 
     Secrets use `SecretStr` so tokens never leak through reprs, logs, or accidental serialization.
     """
 
+    _: KW_ONLY
     access_token: SecretStr
     refresh_token: SecretStr
     account_id: str
-    model_config = {'extra': 'ignore'}
 
     @classmethod
     def from_codex_cli_auth(cls, data: Mapping[str, Any]) -> Self:
         """Parse the Codex CLI `~/.codex/auth.json` shape (`{'tokens': {...}}`)."""
-        tokens = data.get('tokens')
         try:
-            token_data = _OBJECT_ADAPTER.validate_python(tokens)
+            tokens = _CodexCliAuth.model_validate(data).tokens
         except ValidationError:
+            tokens = None
+        if tokens is None:
             raise UserError(
                 "Malformed Codex CLI credentials: expected an object with a 'tokens' entry. "
                 'Run `codex login` to regenerate them.'
             ) from None
-        missing = [key for key in ('access_token', 'refresh_token', 'account_id') if not token_data.get(key)]
+        missing = [name for name in ('access_token', 'refresh_token', 'account_id') if not getattr(tokens, name)]
         if missing:
             raise UserError(
                 f'Malformed Codex CLI credentials: missing {", ".join(missing)}. Run `codex login` to regenerate them.'
             )
         return cls(
-            access_token=SecretStr(token_data['access_token']),
-            refresh_token=SecretStr(token_data['refresh_token']),
-            account_id=token_data['account_id'],
+            access_token=SecretStr(tokens.access_token),
+            refresh_token=SecretStr(tokens.refresh_token),
+            account_id=tokens.account_id,
         )
 
 
-_JWT_PAYLOAD_ADAPTER = TypeAdapter(dict[str, Any])
-_OBJECT_ADAPTER = TypeAdapter(dict[str, Any])
+# Dedicated models for the wire payloads consulted above and below: pydantic ignores extra
+# fields by default, and a `ValidationError` (a `ValueError`) also rejects non-object payloads.
 
 
-def _jwt_payload(token: str) -> dict[str, Any] | None:
+class _CodexCliTokens(BaseModel):
+    """The `tokens` entry of the Codex CLI's `auth.json`."""
+
+    access_token: str = ''
+    refresh_token: str = ''
+    account_id: str = ''
+
+
+class _CodexCliAuth(BaseModel):
+    """The subset of the Codex CLI's `auth.json` that credentials are built from."""
+
+    tokens: _CodexCliTokens | None = None
+
+
+class _JwtAuthClaim(BaseModel):
+    """The nested OpenAI claim carrying the ChatGPT account id."""
+
+    chatgpt_account_id: str | None = None
+
+
+class _JwtPayload(BaseModel):
+    """The unverified JWT claims consulted for expiry and account-id hints."""
+
+    # Strict, so a numeric string is not coerced into an expiry hint.
+    exp: StrictInt | StrictFloat | None = None
+    # The Codex id_token nests the account id under this claim.
+    auth: _JwtAuthClaim | None = Field(default=None, validation_alias='https://api.openai.com/auth')
+    chatgpt_account_id: str | None = None
+    account_id: str | None = None
+
+
+class _TokenResponse(BaseModel):
+    """The fields of an OAuth token-endpoint response that credentials are built from."""
+
+    access_token: str | None = None
+    refresh_token: str | None = None
+    id_token: str | None = None
+    account_id: str | None = None
+
+
+class _TokenErrorResponse(BaseModel):
+    """An OAuth token-endpoint error body."""
+
+    error: str | None = None
+    error_description: str | None = None
+
+
+def _jwt_payload(token: str) -> _JwtPayload | None:
     """Decode a JWT payload without verifying the signature. Returns `None` for anything malformed."""
     try:
         segment = token.split('.')[1]
@@ -155,20 +204,18 @@ def _jwt_payload(token: str) -> dict[str, Any] | None:
         return None
     padded = segment + '=' * (-len(segment) % 4)
     try:
-        # `ValidationError` subclasses `ValueError`, so this also rejects non-object payloads.
-        return _JWT_PAYLOAD_ADAPTER.validate_python(json.loads(base64.urlsafe_b64decode(padded)))
+        return _JwtPayload.model_validate(json.loads(base64.urlsafe_b64decode(padded)))
     except ValueError:
         return None
 
 
 def _jwt_expires_at(token: str) -> datetime | None:
-    """Best-effort unverified `exp` claim — a refresh hint, never an authority."""
+    """Best-effort unverified `exp` claim, a refresh hint, never an authority."""
     payload = _jwt_payload(token)
-    exp = payload.get('exp') if payload else None
-    if isinstance(exp, bool) or not isinstance(exp, int | float):
+    if payload is None or payload.exp is None:
         return None
     try:
-        return datetime.fromtimestamp(exp, tz=timezone.utc)
+        return datetime.fromtimestamp(payload.exp, tz=timezone.utc)
     except (OverflowError, OSError, ValueError):
         return None
 
@@ -177,50 +224,37 @@ def _account_id_from_id_token(token: str) -> str | None:
     payload = _jwt_payload(token)
     if payload is None:
         return None
-    try:
-        # The Codex id_token nests the account id under this claim.
-        claim = _OBJECT_ADAPTER.validate_python(payload.get('https://api.openai.com/auth'))
-    except ValidationError:
-        claim = {}
-    account_id = claim.get('chatgpt_account_id')
-    if isinstance(account_id, str) and account_id:
-        return account_id
-    for key in ('chatgpt_account_id', 'account_id'):
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
+    if payload.auth and payload.auth.chatgpt_account_id:
+        return payload.auth.chatgpt_account_id
+    return payload.chatgpt_account_id or payload.account_id or None
 
 
 def _credentials_from_token_response(
-    data: Mapping[str, Any], fallback_account_id: str | None = None
+    data: _TokenResponse, fallback_account_id: str | None = None
 ) -> OpenAICodexCredentials:
     """Build credentials from an OAuth token-endpoint response."""
-    access_token = data.get('access_token')
-    if not isinstance(access_token, str) or not access_token:
+    if not data.access_token:
         raise CredentialsRefreshError('Token endpoint response is missing `access_token`.')
-    refresh_token = data.get('refresh_token')
-    if not isinstance(refresh_token, str) or not refresh_token:
+    if not data.refresh_token:
         raise CredentialsRefreshError(
             'Token endpoint response is missing `refresh_token`; request the `offline_access` scope.'
         )
-    id_token = data.get('id_token')
     account_id = (
-        data.get('account_id')
-        or (_account_id_from_id_token(id_token) if isinstance(id_token, str) else None)
+        data.account_id
+        or (_account_id_from_id_token(data.id_token) if data.id_token else None)
         or fallback_account_id
     )
     if not account_id:
         raise CredentialsRefreshError('Could not determine the ChatGPT account id from the token response.')
     return OpenAICodexCredentials(
-        access_token=SecretStr(access_token), refresh_token=SecretStr(refresh_token), account_id=str(account_id)
+        access_token=SecretStr(data.access_token), refresh_token=SecretStr(data.refresh_token), account_id=account_id
     )
 
 
-async def _post_json(
+async def _post_token_request(
     url: str, form: Mapping[str, str], http_client: httpx2.AsyncClient | None = None
-) -> dict[str, Any]:
-    """POST a form-urlencoded OAuth request and decode the JSON response.
+) -> _TokenResponse:
+    """POST a form-urlencoded OAuth token request and decode the JSON response.
 
     When `http_client` is given the request goes through it (so custom transports and proxies apply
     to refreshes too); otherwise an ephemeral client is used.
@@ -232,20 +266,18 @@ async def _post_json(
         response = await http_client.post(url, data=dict(form), headers={'Accept': 'application/json'})
     if response.status_code != 200:
         try:
-            body = response.json()
-            detail = body.get('error_description') or body.get('error') or response.text[:200]
-            error = body.get('error')
+            body = _TokenErrorResponse.model_validate(response.json())
         except ValueError:
-            detail, error = response.text[:200], None
-        hint = '; the grant was rejected — rerun the authorization flow' if error == 'invalid_grant' else ''
+            body = _TokenErrorResponse()
+        detail = body.error_description or body.error or response.text[:200]
+        hint = '; the grant was rejected, rerun the authorization flow' if body.error == 'invalid_grant' else ''
         raise CredentialsRefreshError(
             f'Token request to {url} failed with status {response.status_code}: {detail}{hint}'
         )
     try:
-        # `ValidationError` subclasses `ValueError`, so this also rejects invalid JSON.
-        return _OBJECT_ADAPTER.validate_python(response.json())
+        return _TokenResponse.model_validate(response.json())
     except ValueError:
-        raise CredentialsRefreshError(f'Token endpoint {url} returned a non-object response.') from None
+        raise CredentialsRefreshError(f'Token endpoint {url} returned an unexpected response.') from None
 
 
 async def refresh_credentials(
@@ -261,7 +293,7 @@ async def refresh_credentials(
     when the token endpoint rejects the grant (`invalid_grant` means a fresh authorization is
     required) or returns a malformed response.
     """
-    data = await _post_json(
+    data = await _post_token_request(
         _TOKEN_URL,
         {
             'grant_type': 'refresh_token',
@@ -334,8 +366,8 @@ def _read_codex_cli_credentials() -> OpenAICodexCredentials:
     except OSError as e:
         raise UserError(f'Could not read Codex CLI credentials at `{path}`: {e}') from e
     try:
-        data = _OBJECT_ADAPTER.validate_json(text)
-    except ValidationError as e:
+        data = json.loads(text)
+    except ValueError as e:
         raise UserError(f'Malformed Codex CLI credentials at `{path}`: {e}') from e
     return OpenAICodexCredentials.from_codex_cli_auth(data)
 
@@ -392,7 +424,7 @@ class OpenAICodexOAuthFlow:
 
     async def exchange_code(self, code: str) -> OpenAICodexCredentials:
         """Exchange an authorization code for credentials (call this in your callback handler)."""
-        data = await _post_json(
+        data = await _post_token_request(
             _TOKEN_URL,
             {
                 'grant_type': 'authorization_code',

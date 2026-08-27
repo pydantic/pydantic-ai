@@ -39,7 +39,8 @@ with try_import() as imports_successful:
         _account_id_from_id_token,  # pyright: ignore[reportPrivateUsage]
         _credentials_from_token_response,  # pyright: ignore[reportPrivateUsage]
         _jwt_expires_at,  # pyright: ignore[reportPrivateUsage]
-        _post_json,  # pyright: ignore[reportPrivateUsage]
+        _post_token_request,  # pyright: ignore[reportPrivateUsage]
+        _TokenResponse,  # pyright: ignore[reportPrivateUsage]
         refresh_credentials,
     )
 
@@ -72,7 +73,7 @@ def make_provider(credentials: OpenAICodexCredentials | None = None) -> OpenAICo
 
 
 class TokenEndpointMock:
-    """Stands in for `_post_json`, recording forms and returning queued payloads/exceptions."""
+    """Stands in for `_post_token_request`, recording forms and returning queued payloads/exceptions."""
 
     def __init__(self, *results: dict[str, Any] | Exception):
         self.results = list(results)
@@ -80,13 +81,13 @@ class TokenEndpointMock:
 
     async def __call__(
         self, url: str, form: dict[str, Any], http_client: httpx2.AsyncClient | None = None
-    ) -> dict[str, Any]:
+    ) -> _TokenResponse:
         self.forms.append(form)
         await asyncio.sleep(0.001)  # widen race windows for single-flight assertions
         result = self.results[min(len(self.forms), len(self.results)) - 1]
         if isinstance(result, Exception):
             raise result
-        return result
+        return _TokenResponse.model_validate(result)
 
 
 TOKEN_RESPONSE: dict[str, Any] = {
@@ -200,7 +201,9 @@ def test_account_id_claim_fallbacks():
 
 
 @pytest.mark.parametrize('exc_type', [CredentialsRefreshError, CredentialsPersistenceError])
-def test_credentials_errors_are_model_api_errors(exc_type: type[ModelAPIError]):
+def test_credentials_errors_are_model_api_errors(
+    exc_type: type[CredentialsRefreshError] | type[CredentialsPersistenceError],
+):
     """Credential failures are `ModelAPIError`s (so e.g. `FallbackModel` falls back on them) and
     survive a pickle round-trip despite the narrower single-argument constructor."""
     exc = exc_type('something broke')
@@ -214,14 +217,14 @@ def test_credentials_errors_are_model_api_errors(exc_type: type[ModelAPIError]):
 
 def test_token_response_validation_errors():
     with pytest.raises(CredentialsRefreshError, match='access_token'):
-        _credentials_from_token_response({})
+        _credentials_from_token_response(_TokenResponse())
     with pytest.raises(CredentialsRefreshError, match='refresh_token'):
-        _credentials_from_token_response({'access_token': 'a'})
+        _credentials_from_token_response(_TokenResponse(access_token='a'))
     with pytest.raises(CredentialsRefreshError, match='account id'):
-        _credentials_from_token_response({'access_token': 'a', 'refresh_token': 'r'})
+        _credentials_from_token_response(_TokenResponse(access_token='a', refresh_token='r'))
 
 
-async def test_post_json_success_and_error_shapes(monkeypatch: pytest.MonkeyPatch):
+async def test_post_token_request_success_and_error_shapes(monkeypatch: pytest.MonkeyPatch):
     """The OAuth POST helper: success, JSON error with `invalid_grant` hint, JSON error without
     a description, and a non-JSON error body."""
     real_client = httpx2.AsyncClient
@@ -241,16 +244,16 @@ async def test_post_json_success_and_error_shapes(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(httpx2, 'AsyncClient', client_factory)
 
     url = 'https://auth.openai.com/oauth/token'
-    assert await _post_json(url, {'grant_type': 'refresh_token'}) == {'ok': True}
+    assert await _post_token_request(url, {'grant_type': 'refresh_token'}) == _TokenResponse()
     with pytest.raises(CredentialsRefreshError, match='expired; the grant was rejected'):
-        await _post_json(url, {})
+        await _post_token_request(url, {})
     with pytest.raises(CredentialsRefreshError, match='access_denied'):
-        await _post_json(url, {})
+        await _post_token_request(url, {})
     with pytest.raises(CredentialsRefreshError, match='gateway exploded'):
-        await _post_json(url, {})
+        await _post_token_request(url, {})
 
 
-async def test_post_json_rejects_non_object_success_bodies():
+async def test_post_token_request_rejects_non_object_success_bodies():
     """A 200 carrying JSON `null`, a list, or unparsable text raises instead of `AttributeError` later."""
     queue = [
         httpx2.Response(200, json=None),
@@ -264,8 +267,8 @@ async def test_post_json_rejects_non_object_success_bodies():
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     async with client:
         for _ in range(3):
-            with pytest.raises(CredentialsRefreshError, match='non-object response'):
-                await _post_json('https://auth.openai.com/oauth/token', {}, http_client=client)
+            with pytest.raises(CredentialsRefreshError, match='unexpected response'):
+                await _post_token_request('https://auth.openai.com/oauth/token', {}, http_client=client)
     assert _jwt_expires_at('a.b') is None
     assert _jwt_expires_at(f'a.{base64.urlsafe_b64encode(b"not json").decode()}.c') is None
     assert _jwt_expires_at(make_jwt({'exp': 'soon'})) is None
@@ -279,7 +282,7 @@ async def test_post_json_rejects_non_object_success_bodies():
 
 async def test_simultaneous_expiry_performs_one_refresh(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock(TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider(make_credentials(exp=time.time() - 10))
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
@@ -297,7 +300,7 @@ async def test_simultaneous_expiry_performs_one_refresh(monkeypatch: pytest.Monk
 
 async def test_fresh_credentials_skip_proactive_refresh(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock(TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider()  # healthy JWT
 
     old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
@@ -317,7 +320,7 @@ async def test_fresh_credentials_skip_proactive_refresh(monkeypatch: pytest.Monk
 
 async def test_malformed_jwt_degrades_to_401_path(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock(TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider(make_credentials(access_token='not-a-jwt'))
     old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
     requests_seen: list[str] = []
@@ -341,7 +344,7 @@ async def test_malformed_jwt_degrades_to_401_path(monkeypatch: pytest.MonkeyPatc
 
 async def test_simultaneous_401s_single_flight_recheck(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock(TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider(make_credentials())  # no expiry hint: only the 401 can trigger refresh
     old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
     sends: list[str] = []
@@ -368,7 +371,7 @@ async def test_simultaneous_401s_single_flight_recheck(monkeypatch: pytest.Monke
 
 async def test_401_after_inflight_rotation_replays_without_second_refresh(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock(TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider(make_credentials())
     calls = 0
 
@@ -392,7 +395,7 @@ async def test_401_after_inflight_rotation_replays_without_second_refresh(monkey
 async def test_failed_refresh_is_single_flighted_across_waiters(monkeypatch: pytest.MonkeyPatch):
     """A burst of 401s whose refresh fails shares that failure instead of retrying it per waiter."""
     mock = TokenEndpointMock(CredentialsRefreshError('the grant is dead'))
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider(make_credentials())
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -411,7 +414,7 @@ async def test_failed_refresh_is_single_flighted_across_waiters(monkeypatch: pyt
 async def test_stale_refresh_transport_error_falls_through_to_request(monkeypatch: pytest.MonkeyPatch):
     """A transport failure during the proactive refresh must not abort a request whose token still works."""
     mock = TokenEndpointMock(RuntimeError('network down'))
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider(make_credentials(exp=time.time() - 100))
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -427,7 +430,7 @@ async def test_stale_refresh_transport_error_falls_through_to_request(monkeypatc
 async def test_stale_refresh_persistence_error_propagates(monkeypatch: pytest.MonkeyPatch):
     """The proactive path swallows refresh failures but never a failed save of rotated credentials."""
     mock = TokenEndpointMock(TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
 
     async def failing_callback(credentials: OpenAICodexCredentials) -> None:
         raise RuntimeError('db down')
@@ -608,7 +611,7 @@ async def test_refresh_credentials_primitive():
 
 async def test_non_expiry_401_does_not_loop(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock(TOKEN_RESPONSE, TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider()
     sends: list[str] = []
 
@@ -628,7 +631,7 @@ async def test_non_expiry_401_does_not_loop(monkeypatch: pytest.MonkeyPatch):
 async def test_refresh_failure_surfaces_and_keeps_old_credentials(monkeypatch: pytest.MonkeyPatch):
     error = CredentialsRefreshError('Token request failed with status 400: invalid_grant; rerun the authorization flow')
     mock = TokenEndpointMock(error)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider()
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -643,7 +646,7 @@ async def test_refresh_failure_surfaces_and_keeps_old_credentials(monkeypatch: p
 
 async def test_callback_failure_updates_memory_but_raises_persistence_error(monkeypatch: pytest.MonkeyPatch):
     persisted: list[OpenAICodexCredentials] = []
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', TokenEndpointMock(TOKEN_RESPONSE))
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
 
     async def failing_callback(credentials: OpenAICodexCredentials) -> None:
         persisted.append(credentials)
@@ -672,7 +675,7 @@ async def test_callback_failure_updates_memory_but_raises_persistence_error(monk
 
 async def test_account_id_falls_back_to_previous_on_rotation(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock({**TOKEN_RESPONSE, 'id_token': make_jwt({'sub': 'user'})})
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider()
     await provider._refresh_for_401(provider._revision)  # pyright: ignore[reportPrivateUsage]
     assert provider.credentials.account_id == 'acc-1'  # carried over when id_token lacks the claim
@@ -808,7 +811,7 @@ def test_authorization_url_rejects_identity_overrides():
 
 async def test_exchange_code_posts_pkce_form(monkeypatch: pytest.MonkeyPatch):
     mock = TokenEndpointMock(TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_json', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     flow = OpenAICodexOAuthFlow()
     credentials = await flow.exchange_code('the-code')
 
