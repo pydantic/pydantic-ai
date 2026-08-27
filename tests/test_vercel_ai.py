@@ -4979,10 +4979,10 @@ async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_pa
 async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_through(data_payload: Any):
     """Unrecognized binary `data` shapes are left untouched by `_js_binary_to_bytes` (no `KeyError`/`TypeError`).
 
-    Because the merged `ToolReturnContent` discriminator wraps the multimodal branch in a passthrough
-    validator (`_validate_multimodal_or_passthrough`), a `kind: 'binary'` dict whose `data` fails bytes
-    validation isn't a hard error — it falls back to the raw mapping. So the helper only needs to avoid
-    crashing on malformed input; the content round-trips as the untouched dict.
+    Because `ToolReturnContent` resolves left to right, a `kind: 'binary'` dict whose `data` fails
+    bytes validation isn't a hard error — it fails the `MultiModalContent` arm and lands on `Mapping`.
+    So the helper only needs to avoid crashing on malformed input; the content round-trips as the
+    untouched dict.
     """
     ui_messages: list[UIMessage] = [
         UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
@@ -5014,8 +5014,8 @@ async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_th
 
 async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserved():
     """A plain user mapping that merely reuses `kind: 'binary'` (no `media_type`) stays a mapping
-    with its nested `data` untouched — JS-binary coercion is gated on the same type-specific field
-    as the core `ToolReturnContent` discriminator, so it doesn't corrupt non-multimodal user dicts."""
+    with its nested `data` untouched — JS-binary coercion is gated on the type-specific field a real
+    `BinaryContent` carries, so it doesn't corrupt non-multimodal user dicts."""
     ui_messages: list[UIMessage] = [
         UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
         UIMessage(

@@ -1127,7 +1127,7 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
 def _validate_tool_output(output: Any) -> Any:
     """Rehydrate `ToolOutputAvailablePart.output` (typed `Any` on the wire) into `ToolReturnContent`.
 
-    `tool_return_content_ta` runs the lifted `Discriminator` on the union, so multimodal items
+    `tool_return_content_ta` resolves the `ToolReturnContent` union, so multimodal items
     (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
     `BinaryContent` instances with image media types are narrowed to `BinaryImage`. JS-serialized
     binary shapes are coerced to `bytes` first (see `_coerce_js_binary_data`).
@@ -1151,9 +1151,10 @@ def _coerce_js_binary_data(value: Any) -> Any:
     if not isinstance(value, dict):
         return value
     coerced: dict[str, Any] = {k: _coerce_js_binary_data(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
-    # Gate on `media_type` (the type-specific field a real `BinaryContent` carries) so this matches
-    # the core `ToolReturnContent` discriminator: a plain user mapping that merely reuses
-    # `kind: 'binary'` stays untouched instead of having its `data` rewritten to bytes.
+    # Gate on `media_type` (the type-specific field a real `BinaryContent` carries): a plain user
+    # mapping that merely reuses `kind: 'binary'` must keep its `data` value untouched. Without the
+    # gate its `data` is rewritten to bytes and the mapping then fails the `MultiModalContent` arm
+    # anyway, landing on `Mapping` with the user's value corrupted.
     if coerced.get('kind') == 'binary' and 'media_type' in coerced:
         coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
     return coerced

@@ -307,7 +307,7 @@ def rehydrate_tool_return_content(content: Any) -> Any:
     `ImageUrl`, `UploadedFile`, ...) come back as their subclasses. Image `BinaryContent` is narrowed to
     `BinaryImage`.
 
-    Only a parsed mapping or sequence is run through the discriminator, since nested multimodal items can
+    Only a parsed mapping or sequence is run back through the union, since nested multimodal items can
     only live inside those. A non-JSON string (plain-text return) and a parsed JSON scalar (`'123'`,
     `'true'`) are returned as the original string: content is text-only, so a scalar is indistinguishable
     from a string on the wire and rehydrating it would silently turn `'123'` into `123`. An
