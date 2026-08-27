@@ -17,6 +17,7 @@ from pydantic_ai.messages import UploadedFile
 __all__ = (
     'AbstractNativeTool',
     'AnthropicWebSearchToolSettings',
+    'OpenAIWebSearchToolSettings',
     'OpenRouterWebSearchToolSettings',
     'WebSearchProviderSettings',
     'WebSearchTool',
@@ -33,8 +34,11 @@ __all__ = (
     'ImageAspectRatio',
     'MemoryTool',
     'MCPServerTool',
+    'XaiFileSearchToolSettings',
+    'FileSearchProviderSettings',
     'FileSearchTool',
     'AdvisorModelName',
+    'AnthropicAdvisorToolSettings',
     'OpenRouterAdvisorToolSettings',
     'AdvisorProviderSettings',
     'AdvisorTool',
@@ -48,6 +52,22 @@ NATIVE_TOOL_TYPES: dict[str, type[AbstractNativeTool]] = {}
 
 This dict is populated automatically via `__init_subclass__` when tool classes are defined.
 """
+
+
+def _warn_deprecated_provider_fields(tool_name: str, system: str, fields: Sequence[str]) -> None:
+    if not fields:
+        return
+
+    formatted_fields = ', '.join(f'`{name}`' for name in fields)
+    label = 'field' if len(fields) == 1 else 'fields'
+    verb = 'is' if len(fields) == 1 else 'are'
+    warnings.warn(
+        f'`{tool_name}` {label} {formatted_fields} {verb} deprecated; '
+        f'use `provider_settings={{"{system}": {{...}}}}` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=4,
+    )
+
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools."""
@@ -143,6 +163,13 @@ class AnthropicWebSearchToolSettings(TypedDict, total=False):
     """Whether results consumed by completed code execution calls remain in the response."""
 
 
+class OpenAIWebSearchToolSettings(TypedDict, total=False):
+    """OpenAI-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
+
+    external_web_access: bool
+    """Whether OpenAI Responses may fetch live web content."""
+
+
 class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
@@ -166,6 +193,7 @@ class WebSearchProviderSettings(TypedDict, total=False):
     """Provider-specific web search settings, indexed by the model system."""
 
     anthropic: AnthropicWebSearchToolSettings
+    openai: OpenAIWebSearchToolSettings
     openrouter: OpenRouterWebSearchToolSettings
 
 
@@ -253,6 +281,8 @@ class WebSearchTool(AbstractNativeTool):
     external_web_access: bool | None = None
     """Whether the hosted web search tool may fetch live web content.
 
+    Deprecated: use `provider_settings.openai.external_web_access` instead.
+
     If `False`, the tool uses only cached or indexed results. If `None`, the parameter is omitted and the provider
     default is used. OpenAI currently defaults to `True`.
 
@@ -265,6 +295,11 @@ class WebSearchTool(AbstractNativeTool):
 
     kind: str = 'web_search'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        _warn_deprecated_provider_fields(
+            'WebSearchTool', 'openai', ['external_web_access'] if self.external_web_access is not None else []
+        )
 
 
 class WebSearchUserLocation(TypedDict, total=False):
@@ -669,16 +704,7 @@ class ImageGenerationTool(AbstractNativeTool):
             )
             if is_set
         ]
-        if deprecated_fields:
-            fields = ', '.join(f'`{name}`' for name in deprecated_fields)
-            label = 'field' if len(deprecated_fields) == 1 else 'fields'
-            verb = 'is' if len(deprecated_fields) == 1 else 'are'
-            warnings.warn(
-                f'`ImageGenerationTool` {label} {fields} {verb} deprecated; '
-                'use `provider_settings={"openai": {...}}` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=3,
-            )
+        _warn_deprecated_provider_fields('ImageGenerationTool', 'openai', deprecated_fields)
 
 
 @dataclass(kw_only=True)
@@ -765,6 +791,22 @@ class MCPServerTool(AbstractNativeTool):
         return f'MCP: {self.id}'
 
 
+class XaiFileSearchToolSettings(TypedDict, total=False):
+    """xAI-specific settings for [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]."""
+
+    instructions: str
+    """Instructions for interpreting and ranking xAI collections search results."""
+
+    retrieval_mode: Literal['hybrid', 'semantic', 'keyword']
+    """The xAI collections search retrieval strategy."""
+
+
+class FileSearchProviderSettings(TypedDict, total=False):
+    """Provider-specific file search settings, indexed by the model system."""
+
+    xai: XaiFileSearchToolSettings
+
+
 @dataclass(kw_only=True)
 class FileSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search through uploaded files using vector search.
@@ -778,6 +820,9 @@ class FileSearchTool(AbstractNativeTool):
     * Google (Gemini)
     * xAI (mapped to collections search)
     """
+
+    provider_settings: FileSearchProviderSettings | None = None
+    """Provider-specific file search settings, indexed by the model system."""
 
     file_store_ids: Sequence[str]
     """The file store IDs to search through.
@@ -798,6 +843,8 @@ class FileSearchTool(AbstractNativeTool):
     instructions: str | None = None
     """Optional instructions that guide how the collections search results are interpreted and ranked.
 
+    Deprecated: use `provider_settings.xai.instructions` instead.
+
     Supported by:
 
     * xAI
@@ -806,6 +853,8 @@ class FileSearchTool(AbstractNativeTool):
     retrieval_mode: Literal['hybrid', 'semantic', 'keyword'] | None = None
     """The retrieval strategy for the search.
 
+    Deprecated: use `provider_settings.xai.retrieval_mode` instead.
+
     Supported by:
 
     * xAI (defaults to `hybrid` server-side)
@@ -813,6 +862,24 @@ class FileSearchTool(AbstractNativeTool):
 
     kind: str = 'file_search'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        deprecated_fields = [
+            name
+            for name, is_set in (
+                ('instructions', self.instructions is not None),
+                ('retrieval_mode', self.retrieval_mode is not None),
+            )
+            if is_set
+        ]
+        _warn_deprecated_provider_fields('FileSearchTool', 'xai', deprecated_fields)
+
+
+class AnthropicAdvisorToolSettings(TypedDict, total=False):
+    """Anthropic-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
+
+    caching: Literal['5m', '1h']
+    """The ephemeral cache TTL for the Anthropic advisor context."""
 
 
 class OpenRouterAdvisorToolSettings(TypedDict, total=False):
@@ -825,6 +892,7 @@ class OpenRouterAdvisorToolSettings(TypedDict, total=False):
 class AdvisorProviderSettings(TypedDict, total=False):
     """Provider-specific advisor settings, indexed by the model system."""
 
+    anthropic: AnthropicAdvisorToolSettings
     openrouter: OpenRouterAdvisorToolSettings
 
 
@@ -832,9 +900,8 @@ class AdvisorProviderSettings(TypedDict, total=False):
 class AdvisorTool(AbstractNativeTool):
     """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
 
-    The fields map 1:1 to the parameters of Anthropic's advisor tool definition. OpenRouter exposes
-    the advisor as a gateway server tool that honors a subset (`model`, `max_tokens`) and ignores
-    the unsupported fields; see the per-field docstrings for which provider supports each.
+    The first-class fields describe behavior shared by the supported systems; system-specific options
+    live in `provider_settings`. See the per-field docstrings for which provider supports each option.
 
     Supported by:
 
@@ -888,6 +955,8 @@ class AdvisorTool(AbstractNativeTool):
     """If provided, caches the advisor context ephemerally with the given TTL. Maps to
     `caching={'type': 'ephemeral', 'ttl': ...}`.
 
+    Deprecated: use `provider_settings.anthropic.caching` instead.
+
     Supported by:
 
     * Anthropic
@@ -899,6 +968,7 @@ class AdvisorTool(AbstractNativeTool):
     """The kind of tool."""
 
     def __post_init__(self) -> None:
+        _warn_deprecated_provider_fields('AdvisorTool', 'anthropic', ['caching'] if self.caching is not None else [])
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 

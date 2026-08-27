@@ -19,8 +19,9 @@ print(result.output)
 ```
 
 For OpenAI web search, use the Responses API model prefix (`openai-responses:`), not `openai:`.
-Set `external_web_access=False` on `WebSearch` or `WebSearchTool` to restrict OpenAI Responses web search to cached
-or indexed content.
+Set `external_web_access=False` on `WebSearch`, or set
+`provider_settings={'openai': {'external_web_access': False}}` on `WebSearchTool`, to restrict OpenAI Responses web
+search to cached or indexed content.
 
 ## Native Tool Defaults
 

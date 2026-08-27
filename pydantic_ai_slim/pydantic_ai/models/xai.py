@@ -1284,12 +1284,13 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         elif isinstance(builtin_tool, FileSearchTool):
+            provider_settings = (builtin_tool.provider_settings or {}).get('xai', {})
             tools.append(
                 collections_search(
                     collection_ids=list(builtin_tool.file_store_ids),
                     limit=builtin_tool.max_num_results,
-                    instructions=builtin_tool.instructions,
-                    retrieval_mode=builtin_tool.retrieval_mode,
+                    instructions=provider_settings.get('instructions', builtin_tool.instructions),
+                    retrieval_mode=provider_settings.get('retrieval_mode', builtin_tool.retrieval_mode),
                 )
             )
         else:  # pragma: no cover

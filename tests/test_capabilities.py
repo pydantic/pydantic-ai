@@ -564,7 +564,10 @@ def test_model_json_schema_with_capabilities():
             '$defs': {
                 'AdvisorProviderSettings': {
                     'additionalProperties': False,
-                    'properties': {'openrouter': {'$ref': '#/$defs/OpenRouterAdvisorToolSettings'}},
+                    'properties': {
+                        'anthropic': {'$ref': '#/$defs/AnthropicAdvisorToolSettings'},
+                        'openrouter': {'$ref': '#/$defs/OpenRouterAdvisorToolSettings'},
+                    },
                     'title': 'AdvisorProviderSettings',
                     'type': 'object',
                 },
@@ -627,6 +630,12 @@ def test_model_json_schema_with_capabilities():
                     'title': 'AnthropicWebFetchToolSettings',
                     'type': 'object',
                 },
+                'AnthropicAdvisorToolSettings': {
+                    'additionalProperties': False,
+                    'properties': {'caching': {'enum': ['5m', '1h'], 'title': 'Caching', 'type': 'string'}},
+                    'title': 'AnthropicAdvisorToolSettings',
+                    'type': 'object',
+                },
                 'AnthropicWebSearchToolSettings': {
                     'additionalProperties': False,
                     'properties': {
@@ -661,10 +670,20 @@ def test_model_json_schema_with_capabilities():
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
+                'FileSearchProviderSettings': {
+                    'additionalProperties': False,
+                    'properties': {'xai': {'$ref': '#/$defs/XaiFileSearchToolSettings'}},
+                    'title': 'FileSearchProviderSettings',
+                    'type': 'object',
+                },
                 'FileSearchTool': {
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/FileSearchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
                         'max_num_results': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -1543,6 +1562,12 @@ def test_model_json_schema_with_capabilities():
                     'title': 'OpenAIImageGenerationToolSettings',
                     'type': 'object',
                 },
+                'OpenAIWebSearchToolSettings': {
+                    'additionalProperties': False,
+                    'properties': {'external_web_access': {'title': 'External Web Access', 'type': 'boolean'}},
+                    'title': 'OpenAIWebSearchToolSettings',
+                    'type': 'object',
+                },
                 'OpenRouterWebSearchToolSettings': {
                     'additionalProperties': False,
                     'properties': {
@@ -1695,6 +1720,7 @@ def test_model_json_schema_with_capabilities():
                     'additionalProperties': False,
                     'properties': {
                         'anthropic': {'$ref': '#/$defs/AnthropicWebSearchToolSettings'},
+                        'openai': {'$ref': '#/$defs/OpenAIWebSearchToolSettings'},
                         'openrouter': {'$ref': '#/$defs/OpenRouterWebSearchToolSettings'},
                     },
                     'title': 'WebSearchProviderSettings',
@@ -1827,6 +1853,19 @@ def test_model_json_schema_with_capabilities():
                         },
                     },
                     'title': 'XSearchTool',
+                    'type': 'object',
+                },
+                'XaiFileSearchToolSettings': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'instructions': {'title': 'Instructions', 'type': 'string'},
+                        'retrieval_mode': {
+                            'enum': ['hybrid', 'semantic', 'keyword'],
+                            'title': 'Retrieval Mode',
+                            'type': 'string',
+                        },
+                    },
+                    'title': 'XaiFileSearchToolSettings',
                     'type': 'object',
                 },
                 'short_spec_NativeTool': {
@@ -10843,7 +10882,7 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
-    assert tool.external_web_access is False
+    assert tool.provider_settings == {'openai': {'external_web_access': False}}
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 

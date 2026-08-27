@@ -966,6 +966,21 @@ def test_image_generation_tool_provider_field_deprecation() -> None:
     assert mapped_tool.get('model') == 'gpt-image-2'
 
 
+def test_web_search_tool_provider_field_deprecation() -> None:
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'field `external_web_access` is deprecated'):
+        legacy_tool = WebSearchTool(external_web_access=False)
+        overridden_tool = WebSearchTool(
+            external_web_access=False,
+            provider_settings={'openai': {'external_web_access': True}},
+        )
+
+    mapped_tools = model._get_native_tools(  # pyright: ignore[reportPrivateUsage]
+        ModelRequestParameters(native_tools=[legacy_tool, overridden_tool])
+    )
+    assert [tool.get('external_web_access') for tool in mapped_tools] == [False, True]
+
+
 async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_model_requests: None) -> None:
     c = response_message(
         [
@@ -2534,7 +2549,10 @@ async def test_openai_responses_model_web_search_tool_without_external_access(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ) -> None:
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(external_web_access=False))])
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(WebSearchTool(provider_settings={'openai': {'external_web_access': False}}))],
+    )
 
     result = await agent.run('Search the web for the year the Eiffel Tower opened to the public. Reply with the year.')
 

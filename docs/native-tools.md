@@ -179,7 +179,7 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ✅ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
-| `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `provider_settings.openai.external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `provider_settings.anthropic.response_inclusion` | ❌ | ✅ | ❌ | ❌ | ❌ |
 | `provider_settings.openrouter.engine`, `mode`, `max_results`, `max_total_results`, `max_characters` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
@@ -832,7 +832,7 @@ result = agent.run_sync('Design a caching strategy for our API. Consult your adv
 print(result.output)
 ```
 
-For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. `max_uses` and the Anthropic-specific caching setting are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
 
 With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
 
@@ -843,7 +843,7 @@ With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in
 | `model` | ✅ (required — the advisor model to consult) | ✅ (required — an OpenRouter catalog slug) |
 | `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
-| `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
+| `provider_settings.anthropic.caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
 | `provider_settings.openrouter.forward_transcript` | ❌ | ✅ (forward the parent conversation to the advisor) |
 
 ## MCP Server Tool
@@ -1125,7 +1125,7 @@ async def main():
 asyncio.run(main())
 ```
 
-xAI's collections search also accepts options to control result count, ranking guidance, and retrieval strategy. These map to the `max_num_results`, `instructions`, and `retrieval_mode` fields on [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]. When omitted, the server applies its own defaults (10 results, hybrid retrieval).
+xAI's collections search also accepts options to control result count, ranking guidance, and retrieval strategy. Result count is configured with `max_num_results`; the xAI-specific `instructions` and `retrieval_mode` options belong under `provider_settings.xai`. When omitted, the server applies its own defaults (10 results, hybrid retrieval).
 
 ```py {title="file_search_xai_options.py" test="skip"}
 import asyncio
@@ -1142,8 +1142,12 @@ async def main():
                 FileSearchTool(
                     file_store_ids=['collection_abc123'],
                     max_num_results=5,
-                    instructions='Focus on up-to-date, highly relevant documents.',
-                    retrieval_mode='semantic',
+                    provider_settings={
+                        'xai': {
+                            'instructions': 'Focus on up-to-date, highly relevant documents.',
+                            'retrieval_mode': 'semantic',
+                        }
+                    },
                 )
             )
         ],

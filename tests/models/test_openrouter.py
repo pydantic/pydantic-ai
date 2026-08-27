@@ -1075,13 +1075,13 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
                             max_characters=5_000,
                         ),
                         'anthropic': {'response_inclusion': 'excluded'},
+                        'openai': {'external_web_access': False},
                     },
                     search_context_size='high',
                     user_location={'city': 'London', 'country': 'GB', 'region': 'England', 'timezone': 'Europe/London'},
                     allowed_domains=['pydantic.dev'],
                     blocked_domains=['example.com'],
                     max_uses=2,
-                    external_web_access=False,
                 )
             )
         ],
