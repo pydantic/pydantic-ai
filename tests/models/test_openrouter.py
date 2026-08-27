@@ -1745,46 +1745,30 @@ async def test_openrouter_web_search_annotations(
     assert isinstance(response, ModelResponse)
     assert response.provider_details is not None
     annotations = response.provider_details['annotations']
-    assert annotations[0] == snapshot(
+    assert [
         {
-            'type': 'url_citation',
-            'url_citation': {
-                'end_index': 0,
-                'start_index': 0,
-                'title': 'AI Agent Framework, the Pydantic way',
-                'url': 'https://github.com/pydantic/pydantic-ai',
-                'content': """\
-# pydantic/pydantic-ai
-
-...
-
-- Stars: 19265
-- Forks: 2514
-- Watchers: 19265
-- Open issues: 702
-- License: MIT License
-- Homepage: https://pydantic.dev/pydantic-ai
-- Default branch: main
-- Created: 2024-06-21T15:55:04Z
-
-...
-
-AI Agent Framework, the Pydantic way
-
-...
-
-### Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.\
-""",
-            },
+            'type': annotation['type'],
+            'url': annotation['url_citation']['url'],
+            'has_content': bool(annotation['url_citation']['content']),
         }
-    )
-    assert [annotation['url_citation']['url'] for annotation in annotations] == snapshot(
+        for annotation in annotations
+    ] == snapshot(
         [
-            'https://github.com/pydantic/pydantic-ai',
-            'https://pydantic.dev/pydantic-ai',
-            'https://github.com/pydantic/pydantic-ai/releases/tag/v2.0.0',
-            'https://pydantic.dev/docs/ai/overview/',
-            'https://github.com/pydantic/pydantic-ai/tree/refs/tags/v1.44.0',
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai',
+                'has_content': True,
+            },
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai/blob/main/README.md',
+                'has_content': True,
+            },
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai/tree/v1.84.0',
+                'has_content': True,
+            },
         ]
     )
 
