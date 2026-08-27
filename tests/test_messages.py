@@ -1,3 +1,4 @@
+import cProfile
 import json
 import re
 import sys
@@ -1772,11 +1773,13 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
     Temporal activity resolution and replay.
 
-    Counting Python frames rather than timing is what makes this pin usable in CI: the count is
+    Counting Python calls rather than timing is what makes this pin usable in CI: the count is
     deterministic and machine-independent, where a wall-clock threshold would either flake on a noisy
     runner or be loose enough to catch nothing. The bound is generous on purpose — the regression it
-    guards adds thousands of frames, so a handful of tolerance costs no signal and removes any
-    dependence on ambient interpreter activity.
+    guards adds tens of thousands of calls, so a handful of tolerance costs no signal and removes any
+    dependence on ambient interpreter activity. `cProfile` rather than a `sys.setprofile` callback
+    because the interpreter does not trace the callback's own body, leaving it unmeasurable by
+    coverage.
 
     `dump_json` is pinned alongside `validate_json` because it is the leg that notices the two ways
     the `_StrPassthrough` arm can be lost: `pydantic.InstanceOf[str]` builds the same validator but
@@ -1799,25 +1802,19 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     def python_calls(raw: bytes, dump: bool) -> int:
         messages = ModelMessagesTypeAdapter.validate_json(raw)  # build the (de)serializer outside the measurement
         ModelMessagesTypeAdapter.dump_json(messages)
-        calls = 0
 
-        def profile(frame: object, event: str, arg: object) -> None:
-            nonlocal calls
-            if event == 'call':
-                calls += 1
-
-        previous = sys.getprofile()
-        sys.setprofile(profile)
+        profiler = cProfile.Profile()
+        profiler.enable()
         try:
             if dump:
                 ModelMessagesTypeAdapter.dump_json(messages)
             else:
                 ModelMessagesTypeAdapter.validate_json(raw)
         finally:
-            sys.setprofile(previous)
-        return calls
+            profiler.disable()
+        return sum(entry.callcount for entry in profiler.getstats())
 
-    # 100x the nodes: a per-node Python call turns a handful of frames into thousands.
+    # 100x the nodes: a per-node Python call turns a handful of calls into tens of thousands.
     for dump in (False, True):
         small, large = python_calls(payload(2), dump), python_calls(payload(200), dump)
         direction = 'dump_json' if dump else 'validate_json'
