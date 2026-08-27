@@ -240,8 +240,9 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Whether this model is served by the Bedrock Converse API. Default: `True`.
 
     Set to `False` for models that Bedrock serves only through the Mantle OpenAI-compatible API (today,
-    the proprietary OpenAI GPT models); `BedrockConverseModel` raises at construction so the user gets an
-    actionable pointer to `BedrockMantleProvider` instead of an opaque Converse error at request time.
+    the proprietary OpenAI GPT models other than GPT-5.6 Sol/Luna/Terra); `BedrockConverseModel` raises
+    at construction so the user gets an actionable pointer to `BedrockMantleProvider` instead of an
+    opaque Converse error at request time.
     """
 
 
@@ -495,12 +496,23 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
+# Stripped base names of the proprietary (non-GPT-OSS) OpenAI GPT models AWS serves on the Bedrock
+# Converse API, per AWS model cards (checked 2026-08-27). Exact-match on purpose: `gpt-5.6-cyber` is
+# Mantle-only, so prefix matching would wrongly admit it.
+_CONVERSE_SERVED_OPENAI_GPT_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'})
+
+
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
-    # Only the open-weight GPT-OSS family is served on Converse; every proprietary GPT model (GPT-5.4+
-    # today, and future GPT-6/7/… tomorrow) is Bedrock Mantle-only. Flag those as unsupported so
-    # `BedrockConverseModel` raises an actionable error at construction rather than failing later with an
-    # opaque Converse error.
+    if model_name in _CONVERSE_SERVED_OPENAI_GPT_MODELS:
+        # AWS serves GPT-5.6 Sol/Luna/Terra on Converse (via `us.`/`in.`/`global.` inference-profile
+        # IDs), but their model cards verify no Converse-specific capabilities, so they keep the
+        # default profile.
+        return None
+    # Only the open-weight GPT-OSS family is otherwise served on Converse; every other proprietary GPT
+    # model (GPT-5.4, GPT-5.5, GPT-5.6 Cyber today, and future GPT-6/7/… tomorrow) is Bedrock
+    # Mantle-only. Flag those as unsupported so `BedrockConverseModel` raises an actionable error at
+    # construction rather than failing later with an opaque Converse error.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)
     # TODO(v3): default `bedrock:` to Bedrock Mantle (with a deprecation warning steering users who want
