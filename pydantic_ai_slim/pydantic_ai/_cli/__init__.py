@@ -5,7 +5,7 @@ import functools
 import json
 import sys
 from collections.abc import Sequence
-from contextlib import ExitStack
+from contextlib import AsyncExitStack, ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -270,7 +270,7 @@ subcommands:
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
     parser.add_argument(
         '--mcp-config',
-        help='Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Cursor, and the MCP specification).',
+        help='Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Claude Code, and Cursor).',
     )
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
@@ -303,7 +303,7 @@ def _run_chat_command(
             return 1
         agent = loaded
 
-    toolsets: Sequence[AbstractToolset[Any]] = ()
+    toolsets: Sequence[AbstractToolset[Any]] | None = None
     if args.mcp_config:
         try:
             from ..mcp import load_mcp_toolsets
@@ -372,7 +372,7 @@ async def run_chat(
     model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
-    toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -384,47 +384,55 @@ async def run_chat(
     session_usage = _usage.RunUsage()
     session_turns = 0
 
-    while True:
-        try:
-            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/usage', '/exit', '/cp'])
-            text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
-        except (KeyboardInterrupt, EOFError):  # pragma: no cover
-            return 0
+    async with AsyncExitStack() as toolset_stack:
+        # Hold the toolsets open for the whole chat rather than per turn. Each run still enters
+        # them, but `MCPToolset` ref-counts, so those become no-ops instead of a fresh subprocess
+        # and `tools/list` handshake on every message, and server-side session state survives the
+        # turn. An unreachable server therefore fails at startup rather than on the first message.
+        for toolset in toolsets or ():
+            await toolset_stack.enter_async_context(toolset)
 
-        if not text.strip():
-            continue
-
-        ident_prompt = text.lower().strip().replace(' ', '-')
-        if ident_prompt.startswith('/'):
-            exit_value, multiline = handle_slash_command(
-                ident_prompt, messages, multiline, console, code_theme, usage=session_usage, turns=session_turns
-            )
-            if exit_value is not None:
-                return exit_value
-        else:
+        while True:
             try:
-                messages = await ask_agent(
-                    agent,
-                    text,
-                    stream,
-                    console,
-                    code_theme,
-                    deps=deps,
-                    messages=messages,
-                    model=model,
-                    model_settings=model_settings,
-                    usage_limits=usage_limits,
-                    toolsets=toolsets,
-                    usage=session_usage,
+                auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/usage', '/exit', '/cp'])
+                text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
+            except (KeyboardInterrupt, EOFError):  # pragma: no cover
+                return 0
+
+            if not text.strip():
+                continue
+
+            ident_prompt = text.lower().strip().replace(' ', '-')
+            if ident_prompt.startswith('/'):
+                exit_value, multiline = handle_slash_command(
+                    ident_prompt, messages, multiline, console, code_theme, usage=session_usage, turns=session_turns
                 )
-                session_turns += 1
-            except anyio.get_cancelled_exc_class():  # pragma: no cover
-                console.print('[dim]Interrupted[/dim]')
-            except Exception as e:  # pragma: no cover
-                cause = getattr(e, '__cause__', None)
-                console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
-                if cause:
-                    console.print(f'[dim]Caused by: {cause}[/dim]')
+                if exit_value is not None:
+                    return exit_value
+            else:
+                try:
+                    messages = await ask_agent(
+                        agent,
+                        text,
+                        stream,
+                        console,
+                        code_theme,
+                        deps=deps,
+                        messages=messages,
+                        model=model,
+                        model_settings=model_settings,
+                        usage_limits=usage_limits,
+                        toolsets=toolsets,
+                        usage=session_usage,
+                    )
+                    session_turns += 1
+                except anyio.get_cancelled_exc_class():  # pragma: no cover
+                    console.print('[dim]Interrupted[/dim]')
+                except Exception as e:  # pragma: no cover
+                    cause = getattr(e, '__cause__', None)
+                    console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
+                    if cause:
+                        console.print(f'[dim]Caused by: {cause}[/dim]')
 
 
 async def ask_agent(
@@ -438,7 +446,7 @@ async def ask_agent(
     model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
-    toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     *,
     usage: _usage.RunUsage | None = None,
 ) -> list[ModelMessage]:
@@ -457,7 +465,7 @@ async def ask_agent(
                     model=model,
                     model_settings=model_settings,
                     usage_limits=usage_limits,
-                    toolsets=toolsets or None,
+                    toolsets=toolsets,
                     usage=turn_usage,
                 )
             content = str(result.output)
@@ -472,7 +480,7 @@ async def ask_agent(
                 model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
-                toolsets=toolsets or None,
+                toolsets=toolsets,
                 usage=turn_usage,
             ) as agent_run:
                 live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')

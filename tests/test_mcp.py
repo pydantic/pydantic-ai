@@ -1802,7 +1802,7 @@ class TestLoadMCPToolsets:
         assert wrapped.client.transport.headers == {'Authorization': 'Bearer secret-value'}
         assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
 
-        stdio = toolsets[1].wrapped  # type: ignore[attr-defined]
+        stdio = toolsets[1].wrapped  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
         assert isinstance(stdio, MCPToolset)
         assert isinstance(stdio.client.transport, StdioTransport)
         assert stdio.client.transport.args == ['-m', 'secret-value']
@@ -1842,7 +1842,7 @@ class TestLoadMCPToolsets:
             ),
         ],
     )
-    async def test_load_mcp_toolsets_rejects_config_not_matching_the_schema(self, config: Any, loc: tuple[str, ...]):
+    async def test_load_mcp_toolsets_rejects_config_not_matching_the_schema(self, config: object, loc: tuple[str, ...]):
         """A config that doesn't match the `mcpServers` shape raises `ValidationError`, pointing at the field.
 
         The wrongly-typed `command` / `args` / `env` / `headers` cases used to load without complaint

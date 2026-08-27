@@ -59,7 +59,7 @@ to print only the final answer.
 | `-a`, `--agent` | Custom agent in `module:variable` format |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
 | `--no-stream` | Disable streaming from the model |
-| `--mcp-config` | Path to [MCP servers configuration file](mcp/client.md#loading-mcp-toolsets-from-configuration) (JSON, using the same `mcpServers` shape as Claude Desktop, Cursor, and the MCP specification) |
+| `--mcp-config` | Path to [MCP servers configuration file](mcp/client.md#loading-mcp-toolsets-from-configuration) (JSON, using the same `mcpServers` shape as Claude Desktop, Claude Code, and Cursor) |
 | `-l`, `--list-models` | List all available models and exit |
 | `--version` | Show version and exit |
 
@@ -75,7 +75,7 @@ clai --model anthropic:claude-sonnet-4-6
 
 ### MCP Servers
 
-You can connect to [MCP servers](mcp/client.md#loading-mcp-toolsets-from-configuration) using the `--mcp-config` flag with a JSON configuration file that uses the same `mcpServers` shape as Claude Desktop, Cursor, and the MCP specification:
+You can connect to [MCP servers](mcp/client.md#loading-mcp-toolsets-from-configuration) using the `--mcp-config` flag with a JSON configuration file that uses the same `mcpServers` shape as Claude Desktop, Claude Code, and Cursor:
 
 ```bash
 clai --mcp-config mcp_servers.json
@@ -84,7 +84,7 @@ clai --mcp-config mcp_servers.json
 !!! warning "Treat configuration files as trusted input"
     A configuration file names executables to spawn as subprocesses and expands `${VAR}` references against the full process environment, so anyone who can write it can run arbitrary commands and read any environment variable. Only pass `--mcp-config` a file you control.
 
-```json title="mcp_servers.json"
+```json {title="mcp_servers.json"}
 {
   "mcpServers": {
     "my-stdio-server": {
@@ -140,6 +140,9 @@ async def main():
 ```
 
 _(You'll need to add `asyncio.run(main())` to run `main`)_
+
+Both run the same chat interface as `clai`, so an agent with tools shows each call as it runs and
+marks it done when the result arrives, exactly as described under [CLI Usage](#cli-usage).
 
 ### Message History
 

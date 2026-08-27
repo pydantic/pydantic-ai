@@ -1921,8 +1921,9 @@ def _expand_env_vars(value: Any) -> Any:
 class _MCPServerConfig(TypedDict, total=False):
     """The keys `load_mcp_toolsets` reads from an `mcpServers` entry.
 
-    Keys other MCP clients write (`type`, `disabled`, `timeout`, ...) are ignored rather than
-    rejected, so a configuration file shared with another client still loads.
+    Unknown keys are ignored rather than rejected, so a configuration file shared with another MCP
+    client still loads. They are only ignored, never honoured: `disabled` does not skip a server,
+    and `type` does not select the transport — that is inferred from the URL.
     """
 
     command: str

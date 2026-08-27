@@ -23,6 +23,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
@@ -33,7 +34,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command
+    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command, run_chat
     from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -201,7 +202,7 @@ DIRECTORY_CONFIG = 'directory-instead-of-file'
     'config,expected',
     [
         pytest.param(None, 'not found', id='missing-file'),
-        pytest.param('{ not valid json ', 'Could not load MCP config', id='malformed-json'),
+        pytest.param('{ not valid json ', 'key must be a string', id='malformed-json'),
         pytest.param(
             json.dumps({'mcpServers': {'x': {'command': 'echo', 'args': ['${UNDEFINED_VAR_XYZ}']}}}),
             'is not defined',
@@ -347,6 +348,11 @@ async def _two_city_stream(messages: list[ModelMessage], info: AgentInfo) -> Asy
         }
 
 
+def _distinct_frames(frames: list[str]) -> list[str]:
+    """Drop consecutive duplicates — the same frame re-rendered carries no information."""
+    return [frame for i, frame in enumerate(frames) if i == 0 or frame != frames[i - 1]]
+
+
 @pytest.fixture
 def live_frames(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Record the markdown of every `Live.update`, so intermediate render frames can be asserted.
@@ -394,8 +400,7 @@ async def test_streaming_with_concurrent_tool_calls(live_frames: list[str]):
     console = Console(file=StringIO(), force_terminal=False, width=80)
     await ask_agent(agent, 'weather?', stream=True, console=console, code_theme='monokai')
 
-    # Consecutive duplicates carry no information — the same frame re-rendered.
-    distinct = [frame for i, frame in enumerate(live_frames) if i == 0 or frame != live_frames[i - 1]]
+    distinct = _distinct_frames(live_frames)
 
     # The regression: the second call's indicator replaced the first's, so this frame never existed.
     assert any('_Calling tool `get_weather`…_' in frame and '_Calling tool `get_temp`…_' in frame for frame in distinct)
@@ -462,7 +467,7 @@ async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str
     console = Console(file=StringIO(), force_terminal=False, width=80)
     await ask_agent(agent, 'go', stream=True, console=console, code_theme='monokai')
 
-    distinct = [frame for i, frame in enumerate(live_frames) if i == 0 or frame != live_frames[i - 1]]
+    distinct = _distinct_frames(live_frames)
     assert distinct == snapshot(
         [
             'Trying a tool.',
@@ -479,10 +484,53 @@ Recovered without the tool.\
 """,
         ]
     )
-    # The indicator appears while the call is in flight, then is gone for good.
-    assert any('_Calling tool `flaky`…_' in frame for frame in distinct)
-    assert '_Calling tool' not in distinct[-1]
-    assert 'Called tool' not in distinct[-1]
+
+
+@dataclass
+class _LifetimeToolset(WrapperToolset[Any]):
+    """Counts how often it is fully released, to observe whether it survives between turns."""
+
+    depth: int = 0
+    full_releases: int = 0
+
+    async def __aenter__(self) -> _LifetimeToolset:
+        self.depth += 1
+        await super().__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        result = await super().__aexit__(*args)
+        self.depth -= 1
+        if self.depth == 0:
+            self.full_releases += 1
+        return result
+
+
+@pytest.mark.anyio
+async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
+    """Run-scoped toolsets survive between turns instead of being torn down after each one.
+
+    Passing them straight to each `agent.run()` fully released them every turn — for an MCP server
+    that means a fresh subprocess and `tools/list` handshake per message, and server-side session
+    state lost in between. `run_chat` now holds them open around the REPL loop, so each turn's own
+    enter is a ref-count bump and the toolset is released once, at the end.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    toolset = _LifetimeToolset(FunctionToolset[Any]())
+
+    with create_pipe_input() as inp:
+        inp.send_text('hello\n')
+        inp.send_text('hello again\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+
+        agent = Agent(TestModel(custom_output_text='goodbye'))
+        console = Console(file=StringIO(), force_terminal=False, width=80)
+        assert await run_chat(True, agent, console, 'monokai', 'clai', config_dir=tmp_path, toolsets=[toolset]) == 0
+
+    # Two turns ran, but the toolset was released once — at the end of the session, not per turn.
+    assert toolset.full_releases == snapshot(1)
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
@@ -727,21 +775,27 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=())
+    mock_run_chat.assert_awaited_once_with(
+        True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=None
+    )
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'clai', toolsets=())
+    mock_run_chat.assert_awaited_once_with(
+        True, IsInstance(Agent), IsInstance(Console), 'default', 'clai', toolsets=None
+    )
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=())
+    mock_run_chat.assert_awaited_once_with(
+        True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=None
+    )
 
 
 def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
