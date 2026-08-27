@@ -528,7 +528,9 @@ async def test_a_combined_toolset_subclass_get_instructions_override_is_authorit
 
 
 def _keep_every_tool(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
-    return True
+    # Never called: the swept containers hold a toolset with no tools, because what is being swept is
+    # instruction relay. `FilteredToolset` still requires a filter to construct.
+    return True  # pragma: no cover
 
 
 def _keep_every_tool_def(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
