@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
@@ -25,6 +27,8 @@ __all__ = (
     'WebFetchProviderSettings',
     'WebFetchTool',
     'ImageGenerationModelName',
+    'OpenAIImageGenerationToolSettings',
+    'ImageGenerationProviderSettings',
     'ImageGenerationTool',
     'ImageAspectRatio',
     'MemoryTool',
@@ -491,6 +495,24 @@ class WebFetchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+class OpenAIImageGenerationToolSettings(TypedDict, total=False):
+    """OpenAI-specific settings for [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]."""
+
+    action: Literal['generate', 'edit', 'auto']
+    background: Literal['transparent', 'opaque', 'auto']
+    input_fidelity: Literal['high', 'low']
+    moderation: Literal['auto', 'low']
+    model: ImageGenerationModelName
+    partial_images: int
+    quality: Literal['low', 'medium', 'high', 'auto']
+
+
+class ImageGenerationProviderSettings(TypedDict, total=False):
+    """Provider-specific image generation settings, indexed by the model system."""
+
+    openai: OpenAIImageGenerationToolSettings
+
+
 @dataclass(kw_only=True)
 class ImageGenerationTool(AbstractNativeTool):
     """A native tool that allows your agent to generate images.
@@ -501,8 +523,13 @@ class ImageGenerationTool(AbstractNativeTool):
     * Google
     """
 
+    provider_settings: ImageGenerationProviderSettings | None = None
+    """Provider-specific image generation settings, indexed by the model system."""
+
     action: Literal['generate', 'edit', 'auto'] = 'auto'
     """Whether to generate a new image or edit an existing image.
+
+    Deprecated: use `provider_settings.openai.action` instead.
 
     Supported by:
 
@@ -511,6 +538,8 @@ class ImageGenerationTool(AbstractNativeTool):
 
     background: Literal['transparent', 'opaque', 'auto'] = 'auto'
     """Background type for the generated image.
+
+    Deprecated: use `provider_settings.openai.background` instead.
 
     Supported by:
 
@@ -522,6 +551,8 @@ class ImageGenerationTool(AbstractNativeTool):
     Control how much effort the model will exert to match the style and features,
     especially facial features, of input images.
 
+    Deprecated: use `provider_settings.openai.input_fidelity` instead.
+
     Supported by:
 
     * OpenAI Responses. Default: 'low'.
@@ -530,6 +561,8 @@ class ImageGenerationTool(AbstractNativeTool):
     moderation: Literal['auto', 'low'] = 'auto'
     """Moderation level for the generated image.
 
+    Deprecated: use `provider_settings.openai.moderation` instead.
+
     Supported by:
 
     * OpenAI Responses
@@ -537,6 +570,8 @@ class ImageGenerationTool(AbstractNativeTool):
 
     model: ImageGenerationModelName | None = None
     """The image generation model to use.
+
+    Deprecated: use `provider_settings.openai.model` instead.
 
     Supported by:
 
@@ -571,6 +606,8 @@ class ImageGenerationTool(AbstractNativeTool):
     """
     Number of partial images to generate in streaming mode.
 
+    Deprecated: use `provider_settings.openai.partial_images` instead.
+
     Supported by:
 
     * OpenAI Responses. Supports 0 to 3.
@@ -578,6 +615,8 @@ class ImageGenerationTool(AbstractNativeTool):
 
     quality: Literal['low', 'medium', 'high', 'auto'] = 'auto'
     """The quality of the generated image.
+
+    Deprecated: use `provider_settings.openai.quality` instead.
 
     Supported by:
 
@@ -602,6 +641,31 @@ class ImageGenerationTool(AbstractNativeTool):
 
     kind: str = 'image_generation'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        deprecated_fields = [
+            name
+            for name, is_set in (
+                ('action', self.action != 'auto'),
+                ('background', self.background != 'auto'),
+                ('input_fidelity', self.input_fidelity is not None),
+                ('moderation', self.moderation != 'auto'),
+                ('model', self.model is not None),
+                ('partial_images', self.partial_images != 0),
+                ('quality', self.quality != 'auto'),
+            )
+            if is_set
+        ]
+        if deprecated_fields:
+            fields = ', '.join(f'`{name}`' for name in deprecated_fields)
+            label = 'field' if len(deprecated_fields) == 1 else 'fields'
+            verb = 'is' if len(deprecated_fields) == 1 else 'are'
+            warnings.warn(
+                f'`ImageGenerationTool` {label} {fields} {verb} deprecated; '
+                'use `provider_settings={"openai": {...}}` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
 
 
 @dataclass(kw_only=True)

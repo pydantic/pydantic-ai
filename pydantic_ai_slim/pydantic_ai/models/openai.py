@@ -429,23 +429,24 @@ def _resolve_openai_image_generation_size(
 
 
 def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.tool_param.ImageGeneration:
+    provider_settings = (tool.provider_settings or {}).get('openai', {})
     size = _resolve_openai_image_generation_size(tool)
     output_compression = tool.output_compression if tool.output_compression is not None else 100
     image_generation_tool = responses.tool_param.ImageGeneration(
         type='image_generation',
-        action=tool.action,
-        background=tool.background,
-        moderation=tool.moderation,
+        action=provider_settings.get('action', tool.action),
+        background=provider_settings.get('background', tool.background),
+        moderation=provider_settings.get('moderation', tool.moderation),
         output_compression=output_compression,
         output_format=tool.output_format or 'png',
-        partial_images=tool.partial_images,
-        quality=tool.quality,
+        partial_images=provider_settings.get('partial_images', tool.partial_images),
+        quality=provider_settings.get('quality', tool.quality),
         size=size,
     )
-    if tool.model is not None:
-        image_generation_tool['model'] = tool.model
-    if tool.input_fidelity is not None:
-        image_generation_tool['input_fidelity'] = tool.input_fidelity
+    if (model := provider_settings.get('model', tool.model)) is not None:
+        image_generation_tool['model'] = model
+    if (input_fidelity := provider_settings.get('input_fidelity', tool.input_fidelity)) is not None:
+        image_generation_tool['input_fidelity'] = input_fidelity
     return image_generation_tool
 
 

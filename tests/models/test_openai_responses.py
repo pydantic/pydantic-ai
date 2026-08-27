@@ -55,7 +55,13 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelHTTPError,
+    ModelRetry,
+    PydanticAIDeprecationWarning,
+    SuspendedResponseExpired,
+)
 from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
@@ -108,6 +114,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
+        _map_openai_image_generation_tool,  # pyright: ignore[reportPrivateUsage]
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -906,9 +913,13 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
         capabilities=[
             NativeTool(
                 ImageGenerationTool(
-                    action='generate',
-                    model='gpt-image-2',
-                    background='opaque',
+                    provider_settings={
+                        'openai': {
+                            'action': 'generate',
+                            'model': 'gpt-image-2',
+                            'background': 'opaque',
+                        }
+                    },
                     output_format='jpeg',
                     size='1536x1024',
                 )
@@ -939,6 +950,19 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
     )
 
 
+def test_image_generation_tool_provider_field_deprecation() -> None:
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'fields `action`, `model` are deprecated'):
+        tool = ImageGenerationTool(
+            action='generate',
+            model='gpt-image-2',
+            provider_settings={'openai': {'action': 'edit'}},
+        )
+
+    mapped_tool = _map_openai_image_generation_tool(tool)
+    assert mapped_tool.get('action') == 'edit'
+    assert mapped_tool.get('model') == 'gpt-image-2'
+
+
 async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_model_requests: None) -> None:
     c = response_message(
         [
@@ -958,12 +982,16 @@ async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_m
         capabilities=[
             NativeTool(
                 ImageGenerationTool(
-                    action='generate',
-                    model='gpt-image-2',
-                    background='opaque',
+                    provider_settings={
+                        'openai': {
+                            'action': 'generate',
+                            'model': 'gpt-image-2',
+                            'background': 'opaque',
+                            'input_fidelity': 'high',
+                        }
+                    },
                     output_format='jpeg',
                     size='1536x1024',
-                    input_fidelity='high',
                 )
             )
         ],

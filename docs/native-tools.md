@@ -509,21 +509,26 @@ The `ImageGenerationTool` supports several configuration parameters:
 ```py {title="image_generation_configured.py"}
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import OpenAIImageGenerationToolSettings
 
 agent = Agent(
     'openai-responses:gpt-5.2',
     capabilities=[
         NativeTool(
             ImageGenerationTool(
-                action='generate',
-                background='transparent',
-                input_fidelity='high',
-                model='gpt-image-2',
-                moderation='low',
+                provider_settings={
+                    'openai': OpenAIImageGenerationToolSettings(
+                        action='generate',
+                        background='transparent',
+                        input_fidelity='high',
+                        model='gpt-image-2',
+                        moderation='low',
+                        partial_images=3,
+                        quality='high',
+                    )
+                },
                 output_compression=100,
                 output_format='png',
-                partial_images=3,
-                quality='high',
                 size='1024x1024',
             )
         )
@@ -537,13 +542,17 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
+The former top-level OpenAI-only fields (`action`, `background`, `input_fidelity`, `moderation`,
+`model`, `partial_images`, and `quality`) remain functional with a deprecation warning until the
+next breaking release. If both forms are supplied, `provider_settings.openai` takes precedence.
+
 OpenAI Responses models also respect the `aspect_ratio` parameter. Because the OpenAI API only exposes discrete image sizes,
 Pydantic AI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> `1536x1024`. Providing any other aspect ratio
 results in an error, and if you also set `size` it must match the computed value.
 
 The OpenAI Responses image generation tool defaults to `action='auto'`, where the model decides whether to generate a new
-image or edit one already in context. Use `action='generate'` or `action='edit'` to force either behavior. You can also set
-`model` to select the underlying image generation model used by the tool, for example `model='gpt-image-2'`; this does not
+image or edit one already in context. Set `provider_settings.openai.action` to `'generate'` or `'edit'` to force either
+behavior. You can also set `provider_settings.openai.model` to select the underlying image generation model; this does not
 change the agent's conversational model.
 
 To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
@@ -588,15 +597,15 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 
 | Parameter | OpenAI | Google |
 |-----------|--------|--------|
-| `action` | ✅ (auto (default), generate, edit) | ❌ |
-| `background` | ✅ | ❌ |
-| `input_fidelity` | ✅ | ❌ |
-| `moderation` | ✅ | ❌ |
-| `model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
+| `provider_settings.openai.action` | ✅ (auto (default), generate, edit) | ❌ |
+| `provider_settings.openai.background` | ✅ | ❌ |
+| `provider_settings.openai.input_fidelity` | ✅ | ❌ |
+| `provider_settings.openai.moderation` | ✅ | ❌ |
+| `provider_settings.openai.model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Google Cloud only) |
 | `output_format` | ✅ | ✅ (Google Cloud only) |
-| `partial_images` | ✅ | ❌ |
-| `quality` | ✅ | ❌ |
+| `provider_settings.openai.partial_images` | ✅ | ❌ |
+| `provider_settings.openai.quality` | ✅ | ❌ |
 | `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (512, 1K (default), 2K, 4K) |
 | `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
 

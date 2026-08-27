@@ -117,6 +117,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'image_generation',
                     'optional': False,
+                    'provider_settings': None,
                     'action': 'auto',
                     'background': 'auto',
                     'input_fidelity': None,
