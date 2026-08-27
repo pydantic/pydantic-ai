@@ -50,7 +50,7 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._instructions import normalize_toolset_instructions
-from ._run_context import AnchoredEvidence, set_current_run_context
+from ._run_context import AnchoredEvidence, dispatch_event_stream, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -333,6 +333,8 @@ class GraphAgentState:
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]s from
     [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]);
     the graph drains it into the agent event stream around node events."""
+    inline_dispatched_event_ids: set[int] = dataclasses.field(default_factory=set[int])
+    """IDs of emitted events already delivered inline, pending stream deduplication."""
     mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = dataclasses.field(
         default_factory=dict[str, dict[str, ToolDefinition]]
     )
@@ -1882,9 +1884,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         stream, duplicating whatever setup or teardown it does outside its own iteration.
         """
         if self._wrapped_events_iterator is None:
-            inner = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+            run_context = build_run_context(ctx)
+            inner = dispatch_event_stream(
+                run_context, _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
+            )
             self._wrapped_events_iterator = aiter(
-                ctx.deps.root_capability.wrap_run_event_stream(build_run_context(ctx), stream=inner)
+                ctx.deps.root_capability.wrap_run_event_stream(run_context, stream=inner)
             )
         return self._wrapped_events_iterator
 
@@ -2364,6 +2369,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
+        _inline_dispatched_event_ids=ctx.state.inline_dispatched_event_ids,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)

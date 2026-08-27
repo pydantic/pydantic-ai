@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import sys
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -36,6 +36,34 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 
 RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+
+CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
+
+
+async def dispatch_event_inline(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
+    """Dispatch an emitted event before buffering it and mark it for stream deduplication."""
+    capability = ctx.root_capability
+    if capability is not None and capability.has_on_event:
+        await capability.on_event(ctx, event=event)
+        ctx._inline_dispatched_event_ids.add(id(event))  # pyright: ignore[reportPrivateUsage]
+
+
+async def dispatch_event_stream(
+    ctx: RunContext[Any], stream: AsyncIterable[_messages.AgentStreamEvent]
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    """Dispatch framework events and deduplicate events already dispatched inline."""
+    capability = ctx.root_capability
+    if capability is None or not capability.has_on_event:
+        async for event in stream:
+            yield event
+        return
+    async for event in stream:
+        event_id = id(event)
+        if event_id in ctx._inline_dispatched_event_ids:  # pyright: ignore[reportPrivateUsage]
+            ctx._inline_dispatched_event_ids.discard(event_id)  # pyright: ignore[reportPrivateUsage]
+        else:
+            await capability.on_event(ctx, event=event)
+        yield event
 
 
 @dataclasses.dataclass(frozen=True)
@@ -175,6 +203,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent,
     where [`emit_event`][pydantic_ai.tools.RunContext.emit_event] raises.
     """
+
+    _inline_dispatched_event_ids: set[int] = field(default_factory=set[int], repr=False)
+    """IDs of buffered events already dispatched inline, shared across the run."""
 
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -481,7 +512,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
 
     @overload
-    async def emit_event(self, event: _messages.CapabilityEvent, /) -> _messages.CapabilityEvent: ...
+    async def emit_event(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
 
     async def emit_event(
         self, event: str | _messages.CustomEvent | _messages.CapabilityEvent, data: Any = None, /
@@ -554,6 +585,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             event = _messages.CustomEvent(name=event, data=data)
         if event.tool_call_id is None and self.tool_call_id is not None:
             event = dataclasses.replace(event, tool_call_id=self.tool_call_id, tool_name=self.tool_name)
+        await dispatch_event_inline(self, event)
         self._emit_event(event)
         return event
 

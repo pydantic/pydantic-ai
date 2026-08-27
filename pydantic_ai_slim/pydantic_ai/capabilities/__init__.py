@@ -45,6 +45,7 @@ from .instrumentation import Instrumentation
 from .mcp import MCP
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
+from .on_event import OnEventMethod, on_event
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
@@ -122,6 +123,8 @@ __all__ = [
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
     'NativeTool',
+    'OnEventMethod',
+    'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
     'Capability',

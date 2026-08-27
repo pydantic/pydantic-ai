@@ -224,6 +224,69 @@ Pydantic AI stamps the emitting capability's run id as `capability_id`. Events e
 
 The namespace and event name form the serialized `kind` (for example, `file_system.file_read`). Import the module defining an event before deserialization to recover its typed subclass. Otherwise it becomes [`UnknownCapabilityEvent`][pydantic_ai.messages.UnknownCapabilityEvent] without losing payload fields; serializing it again preserves the wire representation so a later consumer can recover the typed event.
 
+### Reacting to events
+
+Use [`@on_event`][pydantic_ai.capabilities.on_event] on an async capability method to react to selected event classes. For example, a repository-context capability can enqueue instructions immediately after a file-system capability reports reading a repository guidance file:
+
+```python {title="react_to_capability_events.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
+
+
+@dataclass(kw_only=True)
+class FileReadEvent(CapabilityEvent, namespace='repo_context_events'):
+    path: str
+
+
+@dataclass(kw_only=True)
+class DirectoryListedEvent(CapabilityEvent, namespace='repo_context_events'):
+    path: str
+
+
+class RepoContext(AbstractCapability[Any]):
+    @on_event(FileReadEvent, DirectoryListedEvent)
+    async def _on_traversal(
+        self,
+        ctx: RunContext[Any],
+        event: FileReadEvent | DirectoryListedEvent,
+    ) -> None:
+        if event.path.endswith('AGENTS.md'):
+            ctx.enqueue('Follow the instructions in the discovered AGENTS.md file.')
+```
+
+Filtering is explicit: the decorator uses `isinstance` against the classes passed to it. A bare `@on_event` receives the full [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] union, including model response deltas, tool call and result events, deferred and enqueued-message events, [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and capability events.
+
+Listeners run sequentially in capability order, and marked methods within one capability run in definition order. The emitting capability also receives its own events. An event emitted with [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] is delivered inline before the await returns, so a listener can change mutable decision fields:
+
+```python {title="cancellable_capability_event.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
+
+
+@dataclass(kw_only=True)
+class BeforeCompactionEvent(CapabilityEvent, namespace='compaction'):
+    cancelled: bool = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+class KeepFullHistory(AbstractCapability[Any]):
+    @on_event(BeforeCompactionEvent)
+    async def _cancel(
+        self, ctx: RunContext[Any], event: BeforeCompactionEvent
+    ) -> None:
+        event.cancel()
+```
+
+After `event = await ctx.emit_event(BeforeCompactionEvent())`, the emitter can inspect `event.cancelled`. Emitting another event from a listener is supported and dispatches it immediately; listeners must avoid emission cycles. Framework-generated events dispatch as the run event stream advances, inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers. Consequently, `on_event` automatically enables streaming for an otherwise non-streaming `agent.run()` only when at least one listener is present.
+
 ## Provider-adaptive tools
 
 [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] each cover a single capability (web search, URL fetch, image generation, X search, MCP) across two implementations:

@@ -19,6 +19,7 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
+from ._run_context import dispatch_event_inline
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -479,7 +480,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         streamed, so streaming is enabled for it here the same way `agent.run()` enables it.
         `node.stream()` applies the capability chain itself, so draining it is all that's needed.
         """
-        if self.ctx.deps.root_capability.has_wrap_run_event_stream:
+        if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
             await _agent_graph.drain_node_event_stream(node, self.ctx)
         return await self._advance_graph(node)
 
@@ -541,6 +542,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         if isinstance(event, str):
             event = _messages.CustomEvent(name=event, data=data)
+        run_context = _agent_graph.build_run_context(self.ctx)
+        await dispatch_event_inline(run_context, event)
         self._graph_run.state.event_stream_buffer.append(event)
         return event
 

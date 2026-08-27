@@ -90,6 +90,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
 
+    @property
+    def has_on_event(self) -> bool:
+        return any(c.has_on_event for c in self.capabilities)
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [capability.for_agent(agent) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
@@ -390,7 +394,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
-    # --- Event stream hook ---
+    # --- Event hooks ---
+
+    async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        for capability in self.capabilities:
+            if capability.has_on_event and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                await capability.on_event(cap_ctx, event=event)
 
     async def wrap_run_event_stream(
         self,
