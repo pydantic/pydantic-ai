@@ -35,7 +35,6 @@ from pydantic_ai.usage import RunUsage
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
     from prefect import flow
-    from prefect.context import TaskRunContext
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
@@ -57,13 +56,12 @@ else:
 
     try:
         from prefect import flow
-        from prefect.context import TaskRunContext
 
         from pydantic_ai.durable_exec.prefect import PrefectDurability
 
         prefect_available = True
     except ImportError:  # pragma: lax no cover
-        flow = TaskRunContext = PrefectDurability = cast(Any, None)
+        flow = PrefectDurability = cast(Any, None)
         prefect_available = False
 
     try:
@@ -316,95 +314,6 @@ async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
 
     assert capability.result == 2
     assert capability.calls[0][0].agent is agent
-
-
-async def test_run_context_durable_operation_is_direct_without_durability() -> None:
-    capability = Operations()
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-
-    async def handler(value: int) -> int:
-        return value * 2
-
-    operation = ctx.durable_operation(capability, 'any-name', handler)
-
-    assert await operation(3) == 6
-
-
-async def test_run_context_durable_operation_rejects_unknown_bound_name() -> None:
-    class Dynamic(AbstractCapability[Any]):
-        id = 'dynamic'
-
-        # These handlers are registered only to test unknown-name rejection before dispatch.
-        async def alpha(self) -> str: ...  # pragma: no branch
-
-        async def zeta(self) -> str: ...
-
-        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
-            return {'zeta': self.zeta, 'alpha': self.alpha}
-
-    capability = Dynamic()
-    model = TestModel()
-    agent = Agent(model, name='unknown_operation', capabilities=[capability, RecordingDurability()])
-    ctx = RunContext(deps=None, model=model, usage=RunUsage(), agent=agent)
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
-
-    with pytest.raises(UserError) as exc_info:
-        ctx.durable_operation(capability, 'alpah', capability.alpha)
-
-    assert str(exc_info.value) == (
-        "Unknown durable operation 'alpah' for capability 'dynamic'. "
-        "Known durable operations for this capability: 'alpha', 'zeta'. "
-        'Check the operation name passed to `RunContext.durable_operation()`.'
-    )
-
-
-async def test_zero_declared_operations_rejects_unknown_bound_name() -> None:
-    capability = AbstractCapability[Any]()
-    capability.id = 'empty'
-    model = TestModel()
-    agent = Agent(model, name='empty_operations', capabilities=[capability, RecordingDurability()])
-    ctx = RunContext(deps=None, model=model, usage=RunUsage(), agent=agent)
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
-
-    async def handler() -> None:
-        pass
-
-    with pytest.raises(UserError) as exc_info:
-        ctx.durable_operation(capability, 'missing', handler)
-
-    assert str(exc_info.value) == (
-        "Unknown durable operation 'missing' for capability 'empty'. "
-        'This capability declares no durable operations. Implement `get_durable_operations()` or mark a method with '
-        '`@durable_operation`.'
-    )
-
-
-async def test_run_context_durable_operation_dispatches_bound_name() -> None:
-    class Dynamic(AbstractCapability[Any]):
-        id = 'dynamic'
-
-        async def operation(self) -> str:
-            return 'dispatched'
-
-        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
-            return {'operation': self.operation}
-
-    capability = Dynamic()
-    model = TestModel()
-    agent = Agent(model, name='known_operation', capabilities=[capability, RecordingDurability()])
-    ctx = RunContext(deps=None, model=model, usage=RunUsage(), agent=agent)
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
-
-    operation = ctx.durable_operation(capability, 'operation', capability.operation)
-
-    assert await operation() == 'dispatched'
-    assert any(name == 'known_operation__capability__dynamic.operation' for name, _ in durability.calls)
 
 
 async def test_for_run_replacement_dispatches_on_run_instance() -> None:
@@ -760,35 +669,6 @@ async def test_registered_model_replacement_is_stable_on_journal_replay() -> Non
     assert [result.output for result in results] == ['restricted', 'restricted']
 
 
-@requires_prefect
-async def test_dynamic_hook_dispatches_through_public_run_context_lookup() -> None:
-    class Dynamic(AbstractCapability[Any]):
-        id = 'dynamic'
-
-        def __init__(self) -> None:
-            self.in_task = False
-
-        async def before_run(self, ctx: RunContext[Any]) -> None:
-            operation = ctx.durable_operation(self, 'operation', self.operation)
-            self.in_task = await operation(1)
-
-        async def operation(self, value: int) -> bool:
-            return value == 1 and TaskRunContext.get() is not None
-
-        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
-            return {'operation': self.operation}
-
-    capability = Dynamic()
-    agent = Agent(TestModel(), name='dynamic', capabilities=[capability, PrefectDurability()])
-
-    @flow
-    async def run() -> None:
-        await agent.run('test')
-
-    await run()
-    assert capability.in_task
-
-
 def test_sync_non_hook_operation_is_rejected_by_decorator() -> None:
     def operation() -> None:
         pass
@@ -812,18 +692,6 @@ def test_tier_one_base_and_duplicate_override_paths() -> None:
         async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
     assert set(collect_capability_operations(Override())) == {'operation'}
-
-    class Duplicate(Base):
-        id = 'duplicate'
-
-        # Duplicate detection happens before this override can be dispatched.
-        async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
-
-        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
-            return {'operation': self.operation}
-
-    with pytest.raises(UserError, match="Duplicate durable operation name 'operation'"):
-        collect_capability_operations(Duplicate())
 
 
 async def test_run_context_is_located_from_the_schema() -> None:
@@ -855,50 +723,6 @@ def test_before_model_request_context_parameter_can_have_any_name() -> None:
     declaration = collect_capability_operations(RenamedContextBeforeModelRequest())['before_model_request']
 
     assert declaration.ctx_parameter == 'run_context'
-
-
-def test_dynamic_operation_without_run_context_is_supported() -> None:
-    class MissingContext(AbstractCapability[Any]):
-        # Only the declaration's lack of a `RunContext` parameter is inspected.
-        async def operation(self, value: int) -> int: ...
-
-        def get_durable_operations(self) -> dict[str, Callable[..., Awaitable[Any]]]:
-            return {'operation': self.operation}
-
-    declaration = collect_capability_operations(MissingContext())['operation']
-    assert declaration.ctx_parameter is None
-
-
-def test_non_callable_dynamic_operation_is_rejected() -> None:
-    class Invalid(AbstractCapability[Any]):
-        def get_durable_operations(self) -> Mapping[str, object]:
-            return {'invalid': object()}
-
-    with pytest.raises(UserError, match="Durable operation 'invalid' must be an async callable"):
-        collect_capability_operations(Invalid())
-
-
-def test_sync_dynamic_operation_is_rejected_at_bind() -> None:
-    class SyncOperation(AbstractCapability[Any]):
-        id = 'sync_capability'
-
-        def operation(self) -> None:
-            pass
-
-        def get_durable_operations(self) -> Mapping[str, object]:
-            return {'sync_operation': self.operation}
-
-    with pytest.raises(
-        UserError,
-        match="Durable operation 'sync_operation' on capability 'sync_capability' must be an async callable",
-    ):
-        Agent(TestModel(), name='sync_operation', capabilities=[SyncOperation(), RecordingDurability()])
-
-
-def test_prepare_run_context_without_agent_marks_durability_bound() -> None:
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    RecordingDurability()._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
-    assert ctx.__dict__['_durability_bound'] is True
 
 
 def test_two_run_context_parameters_are_rejected_at_bind() -> None:

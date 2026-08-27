@@ -221,7 +221,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
             capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
         }
         run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
-        if run_ctx.__dict__.get('_durability_bound', False):
+        if '_durable_operations' in run_ctx.__dict__:
             with set_current_run_context(run_ctx):
                 await run_capability.before_run(run_ctx)
                 current_ctx = contextvars.copy_context()

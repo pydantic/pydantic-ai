@@ -470,7 +470,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 )
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
-        ctx.__dict__['_durability_bound'] = True
+        ctx.__dict__['_durable_operations'] = {}
         if ctx.agent is None:
             return
         operations: dict[tuple[str, str], Callable[..., Awaitable[object]]] = {}

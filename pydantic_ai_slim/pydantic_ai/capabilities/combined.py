@@ -892,7 +892,7 @@ def _ctx_for_active_cap(
 
 def _replace_capability_context(ctx: RunContext[AgentDepsT], *, capability_active: bool) -> RunContext[AgentDepsT]:
     capability_ctx = replace(ctx, capability_active=capability_active)
-    for name in ('_durability_bound', '_durable_operations', '_run_capabilities_by_id'):
+    for name in ('_durable_operations', '_run_capabilities_by_id'):
         if name in ctx.__dict__:
             capability_ctx.__dict__[name] = ctx.__dict__[name]
     return capability_ctx

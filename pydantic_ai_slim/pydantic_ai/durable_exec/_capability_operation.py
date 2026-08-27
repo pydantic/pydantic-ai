@@ -214,7 +214,29 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                 dispatch_args = args
                 dispatch_kwargs = kwargs
             handler = target.__get__(self, type(self))
-            result = await ctx.durable_operation(self, marker.name, handler)(*dispatch_args, **dispatch_kwargs)
+            operations = cast(
+                dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None,
+                ctx.__dict__.get('_durable_operations'),
+            )
+            operation = (
+                operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
+            )
+            if operation is not None:
+                result = await operation(*dispatch_args, **dispatch_kwargs)
+            else:
+                dispatcher = (
+                    self._get_durable_operation_bindings().get(id(ctx.agent), {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
+                    if ctx.agent is not None
+                    else None
+                )
+                if dispatcher is None:
+                    result = await handler(*dispatch_args, **dispatch_kwargs)
+                else:
+                    result = await dispatcher(
+                        ctx,
+                        cast(tuple[object, ...], dispatch_args),
+                        cast(dict[str, object], dispatch_kwargs),
+                    )
             if request_context is not None and isinstance(result, ModelRequestContextProjection):
                 result.apply(request_context)
                 return cast(R, request_context)
@@ -250,10 +272,10 @@ _NEVER_DURABLE_HOOKS = {
 }
 
 
-def collect_capability_operations(  # noqa: C901
+def collect_capability_operations(
     capability: AbstractCapability[Any],
 ) -> dict[str, CapabilityMethodDeclaration]:
-    handlers = dict(capability.get_durable_operations() or {})
+    handlers: dict[str, Callable[..., Awaitable[Any]]] = {}
     for base in type(capability).__mro__[1:]:
         for method_name, base_member in vars(base).items():
             marker = cast(
@@ -263,11 +285,6 @@ def collect_capability_operations(  # noqa: C901
                 continue
             member = getattr(type(capability), method_name)
             if member is not base_member:
-                if marker.name in handlers:
-                    raise UserError(
-                        f'Duplicate durable operation name {marker.name!r} on capability {capability.id!r}. '
-                        'Use `@durable_operation(name=...)` or change the hook key.'
-                    )
                 handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
 
     for method_name, member in inspect.getmembers(type(capability)):
@@ -287,13 +304,6 @@ def collect_capability_operations(  # noqa: C901
 
     declarations: dict[str, CapabilityMethodDeclaration] = {}
     for operation_name, handler in handlers.items():
-        if not callable(handler):
-            raise UserError(f'Durable operation {operation_name!r} must be an async callable.')
-        handler = cast(Callable[..., Awaitable[Any]], handler)
-        if not inspect.iscoroutinefunction(handler):
-            raise UserError(
-                f'Durable operation {operation_name!r} on capability {capability.id!r} must be an async callable.'
-            )
         original = cast(_DurableOperationMarker | None, getattr(handler, '__pydantic_ai_durable_operation__', None))
         function = original.function if original is not None else handler
         bound = function.__get__(capability, type(capability))

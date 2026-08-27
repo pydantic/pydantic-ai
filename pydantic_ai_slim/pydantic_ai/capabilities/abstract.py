@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
 
@@ -82,16 +82,15 @@ WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]
 RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
 
+DurableOperationDispatcher: TypeAlias = Callable[
+    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
+]
+
 WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 """Handler type for wrap_output_validate."""
 
 WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
 """Handler type for wrap_output_process."""
-
-DurableOperationDispatcher: TypeAlias = Callable[
-    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
-]
-
 
 CapabilityPosition = Literal['outermost', 'innermost']
 """Position tier for a capability in the middleware chain.
@@ -448,19 +447,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
-        """
-        return None
-
-    def get_durable_operations(self) -> Mapping[str, object] | None:
-        """Return async handlers contributed as durable operations, keyed by operation name.
-
-        Invoke a contributed handler with
-        [`RunContext.durable_operation()`][pydantic_ai.tools.RunContext.durable_operation], passing
-        the same typed handler as the third argument. Its handle dispatches through a bound
-        durability engine, or awaits the original handler when no durability capability is bound.
-
-        Returns:
-            A mapping from stable operation names to async handlers, or `None`.
         """
         return None
 

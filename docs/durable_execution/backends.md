@@ -2,7 +2,7 @@
 
 Pydantic AI's durable execution builder lets an integration route model requests, tool discovery,
 tool validation, tool calls, event handling, message compaction, and
-[capability operations](../capabilities/custom.md#durable-capability-operations) through one engine
+[decorated capability operations](../capabilities/custom.md#durable-capability-operations) through one engine
 backend. Use it when you are integrating a durable execution system that is not already supported.
 
 The complete implementations for [Temporal][pydantic_ai.durable_exec.temporal.TemporalDurability],
@@ -119,7 +119,7 @@ Use [`IDENTITY_CODEC`][pydantic_ai.durable_exec.IDENTITY_CODEC] when the engine 
 object serialization. Use [`JSON_CODEC`][pydantic_ai.durable_exec.JSON_CODEC] when the integration
 writes JSON-compatible journal payloads itself. Both implement
 [`DurabilityCodec`][pydantic_ai.durable_exec.DurabilityCodec]. Arguments, results, tool control-flow
-signals, and capability operations all cross the selected codec boundary.
+signals, and decorated capability operations all cross the selected codec boundary.
 
 The backend config object receives an
 [`OperationConfigRole`][pydantic_ai.durable_exec.OperationConfigRole] and a
@@ -139,10 +139,10 @@ IDs, capability IDs, or operation names. A rename without a migration prevents i
 from finding their recorded work.
 
 A durable unit can run more than once when a worker fails after its side effect but before the
-checkpoint commits. Tools and capability operations should therefore be idempotent unless the
+checkpoint commits. Tools and decorated capability operations should therefore be idempotent unless the
 engine provides a suitable at-most-once mode. Test replay and recovery, resource teardown,
 control-flow exceptions, persisted-output upgrades, and ordinary execution outside the durable
 runtime before publishing an integration.
 
 See [durable capability operations](../capabilities/custom.md#durable-capability-operations) for how
-capability authors contribute work that arrives through the same backend.
+capability authors contribute decorated methods that arrive through the same backend.

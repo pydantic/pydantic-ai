@@ -42,8 +42,9 @@ reviewed.
 Resolve base and per-tool configuration with `OperationConfigRole` and `DurableOperationId`.
 Exhaustively handle every ID variant; the union includes model requests, suspended-response
 cancellation, message compaction, event handling, discovery, validation, calls, and
-`CapabilityOperationId`. Operations declared by capabilities arrive through the same backend and
-config resolver as framework operations, so do not maintain a second registration path for them.
+`CapabilityOperationId`. Capability methods marked with `@durable_operation` arrive through the
+same backend and config resolver as framework operations, so do not maintain a second registration
+path for them.
 
 Assume a durable unit may execute more than once if the process fails after the side effect but
 before its checkpoint commits. Document the engine's guarantees and require idempotency or expose

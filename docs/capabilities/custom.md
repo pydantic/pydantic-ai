@@ -861,30 +861,7 @@ class Summaries(AbstractCapability[None]):
 agent = Agent(TestModel(), capabilities=[Summaries()])
 ```
 
-The decorator is the recommended form for methods with a fixed name. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
-
-Capability implementations that build their operation table dynamically can override [`get_durable_operations()`][pydantic_ai.capabilities.AbstractCapability.get_durable_operations]. Use [`RunContext.durable_operation()`][pydantic_ai.tools.RunContext.durable_operation] to retain the handler's parameter and return types:
-
-```python
-from collections.abc import Awaitable, Callable, Mapping
-
-from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability
-
-
-class DynamicSummary(AbstractCapability[None]):
-    id = 'dynamic-summary'
-
-    async def before_run(self, ctx: RunContext[None]) -> None:
-        summarize = ctx.durable_operation(self, 'summarize', self.summarize)
-        await summarize(['one', 'two'])
-
-    async def summarize(self, messages: list[str]) -> str:
-        return f'{len(messages)} messages'
-
-    def get_durable_operations(self) -> Mapping[str, Callable[[list[str]], Awaitable[str]]]:
-        return {'summarize': self.summarize}
-```
+Mark each operation method with `@durable_operation`. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
