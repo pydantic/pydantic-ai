@@ -10,7 +10,7 @@ import pydantic
 import pytest
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext, UnknownCapabilityEvent
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext
@@ -310,3 +310,32 @@ async def test_hooks_can_emit_custom_event():
 
     events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[hooks]))
     assert [event for event in events if isinstance(event, CustomEvent)] == [BridgeEvent()]
+
+
+async def test_wrapped_hooks_can_emit_custom_event():
+    """Wrapping an app-facing capability must not revoke its callbacks' `CustomEvent` permission."""
+    hooks = Hooks[Any]()
+
+    @hooks.on.before_model_request
+    async def emit(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        await ctx.emit_event(BridgeEvent())
+        return request_context
+
+    wrapper = WrapperCapability(wrapped=hooks, id='wrapped_hooks')
+    events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[wrapper]))
+    assert [event for event in events if isinstance(event, CustomEvent)] == [BridgeEvent()]
+
+
+def test_subclass_post_init_override_keeps_guards():
+    """A subclass `__post_init__` that doesn't call `super()` cannot bypass the construction guards."""
+
+    @dataclass(kw_only=True)
+    class GuardedOverrideEvent(CapabilityEvent, namespace='guarded_override'):
+        value: int = 0
+
+        def __post_init__(self) -> None:
+            self.value += 1
+
+    with pytest.raises(ValueError, match='serializes under its registered kind'):
+        GuardedOverrideEvent(kind='other.kind')
+    assert GuardedOverrideEvent().value == 1

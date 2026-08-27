@@ -24,7 +24,7 @@ import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 import anyio
 from pydantic import ValidationError
@@ -51,6 +51,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .on_event import collect_on_event_methods
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -775,7 +776,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
     """
 
     _registry: dict[str, list[_HookEntry[Any]]]
-    _emits_app_events: ClassVar[bool] = True
+
+    @property
+    def _emits_app_events(self) -> bool:
+        return True
 
     def __init__(
         self,
@@ -883,17 +887,26 @@ class Hooks(AbstractCapability[AgentDepsT]):
     def _get(self, key: str) -> list[_HookEntry[Any]]:
         return self._registry.get(key, [])
 
+    # The has-checks must not mask a subclass's overrides or marked listeners: registered hook
+    # functions are this class's own contribution, on top of the base capability surface.
     @property
     def _has_wrap_node_run(self) -> bool:
-        return bool(self._get('wrap_node_run'))
+        return bool(self._get('wrap_node_run')) or type(self).wrap_node_run is not Hooks.wrap_node_run
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
-        return bool(self._get('wrap_run_event_stream'))
+        return (
+            bool(self._get('wrap_run_event_stream'))
+            or type(self).wrap_run_event_stream is not Hooks.wrap_run_event_stream
+        )
 
     @property
     def has_on_event(self) -> bool:
-        return bool(self._get('on_event'))
+        return (
+            bool(self._get('on_event'))
+            or type(self).on_event is not Hooks.on_event
+            or bool(collect_on_event_methods(type(self)))
+        )
 
     def get_ordering(self) -> CapabilityOrdering | None:
         return self._ordering
@@ -1010,6 +1023,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
             event = replacement
             if not isinstance(original_event, CapabilityEvent) or original_event.event_dispatch != 'inline':
                 ctx._event_stream_replacements[id(original_event)] = replacement  # pyright: ignore[reportPrivateUsage]
+        # A `Hooks` subclass can carry marked listeners of its own; the base dispatches them.
+        await super().on_event(ctx, event=event)
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

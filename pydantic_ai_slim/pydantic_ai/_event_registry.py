@@ -13,6 +13,7 @@ does have the defining module imported recovers the typed event.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import inspect
 import warnings
 from collections.abc import Callable, Mapping
@@ -38,6 +39,28 @@ def is_redefinition(existing: type, cls: type) -> bool:
     conflict.
     """
     return existing.__module__ == cls.__module__ and existing.__qualname__ == cls.__qualname__
+
+
+def guard_post_init(cls: type, base_post_init: Callable[[Any], None]) -> None:
+    """Keep the base event guards running when a subclass defines its own `__post_init__`.
+
+    A dataclass-generated `__init__` calls only the most-derived `__post_init__`, so a subclass
+    that defines one without calling `super().__post_init__()` would silently skip the family's
+    construction guards (base instantiation, per-instance tag overrides). Wrapping at class
+    definition makes the guards unbypassable; a cooperative `super()` call just re-runs them,
+    which is harmless.
+    """
+    user_post_init = cls.__dict__.get('__post_init__')
+    if user_post_init is None or getattr(user_post_init, '_event_guarded', False):
+        return
+
+    @functools.wraps(user_post_init)
+    def guarded(self: Any, *args: Any, **kwargs: Any) -> None:
+        base_post_init(self)
+        user_post_init(self, *args, **kwargs)
+
+    guarded._event_guarded = True  # pyright: ignore[reportAttributeAccessIssue]
+    cls.__post_init__ = guarded
 
 
 def shadowed_envelope_fields(cls: type, reserved: frozenset[str]) -> str | None:

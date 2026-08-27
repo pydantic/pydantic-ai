@@ -41,6 +41,7 @@ from . import _otel_messages, _utils
 from ._event_registry import (
     RESERVED_EVENT_TAGS as _RESERVED_EVENT_TAGS,
     event_family_schema as _event_family_schema,
+    guard_post_init as _guard_post_init,
     is_redefinition as _is_redefinition,
     shadowed_envelope_fields as _shadowed_envelope_fields,
 )
@@ -4424,6 +4425,9 @@ class CustomEvent:
 
     def __init_subclass__(cls, *, name: str | None = None, _register: bool = True, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        # A subclass-defined `__post_init__` replaces the generated initializer's only call to the
+        # family guards; keep them running regardless of whether it calls `super().__post_init__()`.
+        _guard_post_init(cls, CustomEvent.__post_init__)
         if not _register:
             return
         # `@dataclass(slots=True)` recreates the class, re-invoking registration without the
@@ -4581,6 +4585,9 @@ class CapabilityEvent:
         **kwargs: Any,
     ) -> None:
         super().__init_subclass__(**kwargs)
+        # A subclass-defined `__post_init__` replaces the generated initializer's only call to the
+        # family guards; keep them running regardless of whether it calls `super().__post_init__()`.
+        _guard_post_init(cls, CapabilityEvent.__post_init__)
         if dispatch not in (None, 'stream', 'inline'):
             raise TypeError("`dispatch` must be either 'stream' or 'inline'.")
         if dispatch is not None:

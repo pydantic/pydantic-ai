@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
 import pydantic
 import pytest
@@ -114,7 +114,9 @@ async def test_emit_from_capability_hook():
 
     @dataclass
     class EmitCapability(AbstractCapability[Any]):
-        _emits_app_events: ClassVar[bool] = True
+        @property
+        def _emits_app_events(self) -> bool:
+            return True
 
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
@@ -505,3 +507,18 @@ def test_registration_after_adapter_not_seen():
 
     recovered = fresh_adapter.validate_python(old_adapter.dump_python(degraded))
     assert recovered == LateEvent(value=1)
+
+
+def test_subclass_post_init_override_keeps_guards():
+    """A subclass `__post_init__` that doesn't call `super()` cannot bypass the construction guards."""
+
+    @dataclass(kw_only=True)
+    class GuardedCustomEvent(CustomEvent, name='guarded_custom'):
+        value: int = 0
+
+        def __post_init__(self) -> None:
+            self.value += 1
+
+    with pytest.raises(ValueError, match='serializes under its registered name'):
+        GuardedCustomEvent(name='other')
+    assert GuardedCustomEvent().value == 1

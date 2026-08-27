@@ -117,6 +117,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped.has_on_event
         )
 
+    @property
+    def _emits_app_events(self) -> bool:
+        # The `RunContext.emit_event` gate must see through wrappers: wrapping an app-facing
+        # `Hooks`/`ProcessEventStream` must not revoke its user callbacks' permission to emit
+        # `CustomEvent`s.
+        return self.wrapped._emits_app_events
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped.for_agent(agent)
         if new_wrapped is self.wrapped:

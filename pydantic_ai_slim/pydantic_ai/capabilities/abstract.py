@@ -199,8 +199,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
     """
 
-    _emits_app_events: ClassVar[bool] = False
-    """Whether this app-facing capability may emit `CustomEvent`s while dispatching callbacks."""
+    @property
+    def _emits_app_events(self) -> bool:
+        """Whether this app-facing capability may emit `CustomEvent`s while dispatching callbacks.
+
+        A property rather than a flag so wrappers can derive it from the capability they wrap.
+        """
+        return False
 
     _: KW_ONLY
 

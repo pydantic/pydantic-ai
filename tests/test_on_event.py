@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, on_event
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, Hooks, on_event
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -374,3 +374,32 @@ def test_combined_capability_subclass_listeners_alone_enable_dispatch() -> None:
 
     assert Harness(capabilities=[AbstractCapability()]).has_on_event
     assert not CombinedCapability[Any](capabilities=[AbstractCapability()]).has_on_event
+
+
+async def test_hooks_subclass_marked_listeners_dispatch() -> None:
+    """A `Hooks` subclass's own marked listeners are detected and dispatched.
+
+    `Hooks.has_on_event` reports registered hook functions; it must not mask the base
+    capability surface a subclass uses.
+    """
+    received: list[FileReadEvent] = []
+
+    class ListeningHooks(Hooks[Any]):
+        @on_event(FileReadEvent)
+        async def _on_read(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            received.append(event)
+
+    hooks = ListeningHooks()
+    assert hooks.has_on_event
+
+    files = Capability[Any](id='files')
+
+    @files.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(FileReadEvent(path='hook.txt'))
+        return 'contents'
+
+    await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[files, hooks]).run('go')
+    assert received == [
+        FileReadEvent(path='hook.txt', capability_id='files', tool_call_id='call_1', tool_name='read_file')
+    ]
