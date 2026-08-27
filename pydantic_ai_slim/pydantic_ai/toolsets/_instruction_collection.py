@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic
 
-from pydantic_ai._instructions import normalize_toolset_instruction_parts, qualify_toolset_instruction_parts
+from pydantic_ai._instructions import qualify_toolset_instruction_parts
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
@@ -23,20 +22,16 @@ class InstructionContribution(Generic[AgentDepsT]):
 
 
 def make_contribution(
-    source: AbstractToolset[AgentDepsT],
-    result: str | InstructionPart | Sequence[str | InstructionPart] | None,
-) -> list[InstructionContribution[AgentDepsT]]:
-    """Build one source's contribution, minting its key only once a block has survived.
+    source: AbstractToolset[AgentDepsT], part: InstructionPart
+) -> InstructionContribution[AgentDepsT]:
+    """Attribute one surviving block to the source that authored it, minting that source's key.
 
-    The only way a contribution is made, so the ordering holds everywhere: normalize and strip
-    first, and return nothing at all when there is nothing left. Minting validates the toolset's
-    `id`, and a source that says nothing to the model must never be the reason that fails.
+    Takes a block rather than a `get_instructions` result because minting validates the source's
+    `id`, and a source that says nothing to the model must never be the reason that fails. Callers
+    normalize first and never reach here with nothing, so there is no empty case to mint for.
     """
-    parts = normalize_toolset_instruction_parts(result)
-    if not parts:
-        return []
-    source_id, parts = qualify_toolset_instruction_parts(parts, source.id)
-    return [InstructionContribution(source=source, source_id=source_id, parts=tuple(parts))]
+    source_id, parts = qualify_toolset_instruction_parts([part], source.id)
+    return InstructionContribution(source=source, source_id=source_id, parts=tuple(parts))
 
 
 async def collect_toolset_instructions(

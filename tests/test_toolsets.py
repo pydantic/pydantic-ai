@@ -2649,7 +2649,8 @@ async def test_concurrent_runs_dont_share_state():
 
         @property
         def id(self) -> str | None:
-            return 'counting'
+            # Never read: a toolset that contributes no instructions is never asked for its key.
+            return 'counting'  # pragma: no cover
 
         async def for_run(self, ctx: RunContext) -> AbstractToolset:
             return CountingToolset()

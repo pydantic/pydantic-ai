@@ -181,14 +181,12 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     ) -> list[InstructionContribution[AgentDepsT]]:
         """Collect contributions once, preserving the toolset that authored every relayed block.
 
-        Leaves author their own result. Containers that retain their inherited implementation walk
-        their children directly, while a public `get_instructions` override takes over and is called
-        exactly once. A returned key owned below the container is relayed unchanged and attributed
-        to its owner; every other block is authored by the container itself.
+        A toolset that only passes its children along is walked; anything that speaks for itself is
+        asked once. That covers a leaf and a container whose subclass took `get_instructions` over
+        with the same path, because the difference between them is only what they own: a returned
+        key owned below is relayed unchanged and stays attributed to its owner, and everything else
+        is the caller's own text, resolved against the caller's own key.
         """
-        children = self._instruction_children()
-        if not children:
-            return make_contribution(self, await self.get_instructions(ctx))
         if not self._authors_own_instructions():
             return await self._collect_child_instruction_contributions(ctx)
 
@@ -200,7 +198,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             # container is being relayed and stays attributed there. Everything else this container
             # wrote itself, and is resolved against its own key like any other author's.
             owner = sources_by_key.get(instruction_source_key(part.id)) if part.id is not None else None
-            contributions.extend(make_contribution(owner if owner is not None else self, (part,)))
+            contributions.append(make_contribution(owner if owner is not None else self, part))
         return contributions
 
     async def _collect_child_instruction_contributions(
@@ -217,8 +215,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return ()
 
     def _authors_own_instructions(self) -> bool:
-        """Whether this container's public authoring hook replaces its children's contributions."""
-        return False
+        """Whether `get_instructions` speaks for this toolset rather than aggregating its children.
+
+        True here because a toolset with nothing below it can only be speaking for itself. A
+        container overrides this to answer for the case that actually varies: whether a subclass has
+        taken the method over, or it is still the inherited implementation that just relays.
+        """
+        return True
 
     def _instruction_source_key(self) -> str | None:
         """Read this toolset's source key without minting or validating an unusable one."""
