@@ -77,7 +77,7 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .conftest import IsDatetime, IsNow, IsStr
@@ -129,6 +129,7 @@ from .sandbox_fakes import (
     ConnectOnlySandboxCapability,
     FakeSandboxHandle,
     LifecycleSandboxCapability,
+    RecordingSandboxBackend,
     SandboxContributingCapability,
 )
 
@@ -1600,6 +1601,42 @@ async def test_dbos_durability_runs_a_sandbox_supplying_capability_in_steps(dbos
         ['acquire:created-1', 'release:created-1', 'acquire:created-2', 'release:created-2']
     )
     assert supplier.in_step == [True, True, False, False]
+
+
+async def test_dbos_get_only_sandbox_connects_inside_the_tool_step(dbos: DBOS):
+    class GetOnlySandboxCapability(AbstractCapability[Any]):
+        id = 'dbos-get-only-sandbox'
+
+        def __init__(self) -> None:
+            self.in_step: list[bool] = []
+            self.backends: list[RecordingSandboxBackend] = []
+
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            assert ref is None
+            self.in_step.append(DBOS.step_id is not None)
+            backend = RecordingSandboxBackend('always-live')
+            self.backends.append(backend)
+            return backend
+
+    @DBOS.step()
+    async def use_get_only_sandbox(ctx: RunContext[Any]) -> str:
+        return (await ctx.sandbox.run(['echo', 'always-live'])).stdout
+
+    provider = GetOnlySandboxCapability()
+    agent = Agent(
+        TestModel(),
+        name='dbos_get_only_sandbox',
+        tools=[use_get_only_sandbox],
+        capabilities=[DBOSDurability(), provider],
+    )
+
+    @DBOS.workflow(name='test_dbos_get_only_sandbox')
+    async def run_agent() -> str:
+        return (await agent.run('Use the sandbox.')).output
+
+    assert await run_agent() == '{"use_get_only_sandbox":"connected"}'
+    assert provider.in_step == [True]
+    assert [backend.commands for backend in provider.backends] == [[['echo', 'always-live']]]
 
 
 async def test_dbos_durability_rejects_a_per_run_sandbox_supplier(dbos: DBOS):

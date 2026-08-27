@@ -166,6 +166,7 @@ from .sandbox_fakes import (
     FailingReleaseSandboxCapability,
     FakeSandboxHandle,
     LifecycleSandboxCapability,
+    RecordingSandboxBackend,
 )
 
 
@@ -2447,6 +2448,20 @@ async def test_cache_policy_includes_deferred_sandbox_identity_without_connectin
     assert projected['sandbox'] == ('fake', 'deferred-sandbox', None)
 
 
+async def test_cache_policy_includes_get_only_sandbox_provider_without_connecting():
+    async def refuse_to_connect(ref: SandboxRef | None) -> SandboxBackend:
+        raise AssertionError('computing a cache key must not connect the sandbox')  # pragma: no cover
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        sandbox=Sandbox._from_provider('get-only-sandbox', refuse_to_connect),  # pyright: ignore[reportPrivateUsage]
+    )
+    projected = _replace_run_context({'ctx': ctx})['ctx']
+    assert projected['sandbox_provider'] == 'get-only-sandbox'
+
+
 async def test_prefect_flow_forwards_sandbox_to_tools():
     backend = FakeSandboxHandle('flow-sandbox')
     seen: list[Sandbox] = []
@@ -2935,6 +2950,40 @@ async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuste
         ]
     )
     assert supplier.in_task == [True, True, True, True, False, False]
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_get_only_sandbox_connects_inside_the_tool_task(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+
+    class GetOnlySandboxCapability(AbstractCapability[Any]):
+        id = 'prefect-get-only-sandbox'
+
+        def __init__(self) -> None:
+            self.in_task: list[bool] = []
+            self.backends: list[RecordingSandboxBackend] = []
+
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            assert ref is None
+            self.in_task.append(TaskRunContext.get() is not None)
+            backend = RecordingSandboxBackend('always-live')
+            self.backends.append(backend)
+            return backend
+
+    provider = GetOnlySandboxCapability()
+    agent = Agent(TestModel(), name='prefect_get_only_sandbox', capabilities=[PrefectDurability(), provider])
+
+    @agent.tool
+    async def use_get_only_sandbox(ctx: RunContext[Any]) -> str:
+        return (await ctx.sandbox.run(['echo', 'always-live'])).stdout
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Use the sandbox.')).output
+
+    assert await run_agent() == '{"use_get_only_sandbox":"connected"}'
+    assert provider.in_task == [True]
+    assert [backend.commands for backend in provider.backends] == [[['echo', 'always-live']]]
 
 
 @pytest.mark.parametrize('blockbuster_enabled', [False])

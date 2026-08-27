@@ -14,16 +14,17 @@ Pydantic AI resolves the sandbox once, before capability and toolset `for_run` h
    [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable
    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef].
 2. A capability's
-   [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] contribution.
-   The latest supplier in the capability chain wins. Its effective capability ID is recorded on
-   the returned reference so reconnection and release route back to the same supplier. Give the
-   supplier an explicit stable `id` when the ref will cross runs or processes.
+   sandbox hooks. Exactly one active capability may define any of `acquire_sandbox`,
+   `get_sandbox`, or `release_sandbox`; an ambiguous tree raises before any hook runs. The
+   provider may acquire a [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef], or return an
+   already-live backend from `get_sandbox(ctx, None)` without an acquisition step.
 3. The framework default: an `UnavailableSandbox` explaining how to attach one.
 
-The selected supplier remains the lifecycle owner for the whole run. A capability returned by
-that supplier's later `for_run()` may contribute other run-specific behavior, but it does not
-replace the owner used for `acquire_sandbox`, `get_sandbox`, or `release_sandbox`. Durable workers
-recover the owner by the stable capability ID recorded on the ref.
+The selected provider remains the owner for the whole run. A capability returned by that
+provider's later `for_run()` may contribute other run-specific behavior, but it does not replace
+the owner used for `acquire_sandbox`, `get_sandbox`, or `release_sandbox`. Give it an explicit
+stable `id` when its sandbox crosses durable boundaries; workers use that ID to recover the same
+provider whether or not acquisition produced a ref.
 
 Tools and capabilities can therefore use `ctx.sandbox` directly:
 
@@ -109,16 +110,18 @@ its state between those runs.
 
 ### From a capability
 
-A capability supplies a sandbox through up to three lifecycle hooks. The run holds only the
-serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; the live connection is
-(re)established wherever it is needed, which is what makes the same capability work unchanged
-under [durable execution](#durable-execution).
+A capability supplies a sandbox through up to three lifecycle hooks. A managed environment uses
+a serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; an already-live environment may
+skip the ref and return its backend directly from `get_sandbox`. In both cases the live connection
+is established lazily wherever it is needed, which is what makes the same capability work
+unchanged under [durable execution](#durable-execution).
 
 - [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox], once per run:
   provision, check out, or select an environment and return its identity, or `None` to not contribute.
 - [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]: connect, never
-  create. Called lazily on the first sandbox operation, and again in each durable unit that
-  touches the sandbox.
+  create. With a ref, reconnect that environment; with `None`, return an already-live backend
+  using capability configuration or `ctx.deps`. Called lazily on the first sandbox operation,
+  and again in each durable unit that touches the sandbox.
 - [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox], once
   after the run ends, including on failure. It may destroy the environment, return it to a pool,
   decrement a reference count, or do nothing. The inherited no-op suits warm sandboxes and
@@ -143,9 +146,9 @@ class MySandboxCapability(AbstractCapability[Any]):
         sandbox = await self.client.create()
         return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-        if ref.provider != 'docker':
-            return None  # not ours; resolution continues along the capability chain
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        if ref is None or ref.provider != 'docker':
+            return None  # this implementation requires an acquired or caller-provided ref
         # Re-open only: raise if the environment expired. Never create a replacement here.
         return await self.client.connect(ref.sandbox_id)
 
@@ -173,12 +176,21 @@ The same three hooks cover every lifecycle without further concepts:
 | Fresh sandbox per run | provision, return its ref | connect by id | destroy |
 | Warm, shared across runs | return the held backend's ref | return the held backend | inherited no-op |
 | Pooled per conversation | check out or create by `ctx.conversation_id` | connect | return to pool or decrement a reference count |
+| Already-live environment | don't override | return the configured backend for `None` | don't override |
 | Connect-only (provisioned elsewhere) | don't override | connect by id | don't override |
 
-Among capability suppliers, the latest in the chain wins; a supplier that returns
-`None` falls through to the next. Deferred capabilities cannot contribute a sandbox because
-sandbox resolution happens before deferred capabilities can load. Acquisition and release happen
-inside the agent-run span, so startup failures and slow provisioning are visible in traces.
+Without a ref there is no provider or sandbox identity to expose before connection. The first
+async sandbox operation calls `get_sandbox(ctx, None)` and caches its backend; after that,
+`sandbox.provider`, `sandbox.sandbox_id`, and `sandbox.backend` reflect the returned backend.
+
+Exactly one active capability may provide these hooks. Pydantic AI checks the resolved tree before
+calling `acquire_sandbox`, so configuration mistakes cannot provision a second sandbox and then
+fail without knowing which provider should release it. Returning `None` from the sole provider's
+`acquire_sandbox` skips acquisition; if it implements `get_sandbox`, the run asks it for an
+already-live backend with `ref=None`, otherwise the run uses the unavailable default. Deferred
+capabilities cannot provide a sandbox because sandbox resolution happens before they can load.
+Acquisition and release happen inside the agent-run span, so startup failures and slow
+provisioning are visible in traces.
 
 "After the run ends" includes a run that ends early with
 [`DeferredToolRequests`](deferred-tools.md): the approval round-trip spans two runs, so a
@@ -393,8 +405,8 @@ A run argument wins over every capability contribution, so the run uses the refe
 and never destroys it. Pydantic AI reconstructs a deferred
 [`Sandbox`][pydantic_ai.sandboxes.Sandbox] inside the durable I/O boundary; the first operation
 connects once and caches the live backend for that activity, step, or task. Framework-created
-refs also carry `capability_id`, which routes reconnection directly to the supplier. Caller-created
-refs may omit it and use normal chain precedence for backward compatibility. `provider` and
+refs also carry `capability_id`, which routes reconnection directly to the provider. Caller-created
+refs may omit it; the run's sole sandbox provider is then asked to connect. `provider` and
 `sandbox_id` are readable before connection, but the synchronous `sandbox.backend` property raises
 until an async operation has connected the facade.
 
@@ -406,7 +418,8 @@ until an async operation has connected the facade.
   chain. Effectful sandbox tools must still run as DBOS steps, like any other tool I/O.
 - **[Prefect](durable_execution/prefect.md)** runs tools in-process. A deferred facade
   contributes `(provider, sandbox_id, capability_id)` to task cache keys without connecting;
-  `UnavailableSandbox` (including the framework default) adds no sandbox component.
+  a provider-only facade contributes its capability ID. `UnavailableSandbox` (including the
+  framework default) adds no sandbox component.
 
 A live backend is still rejected inside durable containers because it cannot cross their
 boundaries, and `LocalSandbox` has no meaningful ref: its worker-local temporary directory

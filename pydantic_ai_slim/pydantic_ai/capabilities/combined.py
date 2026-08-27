@@ -262,9 +262,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
-        # Reversed to match supplier precedence, so the capability that produced a ref is also
-        # the first one asked to re-open it; capabilities decline refs they don't recognize.
+    @property
+    def has_sandbox_hooks(self) -> bool:
+        return any(capability.has_sandbox_hooks for capability in self.capabilities)
+
+    @property
+    def has_get_sandbox(self) -> bool:
+        return any(capability.has_get_sandbox for capability in self.capabilities)
+
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef | None) -> SandboxBackend | None:
+        # Reversed for legacy refs resolved outside normal run setup. Agent runs validate that
+        # exactly one active capability provides sandbox hooks before connecting a ref.
         # Deferred capabilities are skipped: their contributions are inert until loaded.
         # `acquire_sandbox`/`release_sandbox` deliberately have no combined dispatch — the run
         # resolves them through `resolve_run_sandbox`, which keeps the supplier's identity.

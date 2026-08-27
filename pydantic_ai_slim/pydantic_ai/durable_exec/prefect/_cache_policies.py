@@ -141,7 +141,9 @@ def _replace_run_context(
             # `UnavailableSandbox` (including the framework default) is policy state, so it
             # remains equivalent to the previous "no sandbox" input for caching.
             sandbox_identity = value.sandbox.durable_identity()
-            if not isinstance(sandbox_identity, UnavailableSandbox):
+            if sandbox_identity is None:
+                projected['sandbox_provider'] = value.sandbox._durable_capability_id()  # pyright: ignore[reportPrivateUsage]
+            elif not isinstance(sandbox_identity, UnavailableSandbox):
                 projected['sandbox'] = (
                     value.sandbox.provider,
                     value.sandbox.sandbox_id,

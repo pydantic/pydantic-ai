@@ -79,8 +79,8 @@ class ConnectOnlySandboxCapability(AbstractCapability[Any]):
         self.sandbox_ids.clear()
         self.backends.clear()
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-        if ref.provider != 'fake':
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        if ref is None or ref.provider != 'fake':
             return None
         self.sandbox_ids.append(ref.sandbox_id)
         backend = RecordingSandboxBackend(ref.sandbox_id)
@@ -114,8 +114,8 @@ class AcquireOnlySandboxCapability(AbstractCapability[Any]):
         self.events.append(f'acquire:{sandbox_id}')
         return SandboxRef(provider='fake', sandbox_id=sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-        if ref.provider != 'fake':
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        if ref is None or ref.provider != 'fake':
             return None
         self.events.append(f'connect:{ref.sandbox_id}')
         backend = RecordingSandboxBackend(ref.sandbox_id)

@@ -1694,7 +1694,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 f'their {self._durable_unit_noun}s were not registered when the agent was bound.'
             )
 
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+    @property
+    def has_sandbox_hooks(self) -> bool:
+        # Durable routing is infrastructure around the user's provider, not a provider itself.
+        capability_type = type(self)
+        return any(
+            getattr(capability_type, name) is not getattr(BaseDurabilityCapability, name)
+            for name in ('acquire_sandbox', 'get_sandbox', 'release_sandbox')
+        )
+
+    @property
+    def has_get_sandbox(self) -> bool:
+        return type(self).get_sandbox is not BaseDurabilityCapability.get_sandbox
+
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef | None) -> SandboxBackend | None:
         # In workflow/flow code connecting would be I/O, so fail with directions; inside a
         # durable unit `in_durable_context` is False and the real capability connects.
         if self.in_durable_context:

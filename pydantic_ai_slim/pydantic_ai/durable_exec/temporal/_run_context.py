@@ -7,7 +7,7 @@ from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities.abstract import resolve_sandbox_ref
+from pydantic_ai.capabilities.abstract import connect_sandbox_provider, resolve_sandbox_ref
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
@@ -225,6 +225,8 @@ class TemporalRunContext(RunContext[AgentDepsT]):
                 'sandbox_id': sandbox_identity.sandbox_id,
                 'capability_id': sandbox_identity.capability_id,
             }
+        elif sandbox_identity is None and (capability_id := ctx.sandbox._durable_capability_id()) is not None:  # pyright: ignore[reportPrivateUsage]
+            serialized['_sandbox_state'] = {'capability_id': capability_id}
         elif isinstance(sandbox_identity, UnavailableSandbox):
             serialized['_sandbox_state'] = {'unavailable_reason': sandbox_identity.reason}
         return serialized
@@ -258,48 +260,78 @@ def deserialize_run_context(
         ctx.__dict__['root_capability'] = agent.root_capability
     sandbox_state = serialized.get('_sandbox_state')
     if is_str_dict(sandbox_state):
-        provider = sandbox_state.get('provider')
-        sandbox_id = sandbox_state.get('sandbox_id')
-        capability_id = sandbox_state.get('capability_id')
-        unavailable_reason = sandbox_state.get('unavailable_reason')
-        if isinstance(provider, str) and isinstance(sandbox_id, str):
-            # The worker's capability tree is the connection registry: the capability that can
-            # recognize the ref exists on the agent this worker constructed, credentials included.
-            async def resolve_sandbox(ref: SandboxRef) -> SandboxBackend:
-                if agent is None:
-                    raise UserError(
-                        f'Cannot connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}: '
-                        'no agent is attached to this Temporal activity, so there is no capability '
-                        'chain to resolve the reference through.'
-                    )
-                try:
-                    backend = await resolve_sandbox_ref(agent.root_capability, ctx, ref)
-                except UserError:
-                    raise
-                except Exception as error:
-                    raise UserError(
-                        f'Failed to connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}.'
-                    ) from error
-                if backend is None:
-                    raise UserError(
-                        f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
-                        f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
-                    )
-                return backend
-
-            ctx.__dict__['_sandbox'] = Sandbox.from_ref(
-                SandboxRef(
-                    provider=provider,
-                    sandbox_id=sandbox_id,
-                    capability_id=capability_id if isinstance(capability_id, str) else None,
-                ),
-                resolve_sandbox,
-            )
-        elif isinstance(unavailable_reason, str):
-            ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason
+        _restore_sandbox(ctx, sandbox_state, agent)
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside
     # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install
     # the same guard the in-process engines use so `ctx.enqueue()` raises the shared explanation.
     ctx.__dict__['pending_messages'] = EnqueueGuard(enqueue_not_supported_message('activity', 'workflow'))
     return ctx
+
+
+def _restore_sandbox(
+    ctx: RunContext[Any], sandbox_state: dict[str, Any], agent: AbstractAgent[Any, Any] | None
+) -> None:
+    """Rebuild a lazy sandbox facade from its serialized ref or provider identity."""
+    provider = sandbox_state.get('provider')
+    sandbox_id = sandbox_state.get('sandbox_id')
+    capability_id = sandbox_state.get('capability_id')
+    unavailable_reason = sandbox_state.get('unavailable_reason')
+    if isinstance(provider, str) and isinstance(sandbox_id, str):
+        # The worker's capability tree is the connection registry: the capability that can
+        # recognize the ref exists on the agent this worker constructed, credentials included.
+        async def resolve_sandbox(ref: SandboxRef) -> SandboxBackend:
+            if agent is None:
+                raise UserError(
+                    f'Cannot connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}: '
+                    'no agent is attached to this Temporal activity, so there is no capability '
+                    'chain to resolve the reference through.'
+                )
+            try:
+                backend = await resolve_sandbox_ref(agent.root_capability, ctx, ref)
+            except UserError:
+                raise
+            except Exception as error:
+                raise UserError(
+                    f'Failed to connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}.'
+                ) from error
+            if backend is None:
+                raise UserError(
+                    f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
+                    f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
+                )
+            return backend
+
+        ctx.__dict__['_sandbox'] = Sandbox.from_ref(
+            SandboxRef(
+                provider=provider,
+                sandbox_id=sandbox_id,
+                capability_id=capability_id if isinstance(capability_id, str) else None,
+            ),
+            resolve_sandbox,
+        )
+    elif isinstance(capability_id, str):
+
+        async def resolve_provider_sandbox(ref: SandboxRef | None) -> SandboxBackend:
+            assert ref is None
+            if agent is None:
+                raise UserError(
+                    f'Cannot connect the sandbox from capability {capability_id!r}: no agent is attached '
+                    'to this Temporal activity, so there is no capability registry.'
+                )
+            try:
+                backend = await connect_sandbox_provider(agent.root_capability, ctx, capability_id)
+            except UserError:
+                raise
+            except Exception as error:
+                raise UserError(f'Capability {capability_id!r} failed to connect its sandbox.') from error
+            if backend is None:
+                raise UserError(
+                    f'Capability {capability_id!r} provides sandbox hooks but its `get_sandbox` hook '
+                    'returned `None` without a `SandboxRef`.'
+                )
+            return backend
+
+        ctx.__dict__['_sandbox'] = Sandbox._from_provider(capability_id, resolve_provider_sandbox)  # pyright: ignore[reportPrivateUsage]
+    elif isinstance(unavailable_reason, str):
+        ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason

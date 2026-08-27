@@ -69,7 +69,13 @@ from ..capabilities._durable_operation import active_durable_operation, invoke_d
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import capabilities_by_id, leaf_capabilities, resolve_run_sandbox, resolve_sandbox_ref
+from ..capabilities.abstract import (
+    capabilities_by_id,
+    find_sandbox_provider,
+    leaf_capabilities,
+    resolve_run_sandbox,
+    resolve_sandbox_ref,
+)
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1680,12 +1686,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
         sandbox_ref: SandboxRef | None = None
-        if not explicit_sandbox:
+        if isinstance(sandbox, SandboxRef):
+            # A caller-owned ref skips acquisition, but still requires one unambiguous connector.
+            find_sandbox_provider(preparation_capability)
+        elif not explicit_sandbox:
             async with _close_preparation_on_error():
                 supplied = await resolve_run_sandbox(preparation_capability, initial_ctx)
             if supplied is not None:
-                sandbox_supplier, sandbox_ref = supplied
-                sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
+                sandbox_supplier, sandbox_capability_id, sandbox_ref = supplied
+                if sandbox_ref is not None:
+                    sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
+                elif sandbox_supplier.has_get_sandbox:
+
+                    async def _resolve_provider_sandbox(ref: SandboxRef | None) -> SandboxBackend:
+                        assert ref is None
+                        try:
+                            backend = await sandbox_supplier.get_sandbox(initial_ctx, None)
+                        except Exception as error:
+                            raise exceptions.UserError(
+                                f'Capability {sandbox_capability_id!r} failed to connect its sandbox.'
+                            ) from error
+                        if backend is None:
+                            raise exceptions.UserError(
+                                f'Capability {sandbox_capability_id!r} provides sandbox hooks but its '
+                                '`get_sandbox` hook returned `None` without a `SandboxRef`.'
+                            )
+                        return backend
+
+                    sandbox_facade = Sandbox._from_provider(sandbox_capability_id, _resolve_provider_sandbox)  # pyright: ignore[reportPrivateUsage]
+                else:
+                    sandbox_facade = Sandbox.wrap(default_sandbox_backend())
 
                 async def _release_run_sandbox(supplier: AbstractCapability[AgentDepsT], ref: SandboxRef) -> None:
                     with anyio.CancelScope(shield=True):
@@ -1710,7 +1740,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 exc_info=True,
                             )
 
-                preparation_stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
+                if sandbox_ref is not None:
+                    preparation_stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
             else:
                 sandbox_facade = Sandbox.wrap(default_sandbox_backend())
             initial_ctx.sandbox = sandbox_facade
@@ -1883,6 +1914,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             await model_stack.enter_async_context(selected_model)
             entered_model_ids.add(model_identity)
 
+        assert sandbox_facade is not None
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,

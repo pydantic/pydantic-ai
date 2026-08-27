@@ -151,6 +151,7 @@ from .sandbox_fakes import (
     FailingReleaseSandboxCapability,
     FakeSandboxHandle,
     LifecycleSandboxCapability,
+    RecordingSandboxBackend,
     SandboxContributingCapability,
 )
 
@@ -3222,7 +3223,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'A capability that supplies a sandbox (overrides `acquire_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
+                'A capability that supplies a sandbox cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
             ),
         ):
             await client.execute_workflow(
@@ -4838,7 +4839,7 @@ async def test_temporal_run_context_sandbox_ref_connection_errors_surface():
     class FailingConnectCapability(AbstractCapability[Any]):
         error: Exception = RuntimeError('expired')
 
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
             raise self.error
 
     capability = FailingConnectCapability()
@@ -7764,6 +7765,46 @@ _unreleasable_durable_agent = _supplier_sandbox_agent(
 )
 
 
+class ActivityAwareGetOnlySandboxCapability(AbstractCapability[Any]):
+    id = 'get-only-sandbox'
+
+    def __init__(self) -> None:
+        self.in_activity: list[bool] = []
+        self.backends: list[RecordingSandboxBackend] = []
+
+    def reset(self) -> None:
+        self.in_activity.clear()
+        self.backends.clear()
+
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        assert ref is None
+        self.in_activity.append(activity.in_activity())
+        backend = RecordingSandboxBackend('always-live')
+        self.backends.append(backend)
+        return backend
+
+
+def _get_only_sandbox_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('use_get_only_sandbox', {})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_get_only_sandbox_capability = ActivityAwareGetOnlySandboxCapability()
+_get_only_sandbox_agent: Agent[None, str] = Agent(
+    FunctionModel(_get_only_sandbox_model),
+    name='get_only_sandbox_durability_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG), _get_only_sandbox_capability],
+)
+
+
+@_get_only_sandbox_agent.tool
+async def use_get_only_sandbox(ctx: RunContext[None]) -> str:
+    await ctx.sandbox.run(['echo', 'always-live'])
+    return ctx.sandbox.sandbox_id
+
+
 def _exploding_sandbox_tool_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart('explode_in_sandbox', {})])
 
@@ -7808,6 +7849,13 @@ class UnreleasableSandboxWorkflow:
 
 
 @workflow.defn
+class GetOnlySandboxWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _get_only_sandbox_agent.run(prompt)).output
+
+
+@workflow.defn
 class FailingSandboxWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
@@ -7846,6 +7894,26 @@ async def test_temporal_durability_runs_the_sandbox_lifecycle_in_activities(clie
     assert [backend.commands for backend in _lifecycle_sandbox_capability.backends] == [[['echo', 'created-1']]]
 
 
+async def test_temporal_get_only_sandbox_connects_inside_the_tool_activity(client: Client):
+    _get_only_sandbox_capability.reset()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[GetOnlySandboxWorkflow],
+        plugins=[AgentPlugin(_get_only_sandbox_agent)],
+    ):
+        output = await client.execute_workflow(
+            GetOnlySandboxWorkflow.run,
+            args=['Use the always-live sandbox.'],
+            id=GetOnlySandboxWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'done'
+    assert _get_only_sandbox_capability.in_activity == [True]
+    assert [backend.commands for backend in _get_only_sandbox_capability.backends] == [[['echo', 'always-live']]]
+
+
 _declining_sandbox_capability = DecliningSandboxCapability()
 _declining_sandbox_capability.id = 'declining-sandbox'
 _fallthrough_lifecycle_capability = LifecycleSandboxCapability()
@@ -7870,15 +7938,8 @@ class FallthroughSandboxWorkflow:
         return (await _fallthrough_durable_agent.run(prompt)).output
 
 
-async def test_temporal_durability_falls_through_a_declining_supplier_inside_the_activity(client: Client):
-    """A supplier that declines falls through to the next supplier *inside* the create activity.
-
-    The whole supplier walk runs worker-side and the durability capability's workflow-side
-    answer is final, so the declining supplier is consulted exactly once: a second call would
-    mean the workflow-side walk resumed past the durability capability and re-ran supplier
-    hooks as workflow code. Destroy routing back to the supplier that actually created the
-    sandbox proves the winning leaf survives the workflow boundary by index, not identity.
-    """
+async def test_temporal_durability_rejects_multiple_sandbox_providers_before_acquisition(client: Client):
+    """Provider ambiguity is rejected in workflow setup before either acquire activity runs."""
     _declining_sandbox_capability.reset()
     _fallthrough_lifecycle_capability.reset()
     async with Worker(
@@ -7887,18 +7948,20 @@ async def test_temporal_durability_falls_through_a_declining_supplier_inside_the
         workflows=[FallthroughSandboxWorkflow],
         plugins=[AgentPlugin(_fallthrough_durable_agent)],
     ):
-        output = await client.execute_workflow(
-            FallthroughSandboxWorkflow.run,
-            args=['Use the sandbox.'],
-            id=FallthroughSandboxWorkflow.__name__,
-            task_queue=TASK_QUEUE,
-        )
+        with workflow_raises(
+            UserError,
+            'Exactly one capability may provide sandbox hooks; found 2: '
+            "'fallthrough-lifecycle-sandbox', 'declining-sandbox'.",
+        ):
+            await client.execute_workflow(
+                FallthroughSandboxWorkflow.run,
+                args=['Use the sandbox.'],
+                id=FallthroughSandboxWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
 
-    assert output == 'done'
-    assert _declining_sandbox_capability.acquire_calls == 1
-    assert _fallthrough_lifecycle_capability.events == snapshot(
-        ['acquire:created-1', 'connect:created-1', 'release:created-1']
-    )
+    assert _declining_sandbox_capability.acquire_calls == 0
+    assert _fallthrough_lifecycle_capability.events == []
 
 
 async def test_temporal_durability_tears_down_the_sandbox_when_a_tool_fails(client: Client):

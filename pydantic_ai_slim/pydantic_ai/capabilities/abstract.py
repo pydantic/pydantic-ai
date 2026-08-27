@@ -436,7 +436,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Invoked once in a non-durable run, or recorded once in a durable run's logical history, before any hook sees
         [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox], and only when no `sandbox=` run
-        argument was passed. The latest overriding capability in the resolved chain wins.
+        argument was passed. Exactly one active capability may define sandbox hooks; ambiguity
+        raises before acquisition begins.
         Acquisition may provision a new sandbox, check one out from a pool, or select a warm
         environment. Return `None`, without side effects, to not contribute.
 
@@ -450,18 +451,35 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
-        """Return a live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] for `ref`: connect, never create.
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef | None) -> SandboxBackend | None:
+        """Return a live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend]: connect, never create.
 
-        Return `None` for refs this capability doesn't recognize (check `ref.provider`);
-        resolution then continues along the chain, like
-        [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id].
+        When `ref` is present, return `None` if this capability doesn't recognize it (typically
+        by checking `ref.provider`). When `ref` is `None`, the capability is the run's sole
+        sandbox provider and may return an already-live backend whose connection information
+        comes from its configuration or `ctx.deps`, without implementing
+        [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] or
+        [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox].
         May be called any number of times, in any process that holds this capability, so
         credentials and clients belong here rather than on the ref. Must fail when the sandbox
         no longer exists instead of silently provisioning a replacement. Inside a durable unit,
         `ctx` is the engine's restricted run context: `ctx.deps` is always available.
         """
         return None
+
+    @property
+    def has_sandbox_hooks(self) -> bool:
+        """Whether this capability declares any part of the sandbox provider interface."""
+        capability_type = type(self)
+        return any(
+            getattr(capability_type, name) is not getattr(AbstractCapability, name)
+            for name in ('acquire_sandbox', 'get_sandbox', 'release_sandbox')
+        )
+
+    @property
+    def has_get_sandbox(self) -> bool:
+        """Whether this capability can provide a live sandbox without an acquired ref."""
+        return type(self).get_sandbox is not AbstractCapability.get_sandbox
 
     @tier_one_durable_operation
     async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
@@ -1245,30 +1263,51 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     return leaves
 
 
+def find_sandbox_provider(
+    capability: AbstractCapability[AgentDepsT],
+) -> tuple[AbstractCapability[AgentDepsT], str] | None:
+    """Return the sole active sandbox provider, rejecting ambiguous trees before side effects."""
+    capabilities = capabilities_by_id(capability)
+    capability_ids = {id(leaf): capability_id for capability_id, leaf in capabilities.items()}
+    providers = [
+        leaf for leaf in leaf_capabilities(capability) if leaf.defer_loading is not True and leaf.has_sandbox_hooks
+    ]
+    if len(providers) > 1:
+        provider_ids = [capability_ids[id(provider)] for provider in providers]
+        raise UserError(
+            f'Exactly one capability may provide sandbox hooks; found {len(providers)}: '
+            f'{", ".join(repr(provider_id) for provider_id in provider_ids)}.'
+        )
+    if not providers:
+        return None
+    provider = providers[0]
+    return provider, capability_ids[id(provider)]
+
+
 async def resolve_run_sandbox(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
-) -> tuple[AbstractCapability[AgentDepsT], SandboxRef] | None:
-    """Consult the tree's `acquire_sandbox` hooks latest-first; return the winning supplier and its ref.
+) -> tuple[AbstractCapability[AgentDepsT], str, SandboxRef | None] | None:
+    """Resolve the tree's sole sandbox provider before invoking any lifecycle hook.
 
     Lives outside the combined-capability dispatch because the run must route
-    `release_sandbox` back to the same capability, and that dispatch loses supplier identity.
+    `get_sandbox` and `release_sandbox` back to the same capability, and that dispatch loses
+    provider identity.
     """
-    capability_ids = {id(leaf): capability_id for capability_id, leaf in capabilities_by_id(capability).items()}
-    for leaf in reversed(leaf_capabilities(capability)):
-        if leaf.defer_loading is True:
-            continue
-        ref = await invoke_durable_operation(
-            leaf,
-            'acquire_sandbox',
-            ctx,
-            leaf.acquire_sandbox,
-            (ctx,),
-            {},
-        )
-        if ref is not None:
-            ref = replace(ref, capability_id=capability_ids[id(leaf)])
-            return leaf, ref
-    return None
+    resolved = find_sandbox_provider(capability)
+    if resolved is None:
+        return None
+    provider, provider_id = resolved
+    ref = await invoke_durable_operation(
+        provider,
+        'acquire_sandbox',
+        ctx,
+        provider.acquire_sandbox,
+        (ctx,),
+        {},
+    )
+    if ref is not None:
+        ref = replace(ref, capability_id=provider_id)
+    return provider, provider_id, ref
 
 
 async def resolve_sandbox_ref(
@@ -1290,6 +1329,24 @@ async def resolve_sandbox_ref(
             f'{ref.capability_id!r}; deferred capabilities cannot provide the run sandbox.'
         )
     return await match.get_sandbox(ctx, ref)
+
+
+async def connect_sandbox_provider(
+    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], capability_id: str
+) -> SandboxBackend | None:
+    """Connect a provider-only sandbox through the exact capability selected at run setup."""
+    match = capabilities_by_id(capability).get(capability_id)
+    if match is None:
+        raise UserError(
+            f'Cannot connect the capability-provided sandbox: expected one capability with id '
+            f'{capability_id!r}, found 0.'
+        )
+    if match.defer_loading is True:
+        raise UserError(
+            f'Cannot connect the capability-provided sandbox through deferred capability '
+            f'{capability_id!r}; deferred capabilities cannot provide the run sandbox.'
+        )
+    return await match.get_sandbox(ctx, None)
 
 
 def capabilities_by_id(

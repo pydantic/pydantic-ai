@@ -3,23 +3,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, cast
 
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 
 
 def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
-    """The capabilities in the tree that override `acquire_sandbox`, in resolved-chain order.
+    """The capabilities in the tree that declare sandbox provider hooks, in chain order.
 
-    Ordered because the *last* supplier is the one that wins sandbox resolution. Wrapper
-    forwarding and the durability capability's own routing don't count as contributions. The
-    check is static: a contributor produced at run time by a dynamic capability function is
-    not visible here.
+    Wrapper forwarding represents the wrapped provider once, and the durability capability's own
+    routing does not count as a contribution. The check is static: a provider produced at run time
+    by a dynamic capability function is not visible here.
     """
-    # Import lazily so loading this lightweight workflow guard does not pull the durability
-    # capability's model/toolset import graph into Temporal workflow sandbox validation.
-    from ._base import BaseDurabilityCapability
-
     suppliers: list[AbstractCapability[Any]] = []
     seen: set[int] = set()
 
@@ -27,16 +22,7 @@ def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapa
         if leaf.defer_loading is True or id(leaf) in seen:
             return
         seen.add(id(leaf))
-        acquire_sandbox = type(leaf).acquire_sandbox
-        if isinstance(leaf, WrapperCapability) and acquire_sandbox is WrapperCapability.acquire_sandbox:
-            for supplier in _sandbox_suppliers(leaf.wrapped):
-                # The recursive call starts a fresh `seen`, so filter against ours: a
-                # capability reachable both directly and through a wrapper is one supplier.
-                if id(supplier) not in seen:
-                    seen.add(id(supplier))
-                    suppliers.append(supplier)
-            return
-        if acquire_sandbox not in (AbstractCapability.acquire_sandbox, BaseDurabilityCapability.acquire_sandbox):
+        if leaf.has_sandbox_hooks:
             suppliers.append(leaf)
 
     capability.apply(visit)
@@ -44,7 +30,7 @@ def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapa
 
 
 def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
-    """Whether the capability tree contains an `acquire_sandbox` override.
+    """Whether the capability tree contains a sandbox provider.
 
     The deprecated durable-agent wrappers reject sandbox-contributing capabilities up front:
     running the supplier's lifecycle hooks would be I/O in workflow code, and the wrappers
@@ -56,7 +42,7 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
 
 def sandbox_contribution_error(*, run_location: str, sandbox_constraint: str) -> str:
     return (
-        f'A capability that supplies a sandbox (overrides `acquire_sandbox`) cannot run {run_location}: '
+        f'A capability that supplies a sandbox cannot run {run_location}: '
         f'{sandbox_constraint}. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
     )
 

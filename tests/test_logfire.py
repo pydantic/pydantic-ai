@@ -3341,8 +3341,8 @@ async def test_agent_span_brackets_sandbox_lifecycle(capfire: CaptureLogfire, tm
             with logfire.span('sandbox_acquire'):  # pyright: ignore[reportPossiblyUnboundVariable]
                 return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            return LocalSandbox(tmp_path) if ref.provider == 'local' else None
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            return LocalSandbox(tmp_path) if ref is not None and ref.provider == 'local' else None
 
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             with logfire.span('sandbox_release'):  # pyright: ignore[reportPossiblyUnboundVariable]

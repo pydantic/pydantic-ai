@@ -105,17 +105,19 @@ class Sandbox:
     """
 
     def __init__(self, backend: SandboxBackend):
-        self._initialize(backend=backend, ref=None, resolver=None)
+        self._initialize(backend=backend, ref=None, capability_id=None, resolver=None)
 
     def _initialize(
         self,
         *,
         backend: SandboxBackend | None,
         ref: SandboxRef | None,
-        resolver: Callable[[SandboxRef], Awaitable[SandboxBackend]] | None,
+        capability_id: str | None,
+        resolver: Callable[[SandboxRef | None], Awaitable[SandboxBackend]] | None,
     ) -> None:
         self._backend: SandboxBackend | None = backend
         self._ref = ref
+        self._capability_id = capability_id
         self._resolver = resolver
         self._deferred_filesystem: _DeferredFilesystem | None = None
 
@@ -133,21 +135,44 @@ class Sandbox:
     def from_ref(cls, ref: SandboxRef, resolver: SandboxResolver) -> Sandbox:
         """Create a facade that connects to `ref` through `resolver` on its first operation."""
         sandbox = cls.__new__(cls)
-        sandbox._initialize(backend=None, ref=ref, resolver=resolver)
+        sandbox._initialize(
+            backend=None,
+            ref=ref,
+            capability_id=ref.capability_id,
+            resolver=lambda value: resolver(value if value is not None else ref),
+        )
         return sandbox
 
-    def durable_identity(self) -> SandboxRef | SandboxBackend:
-        """The sandbox's identity for durable frameworks: its deferred [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef], or the attached backend."""
+    @classmethod
+    def _from_provider(
+        cls,
+        capability_id: str,
+        resolver: Callable[[SandboxRef | None], Awaitable[SandboxBackend]],
+    ) -> Sandbox:
+        """Create a facade that asks one capability for an already-live backend on first use."""
+        sandbox = cls.__new__(cls)
+        sandbox._initialize(backend=None, ref=None, capability_id=capability_id, resolver=resolver)
+        return sandbox
+
+    def durable_identity(self) -> SandboxRef | SandboxBackend | None:
+        """Identity for durable frameworks: a ref, backend, or `None` for provider-only resolution."""
         if self._ref is not None:
             return self._ref
-        assert self._backend is not None
         return self._backend
+
+    def _durable_capability_id(self) -> str | None:
+        """Return the capability that resolves a provider-only sandbox across a durable boundary."""
+        return self._capability_id if self._backend is None and self._ref is None else None
 
     @property
     def backend(self) -> SandboxBackend:
         """The wrapped backend, for access to provider-specific functionality."""
         if self._backend is None:
-            assert self._ref is not None
+            if self._ref is None:
+                raise UserError(
+                    'The capability-provided sandbox has not connected yet. '
+                    'Call an async sandbox operation before accessing `sandbox.backend`.'
+                )
             raise UserError(
                 f'Sandbox {self._ref.sandbox_id!r} for provider {self._ref.provider!r} has not connected yet. '
                 'Call an async sandbox operation before accessing `sandbox.backend`.'
@@ -158,14 +183,22 @@ class Sandbox:
     def provider(self) -> str:
         if self._ref is not None:
             return self._ref.provider
-        assert self._backend is not None
+        if self._backend is None:
+            raise UserError(
+                'The capability-provided sandbox has not connected yet. '
+                'Call an async sandbox operation before accessing `sandbox.provider`.'
+            )
         return self._backend.provider
 
     @property
     def sandbox_id(self) -> str:
         if self._ref is not None:
             return self._ref.sandbox_id
-        assert self._backend is not None
+        if self._backend is None:
+            raise UserError(
+                'The capability-provided sandbox has not connected yet. '
+                'Call an async sandbox operation before accessing `sandbox.sandbox_id`.'
+            )
         return self._backend.sandbox_id
 
     @property
@@ -179,7 +212,6 @@ class Sandbox:
     async def _ensure_backend(self) -> SandboxBackend:
         if self._backend is not None:
             return self._backend
-        assert self._ref is not None
         assert self._resolver is not None
         async with self._connect_lock:
             if self._backend is None:

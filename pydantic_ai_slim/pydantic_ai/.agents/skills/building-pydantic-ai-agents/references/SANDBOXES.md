@@ -66,9 +66,9 @@ class MySandboxCapability(AbstractCapability[Any]):
         sandbox = await self.client.create()
         return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-        """Connect, never create. None = not my ref; the capability chain continues."""
-        if ref.provider != 'docker':
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        """Connect, never create. With no ref, an implementation may return an already-live backend."""
+        if ref is None or ref.provider != 'docker':
             return None
         return await self.client.connect(ref.sandbox_id)
 
@@ -79,9 +79,11 @@ class MySandboxCapability(AbstractCapability[Any]):
 
 The same hooks cover every lifecycle: per-run (as above), warm (acquisition returns the held
 backend's ref, no release override), pooled per conversation (acquisition checks out by
-`ctx.conversation_id` and release checks it back in), and connect-only (only `get_sandbox` overridden, which serves
-`SandboxRef` run arguments). With a ref run argument, `acquire_sandbox` is skipped (the caller
-owns the lifecycle) but `get_sandbox` still connects.
+`ctx.conversation_id` and release checks it back in), already-live (only `get_sandbox` is
+overridden and returns a backend for `None`), and connect-only (only `get_sandbox` is overridden
+and serves `SandboxRef` run arguments). With a ref run argument, `acquire_sandbox` is skipped (the
+caller owns the lifecycle) but `get_sandbox` still connects. Exactly one active capability may
+define sandbox hooks; ambiguity raises before any acquisition side effect.
 
 The handle is present on every `RunContext`, including capability and toolset `for_run` hooks
 and initial metadata factories.

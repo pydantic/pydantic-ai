@@ -713,8 +713,8 @@ class SandboxCapability(AbstractCapability[Any]):
         self.backend = FakeSandbox(self.name)
         return SandboxRef(provider='fake', sandbox_id=self.backend.sandbox_id)
 
-    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-        if ref.provider != 'fake' or self.backend is None or ref.sandbox_id != self.backend.sandbox_id:
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+        if ref is None or ref.provider != 'fake' or self.backend is None or ref.sandbox_id != self.backend.sandbox_id:
             return None
         self.events.append(f'{self.name}:connect')
         return self.backend
@@ -797,23 +797,16 @@ async def test_ref_resolution_skips_deferred_capabilities():
     assert connector.sandbox_ids == ['fake-1']
 
 
-@pytest.mark.parametrize('with_other_capability', [False, True], ids=['no-capabilities', 'declining-capabilities'])
-async def test_sandbox_ref_requires_recognizing_capability(with_other_capability: bool):
-    """Every capability shape declines a foreign provider by returning `None`, and a chain of
-    pure declines ends in the attachment error rather than a silent fallback."""
+@pytest.mark.parametrize('with_provider', [False, True], ids=['no-provider', 'declining-provider'])
+async def test_sandbox_ref_requires_recognizing_capability(with_provider: bool):
+    """No provider, or one provider declining a foreign ref, produces the attachment error."""
 
     @dataclass
     class OtherProviderCapability(AbstractCapability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            return FakeSandbox('other') if ref.provider == 'other' else None
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            return FakeSandbox('other') if ref is not None and ref.provider == 'other' else None
 
-    capabilities = (
-        # Suppliers decline too: with a ref run argument their `acquire_sandbox` is skipped, so
-        # only their (provider-mismatched) `get_sandbox` is consulted.
-        [OtherProviderCapability(), SandboxCapability(), ConnectOnlySandboxCapability(), LifecycleSandboxCapability()]
-        if with_other_capability
-        else []
-    )
+    capabilities = [OtherProviderCapability()] if with_provider else []
     agent = make_connecting_probe_agent([], capabilities=capabilities)
     with pytest.raises(
         UserError,
@@ -827,7 +820,7 @@ async def test_sandbox_ref_connection_failure_is_chained():
 
     @dataclass
     class FailingConnectCapability(AbstractCapability[Any]):
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
             await asyncio.sleep(0)
             raise error
 
@@ -841,41 +834,36 @@ async def test_sandbox_ref_connection_failure_is_chained():
 
 
 async def test_sandbox_ref_wins_over_sandbox_supplier():
-    supplier = SandboxCapability(name='loser')
-    connector = ConnectOnlySandboxCapability()
+    class SupplierAndConnector(ConnectOnlySandboxCapability):
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            raise AssertionError('an explicit ref must skip acquisition')  # pragma: no cover
+
+    supplier = SupplierAndConnector()
     seen: list[str] = []
-    agent = make_connecting_probe_agent(seen, capabilities=[supplier, connector])
+    agent = make_connecting_probe_agent(seen, capabilities=[supplier])
     await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-winner'))
     assert seen == ['winner']
-    assert supplier.events == []
-    assert connector.sandbox_ids == ['fake-winner']
+    assert supplier.sandbox_ids == ['fake-winner']
 
 
-async def test_ref_resolution_prefers_the_latest_recognizing_capability():
-    """Two capabilities recognize the same provider name; the latest in the chain connects,
-    matching supplier precedence everywhere else.
-    """
+async def test_multiple_ref_connectors_are_rejected_before_connection():
     first = ConnectOnlySandboxCapability()
     last = ConnectOnlySandboxCapability()
-    seen: list[str] = []
-    agent = make_connecting_probe_agent(seen, capabilities=[first, WrapperCapability(wrapped=last)])
-    await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1'))
-    assert seen == ['1']
+    agent = make_connecting_probe_agent([], capabilities=[first, WrapperCapability(wrapped=last)])
+    with pytest.raises(UserError, match=r'Exactly one capability may provide sandbox hooks; found 2:'):
+        await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1'))
     assert first.sandbox_ids == []
-    assert last.sandbox_ids == ['fake-1']
+    assert last.sandbox_ids == []
 
 
 async def test_sandbox_ref_capability_id_routes_to_exact_connector():
-    first = ConnectOnlySandboxCapability()
-    first.id = 'first'
-    last = ConnectOnlySandboxCapability()
-    last.id = 'last'
+    connector = ConnectOnlySandboxCapability()
+    connector.id = 'connector'
     seen: list[str] = []
-    agent = make_connecting_probe_agent(seen, capabilities=[first, last])
-    await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1', capability_id='first'))
+    agent = make_connecting_probe_agent(seen, capabilities=[connector])
+    await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1', capability_id='connector'))
     assert seen == ['1']
-    assert first.sandbox_ids == ['fake-1']
-    assert last.sandbox_ids == []
+    assert connector.sandbox_ids == ['fake-1']
 
 
 async def test_sandbox_ref_capability_id_must_be_available():
@@ -897,7 +885,7 @@ async def test_sandbox_ref_capability_id_cannot_activate_deferred_connector():
 
 
 def test_contributes_sandbox_detection():
-    assert contributes_sandbox(ConnectOnlySandboxCapability()) is False  # connecting alone supplies nothing
+    assert contributes_sandbox(ConnectOnlySandboxCapability()) is True
     assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
     assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), ConnectOnlySandboxCapability()])) is True
@@ -1077,6 +1065,33 @@ async def test_acquire_only_capability_leans_on_platform_reaping():
     assert creator.events == ['acquire:created-1']
 
 
+async def test_get_only_capability_supplies_an_already_live_sandbox_without_a_ref():
+    backend = FakeSandbox('always-live')
+    refs: list[SandboxRef | None] = []
+
+    @dataclass
+    class LiveSandboxCapability(AbstractCapability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            refs.append(ref)
+            return backend if ref is None else None
+
+    seen: list[tuple[str, str, SandboxBackend]] = []
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[LiveSandboxCapability()])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        for attribute in ('provider', 'sandbox_id', 'backend'):
+            with pytest.raises(UserError, match='has not connected yet'):
+                getattr(ctx.sandbox, attribute)
+        await ctx.sandbox.run(['true'])
+        seen.append((ctx.sandbox.provider, ctx.sandbox.sandbox_id, ctx.sandbox.backend))
+        return 'ok'
+
+    await agent.run('go')
+    assert seen == [('fake', 'fake-always-live', backend)]
+    assert refs == [None]
+
+
 async def test_lifecycle_capability_also_connects_ref_run_arguments():
     """The same capability serves both jobs: with a ref run argument its `acquire_sandbox` is
     skipped (the caller owns the lifecycle), but its `get_sandbox` still connects.
@@ -1132,21 +1147,23 @@ async def test_capability_sandbox_live_through_after_run():
 
 
 async def test_run_argument_wins_over_capability():
-    cap = SandboxCapability(name='loser')
+    first = SandboxCapability(name='first-loser')
+    second = SandboxCapability(name='second-loser')
     seen: list[str] = []
-    agent = make_probe_agent(seen, capabilities=[cap])
+    agent = make_probe_agent(seen, capabilities=[first, second])
     await agent.run('go', sandbox=FakeSandbox('direct'))
     assert seen == ['direct']
-    assert cap.events == []
+    assert first.events == []
+    assert second.events == []
 
 
-async def test_last_capability_in_chain_wins_and_losers_are_never_set_up():
+async def test_multiple_sandbox_providers_fail_before_acquisition():
     first = SandboxCapability(name='first')
     last = SandboxCapability(name='last')
-    seen: list[str] = []
-    await make_probe_agent(seen, capabilities=[first, last]).run('go')
-    assert seen == ['last']
+    with pytest.raises(UserError, match=r'Exactly one capability may provide sandbox hooks; found 2:'):
+        await make_probe_agent([], capabilities=[first, last]).run('go')
     assert first.events == []
+    assert last.events == []
 
 
 async def test_capability_without_sandbox_does_not_mask_supplier():
@@ -1172,8 +1189,8 @@ async def test_warm_sandbox_shared_across_runs():
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(provider='fake', sandbox_id=warm.sandbox_id)
 
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
-            return warm if ref.sandbox_id == warm.sandbox_id else None
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            return warm if ref is not None and ref.sandbox_id == warm.sandbox_id else None
 
     observed: list[Sandbox] = []
     agent: Agent = Agent(_tool_call_then_text(), capabilities=[WarmSandboxCapability()])
