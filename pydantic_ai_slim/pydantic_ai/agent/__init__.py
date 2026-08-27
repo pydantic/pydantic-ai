@@ -65,6 +65,7 @@ from ..capabilities import (
     ModelSelector,
     ToolSearch as ToolSearchCap,
 )
+from ..capabilities._durable_operation import invoke_durable_operation
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
@@ -1661,6 +1662,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if supplied is not None:
                 sandbox_supplier, sandbox_ref = supplied
                 sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
+
+                async def _destroy_run_sandbox(supplier: AbstractCapability[AgentDepsT], ref: SandboxRef) -> None:
+                    with anyio.CancelScope(shield=True):
+                        await invoke_durable_operation(
+                            supplier,
+                            'destroy_sandbox',
+                            initial_ctx,
+                            supplier.destroy_sandbox,
+                            (initial_ctx, ref),
+                            {},
+                        )
+
+                preparation_stack.push_async_callback(_destroy_run_sandbox, sandbox_supplier, sandbox_ref)
             else:
                 sandbox_facade = Sandbox.wrap(default_sandbox_backend())
             initial_ctx.sandbox = sandbox_facade
@@ -1923,13 +1937,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 return False
 
             stack.push(_record_unwind_error)
-            if sandbox_supplier is not None and sandbox_ref is not None:
-
-                async def _destroy_run_sandbox() -> None:
-                    with anyio.CancelScope(shield=True):
-                        await sandbox_supplier.destroy_sandbox(initial_ctx, sandbox_ref)
-
-                stack.push_async_callback(_destroy_run_sandbox)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
 

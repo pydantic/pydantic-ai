@@ -1564,10 +1564,21 @@ async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
         simple_dbos_agent.run_sync('Hello', capabilities=[SandboxContributingCapability()])
 
 
-async def test_dbos_durability_rejects_a_sandbox_supplying_capability(dbos: DBOS):
-    """DBOS has no durable unit to run the lifecycle in, so a sandbox-supplying capability is
-    rejected from `create_sandbox` inside a workflow, not silently skipped."""
-    supplier = LifecycleSandboxCapability()
+async def test_dbos_durability_runs_a_sandbox_supplying_capability_in_steps(dbos: DBOS):
+    class StepAwareLifecycleSandboxCapability(LifecycleSandboxCapability):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_step: list[bool] = []
+
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            self.in_step.append(DBOS.step_id is not None)
+            return await super().create_sandbox(ctx)
+
+        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            self.in_step.append(DBOS.step_id is not None)
+            await super().destroy_sandbox(ctx, ref)
+
+    supplier = StepAwareLifecycleSandboxCapability()
     agent = Agent(
         TestModel(),
         name='dbos_supplied_sandbox',
@@ -1578,23 +1589,17 @@ async def test_dbos_durability_rejects_a_sandbox_supplying_capability(dbos: DBOS
     async def run_agent() -> str:
         return (await agent.run('Hello')).output
 
-    with workflow_raises(
-        UserError,
-        snapshot(
-            'A capability that supplies a sandbox (overrides `create_sandbox`) is not supported inside a '
-            'DBOS workflow: creating and destroying the sandbox would be workflow code, which '
-            'DBOS replays. Temporal runs the sandbox lifecycle in durable units and does support it; '
-            'on other engines, create the sandbox outside the workflow and pass a `SandboxRef` to the '
-            'run instead.'
-        ),
-    ):
-        await run_agent()
-    assert supplier.events == []
+    assert await run_agent() == snapshot('success (no tool calls)')
+    assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
+    assert supplier.in_step == [True, True]
 
     # Outside a workflow the very same agent runs the supplier's lifecycle normally; no tool
     # touches the sandbox, so the lazily connecting facade never connects.
     assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
-    assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
+    assert supplier.events == snapshot(
+        ['create:created-1', 'teardown:created-1', 'create:created-2', 'teardown:created-2']
+    )
+    assert supplier.in_step == [True, True, False, False]
 
 
 async def test_dbos_durability_rejects_a_per_run_sandbox_supplier(dbos: DBOS):

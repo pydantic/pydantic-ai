@@ -16,6 +16,7 @@ from pydantic_ai._function_schema import (
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities._durable_operation import (
     DurableOperationMarker,
+    invoke_durable_operation,
     operation_name as _operation_name,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
@@ -208,29 +209,14 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                 dispatch_args = args
                 dispatch_kwargs = kwargs
             handler = target.__get__(self, type(self))
-            operations = cast(
-                dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None,
-                ctx.__dict__.get('_durable_operations'),
+            result = await invoke_durable_operation(
+                self,
+                marker.name,
+                ctx,
+                handler,
+                dispatch_args,
+                dispatch_kwargs,
             )
-            operation = (
-                operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
-            )
-            if operation is not None:
-                result = await operation(*dispatch_args, **dispatch_kwargs)
-            else:
-                dispatcher = (
-                    self._get_durable_operation_bindings().get(id(ctx.agent), {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
-                    if ctx.agent is not None
-                    else None
-                )
-                if dispatcher is None:
-                    result = await handler(*dispatch_args, **dispatch_kwargs)
-                else:
-                    result = await dispatcher(
-                        ctx,
-                        cast(tuple[object, ...], dispatch_args),
-                        cast(dict[str, object], dispatch_kwargs),
-                    )
             if request_context is not None and isinstance(result, ModelRequestContextProjection):
                 result.apply(request_context)
                 return cast(R, request_context)

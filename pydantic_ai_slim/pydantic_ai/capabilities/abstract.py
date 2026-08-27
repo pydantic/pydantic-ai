@@ -27,7 +27,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
-from ._durable_operation import tier_one_durable_operation
+from ._durable_operation import DurableOperationBinding, invoke_durable_operation, tier_one_durable_operation
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -87,10 +87,6 @@ WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]
 
 RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
-
-DurableOperationDispatcher: TypeAlias = Callable[
-    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
-]
 
 WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 """Handler type for wrap_output_validate."""
@@ -193,13 +189,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    def _get_durable_operation_bindings(self) -> dict[int, dict[str, DurableOperationDispatcher]]:
+    def _get_durable_operation_bindings(self) -> dict[int, dict[str, DurableOperationBinding]]:
         return cast(
-            dict[int, dict[str, DurableOperationDispatcher]],
+            dict[int, dict[str, DurableOperationBinding]],
             self.__dict__.get('_pydantic_ai_durable_operation_bindings', {}),
         )
 
-    def _set_durable_operation_bindings(self, bindings: dict[int, dict[str, DurableOperationDispatcher]]) -> None:
+    def _set_durable_operation_bindings(self, bindings: dict[int, dict[str, DurableOperationBinding]]) -> None:
         object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
 
     _safe_at_runtime: ClassVar[bool] = False
@@ -1258,7 +1254,14 @@ async def resolve_run_sandbox(
     for leaf in reversed(leaf_capabilities(capability)):
         if leaf.defer_loading is True:
             continue
-        ref = await leaf.create_sandbox(ctx)
+        ref = await invoke_durable_operation(
+            leaf,
+            'create_sandbox',
+            ctx,
+            leaf.create_sandbox,
+            (ctx,),
+            {},
+        )
         if ref is not None:
             return leaf, ref
     return None

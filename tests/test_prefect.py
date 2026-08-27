@@ -2887,7 +2887,21 @@ async def test_prefect_durability_keeps_the_default_unavailable_sandbox() -> Non
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
-    supplier = LifecycleSandboxCapability()
+
+    class TaskAwareLifecycleSandboxCapability(LifecycleSandboxCapability):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_task: list[bool] = []
+
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            self.in_task.append(TaskRunContext.get() is not None)
+            return await super().create_sandbox(ctx)
+
+        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            self.in_task.append(TaskRunContext.get() is not None)
+            await super().destroy_sandbox(ctx, ref)
+
+    supplier = TaskAwareLifecycleSandboxCapability()
     agent = Agent(
         TestModel(),
         name='prefect_supplied_sandbox',
@@ -2900,6 +2914,7 @@ async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuste
 
     assert await run_durable_agent() == snapshot('success (no tool calls)')
     assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
+    assert supplier.in_task == [True, True]
 
     # Outside a flow the very same agent runs the supplier's lifecycle normally; no tool touches
     # the sandbox, so the lazily connecting facade never connects.
@@ -2907,6 +2922,7 @@ async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuste
     assert supplier.events == snapshot(
         ['create:created-1', 'teardown:created-1', 'create:created-2', 'teardown:created-2']
     )
+    assert supplier.in_task == [True, True, False, False]
 
 
 async def test_prefect_durability_rejects_a_per_run_sandbox_supplier() -> None:

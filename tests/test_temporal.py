@@ -7715,7 +7715,25 @@ def _supplier_sandbox_agent(name: str, supplier: CreateOnlySandboxCapability) ->
     )
 
 
-_lifecycle_sandbox_capability = LifecycleSandboxCapability()
+class ActivityAwareLifecycleSandboxCapability(LifecycleSandboxCapability):
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_activity: list[bool] = []
+
+    def reset(self) -> None:
+        super().reset()
+        self.in_activity.clear()
+
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        self.in_activity.append(activity.in_activity())
+        return await super().create_sandbox(ctx)
+
+    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        self.in_activity.append(activity.in_activity())
+        await super().destroy_sandbox(ctx, ref)
+
+
+_lifecycle_sandbox_capability = ActivityAwareLifecycleSandboxCapability()
 _lifecycle_sandbox_capability.id = 'lifecycle-sandbox'
 _lifecycle_durable_agent = _supplier_sandbox_agent('lifecycle_sandbox_durability_agent', _lifecycle_sandbox_capability)
 
@@ -7809,6 +7827,7 @@ async def test_temporal_durability_runs_the_sandbox_lifecycle_in_activities(clie
     assert _lifecycle_sandbox_capability.events == snapshot(
         ['create:created-1', 'connect:created-1', 'teardown:created-1']
     )
+    assert _lifecycle_sandbox_capability.in_activity == [True, True]
     # The command reached the backend the tool activity connected to.
     assert [backend.commands for backend in _lifecycle_sandbox_capability.backends] == [[['echo', 'created-1']]]
 

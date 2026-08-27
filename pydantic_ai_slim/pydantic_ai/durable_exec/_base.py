@@ -27,6 +27,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import ProcessEventStream
+from pydantic_ai.capabilities._durable_operation import DurableOperationBinding
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -493,7 +494,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         **bindings,
                         id(agent): {
                             **bindings.get(id(agent), {}),
-                            operation_name: dispatch_for_run_context,
+                            operation_name: DurableOperationBinding(
+                                dispatch_for_run_context,
+                                lambda: self.in_durable_context,
+                            ),
                         },
                     }
                 )
