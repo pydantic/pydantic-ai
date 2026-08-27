@@ -19,7 +19,6 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
-from ._run_context import dispatch_event_inline
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -518,7 +517,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     @overload
     async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
 
-    async def emit_event(self, event: str | _messages.CustomEvent, data: Any = None, /) -> _messages.CustomEvent:
+    async def emit_event(
+        self, event: str | _messages.CustomEvent | _messages.CapabilityEvent, data: Any = None, /
+    ) -> _messages.CustomEvent:
         """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into this run's event stream.
 
         Pass a name and an optional payload, or a constructed event object -- see
@@ -539,11 +540,19 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
         Returns:
             The event as emitted.
+
+        Raises:
+            UserError: If passed a [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]: those belong
+                to capabilities, and code driving the run is application code.
         """
+        if isinstance(event, _messages.CapabilityEvent):
+            raise exceptions.UserError(
+                'Capability events belong to capabilities and can only be emitted from a capability hook or '
+                'capability-contributed tool. Application code should emit a `CustomEvent`; it can re-emit a '
+                'received capability event as one.'
+            )
         if isinstance(event, str):
             event = _messages.CustomEvent(name=event, data=data)
-        run_context = _agent_graph.build_run_context(self.ctx)
-        await dispatch_event_inline(run_context, event)
         self._graph_run.state.event_stream_buffer.append(event)
         return event
 

@@ -44,10 +44,13 @@ async def dispatch_event_inline(ctx: RunContext[Any], event: _messages.AgentStre
     """Dispatch an inline capability event and mark it for stream deduplication."""
     if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'inline':
         return
+    # Mark before awaiting listeners: awaiting yields the event loop, and a concurrent stream
+    # consumer (e.g. the `run_stream_events` reader task) could drain the buffered event in that
+    # window and dispatch it a second time if it weren't already marked.
+    ctx._inline_dispatched_event_ids.add(id(event))  # pyright: ignore[reportPrivateUsage]
     capability = ctx.root_capability
     if capability is not None and capability.has_on_event:
         await capability.on_event(ctx, event=event)
-    ctx._inline_dispatched_event_ids.add(id(event))  # pyright: ignore[reportPrivateUsage]
 
 
 async def dispatch_event_stream(

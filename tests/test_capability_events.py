@@ -12,7 +12,7 @@ import pytest
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext, UnknownCapabilityEvent
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ToolReturnPart
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
@@ -185,6 +185,20 @@ async def test_app_tool_cannot_emit_capability_event():
 
     with pytest.raises(UserError, match='Capability events belong to capabilities'):
         await _collect(agent)
+
+
+async def test_agent_run_cannot_emit_capability_event():
+    """`AgentRun.emit_event` is a driver-code (application) surface; the guard also holds at runtime."""
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    async with agent.iter('go') as run:
+        with pytest.raises(UserError, match='Capability events belong to capabilities'):
+            await run.emit_event(FileReadEvent(path='tool.txt'))  # pyright: ignore[reportArgumentType,reportCallIssue]
+        async for _ in run:
+            pass
 
 
 async def test_capability_cannot_emit_custom_event():
