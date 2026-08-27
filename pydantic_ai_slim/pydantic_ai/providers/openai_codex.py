@@ -133,7 +133,15 @@ class OpenAICodexCredentials:
                 "Malformed Codex CLI credentials: expected an object with a 'tokens' entry. "
                 'Run `codex login` to regenerate them.'
             ) from None
-        missing = [name for name in ('access_token', 'refresh_token', 'account_id') if not getattr(tokens, name)]
+        missing = [
+            name
+            for name, value in [
+                ('access_token', tokens.access_token),
+                ('refresh_token', tokens.refresh_token),
+                ('account_id', tokens.account_id),
+            ]
+            if not value
+        ]
         if missing:
             raise UserError(
                 f'Malformed Codex CLI credentials: missing {", ".join(missing)}. Run `codex login` to regenerate them.'
@@ -513,12 +521,12 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     @property
     def credentials(self) -> OpenAICodexCredentials:
         """The current credentials (rotated in place by refreshes; persist via the callback)."""
-        if getattr(self, '_credential_source', None) is not None:
+        if self._credential_source is not None:
             raise UserError(
                 '`credentials` is unavailable when a `credential_source` owns the credentials; '
                 'query your source for the current snapshot instead.'
             )
-        if not hasattr(self, '_credentials'):
+        if self._credentials is None:
             raise UserError(
                 '`credentials` is unavailable when the provider wraps an existing `openai_client`, '
                 'which opts out of credential injection entirely.'
@@ -566,6 +574,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         """
         self._on_credentials_refresh = on_credentials_refresh
         self._credential_source = credential_source
+        self._credentials: OpenAICodexCredentials | None = None
         if openai_client is not None:
             assert credentials is None, 'Cannot provide both `openai_client` and `credentials`'
             assert credential_source is None, 'Cannot provide both `openai_client` and `credential_source`'
@@ -666,9 +675,9 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
 
         async def replay() -> OpenAICodexCredentials:
             await self._refresh_for_401(revision_used)
-            return self._credentials
+            return self.credentials
 
-        return self._credentials, replay
+        return self.credentials, replay
 
     @cached_property
     def _refresh_lock(self) -> anyio.Lock:
@@ -719,7 +728,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         assert self._refresh_lock.locked()
         # The provider's own client, so custom transports and proxies apply to refreshes too;
         # the auth flow ignores non-Codex hosts, so this cannot recurse or leak the bearer.
-        new_credentials = await refresh_credentials(self._credentials, http_client=self._http_client)
+        new_credentials = await refresh_credentials(self.credentials, http_client=self._http_client)
         # Atomic replace of the complete set, then bump the revision so concurrent 401s observe it.
         self._credentials = new_credentials
         self._revision += 1
@@ -732,4 +741,4 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 ) from e
 
     def _is_stale(self) -> bool:
-        return _token_is_stale(self._credentials.access_token.get_secret_value())
+        return _token_is_stale(self.credentials.access_token.get_secret_value())
