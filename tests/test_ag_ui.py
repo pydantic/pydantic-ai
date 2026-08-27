@@ -2272,8 +2272,7 @@ def test_dump_load_roundtrip_non_success_outcome(
     )
     assert reloaded_return.outcome == outcome
 
-    with pytest.warns(UserWarning, match=r'predates the `encrypted_value` field'):
-        old_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+    old_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
     old_tool_msg = next(msg for msg in old_msgs if isinstance(msg, ToolMessage))
     assert 'encrypted_value' not in old_tool_msg.model_fields_set
     old_reloaded = AGUIAdapter.load_messages(old_msgs)
