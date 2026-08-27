@@ -12,7 +12,6 @@ import socket
 import zlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from http.cookiejar import CookieJar, DefaultCookiePolicy
 from urllib.parse import urlparse, urlunparse
 
 import httpx2
@@ -579,7 +578,7 @@ async def safe_download(
     5. Validates the hostname against allowed/blocked domain lists
     6. Makes the request to the resolved IP with the Host header set
     7. Manually follows redirects, validating each hop
-    8. Applies server-set cookies against each hop's original hostname rather than the
+    8. Keeps server-set cookies isolated by original hostname rather than the
        resolved-IP URL used for the network request
 
     Args:
@@ -624,8 +623,7 @@ async def safe_download(
     current_url = url
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
-    cookie_policy = DefaultCookiePolicy(strict_ns_domain=DefaultCookiePolicy.DomainStrictNonDomain)
-    cookies = httpx2.Cookies(CookieJar(policy=cookie_policy))
+    cookie_jars: dict[str, httpx2.Cookies] = {}
 
     async with create_async_httpx2_client(timeout=timeout) as client:
         while True:
@@ -663,10 +661,10 @@ async def safe_download(
 
             # Stream the raw response so gzip members can be decoded and validated before
             # httpx2's automatic content decoder discards member boundaries.
-            # Scope cookies to the original hostname while the network request uses
-            # the verified IP. Strict host-only matching prevents cross-host leaks,
-            # while ordinary Domain, Path and Secure rules remain intact.
+            # Each original hostname gets its own jar while the network request uses
+            # the verified IP. The jar still applies ordinary Path and Secure rules.
             cookie_scope_request = httpx2.Request('GET', _build_url(resolved, resolved.hostname))
+            cookies = cookie_jars.setdefault(cookie_scope_request.url.host, httpx2.Cookies())
             _apply_cookie_header(cookies, cookie_scope_request, request_headers)
 
             request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
