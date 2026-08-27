@@ -10,6 +10,8 @@ from pydantic_ai.native_tools import ImageGenerationTool
 
 pytestmark = pytest.mark.anyio
 
+# Keep these focused configuration tests separate because `test_capabilities.py` is at the repository's file-size limit.
+
 
 class TestImageGenerationConfiguration:
     def test_image_gen_init_params_match_builtin_tool(self):
