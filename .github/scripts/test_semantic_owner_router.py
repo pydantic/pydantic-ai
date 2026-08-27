@@ -425,6 +425,18 @@ def test_recent_maintainer_response_takes_ownership_over_topic_routing():
     }
 
 
+def test_issue_event_without_comment_routes_by_topic():
+    client = FakeClient({7: item(7, labels=['MCP'])})
+
+    selected = router.select(client, CORE, '7', None, '')
+
+    assert selected['decision'] == {
+        'number': 7,
+        'owner': 'dsfaccini',
+        'evidence': 'label:MCP',
+    }
+
+
 def test_only_the_latest_maintainer_response_can_take_ownership():
     client = FakeClient({7: item(7, labels=['streaming'])})
     client.timelines[7] = [
