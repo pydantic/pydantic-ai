@@ -134,7 +134,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
 # can be, which is what makes an `id()` key safe -- `id()`s are recycled, so an entry outliving its provider must be
 # rejected rather than handed to whatever was later allocated at the same address.
 _context_in_memory_providers: dict[int, tuple[ref[TracerProvider] | TracerProvider, _ContextInMemorySpanExporter]] = {}
-_context_in_memory_providers_lock = threading.RLock()
+_context_in_memory_providers_lock = threading.Lock()
 
 
 def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecordingError:
@@ -174,8 +174,13 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
 
     # Attaching the processor is inside the lock, not just the cache write: two threads racing here would
     # otherwise each attach one, and only the winner's exporter would be reachable through the cache. The
-    # entry is provisionally published before attaching so that same-thread reentry finds the exporter while
-    # the `RLock` continues to exclude other threads. A failed attachment removes that provisional entry.
+    # loser's would stay attached to the provider, collecting spans under every context id that nothing ever
+    # clears.
+    # The consequence is that `add_span_processor` runs under a non-reentrant lock, so a provider that called
+    # back into `context_subtree()` from it would deadlock. That is accepted rather than fixed: an `RLock`
+    # would let the inner call attach a second processor -- the very leak this lock exists to prevent -- and
+    # moving the attach outside the lock reopens the race. No real provider re-enters; the SDK and logfire's
+    # proxy both just append under their own lock.
     with _context_in_memory_providers_lock:
         if (cached := _context_in_memory_providers.get(cache_id)) is not None:
             cached_provider, cached_exporter = cached
@@ -195,7 +200,7 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
         # The eviction callback releases the entry with its provider. CPython runs it during the provider's
         # deallocation, before that address can be reused, so it can never evict a newer entry keyed on a
         # recycled `id()`. It deliberately does not take the lock: it can fire on a thread already holding
-        # the cache lock, and `dict.pop` needs no lock of its own.
+        # this non-reentrant one, and `dict.pop` needs no lock of its own.
         try:
             stored: ref[TracerProvider] | TracerProvider = ref(
                 provider, lambda _: _context_in_memory_providers.pop(cache_id, None)
@@ -209,14 +214,8 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
             stored = provider
 
         processor = SimpleSpanProcessor(exporter)
-        entry = (stored, exporter)
-        _context_in_memory_providers[cache_id] = entry
-        try:
-            provider.add_span_processor(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-                processor
-            )
-        except BaseException:
-            # The held `RLock` and local provider reference ensure this exact provisional entry is still cached.
-            del _context_in_memory_providers[cache_id]
-            raise
+        # Cached only once the attach has succeeded, so a raising `add_span_processor` cannot leave an entry
+        # claiming an attachment that never happened.
+        provider.add_span_processor(processor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        _context_in_memory_providers[cache_id] = (stored, exporter)
         return exporter
