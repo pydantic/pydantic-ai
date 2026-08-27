@@ -31,7 +31,10 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    Citation,
     CompactionPart,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -56,6 +59,7 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     _utils,
     usage,
 )
@@ -91,6 +95,8 @@ if TYPE_CHECKING:
     )
     from mypy_boto3_bedrock_runtime.type_defs import (
         CachePointBlockTypeDef,
+        CitationOutputTypeDef,
+        CitationsDeltaTypeDef,
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
         ConverseRequestTypeDef,
@@ -99,6 +105,7 @@ if TYPE_CHECKING:
         ConverseStreamResponseTypeDef,
         ConverseTokensRequestTypeDef,
         CountTokensRequestTypeDef,
+        DocumentBlockTypeDef,
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
         InferenceConfigurationTypeDef,
@@ -235,10 +242,24 @@ def _make_video_block(format: str, source: DocumentSourceTypeDef) -> ContentBloc
     return {'video': {'format': format, 'source': source}}
 
 
-def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+def _make_document_block(
+    name: str, format: str, source: DocumentSourceTypeDef, *, include_citations: bool
+) -> ContentBlockUnionTypeDef:
     if format not in _SUPPORTED_DOCUMENT_FORMATS:
         raise UserError(f'Unsupported document format: {format}')
-    return {'document': {'name': name, 'format': format, 'source': source}}
+    document: DocumentBlockTypeDef = {'name': name, 'format': format, 'source': source}
+    if include_citations and format in {'txt', 'pdf'}:
+        document['citations'] = {'enabled': True}
+    return {'document': document}
+
+
+def _make_document_source(data: bytes, media_type: str, *, include_citations: bool) -> DocumentSourceTypeDef:
+    if include_citations and media_type == 'text/plain':
+        try:
+            return {'text': data.decode()}
+        except UnicodeDecodeError as e:
+            raise UserError('Bedrock citations require UTF-8 text documents') from e
+    return {'bytes': data}
 
 
 # Content-block kinds that may appear in a user message alongside a `toolResult` block. Used as the
@@ -395,6 +416,29 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'malformed_tool_use': 'error',
     'tool_use': 'tool_call',
 }
+
+
+def _map_citation_source(
+    citation: CitationOutputTypeDef | CitationsDeltaTypeDef,
+) -> WebCitationSource | DocumentCitationSource:
+    details = dict(citation)
+    title = citation.get('title')
+    excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
+    details.pop('title', None)
+    details.pop('sourceContent', None)
+    location = citation.get('location')
+    web = location.get('web') if isinstance(location, Mapping) else None
+    if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
+        details.pop('location', None)
+        return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
+    return DocumentCitationSource(title=title, excerpts=excerpts, provider_details=details or None)
+
+
+def _map_citations(
+    citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], anchor: ContentCitationAnchor | None
+) -> list[Citation] | None:
+    sources = [_map_citation_source(citation) for citation in citations]
+    return [Citation(sources=sources, anchor=anchor)] if sources else None
 
 
 def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
@@ -864,6 +908,11 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
+                elif citations_content := item.get('citationsContent'):
+                    text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
+                    anchor = ContentCitationAnchor(start=0, end=len(text)) if text else None
+                    citations = _map_citations(citations_content.get('citations', []), anchor)
+                    items.append(TextPart(content=text, citations=citations))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
@@ -1187,6 +1236,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             await self._map_user_prompt(
                                 part,
                                 document_count,
+                                include_citations=settings.get('include_citations', False),
                                 supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
                                 prior_messages=bedrock_messages,
                             )
@@ -1236,12 +1286,21 @@ class BedrockConverseModel(Model[BaseClient]):
                                     raise UserError('Audio files are not supported for Bedrock UploadedFile')
                                 else:
                                     tool_result_content.append(
-                                        _make_document_block(f'Document {next(document_count)}', uf_format, uf_source)
+                                        _make_document_block(
+                                            f'Document {next(document_count)}',
+                                            uf_format,
+                                            uf_source,
+                                            include_citations=False,
+                                        )
                                     )
                             elif is_multi_modal_content(item):
                                 if isinstance(item, AudioUrl):
                                     raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
-                                file_block = await self._map_file_to_content_block(item, document_count)  # pyright: ignore[reportArgumentType]
+                                file_block = await self._map_file_to_content_block(
+                                    cast(ImageUrl | DocumentUrl | VideoUrl | BinaryContent, item),
+                                    document_count,
+                                    include_citations=False,
+                                )
                                 kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
                                 if kind in profile.get(
                                     'bedrock_supported_media_kinds_in_tool_returns', frozenset({'image'})
@@ -1511,18 +1570,24 @@ class BedrockConverseModel(Model[BaseClient]):
     async def _map_file_to_content_block(
         file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
         document_count: Iterator[int],
+        *,
+        include_citations: bool = False,
     ) -> ContentBlockUnionTypeDef:
         """Map a multimodal file directly to a Bedrock content block."""
         source: DocumentSourceTypeDef
 
         if isinstance(file, BinaryContent):
-            source = {'bytes': file.data}
             if file.is_image:
-                return _make_image_block(file.format, source)
+                return _make_image_block(file.format, {'bytes': file.data})
             elif file.is_document:
-                return _make_document_block(f'Document {next(document_count)}', file.format, source)
+                return _make_document_block(
+                    f'Document {next(document_count)}',
+                    file.format,
+                    _make_document_source(file.data, file.media_type, include_citations=include_citations),
+                    include_citations=include_citations,
+                )
             elif file.is_video:
-                return _make_video_block(file.format, source)
+                return _make_video_block(file.format, {'bytes': file.data})
             else:
                 raise NotImplementedError(f'Unsupported binary content type for Bedrock: {file.media_type}')
         else:
@@ -1530,7 +1595,11 @@ class BedrockConverseModel(Model[BaseClient]):
                 source = _parse_s3_source(file.url)
             else:
                 downloaded = await download_item(file, data_format='bytes', type_format='extension')
-                source = {'bytes': downloaded['data']}
+                source = (
+                    _make_document_source(downloaded['data'], file.media_type, include_citations=include_citations)
+                    if isinstance(file, DocumentUrl)
+                    else {'bytes': downloaded['data']}
+                )
 
             try:
                 format = file.format
@@ -1540,7 +1609,9 @@ class BedrockConverseModel(Model[BaseClient]):
             if isinstance(file, ImageUrl):
                 return _make_image_block(format, source)
             elif isinstance(file, DocumentUrl):
-                return _make_document_block(f'Document {next(document_count)}', format, source)
+                return _make_document_block(
+                    f'Document {next(document_count)}', format, source, include_citations=include_citations
+                )
             else:
                 return _make_video_block(format, source)
 
@@ -1549,6 +1620,7 @@ class BedrockConverseModel(Model[BaseClient]):
         part: UserPromptPart,
         document_count: Iterator[int],
         *,
+        include_citations: bool = False,
         supports_prompt_caching: bool,
         prior_messages: list[MessageUnionTypeDef],
     ) -> list[MessageUnionTypeDef]:
@@ -1561,7 +1633,11 @@ class BedrockConverseModel(Model[BaseClient]):
                     text = item if isinstance(item, str) else item.content
                     content.append({'text': text})
                 elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
-                    content.append(await BedrockConverseModel._map_file_to_content_block(item, document_count))
+                    content.append(
+                        await BedrockConverseModel._map_file_to_content_block(
+                            item, document_count, include_citations=include_citations
+                        )
+                    )
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
                 elif isinstance(item, UploadedFile):
@@ -1584,7 +1660,11 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif item.media_type.startswith('audio/'):
                         raise UserError('Audio files are not supported for Bedrock UploadedFile')
                     else:
-                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
+                        content.append(
+                            _make_document_block(
+                                f'Document {next(document_count)}', format, source, include_citations=include_citations
+                            )
+                        )
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
@@ -1730,6 +1810,7 @@ class BedrockStreamedResponse(StreamedResponse):
             # Bedrock has deltas for built-in tool returns, which aren't supported by parts manager.
             # We accumulate the deltas here and yield the complete return part once the content block ends
             builtin_tool_returns: dict[int, NativeToolReturnPart] = {}
+            citations: dict[int, list[CitationsDeltaTypeDef]] = {}
 
             async for chunk in _AsyncIteratorWrapper(self._event_stream):
                 match chunk:
@@ -1819,6 +1900,8 @@ class BedrockStreamedResponse(StreamedResponse):
                                 ),
                             ):
                                 yield event
+                        if citation := delta.get('citation'):
+                            citations.setdefault(index, []).append(citation)
                         if 'toolUse' in delta:
                             tool_use = delta['toolUse']
                             maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -1844,6 +1927,19 @@ class BedrockStreamedResponse(StreamedResponse):
 
                     case {'contentBlockStop': content_block_stop}:
                         index = content_block_stop['contentBlockIndex']
+                        if block_citations := citations.pop(index, None):
+                            part = self._parts_manager.get_part_by_vendor_id(index)
+                            anchor = (
+                                ContentCitationAnchor(start=0, end=len(part.content))
+                                if isinstance(part, TextPart) and part.content
+                                else None
+                            )
+                            for event in self._parts_manager.handle_text_delta(
+                                vendor_part_id=index,
+                                content='',
+                                citations=_map_citations(block_citations, anchor),
+                            ):
+                                yield event
                         if return_part := builtin_tool_returns.get(index):
                             # Emit the complete built-in tool return only once when the block closes.
                             yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
