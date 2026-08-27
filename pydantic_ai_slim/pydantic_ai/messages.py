@@ -4352,6 +4352,12 @@ deserializable in processes that have imported the module defining it; see
 """
 
 
+def _is_redefinition(existing: type, cls: type) -> bool:
+    # The same class being defined again -- a re-run notebook cell, `importlib.reload`, or a
+    # re-executed example -- replaces its registration; only genuinely distinct classes conflict.
+    return existing.__module__ == cls.__module__ and existing.__qualname__ == cls.__qualname__
+
+
 @dataclass(repr=False, kw_only=True)
 class CustomEvent:
     """An application-defined event emitted into the agent's event stream.
@@ -4427,7 +4433,7 @@ class CustomEvent:
         if not _register:
             return
         event_name = name or to_snake(cls.__name__.removesuffix('Event'))
-        if (existing := CUSTOM_EVENT_TYPES.get(event_name)) is not None:
+        if (existing := CUSTOM_EVENT_TYPES.get(event_name)) is not None and not _is_redefinition(existing, cls):
             raise TypeError(
                 f'Duplicate custom event name {event_name!r}: already registered by {existing.__qualname__}. '
                 f"Pass an explicit name, e.g. `class {cls.__name__}(CustomEvent, name='...')`."

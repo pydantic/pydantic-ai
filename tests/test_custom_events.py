@@ -304,7 +304,7 @@ async def test_agent_run_emit_event_shorthand():
 
 
 @dataclass(kw_only=True)
-class SyncProgressEvent(CustomEvent):
+class UploadProgressEvent(CustomEvent):
     done: int
     total: int
 
@@ -323,12 +323,12 @@ def test_custom_event_requires_name():
 def test_typed_subclass_round_trip():
     """A typed subclass round-trips through the union back to its own class, payload as its own fields."""
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
-    event = SyncProgressEvent(done=3, total=9)
-    assert event.name == 'sync_progress'
+    event = UploadProgressEvent(done=3, total=9)
+    assert event.name == 'upload_progress'
     dumped = adapter.dump_python(event)
     assert dumped == snapshot(
         {
-            'name': 'sync_progress',
+            'name': 'upload_progress',
             'data': None,
             'tool_call_id': None,
             'tool_name': None,
@@ -338,7 +338,7 @@ def test_typed_subclass_round_trip():
         }
     )
     revalidated = adapter.validate_python(dumped)
-    assert isinstance(revalidated, SyncProgressEvent)
+    assert isinstance(revalidated, UploadProgressEvent)
     assert revalidated == event
 
 
@@ -350,17 +350,34 @@ def test_typed_subclass_explicit_name():
 
 def test_typed_subclass_to_payload():
     """`to_payload` returns the subclass's own fields; the base class returns `data`."""
-    assert SyncProgressEvent(done=3, total=9).to_payload() == {'done': 3, 'total': 9}
+    assert UploadProgressEvent(done=3, total=9).to_payload() == {'done': 3, 'total': 9}
     assert CustomEvent(name='progress', data={'pct': 50}).to_payload() == {'pct': 50}
 
 
 def test_duplicate_event_name_rejected():
     """Registering a second event class under an existing name fails at class definition."""
-    with pytest.raises(TypeError, match="Duplicate custom event name 'sync_progress'"):
+    with pytest.raises(TypeError, match="Duplicate custom event name 'upload_progress'"):
 
         @dataclass(kw_only=True)
-        class _ConflictingEvent(CustomEvent, name='sync_progress'):  # pyright: ignore[reportUnusedClass]
+        class _ConflictingEvent(CustomEvent, name='upload_progress'):  # pyright: ignore[reportUnusedClass]
             pass
+
+
+def test_redefined_event_class_replaces_registration():
+    """Re-executing the same class definition (notebook cell re-run, reload) replaces, not errors."""
+
+    def define() -> CustomEvent:
+        @dataclass(kw_only=True)
+        class RedefinedEvent(CustomEvent):
+            value: int
+
+        return RedefinedEvent(value=1)
+
+    first, second = define(), define()
+    assert type(first) is not type(second)
+    assert second.name == 'redefined'
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    assert type(adapter.validate_python({'event_kind': 'custom', 'name': 'redefined', 'value': 1})) is type(second)
 
 
 async def test_typed_subclass_emitted_from_tool():
@@ -369,12 +386,12 @@ async def test_typed_subclass_emitted_from_tool():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(SyncProgressEvent(done=1, total=2))
+        await ctx.emit_event(UploadProgressEvent(done=1, total=2))
         return 'ok'
 
     events = await _collect_events(agent)
-    custom = [event for event in events if isinstance(event, SyncProgressEvent)]
-    assert custom == snapshot([SyncProgressEvent(done=1, total=2, tool_call_id='call_1', tool_name='progress')])
+    custom = [event for event in events if isinstance(event, UploadProgressEvent)]
+    assert custom == snapshot([UploadProgressEvent(done=1, total=2, tool_call_id='call_1', tool_name='progress')])
 
 
 def test_unknown_event_name_with_payload_degrades():
