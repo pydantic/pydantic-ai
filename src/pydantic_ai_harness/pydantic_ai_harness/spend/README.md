@@ -104,7 +104,10 @@ SpendLimits(budgets=[Budget(usd=Decimal('100'))], on_spend=show)
 
 `status()` reads the same numbers without a run, which is what a cost display in a UI wants:
 
-```python
+```python {names="defined"}
+from pydantic_ai_harness import SpendLimits
+
+
 async def report(limits: SpendLimits[None]) -> None:
     for status in await limits.status(scope='acme'):
         print(status.budget.name, status.spent.usd, status.exhausted)
@@ -120,7 +123,7 @@ Set `expose_tools=True` to give the agent a `get_spend` tool. It is off by defau
 
 The seam that runs before a request rather than after a response is `before_model_request`. A small capability of your own can read `status(ctx)` there and hold the run until someone decides:
 
-```python
+```python {names="defined"}
 import asyncio
 from dataclasses import dataclass
 from decimal import Decimal
@@ -158,7 +161,7 @@ For a ceiling that expands rather than stops, `budgets` is read fresh on every r
 
 A refusal can land mid-run, after tool calls have already run and been paid for. Re-running the original prompt would repeat that work and any side effects it had, so resume from what the refused run produced instead: `capture_run_messages` holds the partial history, and a run given that history and no new prompt continues from the request that was refused.
 
-```python
+```python {names="defined"}
 import dataclasses
 from decimal import Decimal
 
@@ -274,11 +277,18 @@ What bounds that is settled under "Sharing a counter across processes" above: ho
 
 Refuse the workflow **admission** before starting it instead. That is why `exhausted()` works without a `RunContext`:
 
-```python
-async def start_if_funded(limits: SpendLimits[None], tenant_id: str) -> None:
+```python {names="defined"}
+from collections.abc import Awaitable, Callable
+
+from pydantic_ai_harness import SpendLimits
+
+
+async def start_if_funded(
+    limits: SpendLimits[None], tenant_id: str, start_workflow: Callable[[], Awaitable[object]]
+) -> None:
     if await limits.exhausted(scope=tenant_id):
         raise RuntimeError('daily budget exhausted')
-    await workflow_handle.execute(...)
+    await start_workflow()
 ```
 
 `exhausted` rather than `any(s.exhausted for s in await limits.status(...))`: `status` omits
