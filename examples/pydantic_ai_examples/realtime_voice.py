@@ -175,9 +175,8 @@ async def handle_event(
 
 async def stream_mic(session: RealtimeSession, mic: Any) -> None:
     """Read microphone blocks in a worker thread and forward them to the session."""
-    read = partial(mic.read, BLOCK_SIZE)
     while True:
-        data, _overflowed = await anyio.to_thread.run_sync(read)
+        data, _overflowed = await anyio.to_thread.run_sync(mic.read, BLOCK_SIZE)
         await session.send_audio(bytes(data))
 
 
