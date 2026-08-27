@@ -1272,6 +1272,13 @@ RUNTIME_TOOLSET_REJECTION_CASES = [
         ),
     ),
     RuntimeToolsetRejectionCase(
+        id='anonymous-mcp',
+        toolsets=(MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
+        expected=snapshot(
+            "MCPToolset cannot be passed to `run(toolsets=...)` at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+        ),
+    ),
+    RuntimeToolsetRejectionCase(
         id='mixed-custom-and-anonymous',
         toolsets=(CustomLabelFunctionToolset(id='named'), FunctionToolset()),
         expected=snapshot(
