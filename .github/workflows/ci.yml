@@ -585,18 +585,21 @@ jobs:
 
       - run: uv sync --group dev
       - run: uv run coverage combine
-      - run: uv run coverage report
-
-      - run: uv run strict-no-cover
+      - name: generate coverage reports
+        # UV_NO_SYNC rather than `--no-sync` flags: strict-no-cover spawns its own nested
+        # `uv run`, and a sync there could modify the venv under the concurrent reader.
         env:
-          COVERAGE_FILE: .coverage/.coverage
+          UV_NO_SYNC: '1'
+        run: |
+          uv run coverage report &
+          report_pid=$!
+          COVERAGE_FILE=.coverage/.coverage uv run strict-no-cover &
+          strict_pid=$!
 
-      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-html
-          path: htmlcov
-          include-hidden-files: true
+          status=0
+          wait "$report_pid" || status=1
+          wait "$strict_pid" || status=1
+          exit "$status"
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
