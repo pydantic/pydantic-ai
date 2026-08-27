@@ -602,6 +602,38 @@ def test_narrow_exclusive_bounds_tool_args():
     assert calls == snapshot([{'temperature': 0.0}])
 
 
+def test_json_schema_number_fallbacks():
+    """Float fallbacks respect overlapping bounds and representable precision."""
+
+    class TestModel(BaseModel):
+        overlapping: Annotated[float, Field(ge=0, gt=0.9, lt=1)]
+        precision_limited: Annotated[float, Gt(2**53), Le(2**53 + 2)]
+        subnormal: Annotated[float, Gt(0), Le(5e-324)]
+
+    json_schema = TestModel.model_json_schema()
+    data = _JsonSchemaTestData(json_schema).generate()
+    assert data == snapshot({'overlapping': 0.95, 'precision_limited': 9007199254740994.0, 'subnormal': 5e-324})
+    TestModel.model_validate(data)
+
+    assert _JsonSchemaTestData({'type': 'number', 'exclusiveMinimum': 2**53}).generate() == snapshot(9007199254740994.0)
+    assert _JsonSchemaTestData({'type': 'number', 'exclusiveMaximum': -(2**53)}).generate() == snapshot(
+        -9007199254740994.0
+    )
+    assert _JsonSchemaTestData(
+        {'type': 'number', 'minimum': -(10**400), 'exclusiveMinimum': -1, 'maximum': 1}
+    ).generate() == snapshot(0.0)
+    assert _JsonSchemaTestData({'type': 'number', 'minimum': -(10**400), 'maximum': 1.5}).generate() == snapshot(0.0)
+
+    legacy_candidate = _JsonSchemaTestData(
+        {'type': 'number', 'exclusiveMinimum': 0.1, 'exclusiveMaximum': 1}, seed=2
+    ).generate()
+    assert legacy_candidate == pytest.approx(0.9)
+
+    no_representable_float = {'type': 'number', 'exclusiveMinimum': 0, 'exclusiveMaximum': 5e-324}
+    with pytest.raises(ValueError, match='No finite float satisfies'):
+        _JsonSchemaTestData(no_representable_float).generate()
+
+
 def test_chars_wrap():
     class TestModel(BaseModel):
         a: Annotated[set[str], MinLen(4)]
