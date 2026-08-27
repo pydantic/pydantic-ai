@@ -121,6 +121,14 @@ class TestImageGenerationCapability:
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
+    def test_image_generation_resolves_portable_override(self):
+        cap = ImageGeneration(native=ImageGenerationTool(size='1024x1024'), output_format='jpeg')
+
+        resolved_native = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+
+        assert resolved_native.size == '1024x1024'
+        assert resolved_native.output_format == 'jpeg'
+
     def test_image_generation_callable_native_with_fallback(self):
         """When native is a callable, the fallback local tool still gets created."""
         from pydantic_ai.tools import Tool
