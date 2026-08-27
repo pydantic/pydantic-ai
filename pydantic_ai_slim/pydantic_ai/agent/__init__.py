@@ -50,7 +50,7 @@ from .._agent_graph import (
     capture_run_messages,
 )
 from .._cancel import CancellationToken, RunCancellation, take_run_binding
-from .._deferred_capabilities import parse_loaded_capabilities
+from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import validate_from_spec_args
@@ -615,7 +615,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
-            capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/overview/) to configure the agent with,
+            capabilities: Optional list of [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) to configure the agent with,
                 including functions which take a run context and return a capability.
                 See [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] for more information.
                 Custom capabilities can be created by subclassing
@@ -1294,7 +1294,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1307,6 +1307,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
         # run would otherwise consume it and attach the outer handle to the wrong run.
         binding = take_run_binding()
+
+        # The controller likewise exists before any user-supplied setup code, so `RunContext.cancel()`
+        # from a capability/toolset `for_run()` hook records the request instead of raising. Delivery
+        # still waits for `bind()` below: setup hooks are never interrupted, and a request recorded
+        # here ends the run at the first await after binding, before any model request (#7386).
+        cancellation = binding.cancellation if binding is not None else RunCancellation()
 
         # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
         # dict overrides only the named budget for this run (riding `ToolManager.default_max_retries`).
@@ -1561,6 +1567,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
+            _cancellation=cancellation,
         )
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1656,8 +1663,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The deferred capabilities the model has already loaded in prior steps; the graph
         # refreshes this from history before each model request, so the seed only matters
         # for pre-first-step access. Non-deferred capabilities are folded in by the
-        # `RunContext.available_capability_ids` property.
-        loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
+        # `RunContext.active_capability_ids` property.
+        loaded_capability_ids = (
+            registered_loaded_capability_ids(message_history, capabilities_dict.keys())
+            if message_history
+            else set[str]()
+        )
         discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
         run_model_contribution = None if model_is_explicit else run_capability.get_model()
@@ -1751,7 +1762,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
-            cancellation=binding.cancellation if binding is not None else RunCancellation(),
+            cancellation=cancellation,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -2501,7 +2512,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -2639,7 +2651,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -3201,6 +3214,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
         run_id = _agent_graph.resolve_run_id(run_id, message_history)
         max_tool_retries = self._resolve_tool_retries()
+        cancellation = RunCancellation() if run_lifecycle else None
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
@@ -3363,14 +3377,55 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         async def _finalize_session_result(result: AgentRunResult[Any]) -> None:
             assert lifecycle_state is not None
+            if cancellation is not None and cancellation.cancel_requested:
+                raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
             if lifecycle_state.session is None:
                 lifecycle_state.short_result = result
             else:
                 lifecycle_state.session._result = result  # pyright: ignore[reportPrivateUsage]
 
+        @asynccontextmanager
+        async def _translate_cancellation() -> AsyncGenerator[None]:
+            assert cancellation is not None and lifecycle_state is not None
+
+            def _run_cancelled(message: str) -> exceptions.RunCancelled:
+                assert lifecycle_state is not None
+                session = lifecycle_state.session
+                return exceptions.RunCancelled(
+                    message,
+                    messages=session.all_messages() if session is not None else message_history or (),
+                    new_message_index=len(message_history or ()),
+                    usage=run_context.usage,
+                    metadata=run_context.metadata,
+                    run_id=run_id,
+                    conversation_id=conversation_id,
+                )
+
+            try:
+                yield
+            except exceptions.RunCancelled as exc:
+                # Match classic runs: a nested run carries its own history, but this session's
+                # caller must receive the outer conversation it can actually resume.
+                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
+            except asyncio.CancelledError as exc:
+                cancelled = _run_cancelled('The agent run was cancelled.')
+                if cancellation.resolve():
+                    raise cancelled from exc
+                cancelled._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
+            finally:
+                cancellation.release_issued()
+
         yielded = False
         async with AsyncExitStack() as session_stack:
             if lifecycle_state is not None:
+                assert cancellation is not None
+                # Setup-time `for_run` callbacks have the same context contract as a classic run:
+                # cancellation becomes available only once the run lifecycle has an owning task.
+                run_context._cancellation = cancellation  # pyright: ignore[reportPrivateUsage]
+                await session_stack.enter_async_context(_translate_cancellation())
+                cancellation.bind()
+                session_stack.callback(cancellation.finish)
                 lifecycle = await session_stack.enter_async_context(
                     _run_lifecycle_hooks(
                         run_capability,
@@ -3808,6 +3863,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
+        allowed_hosts: Sequence[str] | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -3840,6 +3896,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 - A Path instance: Reads from the local file
                 - A URL string (http:// or https://): Fetches from the URL
                 - A file path string: Reads from the local file
+            allowed_hosts: Additional hostnames to answer to, e.g. `['ui.example.com']` or
+                `['*.example.com']` (subdomains only, so list the apex separately if you serve it).
+                IP addresses and `localhost` are always allowed; any other `Host` header is refused
+                with a `421`, so that a website cannot reach the UI on your machine by pointing a
+                hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host,
+                only if something in front of the app already authenticates requests.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -3870,6 +3932,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,
+            allowed_hosts=allowed_hosts,
         )
 
 

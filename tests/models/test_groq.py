@@ -14,7 +14,6 @@ from unittest.mock import patch
 import httpx
 import pytest
 from pydantic import BaseModel
-from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -61,8 +60,6 @@ with try_import() as imports_successful:
     from groq.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
         ChoiceDelta,
-        ChoiceDeltaToolCall,
-        ChoiceDeltaToolCallFunction,
     )
     from groq.types.chat.chat_completion_message import ChatCompletionMessage
     from groq.types.chat.chat_completion_message_tool_call import Function
@@ -508,127 +505,6 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             ['hello ', 'hello world', 'hello world.', 'hello world.']
-        )
-        assert result.is_complete
-
-
-def struc_chunk(
-    tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
-) -> chat.ChatCompletionChunk:
-    return chunk(
-        [
-            ChoiceDelta(
-                tool_calls=[
-                    ChoiceDeltaToolCall(
-                        index=0, function=ChoiceDeltaToolCallFunction(name=tool_name, arguments=tool_arguments)
-                    )
-                ]
-            ),
-        ],
-        finish_reason=finish_reason,
-    )
-
-
-class MyTypedDict(TypedDict, total=False):
-    first: str
-    second: str
-
-
-async def test_stream_structured(allow_model_requests: None):
-    stream = (
-        chunk([ChoiceDelta()]),
-        chunk([ChoiceDelta(tool_calls=[])]),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk('final_result', None),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        chunk([]),
-    )
-    mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
-
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='final_result',
-                        args='{"first": "One", "second": "Two"}',
-                        tool_call_id=IsStr(),
-                    )
-                ],
-                usage=RequestUsage(cost=Decimal('0.00')),
-                model_name='llama-3.3-70b-versatile',
-                timestamp=IsDatetime(),
-                provider_name='groq',
-                provider_url='https://api.groq.com',
-                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
-                provider_response_id='x',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='final_result',
-                        content='Final result processed.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream = (
-        struc_chunk('final_result', None),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        struc_chunk(None, None, finish_reason='stop'),
-    )
-    mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
         )
         assert result.is_complete
 

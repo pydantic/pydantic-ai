@@ -265,7 +265,7 @@ class CohereModel(Model[AsyncClientV2]):
                 elif content.type == 'thinking':  # pragma: no branch
                     parts.append(ThinkingPart(content=content.thinking))
         for c in response.message.tool_calls or []:
-            if c.function and c.function.name and c.function.arguments:  # pragma: no branch
+            if c.function and c.function.name:
                 parts.append(
                     ToolCallPart(
                         tool_name=c.function.name,

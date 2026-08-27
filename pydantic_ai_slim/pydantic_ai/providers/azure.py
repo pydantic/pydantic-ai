@@ -4,7 +4,6 @@ import os
 from typing import TYPE_CHECKING, overload
 from urllib.parse import urlparse
 
-import httpx
 from typing_extensions import Self
 
 from pydantic_ai import ModelProfile
@@ -30,7 +29,10 @@ except ImportError as _import_error:
 else:
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 try:
     from openai.lib.azure import API_KEY_SENTINEL as _api_key_sentinel
@@ -165,7 +167,7 @@ class AzureProvider(_OpenAICompatibleProvider):
         api_version: str | None = None,
         api_key: str | None = None,
         entra_authenticated: bool = False,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> Self:
         """Create an Azure provider for the GA realtime API.
 
@@ -186,7 +188,7 @@ class AzureProvider(_OpenAICompatibleProvider):
                 The key is then neither required nor sent, and `api_key` raises its usual explanatory
                 error if anything asks — the same state a provider built from an Entra-authenticated
                 `openai_client` lands in.
-            http_client: An existing `httpx.AsyncClient` used to construct the provider client.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` used to construct the provider client.
         """
         if entra_authenticated and not api_key and not os.getenv('AZURE_OPENAI_API_KEY'):
             # The SDK's own placeholder for "Entra-authenticated, no key", which `__init__` normalizes
@@ -218,7 +220,7 @@ class AzureProvider(_OpenAICompatibleProvider):
         voice_live_endpoint: str | None = None,
         voice_live_api_key: str | None = None,
         voice_live_api_version: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -231,7 +233,7 @@ class AzureProvider(_OpenAICompatibleProvider):
         voice_live_api_key: str | None = None,
         voice_live_api_version: str | None = None,
         openai_client: AsyncAzureOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new Azure provider.
 
@@ -258,7 +260,7 @@ class AzureProvider(_OpenAICompatibleProvider):
             openai_client: An existing
                 [`AsyncAzureOpenAI`](https://github.com/openai/openai-python#microsoft-azure-openai)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert azure_endpoint is None, 'Cannot provide both `openai_client` and `azure_endpoint`'
@@ -337,7 +339,7 @@ class AzureProvider(_OpenAICompatibleProvider):
                 self._client = AsyncOpenAI(
                     base_url=v1_base_url,
                     api_key=api_key,
-                    http_client=http_client,
+                    http_client=http_client,  # pyright: ignore[reportArgumentType]
                 )
                 self._base_url = str(self._client.base_url)
             else:
@@ -360,7 +362,7 @@ class AzureProvider(_OpenAICompatibleProvider):
                     azure_endpoint=azure_endpoint,
                     api_key=api_key,
                     api_version=api_version,
-                    http_client=http_client,
+                    http_client=http_client,  # pyright: ignore[reportArgumentType]
                 )
                 self._base_url = str(self._client.base_url)
 

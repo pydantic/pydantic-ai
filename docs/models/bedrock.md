@@ -90,6 +90,8 @@ model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
+When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
+
 ### Custom HTTP headers
 
 Use [`ModelSettings.extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] to add HTTP headers to
@@ -440,4 +442,4 @@ agent = Agent(model)
 
 Mantle models are served by Pydantic AI's OpenAI model classes — [`BedrockMantleResponsesModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleResponsesModel] and [`BedrockMantleChatModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleChatModel] — so they accept the same settings as the direct [OpenAI](openai.md) models ([`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings] and [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings]).
 
-The Converse-route features above — [prompt caching](#prompt-caching), [service tier](#service-tier), and [application inference profiles](#using-aws-application-inference-profiles) — are specific to the Converse API and don't apply to the Mantle route.
+The Converse-route features above — [prompt caching](#prompt-caching), [service tier](#service-tier), and [application inference profiles](#using-aws-application-inference-profiles) — are specific to the Converse API and don't apply to the Mantle route. In particular [`bedrock_service_tier`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_service_tier] is a Converse setting; the Mantle models do forward the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] as the OpenAI parameter of the same name, since they are served by the OpenAI model classes.

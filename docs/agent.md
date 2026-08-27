@@ -644,7 +644,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
     | Driving the graph yourself via [`agent.iter()`][pydantic_ai.agent.Agent.iter] | [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
     | The environment cancelled you (`asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], shutdown) | *(you don't call anything)* | [`CancelledError`][asyncio.CancelledError] |
 
-    The first four are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has the two shapes, covered next.
+    The first four are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has two kinds, covered next.
 
 When the surrounding environment cancels the run -- for example through `asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], or application shutdown -- the [`CancelledError`][asyncio.CancelledError] remains unchanged. [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] provides the attached run state:
 
@@ -733,6 +733,9 @@ async def main():
         print(f'Cancelled after {len(exc.all_messages())} messages')
         #> Cancelled after 2 messages
 ```
+
+!!! note "Cancellation is cooperative"
+    Pydantic AI requests cancellation of in-flight work, discards results that arrive after cancellation, and closes the resources it owns. Async tools receive `CancelledError` at a suspension point. A synchronous (`def`) tool runs in a worker thread, which Python cannot safely terminate; depending on the run mode, cancellation may wait for the worker or let it finish in the background. Either way, its result is discarded, but any side effects are not rolled back. Cancelling provider-side model generation is best-effort and depends on the provider.
 
 You may not control which way cancellation will arrive: a caller wraps `agent.run()` in a task for a stop gesture, while a tool -- perhaps from another library -- calls `ctx.cancel()` internally. Handle each on its own terms -- consume the first-party `RunCancelled`, but let an external `CancelledError` keep propagating so timeouts and task groups still tear down correctly, capturing its state first if you need it:
 
@@ -876,7 +879,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    Exceeded the output_tokens_limit of 10 (output_tokens=32). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    Exceeded the output_tokens_limit of 10 (output_tokens=32). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -916,7 +919,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    The next request would exceed the request_limit of 3. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    The next request would exceed the request_limit of 3. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -944,7 +947,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -971,7 +974,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens=62). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens=62). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -996,7 +999,7 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    Exceeded the `cost_limit` of 0.0001 (`usage.cost`=Decimal('0.000201')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    Exceeded the `cost_limit` of 0.0001 (`usage.cost`=Decimal('0.000201')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
@@ -1554,7 +1557,7 @@ with capture_run_messages() as messages:  # (2)!
         print('An error occurred:', e)
         """
         An error occurred:
-        Tool 'calc_volume' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries
+        Tool 'calc_volume' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries
         """
         print('cause:', repr(e.__cause__))
         #> cause: ModelRetry('Please try again.')

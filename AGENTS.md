@@ -1,4 +1,4 @@
-Welcome to the repository for [Pydantic AI](https://ai.pydantic.dev/), an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind [Pydantic Validation](https://docs.pydantic.dev/) and [Pydantic Logfire](https://docs.pydantic.dev/logfire/).
+Welcome to the repository for [Pydantic AI](https://pydantic.dev/docs/ai/), an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind [Pydantic Validation](https://docs.pydantic.dev/) and [Pydantic Logfire](https://docs.pydantic.dev/logfire/).
 
 # Your primary responsibility is to the project and its users
 
