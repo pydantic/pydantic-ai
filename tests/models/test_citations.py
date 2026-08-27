@@ -689,7 +689,7 @@ async def test_cross_provider_citation_replay_google_to_bedrock(
     request_capture: RequestCapture,
 ) -> None:
     """A persisted Gemini grounding citation falls back to unchanged text in Bedrock history."""
-    if not google_available() or not bedrock_available():  # pragma: no cover
+    if not google_available() or not bedrock_available():
         pytest.skip('google and bedrock dependencies are required')
 
     request_capture.client.timeout = httpx2.Timeout(30)
@@ -736,7 +736,7 @@ async def test_cross_provider_document_citation_replay_bedrock_to_anthropic(
     request_capture: RequestCapture,
 ) -> None:
     """A Bedrock text-document citation remains bound to the same document when replayed to Anthropic."""
-    if not bedrock_available() or not anthropic_available():  # pragma: no cover
+    if not bedrock_available() or not anthropic_available():
         pytest.skip('bedrock and anthropic dependencies are required')
 
     document = b'The return window is thirty days from purchase.'
@@ -784,7 +784,7 @@ async def test_cross_provider_document_citation_replay_anthropic_to_bedrock(
     request_capture: RequestCapture,
 ) -> None:
     """An Anthropic text-document citation remains bound to the same document when replayed to Bedrock."""
-    if not anthropic_available() or not bedrock_available():  # pragma: no cover
+    if not anthropic_available() or not bedrock_available():
         pytest.skip('anthropic and bedrock dependencies are required')
 
     document = b'The return window is thirty days from purchase.'
@@ -924,7 +924,7 @@ async def test_citation_context_without_native_replay(
 ) -> None:
     """Response citations remain local while the follow-up request receives plain assistant text."""
     if provider == 'google-gemini':
-        if not google_available():  # pragma: no cover
+        if not google_available():
             pytest.skip('google dependencies not installed')
         # Google derives its SDK deadline from the injected client's read timeout and rejects
         # httpx's five-second default because the Gemini API minimum is ten seconds.

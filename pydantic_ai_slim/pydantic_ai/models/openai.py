@@ -3652,7 +3652,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif (  # pragma: no cover
+                            elif (
                                 item.tool_name == FileSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
