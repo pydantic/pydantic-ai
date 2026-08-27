@@ -215,6 +215,11 @@ dev = [
     "pip>=26.1",
     "genai-prices>=0.1.0",
     "brotli>=1.2.0",
+    # `tests/test_dbos.py`'s fixture sets `enable_otlp=True` to cover DBOS's OTLP integration, and
+    # dbos's own `config_logger` imports this unconditionally on that path without requiring its
+    # `[otel]` extra (only a real bug for callers who set `enable_otlp=True` without it — most don't,
+    # so the public `dbos` extra doesn't need this): https://github.com/dbos-inc/dbos-transact-py/issues/832
+    "opentelemetry-instrumentation-logging>=0.63b0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
     # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
