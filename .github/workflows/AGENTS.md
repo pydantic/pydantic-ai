@@ -7,7 +7,7 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 | Name | Where | Runs when |
 |------|-------|-----------|
-| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. MiniMax engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
+| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. MiniMax M3 (via Fireworks) engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
 | `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and the stronger model. Deletes the label when it finishes. Inline comments, no verdict. |
 
 **They are independent.** Neither reads the other's state, and the label suppresses

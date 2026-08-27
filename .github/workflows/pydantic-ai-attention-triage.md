@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
   workflow_call:
     secrets:
-      MINIMAX_API_KEY:
+      FIREWORKS_API_KEY:
         required: true
 if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
 permissions:
@@ -24,7 +24,7 @@ network:
   allowed:
     - defaults
     - python
-    - api.minimax.io
+    - api.fireworks.ai
 tools:
   bash: []
   github: false

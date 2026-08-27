@@ -24,7 +24,7 @@ network:
     - python
     # ANTHROPIC_BASE_URL is a compile-time literal (below) so gh-aw already
     # auto-allowlists the host; this explicit entry is a harmless safety net.
-    - api.minimax.io
+    - api.fireworks.ai
 # We register as the built-in `claude` engine and only override `command`, so
 # gh-aw runs its full Claude proxy + credential-injection machinery for us.
 # ANTHROPIC_BASE_URL MUST be a compile-time literal (not a ${{ vars.* }}
@@ -32,8 +32,8 @@ network:
 # `--anthropic-api-base-path` from its parsed URL path at compile time. With a
 # vars expression the path can't be parsed, so the proxy drops the `/anthropic`
 # prefix and the upstream returns 404. Only ANTHROPIC_API_KEY stays a secret
-# (injected by the AWF api-proxy, excluded from the agent container). MiniMax
-# exposes an Anthropic-compatible API at https://api.minimax.io/anthropic.
+# (injected by the AWF api-proxy, excluded from the agent container). Fireworks
+# exposes an Anthropic-compatible API at https://api.fireworks.ai/inference.
 runtimes:
   uv: {}
 engine:
@@ -47,8 +47,8 @@ engine:
   # `uv run --script` against the workspace harness.
   command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
   env:
-    ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    ANTHROPIC_BASE_URL: https://api.fireworks.ai/inference
+    ANTHROPIC_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
     # The custom shim is stateless, so an outer retry repeats the whole task.
     GH_AW_HARNESS_MAX_RETRIES: "0"
 tools:
@@ -79,8 +79,8 @@ safe-outputs:
       id: claude
       model: ${{ vars.GH_AW_MODEL }}
       env:
-        ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        ANTHROPIC_BASE_URL: https://api.fireworks.ai/inference
+        ANTHROPIC_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
         GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
 env:
@@ -90,21 +90,21 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
-# MiniMax pricing for AI-credit enforcement and run-cost reporting, in dollars
+# Fireworks pricing for MiniMax M3, for AI-credit enforcement and run-cost reporting, in dollars
 # per 1M tokens. AWF v0.27.42 uses the default for models absent from its
 # catalog; the provider entry retains exact model and cache pricing.
 models:
   default-ai-credits-pricing:
-    input: 0.6
-    output: 2.4
+    input: 0.3
+    output: 1.2
   providers:
     anthropic:
       models:
-        MiniMax-M3:
+        accounts/fireworks/models/minimax-m3:
           cost:
-            input: 0.6
-            output: 2.4
-            cache_read: 0.12
+            input: 0.3
+            output: 1.2
+            cache_read: 0.06
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
