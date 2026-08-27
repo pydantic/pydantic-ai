@@ -201,6 +201,15 @@ async def test_durability_forces_sequential_tools_inside_durable_context() -> No
     await bound.wrap_run(ctx, handler=handler)
 
 
+def test_prepare_run_context_without_agent() -> None:
+    durability = JournalDurability()
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
+
+    assert ctx.__dict__['_durable_operations'] == {}
+
+
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport
@@ -1229,7 +1238,7 @@ async def test_callable_operation_backend_resolves_and_round_trips() -> None:
     }
 
 
-def test_registered_backend_binds_model_operations_during_agent_assembly() -> None:
+async def test_registered_backend_binds_model_operations_during_agent_assembly() -> None:
     agent = Agent(TestModel(), name='registered', capabilities=[_RegisteredDurability()])
 
     durability = _RegisteredDurability.from_agent(agent)
@@ -1247,6 +1256,20 @@ def test_registered_backend_binds_model_operations_during_agent_assembly() -> No
         CompactMessagesId(None, 'default'),
         CancelSuspendedResponseId(None, 'default'),
     ]
+
+    async def handler(params: int) -> int:
+        return params + 1
+
+    operation = DurableOperation(
+        operation_id=ModelRequestId('registered', False, 'model'),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[int](),
+        cache_identity=_CacheIdentity(),
+        result_codec=TypedResultCodec[int](int),
+        config_role=OperationConfigRole.MODEL,
+    )
+    bound = backend.bind(operation)
+    assert await bound(4) == 5
 
 
 def test_trivial_transport_cache_and_invocation_helpers() -> None:
