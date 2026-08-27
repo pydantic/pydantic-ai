@@ -486,9 +486,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             raise serialization_user_error(error) from error
         raise error
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         """Reject per-run capabilities whose activities were not registered with the worker."""
         if self.in_durable_context:
             unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]

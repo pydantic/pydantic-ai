@@ -1611,11 +1611,7 @@ async def test_dbos_durability_rejects_a_per_run_sandbox_supplier(dbos: DBOS):
     with workflow_raises(
         UserError,
         snapshot(
-            'A capability that supplies a sandbox (overrides `create_sandbox`) is not supported inside a '
-            'DBOS workflow: creating and destroying the sandbox would be workflow code, which '
-            'DBOS replays. Temporal runs the sandbox lifecycle in durable units and does support it; '
-            'on other engines, create the sandbox outside the workflow and pass a `SandboxRef` to the '
-            'run instead.'
+            'Capabilities added per run cannot contribute DBOS durable operations because their steps were not registered when the agent was bound.'
         ),
     ):
         await run_agent()

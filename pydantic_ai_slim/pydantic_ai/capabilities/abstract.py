@@ -338,9 +338,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         """Validate capabilities contributed specifically for this run.
 
         Deliberately private: whether this becomes part of the public runtime extension
