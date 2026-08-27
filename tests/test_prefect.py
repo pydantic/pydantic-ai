@@ -160,7 +160,12 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
-from .sandbox_fakes import ConnectOnlySandboxCapability, FakeSandboxHandle, LifecycleSandboxCapability
+from .sandbox_fakes import (
+    ConnectOnlySandboxCapability,
+    FakeSandboxHandle,
+    LifecycleSandboxCapability,
+    PerRunLifecycleSandboxCapability,
+)
 
 
 def test_durability_codecs() -> None:
@@ -2922,6 +2927,21 @@ async def test_prefect_durability_rejects_a_per_run_sandbox_supplier() -> None:
         'registered when the Prefect agent was bound.'
     )
     assert supplier.events == []
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_rederives_a_per_run_sandbox_supplier(blockbuster_enabled: bool) -> None:
+    """A bind-time supplier may return its run-specific implementation from `for_run()`."""
+    assert blockbuster_enabled is False
+    supplier = PerRunLifecycleSandboxCapability()
+    agent = Agent(TestModel(), name='prefect_per_run_sandbox', capabilities=[PrefectDurability(), supplier])
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    assert await run_durable_agent() == 'success (no tool calls)'
+    assert supplier.events == ['create:created-1', 'teardown:created-1']
 
 
 async def test_prefect_durability_connects_a_sandbox_ref_inside_a_task() -> None:

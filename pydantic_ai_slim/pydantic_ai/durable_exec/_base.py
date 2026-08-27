@@ -439,7 +439,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                             operation_result, _usage_delta(usage_before, durable_ctx.usage)
                         )
                     async with self._durable_model_scope(params.model_id, params.run_context) as (_, durable_ctx):
-                        semantic_params = CapabilityOperationParams(durable_ctx, semantic_params.arguments, params.model_id)
+                        semantic_params = CapabilityOperationParams(
+                            durable_ctx, semantic_params.arguments, params.model_id
+                        )
                         usage_before = copy.copy(durable_ctx.usage)
                         if declaration.name == 'destroy_sandbox':
                             try:

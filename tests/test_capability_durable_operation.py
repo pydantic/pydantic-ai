@@ -10,6 +10,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
+from pydantic_ai.capabilities._durable_operation import tier_one_durable_operation
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
@@ -20,7 +21,6 @@ from pydantic_ai.durable_exec._capability_operation import (
     call_declaration,
     collect_capability_operations,
     recover_capability,
-    tier_one_durable_operation,
 )
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
@@ -450,6 +450,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
+        'get_sandbox',
         'wrap_run',
         'wrap_node_run',
         'wrap_model_request',
