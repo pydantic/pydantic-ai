@@ -259,6 +259,38 @@ async def test_capability_tool_emission_stamps_attribution(capability_id: str | 
     ]
 
 
+@pytest.mark.parametrize(
+    ('capabilities', 'expected_ids'),
+    [
+        pytest.param(
+            [EmitCapability(), EmitCapability()],
+            ['emit_capability', 'emit_capability_2'],
+            id='implicit-implicit',
+        ),
+        pytest.param(
+            [EmitCapability(id='emit_capability'), EmitCapability()],
+            ['emit_capability', 'emit_capability_2'],
+            id='explicit-then-implicit',
+        ),
+        pytest.param(
+            [EmitCapability(), EmitCapability(id='emit_capability')],
+            ['emit_capability_2', 'emit_capability'],
+            id='implicit-then-explicit',
+        ),
+    ],
+)
+async def test_multiple_instances_get_distinct_run_ids(
+    capabilities: list[EmitCapability], expected_ids: list[str]
+) -> None:
+    """Multiple instances of one capability class emit under distinct run ids.
+
+    Implicit ids derive from the class name and dedupe with a numeric suffix; an explicit id
+    claims its name even when a preceding implicit instance would otherwise have derived it.
+    """
+    events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=capabilities))
+    assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == expected_ids
+
+
 async def test_app_tool_cannot_emit_capability_event():
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 

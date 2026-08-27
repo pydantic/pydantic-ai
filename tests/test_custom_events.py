@@ -10,7 +10,7 @@ from typing import Any
 import pydantic
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -446,6 +446,68 @@ async def test_typed_subclass_emitted_from_tool():
     events = await _collect_events(agent)
     custom = [event for event in events if isinstance(event, UploadProgressEvent)]
     assert custom == snapshot([UploadProgressEvent(done=1, total=2, tool_call_id='call_1', tool_name='progress')])
+
+
+async def test_event_stream_position_relative_to_framework_events():
+    """A tool-emitted event lands between that call's tool-call and tool-result framework events."""
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(ProgressEvent())
+        return 'ok'
+
+    events = await _collect_events(agent)
+    assert [event.event_kind for event in events] == snapshot(
+        [
+            'part_start',
+            'part_end',
+            'function_tool_call',
+            'custom',
+            'function_tool_result',
+            'part_start',
+            'final_result',
+            'part_end',
+        ]
+    )
+
+
+async def test_emission_before_model_retry_is_delivered():
+    """An event emitted before the tool raises `ModelRetry` still reaches the stream, once per attempt."""
+    attempts = 0
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    async def progress(ctx: RunContext[Any]) -> str:
+        nonlocal attempts
+        attempts += 1
+        await ctx.emit_event(ProgressEvent(payload=attempts))
+        if attempts == 1:
+            raise ModelRetry('try again')
+        return 'ok'
+
+    events = await _collect_events(agent)
+    assert [event.payload for event in events if isinstance(event, ProgressEvent)] == [1, 2]
+
+
+async def test_emission_before_fatal_tool_error_is_delivered():
+    """An event emitted before the tool raises a fatal error reaches consumers before the run fails."""
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(ProgressEvent(payload='before-crash'))
+        raise RuntimeError('tool crashed')
+
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    with pytest.raises(RuntimeError, match='tool crashed'):
+        await agent.run('go', event_stream_handler=handler)
+    assert [event.payload for event in events if isinstance(event, ProgressEvent)] == ['before-crash']
 
 
 def test_unknown_event_name_with_payload_degrades():

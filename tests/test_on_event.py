@@ -321,6 +321,118 @@ async def test_deferred_listener_only_runs_when_loaded() -> None:
     assert seen == ['loaded']
 
 
+@dataclass
+class RecorderCapability(AbstractCapability[Any]):
+    order: list[str]
+    label: str
+
+    @on_event(ThingStartEvent)
+    async def record(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
+        self.order.append(self.label)
+
+
+@dataclass
+class ThingStartEmitter(AbstractCapability[Any]):
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await ctx.emit_event(ThingStartEvent())
+
+
+async def test_listener_order_follows_capability_composition_order() -> None:
+    """Listeners across composed capabilities run in composition order; swapping the composition swaps the order."""
+    order: list[str] = []
+    first = RecorderCapability(order, 'first', id='first')
+    second = RecorderCapability(order, 'second', id='second')
+
+    await Agent(FunctionModel(stream_function=_text_stream), capabilities=[ThingStartEmitter(), first, second]).run(
+        'go'
+    )
+    assert order == ['first', 'second']
+
+    order.clear()
+    await Agent(FunctionModel(stream_function=_text_stream), capabilities=[ThingStartEmitter(), second, first]).run(
+        'go'
+    )
+    assert order == ['second', 'first']
+
+
+async def test_combined_subclass_marked_listeners_run_after_children() -> None:
+    """A `CombinedCapability` subclass's own marked listeners dispatch after its children's.
+
+    Dispatched on the container directly: `Agent(capabilities=[...])` splats a nested combined
+    container into its leaves during normalization, so a subclass's own listener surface is only
+    reached when dispatch starts at the container itself (a custom root or manual dispatch).
+    """
+    order: list[str] = []
+
+    @dataclass
+    class Child(AbstractCapability[Any]):
+        @on_event(OnEventNoteEvent)
+        async def record(self, ctx: RunContext[Any], event: OnEventNoteEvent) -> None:
+            order.append('child')
+
+    @dataclass
+    class Team(CombinedCapability[Any]):
+        @on_event(OnEventNoteEvent)
+        async def record_team(self, ctx: RunContext[Any], event: OnEventNoteEvent) -> None:
+            order.append('team')
+
+    child = Child(id='child')
+    team = Team([child])
+    ctx = RunContext[Any](
+        deps=None,
+        model=FunctionModel(stream_function=_tool_then_text),
+        usage=None,  # type: ignore[arg-type]
+        root_capability=team,
+        capabilities={'child': child},
+    )
+    await team.on_event(ctx, event=OnEventNoteEvent())
+    assert order == ['child', 'team']
+
+
+async def test_stream_listener_exception_fails_run() -> None:
+    """Listeners are fail-closed: an exception from a stream-dispatched listener fails the run."""
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(FileReadEvent(path='a'))
+        return 'ok'
+
+    @dataclass
+    class Boom(AbstractCapability[Any]):
+        @on_event(FileReadEvent)
+        async def boom(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            raise RuntimeError('listener failed')
+
+    agent = Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()])
+    with pytest.raises(RuntimeError, match='listener failed'):
+        await agent.run('go')
+
+
+async def test_inline_listener_exception_propagates_to_emitter() -> None:
+    """An inline listener's exception surfaces from `emit_event`, where the emitter can recover."""
+    caught: list[str] = []
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        try:
+            await ctx.emit_event(ThingStartEvent())
+        except RuntimeError as e:
+            caught.append(str(e))
+        return 'ok'
+
+    @dataclass
+    class Boom(AbstractCapability[Any]):
+        @on_event(ThingStartEvent)
+        async def boom(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
+            raise RuntimeError('inline listener failed')
+
+    result = await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()]).run('go')
+    assert result.output == 'done'
+    assert caught == ['inline listener failed']
+
+
 async def test_zero_listeners_does_not_enable_streaming() -> None:
     calls: list[str] = []
 
