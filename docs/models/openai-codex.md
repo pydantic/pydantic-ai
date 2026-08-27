@@ -100,43 +100,55 @@ A real implementation wraps `get_credentials` in a per-user distributed lease, a
 
 ## Build your own login
 
-[`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] provides the authorization-code + PKCE primitives without any interactive machinery, so you can embed login anywhere. A complete CLI-style flow:
+[`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] provides the authorization-code + PKCE primitives without any interactive machinery, so you can embed login anywhere. A complete CLI-style flow, using FastAPI to receive the callback:
 
 ```python {title="codex_login.py" test="skip - opens a browser and requires user login"}
 import asyncio
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs, urlparse
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai_codex import OpenAICodexOAuthFlow, OpenAICodexProvider
+from pydantic_ai.providers.openai_codex import (
+    OpenAICodexCredentials,
+    OpenAICodexOAuthFlow,
+    OpenAICodexProvider,
+)
 
 flow = OpenAICodexOAuthFlow()  # defaults to the pinned http://localhost:1455/auth/callback
 result: dict[str, str] = {}
+callback_received = asyncio.Event()
+
+app = FastAPI()
 
 
-class Callback(BaseHTTPRequestHandler):
-    def do_GET(self):
-        params = parse_qs(urlparse(self.path).query)
-        if params.get('state', [None])[0] == flow.state:
-            if 'code' in params:
-                result['code'] = params['code'][0]
-            else:  # e.g. the user clicked Deny: surface the error instead of hanging
-                result['error'] = params.get('error', ['unknown'])[0]
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'You can close this tab.')
+@app.get('/auth/callback', response_class=PlainTextResponse)
+async def auth_callback(state: str, code: str | None = None, error: str | None = None) -> str:
+    if state == flow.state:
+        if code is not None:
+            result['code'] = code
+        else:  # e.g. the user clicked Deny: surface the error instead of hanging
+            result['error'] = error or 'unknown'
+        callback_received.set()
+    return 'You can close this tab.'
 
 
-server = HTTPServer(('localhost', 1455), Callback)
-webbrowser.open(flow.authorization_url())
-while not result:
-    server.handle_request()  # serve until the callback with a valid state arrives
-if 'error' in result:
-    raise RuntimeError(f'Authorization failed: {result["error"]}')
+async def login() -> OpenAICodexCredentials:
+    server = uvicorn.Server(uvicorn.Config(app, host='localhost', port=1455, log_level='error'))
+    server_task = asyncio.create_task(server.serve())
+    webbrowser.open(flow.authorization_url())
+    await callback_received.wait()  # serve until the callback with a valid state arrives
+    server.should_exit = True
+    await server_task
+    if 'error' in result:
+        raise RuntimeError(f'Authorization failed: {result["error"]}')
+    return await flow.exchange_code(result['code'])
 
-credentials = asyncio.run(flow.exchange_code(result['code']))
+
+credentials = asyncio.run(login())
 # persist wherever your app keeps secrets - not ~/.codex, which belongs to the Codex CLI
 
 provider = OpenAICodexProvider(credentials=credentials)
