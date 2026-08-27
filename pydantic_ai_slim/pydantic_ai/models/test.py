@@ -572,8 +572,12 @@ class _JsonSchemaTestData:
 
     def _number_gen(self, schema: dict[str, Any]) -> float:
         """Generate a float from a JSON Schema number."""
-        minimum = schema.get('minimum', schema.get('exclusiveMinimum'))
-        maximum = schema.get('maximum', schema.get('exclusiveMaximum'))
+        minimum = schema.get('minimum')
+        if (exclusive_minimum := schema.get('exclusiveMinimum')) is not None:
+            minimum = exclusive_minimum if minimum is None else max(minimum, exclusive_minimum)
+        maximum = schema.get('maximum')
+        if (exclusive_maximum := schema.get('exclusiveMaximum')) is not None:
+            maximum = exclusive_maximum if maximum is None else min(maximum, exclusive_maximum)
         if minimum is not None and maximum is not None:
             if minimum == maximum:
                 return float(minimum)

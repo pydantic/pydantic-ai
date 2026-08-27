@@ -587,6 +587,18 @@ def test_json_schema_test_data_narrow_exclusive_bounds():
     )
 
 
+def test_json_schema_number_uses_strictest_bounds():
+    class TestModel(BaseModel):
+        lower: Annotated[float, Field(ge=0, gt=0.5, le=1)]
+        upper: Annotated[float, Field(ge=0, le=2, lt=0.5)]
+
+    json_schema = TestModel.model_json_schema()
+    for seed in range(3):
+        data = _JsonSchemaTestData(json_schema, seed=seed).generate()
+        TestModel.model_validate(data)
+    assert _JsonSchemaTestData(json_schema).generate() == snapshot({'lower': 0.75, 'upper': 0.0})
+
+
 def test_narrow_exclusive_bounds_tool_args():
     """An agent tool with `Field(ge=0, lt=1)`-style parameters runs without errors."""
 
