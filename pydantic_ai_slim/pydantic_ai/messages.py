@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import html
 import mimetypes
 import os
 import warnings
@@ -1296,6 +1297,26 @@ cancellation). Shared between the agent graph's history repair and the UI adapte
 so both synthesize the same `outcome='interrupted'` return."""
 
 
+def _tool_result_provenance_tags(tool_name: str, tool_call_id: str) -> tuple[str, str]:
+    """The open and close tags framing tool-produced media that has to travel on the user channel.
+
+    A provider whose tool result channel is text-only can only deliver a tool's multimodal output on
+    the user channel — the same one the end user's own uploads travel on — which leaves the model
+    unable to tell a tool attachment from something the person it is talking to attached. The tags
+    name the call the media came from, so tool output, which may be attacker-influenced, is no longer
+    presented at user trust level. `Model.prepare_messages` frames a `SystemPromptPart` a provider
+    can't send natively as `<system>...</system>` for the same reason.
+
+    They identify rather than prove. This is prompt text like any other, so a tool can emit the
+    closing tag and a user can type the opening one; the attribute values are escaped, and a provider
+    that accepts media in its tool result channel sends it there and never renders these at all.
+    """
+    return (
+        f'<tool_result tool_name="{html.escape(tool_name)}" tool_call_id="{html.escape(tool_call_id)}">',
+        '</tool_result>',
+    )
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""
@@ -1521,6 +1542,9 @@ class BaseToolReturnPart:
         by identifier in the tool result text ('See file {id}.') and included in full in the
         returned file content list ('This is file {id}:' followed by the file).
 
+        The files are framed by `_tool_result_provenance_tags` so the model can tell them from the
+        user's own uploads, which travel on the same channel.
+
         Args:
             wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
@@ -1530,7 +1554,8 @@ class BaseToolReturnPart:
             return self.model_response_str(wrap_if_error=wrap_if_error), []
 
         tool_content_parts: list[str] = []
-        file_content: list[UserContent] = []
+        open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id)
+        file_content: list[UserContent] = [open_tag]
 
         for item in self.content_items(mode='str', wrap_if_error=False):
             if is_multi_modal_content(item):
@@ -1539,6 +1564,8 @@ class BaseToolReturnPart:
                 file_content.append(item)
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
+
+        file_content.append(close_tag)
 
         if wrap_if_error and self.outcome == 'failed':
             error = {'error': self.model_response_str(wrap_if_error=False)}
