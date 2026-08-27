@@ -523,6 +523,21 @@ async def test_bedrock_mantle_nonstd_finish_reason_stream() -> None:
 
 
 @pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
+def test_bedrock_mantle_streamed_response_cls_wiring() -> None:
+    """The model factory must hand out `BedrockMantleStreamedResponse` for streams.
+
+    Coverage contract: `_streamed_response_cls` is the seam between the shared
+    OpenAI stream machinery and Mantle's chunk re-validation; the `object.__new__`
+    harness used by the chunk tests above bypasses it, so this direct assertion
+    keeps the wiring checked and the repo-wide fail_under=100 coverage gate green.
+    """
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleStreamedResponse
+
+    model = _mantle_chat_model()
+    assert model._streamed_response_cls is BedrockMantleStreamedResponse  # type: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
 def test_bedrock_mantle_validate_completion_raises_unexpected_behavior_on_malformed_payload() -> None:
     """Malformed SDK completions are normalised to `UnexpectedModelBehavior` on the non-stream path.
 
