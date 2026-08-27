@@ -19,7 +19,7 @@ import json
 import os
 import secrets
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from pathlib import Path
@@ -273,6 +273,7 @@ class OpenAICodexCredentialSnapshot:
     from 'another replica already rotated it'.
     """
 
+    _: KW_ONLY
     credentials: OpenAICodexCredentials
     revision: str
 
