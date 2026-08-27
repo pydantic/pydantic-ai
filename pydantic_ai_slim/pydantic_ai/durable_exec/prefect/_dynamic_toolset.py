@@ -15,7 +15,6 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_recorded_tool_call_result,
     validate_dynamic_tool_args,
     wrap_tool_call_result,
-    wrap_tool_validation_result,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -45,7 +44,7 @@ def prefectify_dynamic_toolset(
     @task
     async def validate_args_task(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> Any:
         task_ctx = guard_task_enqueue(ctx)
-        return await wrap_tool_validation_result(validate_dynamic_tool_args(wrapped, tool_name, tool_args, task_ctx))
+        return await wrap_tool_call_result(validate_dynamic_tool_args(wrapped, tool_name, tool_args, task_ctx))
 
     async def call_tool_operation(
         name: str,

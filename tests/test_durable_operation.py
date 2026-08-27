@@ -1309,12 +1309,12 @@ async def test_dynamic_args_validator_runs_in_declarative_unit_and_preserves_sch
     assert 'static_validation__function_toolset__inner.call_tool:read_file' in static_names
 
 
-async def test_tool_body_validation_error_is_not_sent_to_model() -> None:
-    secret = 'database-secret'
+async def test_tool_body_validation_error_preserves_detailed_retry() -> None:
+    invalid_input = 'not-an-integer'
     model_messages: list[list[Any]] = []
 
     async def inspect_record() -> None:
-        TypeAdapter(int).validate_python(secret)
+        TypeAdapter(int).validate_python(invalid_input)
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
         model_messages.append(messages)
@@ -1334,7 +1334,39 @@ async def test_tool_body_validation_error_is_not_sent_to_model() -> None:
 
     assert result.output == 'done'
     assert len(model_messages) == 2
-    assert secret not in str(model_messages)
+    retry = next(part for message in model_messages[1] for part in message.parts if isinstance(part, RetryPromptPart))
+    assert retry.content == [
+        {
+            'type': 'int_parsing',
+            'loc': (),
+            'msg': 'Input should be a valid integer, unable to parse string as an integer',
+            'input': invalid_input,
+        }
+    ]
+
+    class NonSerializableInput:
+        def __repr__(self) -> str:
+            return '<non-serializable-input>'
+
+    async def inspect_non_serializable_input() -> None:
+        TypeAdapter(int).validate_python(NonSerializableInput())
+
+    payload = await wrap_tool_call_result(inspect_non_serializable_input())
+    assert JSON_CODEC.dump(CallToolResult, payload) == {
+        'title': 'int',
+        'errors': [
+            {
+                'type': 'int_type',
+                'loc': [],
+                'msg': 'Input should be a valid integer',
+                'input': {
+                    'type': f'{NonSerializableInput.__module__}.{NonSerializableInput.__qualname__}',
+                    'repr': '<non-serializable-input>',
+                },
+            }
+        ],
+        'kind': 'validation_error',
+    }
 
 
 async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry() -> None:

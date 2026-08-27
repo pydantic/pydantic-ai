@@ -44,7 +44,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_recorded_tool_call_result,
     unwrap_tool_call_result,
     validate_tool_args,
-    wrap_tool_validation_result,
+    wrap_tool_call_result,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -546,13 +546,21 @@ def test_pre_wrapper_tool_result_upgrade_paths() -> None:
 
 
 async def test_validation_error_crosses_call_tool_result_boundary() -> None:
+    async def invalid_tool_body() -> None:
+        TypeAdapter(int).validate_python('invalid-from-tool-body')
+
+    payload = await wrap_tool_call_result(invalid_tool_body())
+    assert isinstance(payload, _ValidationError)
+    with pytest.raises(ValidationError, match='valid integer'):
+        unwrap_tool_call_result(payload)
+
     async def typed(value: int) -> None:
         pass
 
     toolset = FunctionToolset(tools=[typed])
     tool = (await toolset.get_tools(RunContext(deps=None, model=TestModel(), usage=RunUsage())))['typed']
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    payload = await wrap_tool_validation_result(validate_tool_args(tool, {'value': 'not-an-int'}, ctx))
+    payload = await wrap_tool_call_result(validate_tool_args(tool, {'value': 'not-an-int'}, ctx))
     with pytest.raises(ValidationError, match='valid integer'):
         unwrap_tool_call_result(payload)
 
@@ -561,7 +569,7 @@ async def test_validation_error_crosses_call_tool_result_boundary() -> None:
 
     unsafe_toolset = FunctionToolset(tools=[Tool(typed, args_validator=non_serializable_input)])
     unsafe_tool = (await unsafe_toolset.get_tools(ctx))['typed']
-    payload = await wrap_tool_validation_result(run_args_validator(unsafe_tool, {'value': 1}, ctx))
+    payload = await wrap_tool_call_result(run_args_validator(unsafe_tool, {'value': 1}, ctx))
     dumped = JSON_CODEC.dump(CallToolResult, payload)
     sanitized = dumped['errors'][0]['input']
     assert sanitized['type'] == 'builtins.object'
@@ -576,7 +584,7 @@ async def test_validation_error_crosses_call_tool_result_boundary() -> None:
 
     broken_toolset = FunctionToolset(tools=[Tool(typed, args_validator=broken_repr_input)])
     broken_tool = (await broken_toolset.get_tools(ctx))['typed']
-    payload = await wrap_tool_validation_result(run_args_validator(broken_tool, {'value': 1}, ctx))
+    payload = await wrap_tool_call_result(run_args_validator(broken_tool, {'value': 1}, ctx))
     dumped = JSON_CODEC.dump(CallToolResult, payload)
     assert dumped['errors'][0]['input'] == {
         'type': f'{BrokenRepr.__module__}.{BrokenRepr.__qualname__}',
@@ -588,6 +596,15 @@ async def test_validation_error_crosses_call_tool_result_boundary() -> None:
 
     validated_toolset = FunctionToolset(tools=[Tool(typed, args_validator=invalid_args_validator)])
     validated_tool = (await validated_toolset.get_tools(ctx))['typed']
-    payload = await wrap_tool_validation_result(run_args_validator(validated_tool, {'value': 1}, ctx))
+    payload = await wrap_tool_call_result(run_args_validator(validated_tool, {'value': 1}, ctx))
+    with pytest.raises(ValidationError, match='valid integer'):
+        unwrap_tool_call_result(payload)
+
+    async def invalid_async_args_validator(ctx: RunContext[None], value: int) -> None:
+        TypeAdapter(int).validate_python('invalid-from-async-args-validator')
+
+    async_validated_toolset = FunctionToolset(tools=[Tool(typed, args_validator=invalid_async_args_validator)])
+    async_validated_tool = (await async_validated_toolset.get_tools(ctx))['typed']
+    payload = await wrap_tool_call_result(run_args_validator(async_validated_tool, {'value': 1}, ctx))
     with pytest.raises(ValidationError, match='valid integer'):
         unwrap_tool_call_result(payload)

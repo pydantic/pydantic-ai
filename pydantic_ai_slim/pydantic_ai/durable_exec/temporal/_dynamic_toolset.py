@@ -17,7 +17,6 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     validate_dynamic_tool_args,
     wrap_tool_call_result,
-    wrap_tool_validation_result,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -76,7 +75,7 @@ def temporalize_dynamic_toolset(
     async def validate_args_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
-            return await wrap_tool_validation_result(
+            return await wrap_tool_call_result(
                 validate_dynamic_tool_args(toolset, params.name, params.tool_args, ctx, tool_def=params.tool_def)
             )
 
