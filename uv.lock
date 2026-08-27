@@ -5091,6 +5091,15 @@ wheels = [
 ]
 
 [[package]]
+name = "publicsuffixlist"
+version = "1.0.2.20260819"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/44/f564dbcd254a9d0922744900905c17cceea71cc68c49f6e207170ccb3a38/publicsuffixlist-1.0.2.20260819.tar.gz", hash = "sha256:6345b40a9ed4cb892c10a2cd00f54622e0a4f1a142b929aac4e4d439a71d00bb", size = 108926, upload-time = "2026-08-19T03:54:04.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/9b/4c4f429b7ffd0e021bba62fa8536d15189659117eaa9dcc862af208f0d05/publicsuffixlist-1.0.2.20260819-py2.py3-none-any.whl", hash = "sha256:dc7292f0b44085c3e02578d2961e60cdba9eb64a829af3b8ad7f6e5463f00d24", size = 108641, upload-time = "2026-08-19T03:54:02.957Z" },
+]
+
+[[package]]
 name = "py-key-value-aio"
 version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -5481,6 +5490,7 @@ dependencies = [
     { name = "griffelib" },
     { name = "httpx2" },
     { name = "opentelemetry-api" },
+    { name = "publicsuffixlist" },
     { name = "pydantic" },
     { name = "pydantic-graph" },
     { name = "typing-inspection" },
@@ -5665,6 +5675,7 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
+    { name = "publicsuffixlist", specifier = ">=1.0.2.20260819" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },

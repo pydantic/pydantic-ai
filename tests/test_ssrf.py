@@ -8,6 +8,7 @@ import sys
 import textwrap
 import zlib
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -38,6 +39,117 @@ from pydantic_ai._ssrf import (
 pytestmark = [pytest.mark.anyio]
 
 
+@dataclass(frozen=True)
+class CookieScopeCase:
+    id: str
+    start_url: str = 'https://a.example/start'
+    redirect_url: str = 'https://a.example/download'
+    set_cookie: str = 'sid=secret; Path=/'
+    expected_cookie: str | None = 'sid=secret'
+
+
+COOKIE_SCOPE_CASES = [
+    CookieScopeCase(id='host-only-same-host'),
+    CookieScopeCase(id='host-only-not-subdomain', redirect_url='https://sub.a.example/download', expected_cookie=None),
+    CookieScopeCase(
+        id='host-only-single-label',
+        start_url='https://intranet/start',
+        redirect_url='https://intranet.local/download',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='domain-cookie-ip-suffix',
+        start_url='https://93.184.216.34/start',
+        redirect_url='https://52.184.216.34/download',
+        set_cookie='sid=secret; Domain=184.216.34; Path=/',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='domain-cookie-sibling',
+        start_url='https://app.example.com/start',
+        redirect_url='https://cdn.example.com/download',
+        set_cookie='sid=secret; Domain=example.com; Path=/',
+    ),
+    CookieScopeCase(
+        id='domain-cookie-unrelated-host',
+        redirect_url='https://b.example/download',
+        set_cookie='sid=secret; Domain=b.example; Path=/',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='public-suffix-tenant-isolation',
+        start_url='https://evil.github.io/start',
+        redirect_url='https://victim.github.io/download',
+        set_cookie='sid=secret; Domain=github.io; Path=/',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='default-path-match',
+        start_url='https://a.example/private/start',
+        redirect_url='https://a.example/private/download',
+        set_cookie='sid=secret',
+    ),
+    CookieScopeCase(
+        id='default-path-mismatch',
+        start_url='https://a.example/private/start',
+        redirect_url='https://a.example/public/download',
+        set_cookie='sid=secret',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='explicit-path-mismatch',
+        start_url='https://a.example/private/start',
+        redirect_url='https://a.example/public/download',
+        set_cookie='sid=secret; Path=/private',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='relative-path-uses-default',
+        start_url='https://a.example/private/start',
+        redirect_url='https://a.example/private/download',
+        set_cookie='sid=secret; Path=relative',
+    ),
+    CookieScopeCase(
+        id='relative-path-remains-scoped',
+        start_url='https://a.example/private/start',
+        redirect_url='https://a.example/public/download',
+        set_cookie='sid=secret; Path=relative',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='secure-cookie-on-http',
+        redirect_url='http://a.example/download',
+        set_cookie='sid=secret; Secure; Path=/',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='secure-cookie-from-http',
+        start_url='http://a.example/start',
+        set_cookie='sid=secret; Secure; Path=/',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(id='non-secure-cookie-across-schemes', redirect_url='http://a.example/download'),
+    CookieScopeCase(
+        id='cookies-ignore-port',
+        start_url='https://a.example:8443/start',
+        redirect_url='https://a.example:9443/download',
+    ),
+    CookieScopeCase(
+        id='host-prefix-rejects-domain',
+        start_url='https://a.example.com/start',
+        redirect_url='https://b.example.com/download',
+        set_cookie='__Host-sid=secret; Domain=example.com; Path=/; Secure',
+        expected_cookie=None,
+    ),
+    CookieScopeCase(
+        id='secure-prefix-requires-secure-origin',
+        start_url='http://a.example/start',
+        set_cookie='__Secure-sid=secret; Path=/',
+        expected_cookie=None,
+    ),
+]
+
+
 @pytest.fixture
 def mock_dns(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     """Patch DNS resolution in _ssrf to prevent real network calls."""
@@ -59,8 +171,8 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     def factory_wrapper(**kwargs: Any) -> Any:
         client = mock(**kwargs)
         client.__aenter__.return_value = client
-        # `safe_download` clears the client's cookie jar after every hop, so the mock
-        # needs a real jar like `httpx2.AsyncClient` has.
+        # `safe_download` keeps the resolved-IP jar empty, so the mock needs a real
+        # jar like `httpx2.AsyncClient` has.
         client.cookies = httpx2.Cookies()
 
         # Most tests in this file predate raw streaming and configure `get` directly.
@@ -1373,16 +1485,10 @@ class TestSafeDownload:
         call_args = mock_client.get.call_args
         assert call_args[1]['extensions'] == {}
 
-    async def test_server_cookies_never_replayed_across_redirects(
+    async def test_server_cookies_are_isolated_from_hosts_sharing_an_ip(
         self, serve_requests: Callable[[RequestHandler], None]
     ) -> None:
-        """Server-set cookies are dropped entirely, so no hop ever receives one.
-
-        Every hostname resolves to the same IP here, which is exactly the case where
-        httpx's IP-keyed jar used to replay `a.example`'s cookie to `b.example`. The
-        return hop to `a.example` also gets nothing: `safe_download` deliberately has
-        no cookie jar at all, like `curl`.
-        """
+        """Each host receives only its own cookies even though every hop uses one IP."""
 
         sent_cookies: list[str | None] = []
         hop = 0
@@ -1390,12 +1496,13 @@ class TestSafeDownload:
         def handler(request: httpx2.Request) -> httpx2.Response:
             nonlocal hop
             hop += 1
+            assert request.url.host == '93.184.215.14'
             host = request.headers.get('host', '')
             if hop == 1:
                 assert host == 'a.example'
                 return httpx2.Response(
                     302,
-                    headers={'location': 'https://b.example/file', 'set-cookie': 'sid=secret; Path=/'},
+                    headers={'location': 'https://b.example/file', 'set-cookie': 'sid=a; Path=/'},
                     request=request,
                 )
             if hop == 2:
@@ -1403,7 +1510,7 @@ class TestSafeDownload:
                 sent_cookies.append(request.headers.get('cookie'))
                 return httpx2.Response(
                     302,
-                    headers={'location': 'https://a.example/file', 'set-cookie': 'other=value; Path=/'},
+                    headers={'location': 'https://a.example/file', 'set-cookie': 'sid=b; Path=/'},
                     request=request,
                 )
             assert host == 'a.example'
@@ -1411,32 +1518,90 @@ class TestSafeDownload:
             return httpx2.Response(200, content=b'final', request=request)
 
         serve_requests(handler)
-        await safe_download('https://a.example/file')
+        await safe_download('https://a.example./file')
 
-        assert sent_cookies == [None, None]
+        assert sent_cookies == [None, 'sid=a']
 
-    async def test_server_cookie_dropped_on_same_host_redirect(
-        self, serve_requests: Callable[[RequestHandler], None]
+    @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in COOKIE_SCOPE_CASES])
+    async def test_server_cookie_scope(
+        self,
+        serve_requests: Callable[[RequestHandler], None],
+        case: CookieScopeCase,
     ) -> None:
-        """Even a same-host redirect does not carry a server-set cookie forward."""
-
         sent_cookies: list[str | None] = []
+        first_request = True
 
         def handler(request: httpx2.Request) -> httpx2.Response:
-            assert request.headers.get('host') == 'a.example'
-            if request.url.path == '/login':
+            nonlocal first_request
+            if first_request:
+                first_request = False
                 return httpx2.Response(
                     302,
-                    headers={'location': 'https://a.example/download', 'set-cookie': 'session=123; Path=/'},
+                    headers={'location': case.redirect_url, 'set-cookie': case.set_cookie},
                     request=request,
                 )
             sent_cookies.append(request.headers.get('cookie'))
             return httpx2.Response(200, content=b'final', request=request)
 
         serve_requests(handler)
+        await safe_download(case.start_url)
+
+        assert sent_cookies == [case.expected_cookie]
+
+    async def test_public_suffix_cookie_is_host_only_for_the_suffix_itself(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """A public suffix can set a cookie for itself, but not for its tenants."""
+
+        sent_cookies: list[str | None] = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            sent_cookies.append(request.headers.get('cookie'))
+            host = request.headers.get('host')
+            if host == 'github.io' and request.url.path == '/start':
+                return httpx2.Response(
+                    302,
+                    headers={'location': '/return', 'set-cookie': 'sid=secret; Domain=github.io; Path=/'},
+                    request=request,
+                )
+            if host == 'github.io':
+                return httpx2.Response(
+                    302,
+                    headers={'location': 'https://victim.github.io/download'},
+                    request=request,
+                )
+            return httpx2.Response(200, content=b'final', request=request)
+
+        serve_requests(handler)
+        await safe_download('https://github.io/start')
+
+        assert sent_cookies == [None, 'sid=secret', None]
+
+    async def test_server_cookie_deletion_on_redirect(self, serve_requests: Callable[[RequestHandler], None]) -> None:
+        """An expired cookie is removed before the next request."""
+
+        sent_cookies: list[str | None] = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            sent_cookies.append(request.headers.get('cookie'))
+            if request.headers.get('host') == 'a.example' and request.url.path == '/login':
+                return httpx2.Response(
+                    302,
+                    headers={'location': '/logout', 'set-cookie': 'sid=secret; Path=/'},
+                    request=request,
+                )
+            if request.url.path == '/logout':
+                return httpx2.Response(
+                    302,
+                    headers={'location': '/download', 'set-cookie': 'sid=; Max-Age=0; Path=/'},
+                    request=request,
+                )
+            return httpx2.Response(200, content=b'final', request=request)
+
+        serve_requests(handler)
         await safe_download('https://a.example/login')
 
-        assert sent_cookies == [None]
+        assert sent_cookies == [None, 'sid=secret', None]
 
     async def test_protocol_validation(self) -> None:
         with pytest.raises(ValueError, match='URL protocol "file" is not allowed'):
