@@ -2939,8 +2939,7 @@ async def test_prefect_durability_rejects_a_per_run_sandbox_supplier() -> None:
     with pytest.raises(UserError) as exc_info:
         await run_durable_agent()
     assert str(exc_info.value) == snapshot(
-        "Capability 'test-sandbox' was added per run and its durable operation 'create_sandbox' was not "
-        'registered when the Prefect agent was bound.'
+        'Capabilities added per run cannot contribute Prefect durable operations because their tasks were not registered when the agent was bound.'
     )
     assert supplier.events == []
 
