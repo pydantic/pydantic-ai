@@ -1,21 +1,16 @@
 name: Semantic owner routing
 
 on:
-  issues:
-    types: [opened, reopened]
-  issue_comment:
-    types: [created]
-  # zizmor: ignore[dangerous-triggers] -- executable checkouts use the reusable workflow's trusted SHA
-  pull_request_target:
-    types: [opened, reopened, ready_for_review]
+  # Polling only: issues become routable once triage applies a priority label
+  # (`p:1-highest` / `p:2-high`), so per-event routing has nothing to act on.
   schedule:
     - cron: '25 */6 * * *'
     - cron: '40 7 * * *'
   workflow_dispatch:
   workflow_call:
     inputs:
-      legacy_recovery:
-        description: Route up to six recently active items from before the recovery epoch
+      community_recovery:
+        description: Route up to three unassigned items ignored for two weeks despite community interactions
         required: false
         type: boolean
         default: false
@@ -28,13 +23,7 @@ permissions: {}
 jobs:
   select:
     name: Select routing batch
-    # Keep this cheap runner gate aligned with `_PARTICIPATION_OWNERS` in the routing policy.
-    if: >-
-      (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') &&
-      (github.event_name != 'issue_comment' ||
-      github.event.comment.user.login == 'adtyavrdhn' ||
-      github.event.comment.user.login == 'dsfaccini' ||
-      github.event.comment.user.login == 'DouweM')
+    if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -59,10 +48,7 @@ jobs:
         id: select
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ROUTING_ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ROUTING_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
-          ROUTING_PARTICIPANT_LOGIN: ${{ github.event.comment.user.login }}
-          ROUTING_LEGACY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.legacy_recovery }}
+          ROUTING_COMMUNITY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}
         run: python .github/scripts/semantic_owner_router.py select
 
   route:

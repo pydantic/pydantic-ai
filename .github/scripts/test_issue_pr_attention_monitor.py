@@ -1121,7 +1121,7 @@ class CensusClient(FakeClient):
         oldest = terms.endswith(' sort:created-asc')
         if oldest:
             terms = terms.removesuffix(' sort:created-asc')
-            assert terms == monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, lane='recent')
+            assert terms == monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS)
         nodes = []
         if oldest and self.stalest:
             nodes = [{'number': self.stalest['number'], 'createdAt': self.stalest['created_at']}]
@@ -1199,7 +1199,9 @@ class WeeklyClient(FakeClient):
 CENSUS_COUNTS = {
     f'repo:pydantic/pydantic-ai is:open label:"{monitor._ACTION_LABEL}"': 14,
     f'repo:pydantic/pydantic-ai is:open label:"{monitor._ESCALATED_LABEL}"': 9,
-    monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, lane='recent'): 2,
+    monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 2,
+    monitor._untriaged_query('pydantic/pydantic-ai'): 240,
+    monitor._pull_intake_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 3,
 }
 
 
@@ -1208,8 +1210,9 @@ def test_census_counts_coverage_without_fetching_or_writing_anything():
 
     assert monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>') == (
         '<@UADITYA> :rotating_light: Attention coverage for pydantic/pydantic-ai — '
-        'queue: 14 active, 9 cooling; intake: 2 post-rollout without designated owner; '
-        'oldest #7740 opened 5d ago. The Monday digest covers assigned, legacy, and draft work.'
+        'queue: 14 active, 9 cooling; assignment gate: 2 priority issues unassigned; '
+        'oldest #7740 opened 5d ago; triage pool: 240 unlabeled issues; PR intake: 3 unowned. '
+        'The Monday digest covers assigned, legacy, and draft work.'
     )
     # Count-only by construction: no writes, no pagination, no per-item reads.
     assert {method for method, _, _ in client.calls} == {'GET', 'POST'}
@@ -1219,28 +1222,43 @@ def test_census_counts_coverage_without_fetching_or_writing_anything():
 def test_census_reports_a_healthy_empty_intake_lane():
     counts = {
         **CENSUS_COUNTS,
-        monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, lane='recent'): 0,
+        monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 0,
     }
     client = CensusClient(counts)
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
     assert report.startswith(':telescope:')
-    assert 'intake: 0 post-rollout without designated owner' in report
+    assert 'assignment gate: 0 priority issues unassigned' in report
+    assert 'triage pool: 240 unlabeled issues' in report
+    assert 'PR intake: 3 unowned' in report
     assert '<!channel>' not in report
 
 
-def test_census_escalates_when_the_recovery_search_is_saturated():
+def test_census_escalates_when_the_pull_intake_search_is_saturated():
     counts = {
         **CENSUS_COUNTS,
-        monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, lane='recent'): 101,
+        monitor._pull_intake_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 101,
     }
     client = CensusClient(counts, stalest={'number': 7800, 'created_at': '2026-08-25T00:00:00Z'})
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
 
     assert report.startswith('<@UADITYA> :rotating_light:')
-    assert '101 post-rollout without designated owner' in report
-    assert 'recovery search saturated' in report
+    assert 'PR intake: 101 unowned' in report
+    assert 'intake search saturated' in report
+
+
+def test_census_escalates_when_the_assignment_gate_backs_up():
+    counts = {
+        **CENSUS_COUNTS,
+        monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS): monitor._GATE_BATCH_BREACH + 1,
+    }
+    client = CensusClient(counts, stalest={'number': 7800, 'created_at': '2026-08-25T00:00:00Z'})
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    assert report.startswith('<@UADITYA> :rotating_light:')
+    assert f'assignment gate: {monitor._GATE_BATCH_BREACH + 1} priority issues unassigned' in report
 
 
 def test_census_rejects_an_untrusted_urgent_mention():
@@ -1312,7 +1330,7 @@ def test_weekly_digest_is_bounded_prioritized_and_metadata_only():
     assert '\u202e' not in report
     assert len(report.encode()) <= monitor._WEEKLY_TEXT_LIMIT
     graph_searches = [path for method, path, _ in client.calls if method == 'POST' and path == '/graphql']
-    assert len(graph_searches) <= 2 * len(monitor.MAINTAINER_OWNERS) + 3
+    assert len(graph_searches) <= 2 * len(monitor.MAINTAINER_OWNERS) + 4
     assert len(client.permission_reads()) == len(monitor.MAINTAINER_OWNERS)
 
 
@@ -1329,6 +1347,73 @@ def test_weekly_status_counts_inline_review_comments_as_owner_interaction():
     status = monitor._weekly_status(pull_request, timeline, 'dsfaccini', now=NOW)
 
     assert status == 'pull request · last reply/review @dsfaccini 24h ago · owner replied/reviewed 24h ago'
+
+
+def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
+    client = WeeklyClient(
+        {
+            1: {**item(1), 'created_at': '2026-07-01T00:00:00Z'},
+            2: {**item(2), 'created_at': '2026-07-01T00:00:00Z'},
+        }
+    )
+    client.timelines[1] = [
+        {
+            'event': 'unlabeled',
+            'created_at': '2026-07-19T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'p:2-high'},
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T00:05:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'p:3-mid'},
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T01:00:00Z',
+            'actor': {'login': 'pydanty'},
+            'label': {'name': 'p:1-highest'},
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T02:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'bug'},
+        },
+        {
+            'event': 'unassigned',
+            'created_at': '2026-07-01T00:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+            'assignee': {'login': 'dsfaccini'},
+        },
+    ]
+    client.timelines[2] = [
+        {
+            'event': 'unassigned',
+            'created_at': '2026-07-18T00:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+            'assignee': {'login': 'dsfaccini'},
+        },
+    ]
+
+    report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=NOW)
+
+    assert '*Maintainer corrections this week*' in report
+    assert '• #1: @DouweM removed `p:2-high`' in report
+    assert '• #1: @DouweM added `p:3-mid`' in report
+    assert '• #2: @dsfaccini unassigned @dsfaccini' in report
+    # Bot relabels, non-priority labels, and events older than the window stay out.
+    assert '@pydanty' not in report
+    assert '`bug`' not in report
+    assert '#1: @dsfaccini unassigned' not in report
+    assert 'none recorded' not in report
+
+
+def test_weekly_digest_records_no_corrections_without_maintainer_events():
+    report = monitor.weekly_digest(WeeklyClient(), 'pydantic/pydantic-ai', now=NOW)
+
+    assert '*Maintainer corrections this week*\n• none recorded' in report
 
 
 def test_weekly_digest_rejects_a_foreign_repository():
@@ -1374,7 +1459,7 @@ def test_weekly_digest_shows_a_bounded_recent_legacy_sample_without_assigning():
     assert 'Ignore policy' not in report
     assert report.count('<!channel>') == 0
     graph_searches = [path for method, path, _ in client.calls if method == 'POST' and path == '/graphql']
-    assert len(graph_searches) <= 2 * len(monitor.MAINTAINER_OWNERS) + 3
+    assert len(graph_searches) <= 2 * len(monitor.MAINTAINER_OWNERS) + 4
     assert len(client.permission_reads()) == len(monitor.MAINTAINER_OWNERS)
 
 
@@ -1437,8 +1522,8 @@ def test_census_mode_writes_the_heartbeat_payload(tmp_path: Path, monkeypatch: p
     values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
     assert json.loads(values['slack_payload']) == {
         'text': ':telescope: Attention coverage for pydantic/pydantic-ai — queue: 14 active, 9 cooling; '
-        'intake: 0 post-rollout without designated owner. '
-        'The Monday digest covers assigned, legacy, and draft work.'
+        'assignment gate: 2 priority issues unassigned; triage pool: 240 unlabeled issues; '
+        'PR intake: 3 unowned. The Monday digest covers assigned, legacy, and draft work.'
     }
 
 

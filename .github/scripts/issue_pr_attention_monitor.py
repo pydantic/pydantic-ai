@@ -52,6 +52,13 @@ _WEEKLY_TEXT_LIMIT = 30_000
 REPOSITORIES = frozenset({'pydantic/pydantic-ai', 'pydantic/pydantic-ai-harness'})
 MAINTAINER_OWNERS = ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')
 ROUTING_RECOVERY_EPOCH = '2026-08-18'
+# Triage priority labels: the first two open the assignment gate in
+# `semantic_owner_router`; issues carrying none of the four are still awaiting triage.
+PRIORITY_GATE_LABELS = ('p:1-highest', 'p:2-high')
+_PRIORITY_LABELS_ALL = (*PRIORITY_GATE_LABELS, 'p:3-mid', 'p:4-low')
+_GATE_BATCH_BREACH = 15
+_OVERRIDE_SCAN_LIMIT = 30
+_OVERRIDE_WINDOW_DAYS = 7
 _MAINTAINER_NAMES = {
     'adtyavrdhn': 'Aditya',
     'dsfaccini': 'David SF',
@@ -1293,14 +1300,22 @@ def _unowned_query(
     return f'repo:{repo} is:pr is:open draft:true {exclusions}'
 
 
-def _unowned_snapshot(
-    client: GitHubClient, repo: str, owners: Sequence[str]
-) -> tuple[int, tuple[int, dt.datetime] | None]:
-    query = _unowned_query(repo, owners, lane='recent')
-    total, items = _search_summary(client, f'{query} sort:created-asc', first=1)
-    if not items:
-        return total, None
-    return total, (int(items[0]['number']), _parse_time(str(items[0]['created_at'])))
+def _gate_query(repo: str, owners: Sequence[str]) -> str:
+    """Priority-labeled issues that the assignment gate should have routed."""
+    exclusions = ' '.join(f'-assignee:{owner}' for owner in owners)
+    priorities = ','.join(f'"{label}"' for label in PRIORITY_GATE_LABELS)
+    return f'repo:{repo} is:open is:issue label:{priorities} {exclusions}'
+
+
+def _untriaged_query(repo: str) -> str:
+    """Open issues carrying no priority label at all: triage has not run on them."""
+    exclusions = ' '.join(f'-label:"{label}"' for label in _PRIORITY_LABELS_ALL)
+    return f'repo:{repo} is:open is:issue {exclusions}'
+
+
+def _pull_intake_query(repo: str, owners: Sequence[str]) -> str:
+    exclusions = ' '.join(f'-assignee:{owner}' for owner in owners)
+    return f'repo:{repo} is:pr is:open created:>={ROUTING_RECOVERY_EPOCH} -draft:true {exclusions}'
 
 
 def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention: str | None = None) -> str:
@@ -1308,23 +1323,31 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
     active = _search_count(client, f'repo:{repo} is:open label:"{_ACTION_LABEL}"')
     cooling = _search_count(client, f'repo:{repo} is:open label:"{_ESCALATED_LABEL}"')
     owners = _qualified_routing_owners(client, repo)
-    recent_unowned, oldest = _unowned_snapshot(client, repo, owners)
+    gate_total, gate_items = _search_summary(client, f'{_gate_query(repo, owners)} sort:created-asc', first=1)
+    oldest = (int(gate_items[0]['number']), _parse_time(str(gate_items[0]['created_at']))) if gate_items else None
+    untriaged = _search_count(client, _untriaged_query(repo))
+    pull_intake = _search_count(client, _pull_intake_query(repo, owners))
     # Counts and item numbers only: the heartbeat must stay free of issue and PR
     # prose, which is attacker-controlled text.
     oldest_age = max(0, (now - oldest[1]).days) if oldest else 0
-    breach = recent_unowned > 100 or (oldest is not None and now - oldest[1] > dt.timedelta(days=1))
+    breach = (
+        gate_total > _GATE_BATCH_BREACH
+        or (oldest is not None and now - oldest[1] > dt.timedelta(days=1))
+        or pull_intake > 100
+    )
     if breach and (urgent_mention is None or _SLACK_MENTION.fullmatch(urgent_mention) is None):
         raise ValueError('A valid Aditya Slack mention is required for an intake breach')
     prefix = f'{urgent_mention} :rotating_light:' if breach else ':telescope:'
-    recent = (
-        f'{recent_unowned} post-rollout without designated owner; oldest #{oldest[0]} opened {oldest_age}d ago'
+    gate = (
+        f'{gate_total} priority issues unassigned; oldest #{oldest[0]} opened {oldest_age}d ago'
         if oldest
-        else '0 post-rollout without designated owner'
+        else f'{gate_total} priority issues unassigned'
     )
-    saturation = ' — recovery search saturated' if recent_unowned > 100 else ''
+    saturation = ' — intake search saturated' if pull_intake > 100 else ''
     return (
         f'{prefix} Attention coverage for {_slack_escape(repo)} — '
-        f'queue: {active} active, {cooling} cooling; intake: {recent}{saturation}. '
+        f'queue: {active} active, {cooling} cooling; assignment gate: {gate}; '
+        f'triage pool: {untriaged} unlabeled issues; PR intake: {pull_intake} unowned{saturation}. '
         'The Monday digest covers assigned, legacy, and draft work.'
     )
 
@@ -1428,6 +1451,51 @@ def _legacy_items(
     return lines
 
 
+def _nested_field(event: Mapping[str, Any], key: str, field: str) -> str:
+    value = event.get(key)
+    return str(cast(Mapping[str, object], value).get(field) or '') if isinstance(value, Mapping) else ''
+
+
+def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
+    """List maintainer corrections from the past week: priority relabels and unassignments.
+
+    These are the calibration signal for the triage automation, so the report names
+    who changed what, as metadata only, without pinging anyone.
+    """
+    since = now - dt.timedelta(days=_OVERRIDE_WINDOW_DAYS)
+    total, matches = _search_summary(
+        client,
+        f'repo:{repo} updated:>={since.date().isoformat()} sort:updated-desc',
+        first=_OVERRIDE_SCAN_LIMIT,
+    )
+    owner_keys = {owner.casefold() for owner in MAINTAINER_OWNERS}
+    lines: list[str] = []
+    for match in matches:
+        number = int(match['number'])
+        for event in client.last_pages(f'/repos/{repo}/issues/{number}/events?per_page=100'):
+            kind = str(event.get('event') or '')
+            if kind not in ('labeled', 'unlabeled', 'unassigned'):
+                continue
+            created = event.get('created_at')
+            if not isinstance(created, str) or _parse_time(created) < since:
+                continue
+            actor = _actor(event)
+            if actor.casefold() not in owner_keys:
+                continue
+            if kind == 'unassigned':
+                target = _nested_field(event, 'assignee', 'login') or 'unknown'
+                lines.append(f'• #{number}: @{_slack_escape(actor)} unassigned @{_slack_escape(target)}')
+            else:
+                name = _nested_field(event, 'label', 'name')
+                if not name.startswith('p:'):
+                    continue
+                verb = 'added' if kind == 'labeled' else 'removed'
+                lines.append(f'• #{number}: @{_slack_escape(actor)} {verb} `{_slack_escape(name)}`')
+    if total > len(matches):
+        lines.append(f'…covering the {len(matches)} most recently updated of {total} changed items')
+    return lines
+
+
 def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
     """Build a bounded Monday view of every ownership lane."""
     if repo not in REPOSITORIES:
@@ -1502,6 +1570,8 @@ def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
         f'<https://github.com/{repo}/issues?q={encoded_legacy}|View legacy> · '
         f'<https://github.com/{repo}/issues?q={encoded_drafts}|View drafts>'
     )
+    lines.extend(['', '*Maintainer corrections this week*'])
+    lines.extend(_override_lines(client, repo, now=now) or ['• none recorded'])
     text = '\n'.join(lines)
     if len(text.encode()) > _WEEKLY_TEXT_LIMIT:
         raise RuntimeError('Weekly digest exceeds the Slack payload limit')
