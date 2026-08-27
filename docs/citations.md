@@ -77,6 +77,45 @@ returns more than one for the same source. It lets applications show evidence pr
 the source, but should not be interpreted as a provider-independent exact quotation or as the text selected by the
 citation's anchor.
 
+## Citations in message history
+
+Citations are primarily application metadata for rendering source links, evidence previews, and highlighted text.
+Serializing and reloading [message history](message-history.md#storing-and-loading-messages-to-json) preserves
+[`TextPart.citations`][pydantic_ai.messages.TextPart.citations], but that does not guarantee that the next model receives
+the structured citation data.
+
+| Destination API | What the model receives from citation-bearing history | Notes |
+| --- | --- | --- |
+| Anthropic Messages, same provider | Native web and document citations | Replayed only when every citation on the text part contains the required Anthropic data |
+| Amazon Bedrock Converse, same provider | A native `citationsContent` block | Replayed only when the complete block can be reconstructed |
+| OpenAI Responses, same provider | Native URL and file annotations | Requires the native output item ID and `openai_send_reasoning_ids=True` |
+| Google Gemini / Vertex AI, OpenAI Chat, OpenRouter, or xAI | Text only | These APIs have no confirmed assistant-history input matching Pydantic AI's normalized citations |
+| Any different provider | Text only | Provider identifiers, locations, grouping, and offset meanings are not safely interchangeable |
+
+"Text only" describes what is sent to the model; the citations remain on the stored Pydantic AI messages for the
+application to use. Same-provider replay is all-or-nothing for each text part. If any citation is incomplete, malformed,
+or belongs to another provider, the adapter sends that whole part as ordinary text rather than silently changing which
+claims appear sourced.
+
+!!! warning "Do not assume the model remembers a citation"
+    A follow-up such as "Tell me more about source [1]" may reach a model that sees the rendered `[1]` marker but not
+    its URL, excerpt, or document location. If the model needs the source, include the relevant source content in the
+    new user prompt or let it retrieve the source again.
+
+Pydantic AI does not append a synthetic source list or an explanatory citation message to history. Doing so could
+change the meaning of the conversation and teach the model to imitate an application-specific citation format.
+
+### Prompt caching and structured output
+
+Citation handling does not add synthetic history messages, so ordinary provider prompt-cache rules continue to apply.
+Anthropic supports citations with prompt caching, but generated citation blocks cannot themselves be cached; cache the
+source document instead. See [Anthropic's citation and prompt-caching guidance](https://platform.claude.com/docs/en/build-with-claude/citations#using-prompt-caching-with-citations).
+
+Anthropic rejects citations combined with its native JSON-schema structured output (`output_config.format`). In
+Pydantic AI, do not combine an Anthropic citation request with
+[`NativeOutput`][pydantic_ai.output.NativeOutput]; use a text response or a separate structured-output call. See
+[Anthropic's feature compatibility notes](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility).
+
 ## Provider support
 
 | Provider/API | Normalized response | Request behavior | Provider support notes |

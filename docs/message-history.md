@@ -374,10 +374,9 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
-    Native citation replay initially covers Anthropic Messages, Bedrock Converse, and OpenAI
-    Responses. OpenAI Responses requires replaying native item IDs
-    (`openai_send_reasoning_ids=True`). Other providers and cross-provider histories replay text
-    without synthesizing provider citation objects.
+    Citation fields survive persistence, but not every model API accepts them in history. See
+    [citations in message history](citations.md#citations-in-message-history) for the same-provider replay matrix,
+    cross-provider text-only behavior, and guidance for citation follow-up questions.
 
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
@@ -426,6 +425,10 @@ Possession of the endpoint is therefore the authorization boundary, so design ar
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
+
+Provider-specific metadata is less portable than the message itself. In particular, a
+[citation-bearing response](citations.md#citations-in-message-history) may be sent to another provider as text only,
+even though the original structured citations remain available to your application in the stored messages.
 
 In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5.2` model, in a second agent run using the `google:gemini-3-pro-preview` model.
 
