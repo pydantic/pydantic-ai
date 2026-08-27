@@ -974,8 +974,7 @@ class ToolManager(Generic[AgentDepsT]):
         assert validated.tool is not None
         assert validated.validated_args is not None
 
-        if validated.tool.tool_def.kind == 'external':
-            raise RuntimeError('External tools cannot be called')
+        assert validated.tool.tool_def.kind != 'external', 'External tools cannot be called'
 
         try:
             tool_result = await self._run_execute_hooks(

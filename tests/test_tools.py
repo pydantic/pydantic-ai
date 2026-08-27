@@ -2589,7 +2589,9 @@ def test_parallel_tool_return_with_deferred():
     )
 
 
-def test_deferred_tool_call_approved_fails():
+def test_deferred_external_tool_cannot_be_approved():
+    """Not a VCR test: `FunctionModel` directly exercises deferred resume validation."""
+
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
@@ -2611,7 +2613,7 @@ def test_deferred_tool_call_approved_fails():
         DeferredToolRequests(calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')])
     )
 
-    with pytest.raises(RuntimeError, match='External tools cannot be called'):
+    with pytest.raises(UserError, match="Tool call 'foo' requires external execution"):
         agent.run_sync(
             message_history=result.all_messages(),
             deferred_tool_results=DeferredToolResults(
@@ -2620,6 +2622,49 @@ def test_deferred_tool_call_approved_fails():
                 },
             ),
         )
+
+
+def test_deferred_tool_results_wrong_category_requires_approval():
+    """Not a VCR test: pins resume validation of `DeferredToolResults` categories via `FunctionModel`.
+
+    A `requires_approval=True` tool call must be resolved via `approvals`; a result supplied
+    via `calls` would otherwise skip the approval gate entirely (https://github.com/pydantic/pydantic-ai/issues/7815).
+    """
+    executed = False
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('delete_file', {'path': '.env'}, tool_call_id='delete_file')])
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        nonlocal executed
+        executed = True
+        return f'{path} deleted'
+
+    result = agent.run_sync('Delete .env')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='delete_file', args={'path': '.env'}, tool_call_id='delete_file')]
+        )
+    )
+
+    with pytest.raises(UserError, match="Tool call 'delete_file' requires approval"):
+        agent.run_sync(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(calls={'delete_file': 'fake result'}),
+        )
+    assert executed is False
+
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={'delete_file': True}),
+    )
+    assert result.output == 'Done!'
+    assert executed is True
 
 
 def test_unapproved_tool_invalid_args_retry():

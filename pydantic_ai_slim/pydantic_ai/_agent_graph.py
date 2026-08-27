@@ -685,6 +685,30 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
 
+        # Prepare the tool manager before deferred result categories are flattened below.
+        run_context = replace(
+            build_run_context(ctx),
+            retry=ctx.state.output_retries_used,
+            max_retries=ctx.deps.tool_manager.default_max_retries,
+        )
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        # Runtime deferrals from `'function'` tools cannot be distinguished from message history alone.
+        for call in last_model_response.tool_calls:
+            tool_def = ctx.deps.tool_manager.get_tool_def(call.tool_name)
+            if tool_def is None:
+                continue
+            if tool_def.kind == 'unapproved' and call.tool_call_id in deferred_tool_results.calls:
+                raise exceptions.UserError(
+                    f'Tool call {call.tool_call_id!r} requires approval, so its result must be provided in '
+                    '`DeferredToolResults.approvals`, not `DeferredToolResults.calls`.'
+                )
+            elif tool_def.kind == 'external' and call.tool_call_id in deferred_tool_results.approvals:
+                raise exceptions.UserError(
+                    f'Tool call {call.tool_call_id!r} requires external execution, so its result must be provided in '
+                    '`DeferredToolResults.calls`, not `DeferredToolResults.approvals`.'
+                )
+
         tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
         tool_call_results.update(deferred_tool_results.to_tool_call_results())
 
