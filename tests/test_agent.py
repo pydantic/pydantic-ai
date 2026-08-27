@@ -4232,6 +4232,39 @@ async def test_agent_metadata_persisted_when_run_fails() -> None:
     assert captured_run.result is None
 
 
+async def test_agent_iter_cleans_up_after_tool_exception() -> None:
+    """A failed ``Agent.iter`` run must not leak state into a later run."""
+    model_calls = 0
+
+    def model(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='explode')])
+        return ModelResponse(parts=[TextPart('second run succeeded')])
+
+    agent = Agent(FunctionModel(model))
+
+    @agent.tool_plain
+    def explode() -> str:
+        raise RuntimeError('tool-failure')
+
+    tasks_before = asyncio.all_tasks()
+    with pytest.raises(RuntimeError, match='tool-failure'):
+        async with agent.iter('first run') as agent_run:
+            async for _ in agent_run:
+                pass
+
+    await asyncio.sleep(0)
+    leaked = asyncio.all_tasks() - tasks_before
+    assert not leaked, f'Orphaned tasks remain after failed Agent.iter run: {leaked}'
+
+    second_result = await agent.run('second run')
+    assert second_result.output == 'second run succeeded'
+    assert [message.kind for message in second_result.new_messages()] == ['request', 'response']
+    assert all('first run' not in str(message) for message in second_result.new_messages())
+
+
 async def test_agent_metadata_recomputed_on_successful_run() -> None:
     agent = Agent(
         TestModel(custom_output_text='recomputed metadata'),
