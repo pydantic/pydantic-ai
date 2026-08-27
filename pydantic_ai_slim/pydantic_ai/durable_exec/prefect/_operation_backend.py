@@ -84,7 +84,7 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
             flow_context = FlowRunContext.get()
             assert flow_context is not None
             cache_key = (*cache_key, self._next_sequence(flow_context, self._event_sequence_key))
-        elif name.endswith(('.create_sandbox', '.destroy_sandbox')):
+        elif name.endswith(('.acquire_sandbox', '.release_sandbox')):
             flow_context = FlowRunContext.get()
             assert flow_context is not None
             # The ordinal distinguishes two Agent.run() calls in one flow and is replay-stable

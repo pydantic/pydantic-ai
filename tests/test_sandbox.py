@@ -36,8 +36,8 @@ from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
 from .sandbox_fakes import (
+    AcquireOnlySandboxCapability,
     ConnectOnlySandboxCapability,
-    CreateOnlySandboxCapability,
     DecliningSandboxCapability,
     FakeSandboxResult,
     LifecycleSandboxCapability,
@@ -708,8 +708,8 @@ class SandboxCapability(AbstractCapability[Any]):
     events: list[str] = field(default_factory=lambda: [])
     backend: FakeSandbox | None = field(default=None, init=False)
 
-    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-        self.events.append(f'{self.name}:setup')
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        self.events.append(f'{self.name}:acquire')
         self.backend = FakeSandbox(self.name)
         return SandboxRef(provider='fake', sandbox_id=self.backend.sandbox_id)
 
@@ -719,8 +719,8 @@ class SandboxCapability(AbstractCapability[Any]):
         self.events.append(f'{self.name}:connect')
         return self.backend
 
-    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-        self.events.append(f'{self.name}:teardown')
+    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        self.events.append(f'{self.name}:release')
 
 
 async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection():
@@ -808,7 +808,7 @@ async def test_sandbox_ref_requires_recognizing_capability(with_other_capability
             return FakeSandbox('other') if ref.provider == 'other' else None
 
     capabilities = (
-        # Suppliers decline too: with a ref run argument their `create_sandbox` is skipped, so
+        # Suppliers decline too: with a ref run argument their `acquire_sandbox` is skipped, so
         # only their (provider-mismatched) `get_sandbox` is consulted.
         [OtherProviderCapability(), SandboxCapability(), ConnectOnlySandboxCapability(), LifecycleSandboxCapability()]
         if with_other_capability
@@ -911,7 +911,7 @@ def test_contributes_sandbox_handles_a_capability_reachable_twice():
 
 async def test_lifecycle_capability_creates_at_run_start_and_tears_down_at_run_end():
     """A capability owning the lifecycle gives the run the whole bracket: setup before the
-    first hook, teardown after the run. The tool reaches the sandbox by reconnecting
+    acquisition first, release after the run. The tool reaches the sandbox by reconnecting
     through `get_sandbox`, exactly as it would inside a durable engine's activity.
     """
     lifecycle = LifecycleSandboxCapability()
@@ -922,15 +922,15 @@ async def test_lifecycle_capability_creates_at_run_start_and_tears_down_at_run_e
     async def probe(ctx: RunContext[Any]) -> str:
         seen.append(ctx.sandbox.sandbox_id)
         # Created but not yet torn down while the run is still going.
-        assert lifecycle.events == ['create:created-1']
+        assert lifecycle.events == ['acquire:created-1']
         await ctx.sandbox.run(['echo', 'hello'])
-        assert lifecycle.events == ['create:created-1', 'connect:created-1']
+        assert lifecycle.events == ['acquire:created-1', 'connect:created-1']
         return 'ok'
 
     result = await agent.run('go')
     assert result.output == 'done'
     assert seen == ['created-1']
-    assert lifecycle.events == ['create:created-1', 'connect:created-1', 'teardown:created-1']
+    assert lifecycle.events == ['acquire:created-1', 'connect:created-1', 'release:created-1']
     assert [backend.commands for backend in lifecycle.backends] == [[['echo', 'hello']]]
 
 
@@ -980,7 +980,7 @@ async def test_lifecycle_capability_tears_down_when_a_tool_raises():
 
     with pytest.raises(RuntimeError, match='boom'):
         await agent.run('go')
-    assert lifecycle.events == ['create:created-1', 'teardown:created-1']
+    assert lifecycle.events == ['acquire:created-1', 'release:created-1']
 
 
 async def test_lifecycle_capability_tears_down_when_run_preparation_fails():
@@ -992,7 +992,7 @@ async def test_lifecycle_capability_tears_down_when_run_preparation_fails():
 
     with pytest.raises(RuntimeError, match='metadata preparation failed'):
         await agent.run('go', metadata=failing_metadata)
-    assert lifecycle.events == ['create:created-1', 'teardown:created-1']
+    assert lifecycle.events == ['acquire:created-1', 'release:created-1']
 
 
 async def test_lifecycle_capability_tears_down_when_capability_resolution_fails():
@@ -1006,10 +1006,10 @@ async def test_lifecycle_capability_tears_down_when_capability_resolution_fails(
     agent = Agent(TestModel(), capabilities=[lifecycle, FailingForRun()])
     with pytest.raises(RuntimeError, match='capability resolution failed'):
         await agent.run('go')
-    assert lifecycle.events == ['create:created-1', 'teardown:created-1']
+    assert lifecycle.events == ['acquire:created-1', 'release:created-1']
 
 
-async def test_failing_sandbox_creation_exits_whole_run_context():
+async def test_failing_sandbox_acquisition_exits_whole_run_context():
     events: list[str] = []
 
     @dataclass
@@ -1023,12 +1023,12 @@ async def test_failing_sandbox_creation_exits_whole_run_context():
                 events.append('exit')
 
     @dataclass
-    class FailingCreator(AbstractCapability[Any]):
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            raise RuntimeError('creation failed')
+    class FailingAcquirer(AbstractCapability[Any]):
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            raise RuntimeError('acquisition failed')
 
-    with pytest.raises(RuntimeError, match='creation failed'):
-        await Agent(TestModel(), capabilities=[Bracket(), FailingCreator()]).run('go')
+    with pytest.raises(RuntimeError, match='acquisition failed'):
+        await Agent(TestModel(), capabilities=[Bracket(), FailingAcquirer()]).run('go')
     assert events == ['enter', 'exit']
 
 
@@ -1051,7 +1051,7 @@ async def test_pre_sandbox_validation_failure_exits_whole_run_context():
     assert events == ['enter', 'exit']
 
 
-async def test_duplicate_per_run_supplier_ids_fail_before_creation():
+async def test_duplicate_per_run_supplier_ids_fail_before_acquisition():
     creator = LifecycleSandboxCapability()
     creator.id = 'duplicate'
     decliner = DecliningSandboxCapability()
@@ -1061,24 +1061,24 @@ async def test_duplicate_per_run_supplier_ids_fail_before_creation():
     with pytest.raises(UserError, match=r"Capability id 'duplicate' is used by multiple capabilities\."):
         await agent.run('go', capabilities=[decliner])
     assert creator.events == []
-    assert decliner.create_calls == 0
+    assert decliner.acquire_calls == 0
 
 
-async def test_create_only_capability_leans_on_platform_reaping():
-    """The inherited no-op `destroy_sandbox` is what lets a capability lean on its
+async def test_acquire_only_capability_leans_on_platform_reaping():
+    """The inherited no-op `release_sandbox` is what lets a capability lean on its
     platform's idle timeout instead of destroying anything itself.
     """
-    creator = CreateOnlySandboxCapability()
+    creator = AcquireOnlySandboxCapability()
     seen: list[str] = []
     agent = make_probe_agent(seen, capabilities=[creator])
     result = await agent.run('go')
     assert result.output == 'done'
     assert seen == ['created-1']
-    assert creator.events == ['create:created-1']
+    assert creator.events == ['acquire:created-1']
 
 
 async def test_lifecycle_capability_also_connects_ref_run_arguments():
-    """The same capability serves both jobs: with a ref run argument its `create_sandbox` is
+    """The same capability serves both jobs: with a ref run argument its `acquire_sandbox` is
     skipped (the caller owns the lifecycle), but its `get_sandbox` still connects.
     """
     lifecycle = LifecycleSandboxCapability()
@@ -1107,14 +1107,14 @@ async def test_capability_supplied_sandbox_is_exposed_through_facade():
     assert len(observed) == 1
     assert isinstance(observed[0], Sandbox)
     assert observed[0].backend is cap.backend
-    assert cap.events == ['cap:setup', 'cap:connect', 'cap:teardown']
+    assert cap.events == ['cap:acquire', 'cap:connect', 'cap:release']
 
 
 async def test_capability_supplied_sandbox_connects_lazily():
-    """A run that never touches `ctx.sandbox` pays setup and teardown, but no connection."""
+    """A run that never touches `ctx.sandbox` pays acquisition and release, but no connection."""
     cap = SandboxCapability()
     await make_probe_agent([], capabilities=[cap]).run('go')
-    assert cap.events == ['cap:setup', 'cap:teardown']
+    assert cap.events == ['cap:acquire', 'cap:release']
 
 
 async def test_capability_sandbox_live_through_after_run():
@@ -1128,7 +1128,7 @@ async def test_capability_sandbox_live_through_after_run():
 
     cap = ContributingWatcher()
     await make_probe_agent([], capabilities=[cap]).run('go')
-    assert cap.events == ['cap:setup', 'after_run:cap', 'cap:teardown']
+    assert cap.events == ['cap:acquire', 'after_run:cap', 'cap:release']
 
 
 async def test_run_argument_wins_over_capability():
@@ -1162,14 +1162,14 @@ async def test_capability_without_sandbox_does_not_mask_supplier():
 
 async def test_warm_sandbox_shared_across_runs():
     """A warm capability returns the identity of the backend it already holds from
-    `create_sandbox` and leaves `destroy_sandbox` alone, so the same environment serves
+    `acquire_sandbox` and leaves `release_sandbox` alone, so the same environment serves
     every run.
     """
     warm = FakeSandbox('warm')
 
     @dataclass
     class WarmSandboxCapability(AbstractCapability[Any]):
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(provider='fake', sandbox_id=warm.sandbox_id)
 
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
@@ -1203,7 +1203,7 @@ async def test_wrapper_capability_forwards_sandbox_lifecycle():
     seen: list[str] = []
     await make_connecting_probe_agent(seen, capabilities=[WrapperCapability(wrapped=inner)]).run('go')
     assert seen == ['inner']
-    assert inner.events == ['inner:setup', 'inner:connect', 'inner:teardown']
+    assert inner.events == ['inner:acquire', 'inner:connect', 'inner:release']
 
 
 async def test_capability_sandbox_tears_down_when_a_tool_raises():
@@ -1220,11 +1220,11 @@ async def test_capability_sandbox_tears_down_when_a_tool_raises():
 
     with pytest.raises(RuntimeError, match='boom'):
         await agent.run('go')
-    assert cap.events == ['cap:setup', 'cap:teardown']
+    assert cap.events == ['cap:acquire', 'cap:release']
 
 
 async def test_capability_sandbox_tears_down_when_toolset_entry_fails():
-    """The exit stack owns the bracket, so teardown runs even when the run never starts."""
+    """The exit stack owns the bracket, so release runs even when the run never starts."""
 
     class ExplodingToolset(WrapperToolset[Any]):
         async def __aenter__(self) -> Any:
@@ -1234,33 +1234,33 @@ async def test_capability_sandbox_tears_down_when_toolset_entry_fails():
     agent: Agent = Agent(TestModel(), toolsets=[ExplodingToolset(wrapped=FunctionToolset())], capabilities=[cap])
     with pytest.raises(RuntimeError, match='toolset entry failed'):
         await agent.run('go')
-    assert cap.events == ['cap:setup', 'cap:teardown']
+    assert cap.events == ['cap:acquire', 'cap:release']
 
 
-async def test_failing_teardown_propagates():
-    """An in-process teardown failure surfaces to the caller, exactly like a toolset exit
+async def test_failing_release_propagates():
+    """An in-process release failure surfaces to the caller, exactly like a toolset exit
     error; durable engines make their own call (Temporal logs instead, because the platform
     idle timeout is the backstop and the run's work is already done).
     """
-    from .sandbox_fakes import FailingTeardownSandboxCapability
+    from .sandbox_fakes import FailingReleaseSandboxCapability
 
-    failing = FailingTeardownSandboxCapability()
+    failing = FailingReleaseSandboxCapability()
     agent = make_probe_agent([], capabilities=[failing])
     with pytest.raises(RuntimeError, match="sandbox 'created-1' is already gone"):
         await agent.run('go')
-    assert failing.events == ['create:created-1', 'teardown-failed:created-1']
+    assert failing.events == ['acquire:created-1', 'release-failed:created-1']
 
 
-async def test_teardown_survives_run_cancellation():
-    """Cancelling the run must not abort `destroy_sandbox`: the exit stack unwinds inside an
-    already-cancelled scope, so an unshielded teardown would die at its first await and leak
+async def test_release_survives_run_cancellation():
+    """Cancelling the run must not abort `release_sandbox`: the exit stack unwinds inside an
+    already-cancelled scope, so an unshielded release would die at its first await and leak
     the sandbox.
     """
 
     class AwaitingTeardownCapability(SandboxCapability):
-        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            await asyncio.sleep(0)  # a real teardown awaits provider I/O; an unshielded cancel lands here
-            await super().destroy_sandbox(ctx, ref)
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            await asyncio.sleep(0)  # a real release awaits provider I/O; an unshielded cancel lands here
+            await super().release_sandbox(ctx, ref)
 
     capability = AwaitingTeardownCapability()
     agent: Agent = Agent(_tool_call_then_text(), capabilities=[capability])
@@ -1282,7 +1282,7 @@ async def test_teardown_survives_run_cancellation():
         tg.start_soon(run_agent)
         await entered.wait()
         tg.cancel_scope.cancel()
-    assert capability.events == ['cap:setup', 'cap:teardown']
+    assert capability.events == ['cap:acquire', 'cap:release']
 
 
 async def test_setup_declined_falls_through_to_default():
@@ -1292,7 +1292,7 @@ async def test_setup_declined_falls_through_to_default():
 
     @dataclass
     class DecliningSupplier(AbstractCapability[Any]):
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
             return None
 
     seen: list[str] = []

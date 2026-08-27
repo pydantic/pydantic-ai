@@ -145,10 +145,10 @@ from pydantic_graph.join import reduce_list_append
 from ._inline_snapshot import snapshot
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from .sandbox_fakes import (
+    AcquireOnlySandboxCapability,
     ConnectOnlySandboxCapability,
-    CreateOnlySandboxCapability,
     DecliningSandboxCapability,
-    FailingTeardownSandboxCapability,
+    FailingReleaseSandboxCapability,
     FakeSandboxHandle,
     LifecycleSandboxCapability,
     SandboxContributingCapability,
@@ -3165,7 +3165,7 @@ unavailable_sandbox_temporal_agent = TemporalAgent(  # pyright: ignore[reportDep
 )
 _TEMPORAL_UNAVAILABLE_SANDBOX_MESSAGE = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-    'the activity boundary. Attach a capability that supplies a sandbox through its `create_sandbox` hook, '
+    'the activity boundary. Attach a capability that supplies a sandbox through its `acquire_sandbox` hook, '
     'or pass a `SandboxRef` to the agent run; either way the sandbox is re-opened inside each activity '
     "through the capability chain's `get_sandbox`."
 )
@@ -3222,7 +3222,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'A capability that supplies a sandbox (overrides `create_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
+                'A capability that supplies a sandbox (overrides `acquire_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
             ),
         ):
             await client.execute_workflow(
@@ -4770,13 +4770,13 @@ async def _refuse_to_connect(ref: SandboxRef) -> SandboxBackend:
     raise AssertionError('serializing a run context must not connect its sandbox')  # pragma: no cover
 
 
-def _serialized_ref_context() -> dict[str, Any]:
+def _serialized_ref_context(*, capability_id: str | None = 'connector') -> dict[str, Any]:
     ctx = RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
         sandbox=Sandbox.from_ref(
-            SandboxRef(provider='fake', sandbox_id='sandbox-123', capability_id='connector'),
+            SandboxRef(provider='fake', sandbox_id='sandbox-123', capability_id=capability_id),
             _refuse_to_connect,
         ),
     )
@@ -4817,7 +4817,9 @@ async def test_temporal_run_context_sandbox_ref_requires_a_recognizing_capabilit
     from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
 
     agent: Agent[None, str] = Agent(TestModel(), name='ref_unrecognized_agent')
-    reconstructed = deserialize_run_context(TemporalRunContext, _serialized_ref_context(), deps=None, agent=agent)
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, _serialized_ref_context(capability_id=None), deps=None, agent=agent
+    )
     with pytest.raises(
         UserError,
         match=re.escape(
@@ -4841,7 +4843,9 @@ async def test_temporal_run_context_sandbox_ref_connection_errors_surface():
 
     capability = FailingConnectCapability()
     agent: Agent[None, str] = Agent(TestModel(), name='ref_connect_failure_agent', capabilities=[capability])
-    reconstructed = deserialize_run_context(TemporalRunContext, _serialized_ref_context(), deps=None, agent=agent)
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, _serialized_ref_context(capability_id=None), deps=None, agent=agent
+    )
     with pytest.raises(
         UserError,
         match=re.escape("Failed to connect to sandbox 'sandbox-123' for provider 'fake'.") + '$',
@@ -4850,7 +4854,9 @@ async def test_temporal_run_context_sandbox_ref_connection_errors_surface():
     assert exc_info.value.__cause__ is capability.error
 
     capability.error = UserError('sandbox disabled by policy')
-    reconstructed = deserialize_run_context(TemporalRunContext, _serialized_ref_context(), deps=None, agent=agent)
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, _serialized_ref_context(capability_id=None), deps=None, agent=agent
+    )
     with pytest.raises(UserError, match=r'^sandbox disabled by policy$'):
         await reconstructed.sandbox.run(['true'])
 
@@ -7689,12 +7695,12 @@ async def test_temporal_durability_reconnects_sandbox_ref_inside_activity(client
 
 
 class SandboxSupplyingTemporalDurability(TemporalDurability[Any]):
-    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover
 
 
 def test_temporal_durability_base_sandbox_routing_is_not_a_user_supplier():
-    """The base `create_sandbox` override only routes the real winner's lifecycle into activities,
+    """The base `acquire_sandbox` override only routes the real winner's lifecycle into activities,
     so it must not read as a supplier itself; a subclass override is a genuine supplier."""
     assert contributes_sandbox(TemporalDurability()) is False
     assert contributes_sandbox(SandboxSupplyingTemporalDurability()) is True
@@ -7713,7 +7719,7 @@ async def use_supplied_sandbox(ctx: RunContext[None]) -> str:
     return (await ctx.sandbox.run(['echo', ctx.sandbox.sandbox_id])).stdout
 
 
-def _supplier_sandbox_agent(name: str, supplier: CreateOnlySandboxCapability) -> Agent[None, str]:
+def _supplier_sandbox_agent(name: str, supplier: AcquireOnlySandboxCapability) -> Agent[None, str]:
     return Agent(
         FunctionModel(_supplied_sandbox_model),
         name=name,
@@ -7732,29 +7738,29 @@ class ActivityAwareLifecycleSandboxCapability(LifecycleSandboxCapability):
         super().reset()
         self.in_activity.clear()
 
-    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         self.in_activity.append(activity.in_activity())
-        return await super().create_sandbox(ctx)
+        return await super().acquire_sandbox(ctx)
 
-    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         self.in_activity.append(activity.in_activity())
-        await super().destroy_sandbox(ctx, ref)
+        await super().release_sandbox(ctx, ref)
 
 
 _lifecycle_sandbox_capability = ActivityAwareLifecycleSandboxCapability()
 _lifecycle_sandbox_capability.id = 'lifecycle-sandbox'
 _lifecycle_durable_agent = _supplier_sandbox_agent('lifecycle_sandbox_durability_agent', _lifecycle_sandbox_capability)
 
-_teardownless_sandbox_capability = CreateOnlySandboxCapability()
-_teardownless_sandbox_capability.id = 'teardownless-sandbox'
-_teardownless_durable_agent = _supplier_sandbox_agent(
-    'teardownless_sandbox_durability_agent', _teardownless_sandbox_capability
+_releaseless_sandbox_capability = AcquireOnlySandboxCapability()
+_releaseless_sandbox_capability.id = 'releaseless-sandbox'
+_releaseless_durable_agent = _supplier_sandbox_agent(
+    'releaseless_sandbox_durability_agent', _releaseless_sandbox_capability
 )
 
-_unteardownable_sandbox_capability = FailingTeardownSandboxCapability()
-_unteardownable_sandbox_capability.id = 'unteardownable-sandbox'
-_unteardownable_durable_agent = _supplier_sandbox_agent(
-    'unteardownable_sandbox_durability_agent', _unteardownable_sandbox_capability
+_unreleasable_sandbox_capability = FailingReleaseSandboxCapability()
+_unreleasable_sandbox_capability.id = 'unreleasable-sandbox'
+_unreleasable_durable_agent = _supplier_sandbox_agent(
+    'unreleasable_sandbox_durability_agent', _unreleasable_sandbox_capability
 )
 
 
@@ -7791,14 +7797,14 @@ class LifecycleSandboxWorkflow:
 class TeardownlessSandboxWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        return (await _teardownless_durable_agent.run(prompt)).output
+        return (await _releaseless_durable_agent.run(prompt)).output
 
 
 @workflow.defn
-class UnteardownableSandboxWorkflow:
+class UnreleasableSandboxWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        return (await _unteardownable_durable_agent.run(prompt)).output
+        return (await _unreleasable_durable_agent.run(prompt)).output
 
 
 @workflow.defn
@@ -7814,7 +7820,7 @@ async def test_temporal_durability_runs_the_sandbox_lifecycle_in_activities(clie
     in activities.
 
     Only the sandbox's identity crosses back into workflow code, so the tool activity re-opens
-    the environment through `get_sandbox` — the ordering assertion is what proves creation
+    the environment through `get_sandbox` — the ordering assertion is what proves acquisition
     happened exactly once, outside the workflow, before any tool ran.
     """
     _lifecycle_sandbox_capability.reset()
@@ -7833,7 +7839,7 @@ async def test_temporal_durability_runs_the_sandbox_lifecycle_in_activities(clie
 
     assert output == 'done'
     assert _lifecycle_sandbox_capability.events == snapshot(
-        ['create:created-1', 'connect:created-1', 'teardown:created-1']
+        ['acquire:created-1', 'connect:created-1', 'release:created-1']
     )
     assert _lifecycle_sandbox_capability.in_activity == [True, True]
     # The command reached the backend the tool activity connected to.
@@ -7889,9 +7895,9 @@ async def test_temporal_durability_falls_through_a_declining_supplier_inside_the
         )
 
     assert output == 'done'
-    assert _declining_sandbox_capability.create_calls == 1
+    assert _declining_sandbox_capability.acquire_calls == 1
     assert _fallthrough_lifecycle_capability.events == snapshot(
-        ['create:created-1', 'connect:created-1', 'teardown:created-1']
+        ['acquire:created-1', 'connect:created-1', 'release:created-1']
     )
 
 
@@ -7911,17 +7917,17 @@ async def test_temporal_durability_tears_down_the_sandbox_when_a_tool_fails(clie
                 task_queue=TASK_QUEUE,
             )
 
-    assert _failing_lifecycle_sandbox_capability.events == snapshot(['create:created-1', 'teardown:created-1'])
+    assert _failing_lifecycle_sandbox_capability.events == snapshot(['acquire:created-1', 'release:created-1'])
 
 
-async def test_temporal_durability_sandbox_without_teardown_succeeds(client: Client):
-    """The inherited no-op `destroy_sandbox` runs as an activity like any other and leaves the run alone."""
-    _teardownless_sandbox_capability.reset()
+async def test_temporal_durability_sandbox_without_release_succeeds(client: Client):
+    """The inherited no-op `release_sandbox` runs as an activity like any other and leaves the run alone."""
+    _releaseless_sandbox_capability.reset()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[TeardownlessSandboxWorkflow],
-        plugins=[AgentPlugin(_teardownless_durable_agent)],
+        plugins=[AgentPlugin(_releaseless_durable_agent)],
     ):
         output = await client.execute_workflow(
             TeardownlessSandboxWorkflow.run,
@@ -7931,39 +7937,39 @@ async def test_temporal_durability_sandbox_without_teardown_succeeds(client: Cli
         )
 
     assert output == 'done'
-    assert _teardownless_sandbox_capability.events == snapshot(['create:created-1', 'connect:created-1'])
+    assert _releaseless_sandbox_capability.events == snapshot(['acquire:created-1', 'connect:created-1'])
 
 
-async def test_temporal_durability_retries_then_logs_a_failed_sandbox_teardown(
+async def test_temporal_durability_retries_then_logs_a_failed_sandbox_release(
     client: Client, caplog: pytest.LogCaptureFixture
 ):
-    """A teardown failure retries in Temporal before outer cleanup logs and suppresses it."""
-    _unteardownable_sandbox_capability.reset()
+    """A release failure retries in Temporal before outer cleanup logs and suppresses it."""
+    _unreleasable_sandbox_capability.reset()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[UnteardownableSandboxWorkflow],
-        plugins=[AgentPlugin(_unteardownable_durable_agent)],
+        workflows=[UnreleasableSandboxWorkflow],
+        plugins=[AgentPlugin(_unreleasable_durable_agent)],
     ):
         with caplog.at_level(logging.WARNING):
             output = await client.execute_workflow(
-                UnteardownableSandboxWorkflow.run,
+                UnreleasableSandboxWorkflow.run,
                 args=['Use the sandbox.'],
-                id=UnteardownableSandboxWorkflow.__name__,
+                id=UnreleasableSandboxWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
 
     assert output == 'done'
-    assert _unteardownable_sandbox_capability.events == snapshot(
+    assert _unreleasable_sandbox_capability.events == snapshot(
         [
-            'create:created-1',
+            'acquire:created-1',
             'connect:created-1',
-            'teardown-failed:created-1',
-            'teardown-failed:created-1',
-            'teardown-failed:created-1',
+            'release-failed:created-1',
+            'release-failed:created-1',
+            'release-failed:created-1',
         ]
     )
-    assert any(record.message.startswith("Failed to tear down sandbox 'created-1'") for record in caplog.records)
+    assert any(record.message.startswith("Failed to release sandbox 'created-1'") for record in caplog.records)
 
 
 # --- Durability with tools ---
@@ -8856,7 +8862,7 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
             await agent.run('hello', capabilities=[extra_factory])
 
 
-async def test_temporal_durability_rejects_a_per_run_sandbox_supplier_before_creation():
+async def test_temporal_durability_rejects_a_per_run_sandbox_supplier_before_acquisition():
     supplier = LifecycleSandboxCapability()
     agent = Agent(TestModel(), name='temporal_per_run_supplied_sandbox', capabilities=[TemporalDurability()])
 

@@ -22,7 +22,7 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 
 TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-    'the activity boundary. Attach a capability that supplies a sandbox through its `create_sandbox` hook, '
+    'the activity boundary. Attach a capability that supplies a sandbox through its `acquire_sandbox` hook, '
     'or pass a `SandboxRef` to the agent run; either way the sandbox is re-opened inside each activity '
     "through the capability chain's `get_sandbox`."
 )

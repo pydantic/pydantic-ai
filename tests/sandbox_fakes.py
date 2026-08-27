@@ -88,11 +88,11 @@ class ConnectOnlySandboxCapability(AbstractCapability[Any]):
         return backend
 
 
-class CreateOnlySandboxCapability(AbstractCapability[Any]):
-    """Provisions per run and reconnects, inheriting the no-op `destroy_sandbox`.
+class AcquireOnlySandboxCapability(AbstractCapability[Any]):
+    """Provisions per run and reconnects, inheriting the no-op `release_sandbox`.
 
     Every lifecycle call is appended to `events`, so tests can pin both the counts and the
-    order in which creation, connection, and destruction happened.
+    order in which acquisition, connection, and release happened.
     """
 
     id = 'test-sandbox'
@@ -108,10 +108,10 @@ class CreateOnlySandboxCapability(AbstractCapability[Any]):
         self.backends.clear()
         self._created = 0
 
-    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         self._created += 1
         sandbox_id = f'created-{self._created}'
-        self.events.append(f'create:{sandbox_id}')
+        self.events.append(f'acquire:{sandbox_id}')
         return SandboxRef(provider='fake', sandbox_id=sandbox_id)
 
     async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
@@ -123,11 +123,11 @@ class CreateOnlySandboxCapability(AbstractCapability[Any]):
         return backend
 
 
-class LifecycleSandboxCapability(CreateOnlySandboxCapability):
-    """A `CreateOnlySandboxCapability` that also destroys the sandboxes it made."""
+class LifecycleSandboxCapability(AcquireOnlySandboxCapability):
+    """An `AcquireOnlySandboxCapability` that also releases its sandbox leases."""
 
-    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-        self.events.append(f'teardown:{ref.sandbox_id}')
+    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        self.events.append(f'release:{ref.sandbox_id}')
 
 
 class PerRunLifecycleSandboxCapability(LifecycleSandboxCapability):
@@ -143,7 +143,7 @@ class PerRunLifecycleSandboxCapability(LifecycleSandboxCapability):
 
 
 class DecliningSandboxCapability(AbstractCapability[Any]):
-    """A supplier that overrides `create_sandbox` but declines every run.
+    """A supplier that overrides `acquire_sandbox` but declines every run.
 
     Declining is a first-class supplier shape (contribute only for some runs), so tests use
     the call count to pin that the fall-through to the next supplier happened exactly once,
@@ -151,27 +151,27 @@ class DecliningSandboxCapability(AbstractCapability[Any]):
     """
 
     def __init__(self) -> None:
-        self.create_calls = 0
+        self.acquire_calls = 0
 
     def reset(self) -> None:
         """Restore pristine state, so module-level capabilities can be shared across tests."""
-        self.create_calls = 0
+        self.acquire_calls = 0
 
-    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
-        self.create_calls += 1
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
+        self.acquire_calls += 1
         return None
 
 
-class FailingTeardownSandboxCapability(CreateOnlySandboxCapability):
-    """A capability whose `destroy_sandbox` always fails, e.g. because the sandbox is already gone."""
+class FailingReleaseSandboxCapability(AcquireOnlySandboxCapability):
+    """A capability whose `release_sandbox` always fails, e.g. because the sandbox is already gone."""
 
-    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-        self.events.append(f'teardown-failed:{ref.sandbox_id}')
+    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        self.events.append(f'release-failed:{ref.sandbox_id}')
         raise RuntimeError(f'sandbox {ref.sandbox_id!r} is already gone')
 
 
 class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose sandbox contribution is rejected before anything is provisioned."""
 
-    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover

@@ -1396,7 +1396,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
 
 
 class SandboxSupplyingDBOSDurability(DBOSDurability[Any]):
-    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover
 
 
@@ -1412,7 +1412,7 @@ _DBOS_WRAPPER_UNAVAILABLE_SANDBOX_MESSAGE = (
 _DEFAULT_UNAVAILABLE_SANDBOX_MESSAGE = (
     'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
     'local machine (unsafe: commands and file operations run with the full permissions of this process), '
-    'attach a capability that supplies a sandbox through its `create_sandbox` hook, or pass a `SandboxRef` '
+    'attach a capability that supplies a sandbox through its `acquire_sandbox` hook, or pass a `SandboxRef` '
     'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
 )
 
@@ -1549,7 +1549,7 @@ async def test_dbos_agent_capability_resolves_sandbox_ref(dbos: DBOS):
 
 
 async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
-    # A supplier's `create_sandbox`/`destroy_sandbox` would run in workflow code, which is replayed
+    # A supplier's `acquire_sandbox`/`release_sandbox` would run in workflow code, which is replayed
     # during recovery. Checked statically over both the bound chain and per-run capabilities.
     static_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='dbos_static_sandbox', capabilities=[SandboxContributingCapability()])
@@ -1570,13 +1570,13 @@ async def test_dbos_durability_runs_a_sandbox_supplying_capability_in_steps(dbos
             super().__init__()
             self.in_step: list[bool] = []
 
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             self.in_step.append(DBOS.step_id is not None)
-            return await super().create_sandbox(ctx)
+            return await super().acquire_sandbox(ctx)
 
-        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.in_step.append(DBOS.step_id is not None)
-            await super().destroy_sandbox(ctx, ref)
+            await super().release_sandbox(ctx, ref)
 
     supplier = StepAwareLifecycleSandboxCapability()
     agent = Agent(
@@ -1590,14 +1590,14 @@ async def test_dbos_durability_runs_a_sandbox_supplying_capability_in_steps(dbos
         return (await agent.run('Hello')).output
 
     assert await run_agent() == snapshot('success (no tool calls)')
-    assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
+    assert supplier.events == snapshot(['acquire:created-1', 'release:created-1'])
     assert supplier.in_step == [True, True]
 
     # Outside a workflow the very same agent runs the supplier's lifecycle normally; no tool
     # touches the sandbox, so the lazily connecting facade never connects.
     assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
     assert supplier.events == snapshot(
-        ['create:created-1', 'teardown:created-1', 'create:created-2', 'teardown:created-2']
+        ['acquire:created-1', 'release:created-1', 'acquire:created-2', 'release:created-2']
     )
     assert supplier.in_step == [True, True, False, False]
 
@@ -1624,7 +1624,7 @@ async def test_dbos_durability_rejects_a_per_run_sandbox_supplier(dbos: DBOS):
 
 
 def test_dbos_durability_base_sandbox_routing_is_not_a_user_supplier(dbos: DBOS):
-    """The base `create_sandbox` override only guards durable runs, so it must not read as a
+    """The base `acquire_sandbox` override only guards durable runs, so it must not read as a
     supplier itself; a subclass override is a genuine supplier."""
     assert contributes_sandbox(DBOSDurability()) is False
     assert contributes_sandbox(SandboxSupplyingDBOSDurability()) is True

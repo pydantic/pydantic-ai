@@ -1687,15 +1687,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sandbox_supplier, sandbox_ref = supplied
                 sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
 
-                async def _destroy_run_sandbox(supplier: AbstractCapability[AgentDepsT], ref: SandboxRef) -> None:
+                async def _release_run_sandbox(supplier: AbstractCapability[AgentDepsT], ref: SandboxRef) -> None:
                     with anyio.CancelScope(shield=True):
-                        durable = active_durable_operation(supplier, 'destroy_sandbox', initial_ctx) is not None
+                        durable = active_durable_operation(supplier, 'release_sandbox', initial_ctx) is not None
                         try:
                             await invoke_durable_operation(
                                 supplier,
-                                'destroy_sandbox',
+                                'release_sandbox',
                                 initial_ctx,
-                                supplier.destroy_sandbox,
+                                supplier.release_sandbox,
                                 (initial_ctx, ref),
                                 {},
                             )
@@ -1703,14 +1703,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             if not durable:
                                 raise
                             logger.warning(
-                                'Failed to tear down sandbox %r for provider %r after durable retries; '
+                                'Failed to release sandbox %r for provider %r after durable retries; '
                                 'the platform idle timeout must reap it.',
                                 ref.sandbox_id,
                                 ref.provider,
                                 exc_info=True,
                             )
 
-                preparation_stack.push_async_callback(_destroy_run_sandbox, sandbox_supplier, sandbox_ref)
+                preparation_stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
             else:
                 sandbox_facade = Sandbox.wrap(default_sandbox_backend())
             initial_ctx.sandbox = sandbox_facade

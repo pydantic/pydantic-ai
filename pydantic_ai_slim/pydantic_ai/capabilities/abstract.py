@@ -431,13 +431,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return []
 
     @tier_one_durable_operation
-    async def create_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
-        """Provision or select this run's sandbox and return its serializable identity.
+    async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+        """Acquire this run's sandbox and return its serializable identity.
 
         Invoked once in a non-durable run, or recorded once in a durable run's logical history, before any hook sees
         [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox], and only when no `sandbox=` run
         argument was passed. The latest overriding capability in the resolved chain wins.
-        Return `None`, without side effects, to not contribute.
+        Acquisition may provision a new sandbox, check one out from a pool, or select a warm
+        environment. Return `None`, without side effects, to not contribute.
 
         The run holds only the returned [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; the
         live connection goes through
@@ -463,15 +464,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     @tier_one_durable_operation
-    async def destroy_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
-        """Destroy the sandbox identified by `ref`.
+    async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        """Release the run's ownership of the sandbox identified by `ref`.
 
         Recorded once in the logical run history after the run ends (also on failure), only on the capability whose
-        [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] produced
+        [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] produced
         `ref`, and never for a `sandbox=` run argument. A durable engine may physically retry the
-        operation, so it must tolerate an already-gone sandbox. The platform's idle timeout is the
-        backstop for paths that can never run this hook. The inherited no-op suits warm or externally
-        managed sandboxes.
+        operation, so it must be idempotent. Releasing may destroy the sandbox, return it to a pool,
+        decrement a reference count, or do nothing for a warm environment. The platform's idle
+        timeout is the backstop for paths that can never run this hook. The inherited no-op suits
+        warm or externally managed sandboxes.
         """
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
@@ -572,7 +574,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Deferred capabilities are always excluded from this chain, including capabilities
         already loaded in resumed message history. This matches
-        [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] because
+        [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] because
         the chain is entered once at run start.
 
         """
@@ -1246,10 +1248,10 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
 async def resolve_run_sandbox(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> tuple[AbstractCapability[AgentDepsT], SandboxRef] | None:
-    """Consult the tree's `create_sandbox` hooks latest-first; return the winning supplier and its ref.
+    """Consult the tree's `acquire_sandbox` hooks latest-first; return the winning supplier and its ref.
 
     Lives outside the combined-capability dispatch because the run must route
-    `destroy_sandbox` back to the same capability, and that dispatch loses supplier identity.
+    `release_sandbox` back to the same capability, and that dispatch loses supplier identity.
     """
     capability_ids = {id(leaf): capability_id for capability_id, leaf in capabilities_by_id(capability).items()}
     for leaf in reversed(leaf_capabilities(capability)):
@@ -1257,9 +1259,9 @@ async def resolve_run_sandbox(
             continue
         ref = await invoke_durable_operation(
             leaf,
-            'create_sandbox',
+            'acquire_sandbox',
             ctx,
-            leaf.create_sandbox,
+            leaf.acquire_sandbox,
             (ctx,),
             {},
         )

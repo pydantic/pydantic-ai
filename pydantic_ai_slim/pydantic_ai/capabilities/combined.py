@@ -266,7 +266,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # Reversed to match supplier precedence, so the capability that produced a ref is also
         # the first one asked to re-open it; capabilities decline refs they don't recognize.
         # Deferred capabilities are skipped: their contributions are inert until loaded.
-        # `create_sandbox`/`destroy_sandbox` deliberately have no combined dispatch — the run
+        # `acquire_sandbox`/`release_sandbox` deliberately have no combined dispatch — the run
         # resolves them through `resolve_run_sandbox`, which keeps the supplier's identity.
         for capability in reversed(self.capabilities):
             if capability.defer_loading is True:

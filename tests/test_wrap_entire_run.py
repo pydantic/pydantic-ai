@@ -77,15 +77,15 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
 
     @dataclass
     class SandboxCapability(AbstractCapability[Any]):
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            events.append('create_sandbox')
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            events.append('acquire_sandbox')
             return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
         # No `get_sandbox`: the test's claim is hook ordering, and nothing operates on the
         # sandbox, so connection is never attempted.
 
-        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            events.append('destroy_sandbox')
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            events.append('release_sandbox')
 
         async def for_run(self, ctx: RunContext[Any]) -> SandboxCapability:
             events.append('for_run')
@@ -137,7 +137,7 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
     assert events == [
         'iter1_enter',
         'iter2_enter',
-        'create_sandbox',
+        'acquire_sandbox',
         'for_run',
         'wrap_run',
         'before_run',
@@ -145,7 +145,7 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
         'model',
         'after_run',
         'toolset_exit',
-        'destroy_sandbox',
+        'release_sandbox',
         'iter2_exit',
         'iter1_exit',
     ]
@@ -172,7 +172,7 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
     class ServeSandbox(AbstractCapability[Any]):
         # No `get_sandbox`: the test only inspects the preparation context, so the
         # contributed sandbox is never connected.
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
     model = FunctionModel(simple_model_function)

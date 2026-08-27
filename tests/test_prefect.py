@@ -163,7 +163,7 @@ from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from .sandbox_fakes import (
     ConnectOnlySandboxCapability,
-    FailingTeardownSandboxCapability,
+    FailingReleaseSandboxCapability,
     FakeSandboxHandle,
     LifecycleSandboxCapability,
 )
@@ -2894,13 +2894,13 @@ async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuste
             super().__init__()
             self.in_task: list[bool] = []
 
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             self.in_task.append(TaskRunContext.get() is not None)
-            return await super().create_sandbox(ctx)
+            return await super().acquire_sandbox(ctx)
 
-        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             self.in_task.append(TaskRunContext.get() is not None)
-            await super().destroy_sandbox(ctx, ref)
+            await super().release_sandbox(ctx, ref)
 
     supplier = TaskAwareLifecycleSandboxCapability()
     agent = Agent(
@@ -2917,7 +2917,7 @@ async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuste
 
     assert await run_durable_agent() == snapshot(('success (no tool calls)', 'success (no tool calls)'))
     assert supplier.events == snapshot(
-        ['create:created-1', 'teardown:created-1', 'create:created-2', 'teardown:created-2']
+        ['acquire:created-1', 'release:created-1', 'acquire:created-2', 'release:created-2']
     )
     assert supplier.in_task == [True, True, True, True]
 
@@ -2926,12 +2926,12 @@ async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuste
     assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
     assert supplier.events == snapshot(
         [
-            'create:created-1',
-            'teardown:created-1',
-            'create:created-2',
-            'teardown:created-2',
-            'create:created-3',
-            'teardown:created-3',
+            'acquire:created-1',
+            'release:created-1',
+            'acquire:created-2',
+            'release:created-2',
+            'acquire:created-3',
+            'release:created-3',
         ]
     )
     assert supplier.in_task == [True, True, True, True, False, False]
@@ -2955,14 +2955,14 @@ async def test_prefect_sandbox_lifecycle_cache_is_stable_across_flow_retry(block
 
     assert await run_durable_agent() == 'success (no tool calls)'
     assert attempts == 2
-    assert supplier.events == ['create:created-1', 'teardown:created-1']
+    assert supplier.events == ['acquire:created-1', 'release:created-1']
 
 
 @pytest.mark.parametrize('blockbuster_enabled', [False])
-async def test_prefect_sandbox_teardown_retries_then_is_suppressed(blockbuster_enabled: bool) -> None:
+async def test_prefect_sandbox_release_retries_then_is_suppressed(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
-    supplier = FailingTeardownSandboxCapability()
-    agent = Agent(TestModel(), name='prefect_sandbox_teardown_retry', capabilities=[PrefectDurability(), supplier])
+    supplier = FailingReleaseSandboxCapability()
+    agent = Agent(TestModel(), name='prefect_sandbox_release_retry', capabilities=[PrefectDurability(), supplier])
 
     @flow
     async def run_durable_agent() -> str:
@@ -2970,10 +2970,10 @@ async def test_prefect_sandbox_teardown_retries_then_is_suppressed(blockbuster_e
 
     assert await run_durable_agent() == 'success (no tool calls)'
     assert supplier.events == [
-        'create:created-1',
-        'teardown-failed:created-1',
-        'teardown-failed:created-1',
-        'teardown-failed:created-1',
+        'acquire:created-1',
+        'release-failed:created-1',
+        'release-failed:created-1',
+        'release-failed:created-1',
     ]
 
 
@@ -3002,11 +3002,11 @@ async def test_prefect_durability_keeps_the_bound_sandbox_lifecycle_owner(blockb
     assert blockbuster_enabled is False
 
     class ReplacementLifecycle(LifecycleSandboxCapability):
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             raise AssertionError('the for_run replacement must not create the sandbox')
 
-        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            raise AssertionError('the for_run replacement must not destroy the sandbox')
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            raise AssertionError('the for_run replacement must not release the sandbox')
 
     class BoundLifecycle(LifecycleSandboxCapability):
         async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
@@ -3020,7 +3020,7 @@ async def test_prefect_durability_keeps_the_bound_sandbox_lifecycle_owner(blockb
         return (await agent.run('Hello')).output
 
     assert await run_durable_agent() == 'success (no tool calls)'
-    assert supplier.events == ['create:created-1', 'teardown:created-1']
+    assert supplier.events == ['acquire:created-1', 'release:created-1']
 
 
 async def test_prefect_durability_connects_a_sandbox_ref_inside_a_task() -> None:

@@ -50,7 +50,7 @@ def _default_sandbox() -> Sandbox:
         UnavailableSandbox(
             reason='No sandbox is attached: this `RunContext` was created outside an agent run. '
             'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or supply one '
-            "from a capability's `create_sandbox`."
+            "from a capability's `acquire_sandbox`."
         )
     )
 
@@ -216,7 +216,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`sandbox.backend`][pydantic_ai.sandboxes.Sandbox.backend] to access provider-specific
     functionality. Set once per run, in order of precedence: the `sandbox=` run argument
     (caller-owned), a capability's
-    [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] contribution, or
+    [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] contribution, or
     an [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] whose operations explain
     how to attach one — no run ever gets implicit access to the host machine. Resolution happens
     before `for_run`, so anything that receives a `RunContext` sees the final sandbox. Treat it

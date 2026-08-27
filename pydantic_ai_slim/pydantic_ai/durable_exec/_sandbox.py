@@ -9,7 +9,7 @@ from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 
 
 def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
-    """The capabilities in the tree that override `create_sandbox`, in resolved-chain order.
+    """The capabilities in the tree that override `acquire_sandbox`, in resolved-chain order.
 
     Ordered because the *last* supplier is the one that wins sandbox resolution. Wrapper
     forwarding and the durability capability's own routing don't count as contributions. The
@@ -27,8 +27,8 @@ def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapa
         if leaf.defer_loading is True or id(leaf) in seen:
             return
         seen.add(id(leaf))
-        create_sandbox = type(leaf).create_sandbox
-        if isinstance(leaf, WrapperCapability) and create_sandbox is WrapperCapability.create_sandbox:
+        acquire_sandbox = type(leaf).acquire_sandbox
+        if isinstance(leaf, WrapperCapability) and acquire_sandbox is WrapperCapability.acquire_sandbox:
             for supplier in _sandbox_suppliers(leaf.wrapped):
                 # The recursive call starts a fresh `seen`, so filter against ours: a
                 # capability reachable both directly and through a wrapper is one supplier.
@@ -36,7 +36,7 @@ def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapa
                     seen.add(id(supplier))
                     suppliers.append(supplier)
             return
-        if create_sandbox not in (AbstractCapability.create_sandbox, BaseDurabilityCapability.create_sandbox):
+        if acquire_sandbox not in (AbstractCapability.acquire_sandbox, BaseDurabilityCapability.acquire_sandbox):
             suppliers.append(leaf)
 
     capability.apply(visit)
@@ -44,7 +44,7 @@ def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapa
 
 
 def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
-    """Whether the capability tree contains a `create_sandbox` override.
+    """Whether the capability tree contains an `acquire_sandbox` override.
 
     The deprecated durable-agent wrappers reject sandbox-contributing capabilities up front:
     running the supplier's lifecycle hooks would be I/O in workflow code, and the wrappers
@@ -56,7 +56,7 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
 
 def sandbox_contribution_error(*, run_location: str, sandbox_constraint: str) -> str:
     return (
-        f'A capability that supplies a sandbox (overrides `create_sandbox`) cannot run {run_location}: '
+        f'A capability that supplies a sandbox (overrides `acquire_sandbox`) cannot run {run_location}: '
         f'{sandbox_constraint}. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
     )
 

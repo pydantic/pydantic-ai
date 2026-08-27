@@ -421,7 +421,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     recovered = await recover_capability(
                         params.run_context,
                         capability_id,
-                        resolve_for_run=declaration.name not in ('create_sandbox', 'destroy_sandbox'),
+                        resolve_for_run=declaration.name not in ('acquire_sandbox', 'release_sandbox'),
                     )
                     if declaration.model_request_hook:
                         projection = cast(ModelRequestContextProjection, semantic_params.arguments['request_context'])

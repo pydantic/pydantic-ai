@@ -3337,15 +3337,15 @@ async def test_run_stream(
 async def test_agent_span_brackets_sandbox_lifecycle(capfire: CaptureLogfire, tmp_path: Path) -> None:
     @dataclass
     class TracedSandbox(AbstractCapability[Any]):
-        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            with logfire.span('sandbox_setup'):  # pyright: ignore[reportPossiblyUnboundVariable]
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            with logfire.span('sandbox_acquire'):  # pyright: ignore[reportPossiblyUnboundVariable]
                 return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return LocalSandbox(tmp_path) if ref.provider == 'local' else None
 
-        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            with logfire.span('sandbox_teardown'):  # pyright: ignore[reportPossiblyUnboundVariable]
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            with logfire.span('sandbox_release'):  # pyright: ignore[reportPossiblyUnboundVariable]
                 pass
 
     agent = Agent(
@@ -3365,7 +3365,7 @@ async def test_agent_span_brackets_sandbox_lifecycle(capfire: CaptureLogfire, tm
         and span['parent']['trace_id'] == agent_span['context']['trace_id']
         and span['parent']['span_id'] == agent_span['context']['span_id']
     ]
-    assert [span['name'] for span in child_spans] == ['sandbox_setup', 'chat test', 'sandbox_teardown']
+    assert [span['name'] for span in child_spans] == ['sandbox_acquire', 'chat test', 'sandbox_release']
     assert agent_span['attributes']['final_result'] == 'success (no tool calls)'
     assert agent_span['attributes']['pydantic_ai.all_messages']
     assert agent_span['attributes']['gen_ai.aggregated_usage.input_tokens'] == 51

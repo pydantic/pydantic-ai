@@ -14,15 +14,15 @@ Pydantic AI resolves the sandbox once, before capability and toolset `for_run` h
    [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable
    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef].
 2. A capability's
-   [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] contribution.
+   [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] contribution.
    The latest supplier in the capability chain wins. Its effective capability ID is recorded on
-   the returned reference so reconnection and teardown route back to the same supplier. Give the
+   the returned reference so reconnection and release route back to the same supplier. Give the
    supplier an explicit stable `id` when the ref will cross runs or processes.
 3. The framework default: an `UnavailableSandbox` explaining how to attach one.
 
 The selected supplier remains the lifecycle owner for the whole run. A capability returned by
 that supplier's later `for_run()` may contribute other run-specific behavior, but it does not
-replace the owner used for `create_sandbox`, `get_sandbox`, or `destroy_sandbox`. Durable workers
+replace the owner used for `acquire_sandbox`, `get_sandbox`, or `release_sandbox`. Durable workers
 recover the owner by the stable capability ID recorded on the ref.
 
 Tools and capabilities can therefore use `ctx.sandbox` directly:
@@ -114,13 +114,14 @@ serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; the live connecti
 (re)established wherever it is needed, which is what makes the same capability work unchanged
 under [durable execution](#durable-execution).
 
-- [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox], once per run:
-  provision (or select) an environment and return its identity, or `None` to not contribute.
+- [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox], once per run:
+  provision, check out, or select an environment and return its identity, or `None` to not contribute.
 - [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]: connect, never
   create. Called lazily on the first sandbox operation, and again in each durable unit that
   touches the sandbox.
-- [`destroy_sandbox`][pydantic_ai.capabilities.AbstractCapability.destroy_sandbox], once
-  after the run ends, including on failure. The inherited no-op suits warm sandboxes and
+- [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox], once
+  after the run ends, including on failure. It may destroy the environment, return it to a pool,
+  decrement a reference count, or do nothing. The inherited no-op suits warm sandboxes and
   platforms that clean up on their own.
 
 ```python {title="sandbox_capability.py"}
@@ -138,7 +139,7 @@ from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 class MySandboxCapability(AbstractCapability[Any]):
     client: SandboxClient  # credentials stay here, never in the ref
 
-    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         sandbox = await self.client.create()
         return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
 
@@ -148,7 +149,7 @@ class MySandboxCapability(AbstractCapability[Any]):
         # Re-open only: raise if the environment expired. Never create a replacement here.
         return await self.client.connect(ref.sandbox_id)
 
-    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         await self.client.destroy(ref.sandbox_id)
 ```
 
@@ -167,16 +168,16 @@ agent = Agent(
 
 The same three hooks cover every lifecycle without further concepts:
 
-| Lifecycle | `create_sandbox` | `get_sandbox` | `destroy_sandbox` |
+| Lifecycle | `acquire_sandbox` | `get_sandbox` | `release_sandbox` |
 |---|---|---|---|
 | Fresh sandbox per run | provision, return its ref | connect by id | destroy |
 | Warm, shared across runs | return the held backend's ref | return the held backend | inherited no-op |
-| Pooled per conversation | look up `ctx.conversation_id`, create if missing | connect | inherited no-op (reap by TTL) |
+| Pooled per conversation | check out or create by `ctx.conversation_id` | connect | return to pool or decrement a reference count |
 | Connect-only (provisioned elsewhere) | don't override | connect by id | don't override |
 
 Among capability suppliers, the latest in the chain wins; a supplier that returns
 `None` falls through to the next. Deferred capabilities cannot contribute a sandbox because
-sandbox resolution happens before deferred capabilities can load. Setup and teardown happen
+sandbox resolution happens before deferred capabilities can load. Acquisition and release happen
 inside the agent-run span, so startup failures and slow provisioning are visible in traces.
 
 "After the run ends" includes a run that ends early with
@@ -297,10 +298,10 @@ tree already knows how to connect, so nothing needs a second registration.
 
 Attach a lifecycle-owning capability like `MySandboxCapability`
 [above](#from-a-capability) and the run owns the whole lifecycle. Under
-[Temporal](durable_execution/temporal.md), `create_sandbox` and `destroy_sandbox` each run as
+[Temporal](durable_execution/temporal.md), `acquire_sandbox` and `release_sandbox` each run as
 their own activity and only the ref returns to workflow code, so a replay reuses the recorded
 ref instead of provisioning again. The activity itself is at-least-once — Temporal retries it
-if the worker crashes after provisioning but before the ref reaches history — so `create_sandbox`
+if the worker crashes after provisioning but before the ref reaches history — so `acquire_sandbox`
 should be idempotent: create-or-reuse keyed by
 [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id] (most platforms accept a caller-chosen name
 or tag), with a server-side TTL as the backstop for the copy that lost the race.
@@ -341,13 +342,13 @@ class WorkspaceWorkflow:
         return result.output
 ```
 
-Teardown runs at the end of the run, including a failed one, but a cancelled workflow may skip
+Release runs at the end of the run, including a failed one, but a cancelled workflow may skip
 it, so **always configure a server-side idle timeout or reaper as the backstop.**
 Temporal runs sandbox lifecycle operations in activities, DBOS runs them in steps, and Prefect
-runs them in tasks. Each engine records one create and one destroy operation in the logical run
+runs them in tasks. Each engine records one acquire and one release operation in the logical run
 history, but failed physical attempts may be retried. Both hooks must therefore be idempotent.
 Temporal and Prefect use bounded three-attempt defaults for capability operations; customize them
-with `capability_activity_config` or `capability_task_config`. After durable teardown retries are
+with `capability_activity_config` or `capability_task_config`. After durable release retries are
 exhausted, cleanup is logged and the provider-side timeout or reaper remains the final backstop.
 
 ### A sandbox that outlives the run
@@ -355,8 +356,8 @@ exhausted, cleanup is logged and the provider-side timeout or reaper remains the
 When the environment is provisioned elsewhere (by an operator, another service, or an earlier
 workflow), pass its [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] through `sandbox=`. The
 same capability that can supply sandboxes also connects references: with a ref run argument its
-`create_sandbox` is skipped (the caller owns the lifecycle), but its `get_sandbox` still does
-the connecting. A capability that only ever connects simply doesn't override `create_sandbox`.
+`acquire_sandbox` is skipped (the caller owns the lifecycle), but its `get_sandbox` still does
+the connecting. A capability that only ever connects simply doesn't override `acquire_sandbox`.
 
 ```python {title="durable_sandbox_ref_pattern.py" test="skip" lint="skip"}
 from my_sandboxes import SandboxClient
@@ -416,8 +417,9 @@ Rules of thumb for capability authors:
 - **`get_sandbox` re-opens, never creates.** If the platform deleted the sandbox while the
   workflow slept, an open-or-create fallback silently swaps in an empty environment that the
   model's message history contradicts. Recreate only as an explicit, logged decision.
-- **`destroy_sandbox` tolerates an already-gone sandbox.** It also runs after a failure that
-  may have destroyed the environment already.
+- **`release_sandbox` is idempotent.** It also runs after a failure that may have destroyed the
+  environment already, and a retry may repeat it. For pooled sandboxes, repeated release must not
+  return or decrement the same lease twice.
 - **Still set a server-side TTL.** A terminated workflow runs no cleanup; without a TTL or
   reaper, the sandbox leaks.
 - **Ids only in `SandboxRef`.** The reference is recorded in workflow history; credentials
