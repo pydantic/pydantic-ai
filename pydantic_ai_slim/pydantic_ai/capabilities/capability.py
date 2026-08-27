@@ -81,7 +81,9 @@ class Capability(AbstractCapability[AgentDepsT]):
 
         Args:
             instructions: Static instructions and/or instruction function(s), available via
-                `get_instructions()`. Register more with the
+                `get_instructions()`. Pass an [`InstructionPart`][pydantic_ai.messages.InstructionPart]
+                to declare a block's [`id`][pydantic_ai.messages.InstructionPart.id] or mark it
+                [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic]. Register more with the
                 [`instructions`][pydantic_ai.capabilities.Capability.instructions] decorator.
             toolsets: Toolsets to register with the agent.
             tools: Function tools to register with the agent.

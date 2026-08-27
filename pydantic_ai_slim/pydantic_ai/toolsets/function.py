@@ -119,7 +119,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
             instructions: Instructions for this toolset that are automatically included in the model request.
-                Can be a string, a function (sync or async, with or without `RunContext`), or a sequence of these.
+                Can be a string, an [`InstructionPart`][pydantic_ai.messages.InstructionPart] declaring the
+                block's [`id`][pydantic_ai.messages.InstructionPart.id] and whether it is
+                [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], a function (sync or async, with
+                or without `RunContext`), or a sequence of these.
         """
         self.max_retries = max_retries
         self.timeout = timeout
