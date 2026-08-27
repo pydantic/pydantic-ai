@@ -19,10 +19,11 @@ import json
 import os
 import secrets
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlencode
 
 import anyio
@@ -55,9 +56,12 @@ __all__ = (
     'CredentialsPersistenceError',
     'CredentialsRefreshError',
     'OpenAICodexAuth',
+    'OpenAICodexCredentialSnapshot',
+    'OpenAICodexCredentialSource',
     'OpenAICodexCredentials',
     'OpenAICodexOAuthFlow',
     'OpenAICodexProvider',
+    'refresh_credentials',
 )
 
 _CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
@@ -229,6 +233,77 @@ async def _post_json(
         raise CredentialsRefreshError(f'Token endpoint {url} returned a non-object response.') from None
 
 
+async def refresh_credentials(
+    credentials: OpenAICodexCredentials, *, http_client: httpx2.AsyncClient | None = None
+) -> OpenAICodexCredentials:
+    """Exchange the refresh token for a new credential set against the public Codex client.
+
+    The protocol primitive behind the provider's automatic refresh, public so
+    [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource]
+    implementations can perform the upstream refresh inside their own critical section.
+
+    Raises [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError]
+    when the token endpoint rejects the grant (`invalid_grant` means a fresh authorization is
+    required) or returns a malformed response.
+    """
+    data = await _post_json(
+        _TOKEN_URL,
+        {
+            'grant_type': 'refresh_token',
+            'refresh_token': credentials.refresh_token.get_secret_value(),
+            'client_id': _PUBLIC_CLIENT_ID,
+        },
+        http_client=http_client,
+    )
+    return _credentials_from_token_response(data, fallback_account_id=credentials.account_id)
+
+
+def _token_is_stale(access_token: str) -> bool:
+    """Whether the unverified JWT `exp` hint says the token is within the pre-expiry buffer."""
+    expires_at = _jwt_expires_at(access_token)
+    return expires_at is not None and datetime.now(timezone.utc) >= expires_at - _TOKEN_EXPIRY_BUFFER
+
+
+@dataclass(frozen=True)
+class OpenAICodexCredentialSnapshot:
+    """A credential set paired with the application's opaque persistence revision.
+
+    The revision identifies the stored version this credential set came from (a database row
+    version, an etag, a UUID), so refresh coordination can distinguish 'this grant was rejected'
+    from 'another replica already rotated it'.
+    """
+
+    credentials: OpenAICodexCredentials
+    revision: str
+
+
+class OpenAICodexCredentialSource(Protocol):
+    """Application-owned, revision-aware credential resolution for multi-replica deployments.
+
+    `credentials` + `on_credentials_refresh` is a single-process convenience: each provider
+    instance refreshes independently, so two replicas sharing one stored grant can both consume
+    the same rotating refresh token and invalidate each other. A credential source moves the whole
+    refresh transaction (reload, decide, upstream refresh, durable save) into application code,
+    where it can be wrapped in a per-user distributed lock.
+
+    The provider calls `get_credentials()` before each request. When the returned token looks
+    stale, or the backend rejects it with a 401, the provider calls again with
+    `force_refresh=True` and `rejected_revision` set to the revision it used. Implementations
+    should then, inside their critical section: reload the active snapshot; if its revision
+    differs from `rejected_revision`, return it as-is (another replica already rotated the grant);
+    otherwise perform the upstream refresh (e.g. via
+    [`refresh_credentials`][pydantic_ai.providers.openai_codex.refresh_credentials]), durably
+    replace the stored set with a compare-and-swap on the expected revision, and return the new
+    snapshot.
+    """
+
+    async def get_credentials(
+        self, *, force_refresh: bool = False, rejected_revision: str | None = None
+    ) -> OpenAICodexCredentialSnapshot:
+        """Return the current credential snapshot, refreshing upstream if required."""
+        ...
+
+
 def _read_codex_cli_credentials() -> OpenAICodexCredentials:
     """Read-only load of the Codex CLI's `auth.json` (honors `CODEX_HOME`). Never writes it."""
     code_home = Path(os.getenv('CODEX_HOME') or Path.home() / '.codex')
@@ -326,8 +401,7 @@ class OpenAICodexAuth(httpx2.Auth):
     def __init__(self, provider: OpenAICodexProvider) -> None:
         self._provider = provider
 
-    def _apply_headers(self, request: httpx2.Request) -> None:
-        credentials = self._provider.credentials
+    def _apply_headers(self, request: httpx2.Request, credentials: OpenAICodexCredentials) -> None:
         request.headers['Authorization'] = f'Bearer {credentials.access_token.get_secret_value()}'
         request.headers['chatgpt-account-id'] = credentials.account_id
         request.headers['originator'] = _ORIGINATOR
@@ -342,17 +416,16 @@ class OpenAICodexAuth(httpx2.Auth):
             yield request
             return
         # The two classes are deliberately coupled in one module; the provider owns the state and
-        # the auth is its wire-side skin.
-        await self._provider._refresh_if_stale()  # pyright: ignore[reportPrivateUsage]
-        revision = self._provider._revision  # pyright: ignore[reportPrivateUsage]
-        self._apply_headers(request)
+        # the auth is its wire-side skin. The replay closure carries whatever context the
+        # provider's mode (in-memory single-flight, or application credential source) needs.
+        credentials, replay = await self._provider._prepare_request_credentials()  # pyright: ignore[reportPrivateUsage]
+        self._apply_headers(request, credentials)
         response = yield request
         if response.status_code != 401:
             return
         # Release the connection before replaying.
         await response.aread()
-        await self._provider._refresh_for_401(revision)  # pyright: ignore[reportPrivateUsage]
-        self._apply_headers(request)
+        self._apply_headers(request, await replay())
         yield request  # replay exactly once; its response goes back to the caller
 
 
@@ -388,6 +461,11 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     @property
     def credentials(self) -> OpenAICodexCredentials:
         """The current credentials (rotated in place by refreshes; persist via the callback)."""
+        if getattr(self, '_credential_source', None) is not None:
+            raise UserError(
+                '`credentials` is unavailable when a `credential_source` owns the credentials; '
+                'query your source for the current snapshot instead.'
+            )
         if not hasattr(self, '_credentials'):
             raise UserError(
                 '`credentials` is unavailable when the provider wraps an existing `openai_client`, '
@@ -403,6 +481,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         self,
         credentials: OpenAICodexCredentials | None = None,
         *,
+        credential_source: OpenAICodexCredentialSource | None = None,
         on_credentials_refresh: Callable[[OpenAICodexCredentials], Awaitable[None]] | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -414,10 +493,16 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 **read-only** from the Codex CLI's `auth.json` (honors `CODEX_HOME`) — see
                 [`from_codex_cli`][pydantic_ai.providers.openai_codex.OpenAICodexProvider.from_codex_cli].
                 Pydantic AI never falls back to `OPENAI_API_KEY`.
+            credential_source: Application-owned, revision-aware credential resolution for
+                multi-replica deployments; see
+                [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource].
+                Mutually exclusive with `credentials` and `on_credentials_refresh`: the source owns
+                loading, refresh coordination, and persistence.
             on_credentials_refresh: Async callback invoked with the complete new credential set
                 whenever tokens are rotated, so apps can persist them. If it raises, in-memory
                 credentials stay current but a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError]
-                surfaces instead of pretending durability succeeded.
+                surfaces instead of pretending durability succeeded. Note this is a single-process
+                convenience; multi-replica services should use `credential_source`.
             openai_client: An existing `AsyncOpenAI` client to use as-is. Opts out of credential
                 injection entirely; `credentials`, `on_credentials_refresh`, and `http_client`
                 must be `None`.
@@ -428,14 +513,22 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 be reused for other destinations.
         """
         self._on_credentials_refresh = on_credentials_refresh
+        self._credential_source = credential_source
         if openai_client is not None:
             assert credentials is None, 'Cannot provide both `openai_client` and `credentials`'
+            assert credential_source is None, 'Cannot provide both `openai_client` and `credential_source`'
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert on_credentials_refresh is None, 'Cannot provide both `openai_client` and `on_credentials_refresh`'
             self._client = openai_client
             return
 
-        self._credentials = credentials if credentials is not None else _read_codex_cli_credentials()
+        if credential_source is not None:
+            assert credentials is None, 'Cannot provide both `credentials` and `credential_source`'
+            assert on_credentials_refresh is None, (
+                'Cannot provide both `on_credentials_refresh` and `credential_source`: the source owns persistence'
+            )
+        else:
+            self._credentials = credentials if credentials is not None else _read_codex_cli_credentials()
         self._revision = 0
         self._last_refresh_error: tuple[int, Exception] | None = None
         self._auth = OpenAICodexAuth(self)
@@ -492,6 +585,39 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
             http_client=http_client,
         )
 
+    async def _prepare_request_credentials(
+        self,
+    ) -> tuple[OpenAICodexCredentials, Callable[[], Awaitable[OpenAICodexCredentials]]]:
+        """The credentials for an outgoing request, plus a replay resolver for a 401 on it.
+
+        With a `credential_source`, resolution is delegated per request and stale or rejected
+        tokens escalate through `get_credentials(force_refresh=True, rejected_revision=...)`, so
+        the application's critical section owns the whole refresh transaction. Otherwise the
+        provider's in-memory single-flight logic applies.
+        """
+        if (source := self._credential_source) is not None:
+            snapshot = await source.get_credentials()
+            if _token_is_stale(snapshot.credentials.access_token.get_secret_value()):
+                # Route the proactive pre-expiry refresh through the source too: coordinating only
+                # the 401 path would leave this path with the same cross-replica race.
+                snapshot = await source.get_credentials(force_refresh=True, rejected_revision=snapshot.revision)
+            revision = snapshot.revision
+
+            async def replay() -> OpenAICodexCredentials:
+                replayed = await source.get_credentials(force_refresh=True, rejected_revision=revision)
+                return replayed.credentials
+
+            return snapshot.credentials, replay
+
+        await self._refresh_if_stale()
+        revision_used = self._revision
+
+        async def replay() -> OpenAICodexCredentials:
+            await self._refresh_for_401(revision_used)
+            return self._credentials
+
+        return self._credentials, replay
+
     @cached_property
     def _refresh_lock(self) -> anyio.Lock:
         # Like the base provider's enter lock: bind lazily so we attach to whatever loop first
@@ -539,18 +665,9 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     async def _refresh_locked(self) -> None:
         # The caller must hold `_refresh_lock`.
         assert self._refresh_lock.locked()
-        data = await _post_json(
-            _TOKEN_URL,
-            {
-                'grant_type': 'refresh_token',
-                'refresh_token': self._credentials.refresh_token.get_secret_value(),
-                'client_id': _PUBLIC_CLIENT_ID,
-            },
-            # The provider's own client, so custom transports and proxies apply to refreshes too;
-            # the auth flow ignores non-Codex hosts, so this cannot recurse or leak the bearer.
-            http_client=self._http_client,
-        )
-        new_credentials = _credentials_from_token_response(data, fallback_account_id=self._credentials.account_id)
+        # The provider's own client, so custom transports and proxies apply to refreshes too;
+        # the auth flow ignores non-Codex hosts, so this cannot recurse or leak the bearer.
+        new_credentials = await refresh_credentials(self._credentials, http_client=self._http_client)
         # Atomic replace of the complete set, then bump the revision so concurrent 401s observe it.
         self._credentials = new_credentials
         self._revision += 1
@@ -563,5 +680,4 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 ) from e
 
     def _is_stale(self) -> bool:
-        expires_at = _jwt_expires_at(self._credentials.access_token.get_secret_value())
-        return expires_at is not None and datetime.now(timezone.utc) >= expires_at - _TOKEN_EXPIRY_BUFFER
+        return _token_is_stale(self._credentials.access_token.get_secret_value())

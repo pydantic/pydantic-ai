@@ -50,7 +50,53 @@ agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
 ...
 ```
 
-Tokens are refreshed automatically; rotated credentials are passed to `on_credentials_refresh` so your store stays current (if the callback raises, the in-memory credentials are still updated and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] surfaces). One provider instance carries one user's credentials; construct one per user rather than sharing globally.
+Tokens are refreshed automatically; rotated credentials are passed to `on_credentials_refresh` so your store stays current (if the callback raises, the in-memory credentials are still updated and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] surfaces). One provider instance carries one user's credentials; construct one per user rather than sharing globally. This is a single-process convenience: for stateless multi-replica services, use a [credential source](#multi-replica-credential-coordination) instead.
+
+## Multi-replica credential coordination
+
+Codex refresh tokens rotate: when two replicas load the same stored credential set and both refresh around the same time, the second refresh consumes an already-rotated grant, and no persistence callback can prevent that because it runs after the token endpoint was called. For that deployment shape, hand the provider a [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource] (mutually exclusive with `credentials` and `on_credentials_refresh`), which owns the whole refresh transaction: reload inside your critical section, decide whether the refresh is still needed, perform it via [`refresh_credentials`][pydantic_ai.providers.openai_codex.refresh_credentials], and durably save with a compare-and-swap.
+
+The provider resolves credentials through the source per request. When a token looks stale or the backend rejects it with a 401, the provider calls `get_credentials(force_refresh=True, rejected_revision=...)` with the store revision it used, so your implementation can tell "this grant was rejected" apart from "another replica already rotated it":
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.openai_codex import (
+    OpenAICodexCredentials,
+    OpenAICodexCredentialSnapshot,
+    OpenAICodexProvider,
+    refresh_credentials,
+)
+
+
+class DatabaseCredentialSource:
+    """Sketch of a store-backed source; the storage internals are yours."""
+
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+
+    async def get_credentials(
+        self, *, force_refresh: bool = False, rejected_revision: str | None = None
+    ) -> OpenAICodexCredentialSnapshot:
+        snapshot = await self.load_snapshot()  # reload inside your per-user lock
+        if not force_refresh or snapshot.revision != rejected_revision:
+            return snapshot  # current, or another replica already rotated the grant
+        rotated = await refresh_credentials(snapshot.credentials)
+        return await self.save_snapshot(rotated, expected_revision=snapshot.revision)
+
+    async def load_snapshot(self) -> OpenAICodexCredentialSnapshot: ...
+
+    async def save_snapshot(
+        self, credentials: OpenAICodexCredentials, *, expected_revision: str
+    ) -> OpenAICodexCredentialSnapshot: ...
+
+
+provider = OpenAICodexProvider(credential_source=DatabaseCredentialSource('user-123'))
+agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
+...
+```
+
+A real implementation wraps `get_credentials` in a per-user distributed lease, advisory lock, or row-level lock, and makes `save_snapshot` fail (or re-read) when `expected_revision` no longer matches the stored row. The Pydantic AI side needs nothing else: the same source serves both proactive pre-expiry refresh and 401 recovery.
 
 ## Build your own login
 
