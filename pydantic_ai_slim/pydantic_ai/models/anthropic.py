@@ -21,7 +21,6 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
-    ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -1862,7 +1861,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
                             content=tool_result_content or '',
-                            is_error=request_part.outcome in ERROR_OUTCOMES,
+                            is_error=request_part.outcome == 'failed',
                         )
                         user_content_params.append(tool_result_block_param)
                     elif isinstance(request_part, SpeechPart):  # pragma: no cover

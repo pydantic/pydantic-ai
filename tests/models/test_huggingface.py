@@ -23,6 +23,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryFeedbackPart,
+    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -438,12 +439,11 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
+                    RetryPromptPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
-                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),

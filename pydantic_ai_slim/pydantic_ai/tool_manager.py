@@ -13,7 +13,6 @@ from . import messages as _messages
 from ._output import (
     OutputSchema,
     OutputToolset,
-    build_retried_tool_return,
     run_output_process_hooks,
     run_output_validate_hooks,
 )
@@ -30,7 +29,7 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from .messages import ToolCallPart, ToolReturn
+from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
@@ -267,8 +266,9 @@ class ToolManager(Generic[AgentDepsT]):
 
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
-        """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
-        return ToolRetryError(build_retried_tool_return(error, tool_name=name, tool_call_id=call.tool_call_id))
+        """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
+        m = RetryPromptPart.from_error(error, tool_name=name, tool_call_id=call.tool_call_id)
+        return ToolRetryError(m)
 
     @staticmethod
     def _wrap_error_as_failed(name: str, call: ToolCallPart, error: ToolFailed) -> ToolFailedError:
@@ -1231,11 +1231,10 @@ class ToolManager(Generic[AgentDepsT]):
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
-                _messages.ToolReturnPart(
+                _messages.RetryPromptPart(
                     content=tool_call_result.message,
                     tool_name=call.tool_name,
                     tool_call_id=call.tool_call_id,
-                    outcome='retried',
                 )
             )
         if isinstance(tool_call_result, _messages.RetryPromptPart):

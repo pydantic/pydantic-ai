@@ -1,8 +1,8 @@
 """How Pydantic AI's own retry feedback reaches the model.
 
-A retry that answers a tool call rides that call's result — a `ToolReturnPart` with
-`outcome='retried'`. One that doesn't (structured output failed validation, an output validator
-raised `ModelRetry`, the response held nothing usable) is a `RetryFeedbackPart`: stored
+A retry that answers a tool call rides that call's result as it always has — a `RetryPromptPart`
+carrying the call's name and id. One that doesn't (structured output failed validation, an output
+validator raised `ModelRetry`, the response held nothing usable) is a `RetryFeedbackPart`: stored
 model-neutrally, and rendered per model at `prepare_messages` time into the system voice, so the
 model can tell harness feedback from something a person wrote
 (https://github.com/pydantic/pydantic-ai/issues/6404).
@@ -20,7 +20,6 @@ from pydantic import BaseModel, ValidationError
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
-from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -34,7 +33,6 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
-    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelProfile, ModelRequestParameters
@@ -44,7 +42,7 @@ from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, message_part, try_import
+from .conftest import IsDatetime, message_part, try_import
 
 with try_import() as groq_available:
     from pydantic_ai.models.groq import GroqModel
@@ -283,155 +281,9 @@ def test_retry_feedback_part_round_trips_through_the_type_adapter():
     assert restored == messages
 
 
-async def test_a_retried_tool_return_suppresses_an_otherwise_valid_output():
-    """Retry-wins keys off the outcome, not the part class: a function tool asking to be called
-    again holds back an output produced in the same response."""
-
-    class Output(BaseModel):
-        value: str
-
-    responses: list[ModelResponse] = []
-
-    def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        response = (
-            ModelResponse(parts=[ToolCallPart('flaky', {}), ToolCallPart('final_result', {'value': 'first'})])
-            if not responses
-            else ModelResponse(parts=[ToolCallPart('final_result', {'value': 'second'})])
-        )
-        responses.append(response)
-        return response
-
-    agent = Agent(FunctionModel(respond), output_type=Output)
-
-    @agent.tool_plain
-    def flaky() -> str:
-        if len(responses) == 1:
-            raise ModelRetry('not ready yet')
-        return 'ready'  # pragma: no cover
-
-    result = await agent.run('go')
-
-    assert result.output == Output(value='second')
-    retried = message_part(result.all_messages(), ToolReturnPart, message_index=2)
-    assert (retried.tool_name, retried.outcome, retried.content) == ('flaky', 'retried', 'not ready yet')
-
-
-def _anthropic_tool_result(body: Any) -> Any:
-    """Anthropic flags the `tool_result` block itself with `is_error`."""
-    return body['messages'][-1]['content'][0]
-
-
-def _google_tool_result(body: Any) -> Any:
-    """Google's function response carries an `error` key where a successful one carries `output`."""
-    return body['contents'][-1]['parts'][0]['functionResponse']
-
-
-def _bedrock_tool_result(body: Any) -> Any:
-    """Bedrock's Converse API puts a `status` on the `toolResult` block."""
-    return body['messages'][-1]['content'][0]['toolResult']
-
-
-NATIVE_ERROR_CHANNELS: dict[str, Callable[[Any], Any]] = {
-    'anthropic': _anthropic_tool_result,
-    'google': _google_tool_result,
-    'bedrock': _bedrock_tool_result,
-}
-
-NATIVE_ERROR_CHANNEL_EXPECTATIONS: dict[str, Any] = {
-    'anthropic': snapshot(
-        {
-            'tool_use_id': IsStr(),
-            'type': 'tool_result',
-            'content': [{'text': 'The country is not supported. Use "France" instead.', 'type': 'text'}],
-            'is_error': True,
-        }
-    ),
-    'google': snapshot(
-        {
-            'id': IsStr(),
-            'name': 'get_capital',
-            'response': {'error': 'The country is not supported. Use "France" instead.'},
-        }
-    ),
-    'bedrock': snapshot(
-        {
-            'toolUseId': IsStr(),
-            'content': [{'text': 'The country is not supported. Use "France" instead.'}],
-            'status': 'error',
-        }
-    ),
-}
-
-
-def _error_channel_model(provider: str, anthropic_api_key: str, gemini_api_key: str, bedrock_provider: Any) -> Model:
-    """The three models with a native tool-result error channel, built here rather than taken from
-    the shared `model` fixture, whose Google entry pins a model id the API has since retired."""
-    if provider == 'anthropic':
-        from pydantic_ai.models.anthropic import AnthropicModel
-        from pydantic_ai.providers.anthropic import AnthropicProvider
-
-        return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    elif provider == 'google':
-        from pydantic_ai.models.google import GoogleModel
-        from pydantic_ai.providers.google import GoogleProvider
-
-        return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    else:
-        from pydantic_ai.models.bedrock import BedrockConverseModel
-
-        return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-
-
-def _model_call_bodies(vcr: Cassette) -> list[Any]:
-    """The recorded model-call bodies, in order."""
-    return [json.loads(request.body) for request in vcr.requests]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType,reportUnknownVariableType]
-
-
-@pytest.mark.vcr
-@pytest.mark.parametrize('provider', ['anthropic', 'google', 'bedrock'])
-async def test_a_retried_tool_return_takes_the_provider_native_error_channel(
-    allow_model_requests: None,
-    provider: str,
-    anthropic_api_key: str,
-    gemini_api_key: str,
-    bedrock_provider: Any,
-    vcr: Cassette,
-):
-    """A retry that answers a tool call reaches the provider the way a failure does.
-
-    That is wire parity with the `RetryPromptPart` this replaces, which every one of these mappers
-    already rendered as an error, and it is what stops a retry from reading as a result the model
-    should build on. Each provider expresses it differently — `is_error`, an `error` key, a `status`
-    — so the outbound body is pinned per provider rather than the mapping asserted in the abstract.
-    Recorded live, so the assertion is also that each API accepts the retry there.
-    """
-    calls = 0
-
-    agent = Agent(_error_channel_model(provider, anthropic_api_key, gemini_api_key, bedrock_provider))
-
-    @agent.tool_plain
-    def get_capital(country: str) -> str:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise ModelRetry('The country is not supported. Use "France" instead.')
-        return 'Paris'
-
-    result = await agent.run('What is the capital of Frankreich? Use the get_capital tool.')
-
-    assert calls >= 1
-    retried = message_part(result.all_messages(), ToolReturnPart, message_index=2)
-    assert retried.outcome == 'retried'
-
-    # Whether the model retries the call or gives up is its own business; the claim under test is
-    # what the second model call carries, which is the retried result either way.
-    body = _model_call_bodies(vcr)[1]
-    assert NATIVE_ERROR_CHANNELS[provider](body) == NATIVE_ERROR_CHANNEL_EXPECTATIONS[provider]
-
-
-async def test_legacy_retry_prompt_part_handed_back_through_deferred_results():
-    """User code can still answer a deferred call with a `RetryPromptPart`, and it still reaches
-    the model as it always did — instruction suffix included."""
+async def test_retry_prompt_part_handed_back_through_deferred_results():
+    """User code can answer a deferred call with a `RetryPromptPart`, and it reaches the model the
+    way the framework's own tool retries do — instruction suffix included."""
 
     def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -463,12 +315,12 @@ Fix the errors and try again.\
 """)
 
 
-def test_retry_prompt_part_from_error_builds_the_legacy_content():
-    """`RetryPromptPart.from_error` stays as the way user code builds one.
+def test_retry_prompt_part_from_error_builds_the_tool_retry_content():
+    """`RetryPromptPart.from_error` builds the content a tool retry carries.
 
-    Nothing in the framework calls it any more — a tool retry is built by
-    `_output.build_retried_tool_return` instead — but answering a deferred call with a retry of your
-    own still needs the same content shape, so the constructor keeps its job.
+    The agent loop builds its own tool retries through it, so anything else presenting the same
+    failure — an instrumentation span, or user code answering a deferred call with a retry of its
+    own — produces the identical content shape.
     """
     try:
         Answer.model_validate({'count': 'lots'})
@@ -497,28 +349,14 @@ def test_retry_prompt_part_from_error_builds_the_legacy_content():
     assert (from_retry.content, from_retry.tool_name) == ('try again', None)
 
 
-def test_a_retried_tool_return_generates_a_call_id_when_it_is_given_none():
-    """`RunContext.tool_call_id` is optional, so the builder has to cope with its absence.
-
-    A unit test rather than a VCR one because no provider produces this: every tool call the agent
-    loop retries carries an id, and the branch exists for the output-processing path, where the
-    context can be built without one. Falling through to `ToolReturnPart`'s own default is what stops
-    a retry from answering the empty string.
-    """
-    part = build_retried_tool_return(ModelRetry('try again'), tool_name='count_things')
-
-    assert part.tool_call_id
-    assert (part.tool_name, part.content, part.outcome) == ('count_things', 'try again', 'retried')
-
-
 @pytest.mark.skipif(not groq_available(), reason='groq not installed')
-async def test_a_legacy_retry_prompt_part_still_maps_unchanged():
+async def test_a_retry_prompt_part_maps_unchanged():
     """A stored history holding either shape of `RetryPromptPart` renders exactly as it always did.
 
     Pinned on Groq because it is a text-only tool API that carries both shapes — the tool-bound one
-    as a tool message, the tool-less one as the bare user text that motivated this redesign. No
-    cassette would catch a regression here: nothing the framework emits reaches this branch any
-    more, so only a history handed in by a user does.
+    as a tool message, the tool-less one as the bare user text that motivated this redesign. The
+    framework no longer emits the tool-less shape, so that half only arrives from a stored history
+    or from user code.
     """
     model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='test-key'))
     messages: list[ModelMessage] = [
@@ -551,55 +389,6 @@ the answer has to be a number
 
 Fix the errors and try again.\
 """,
-            },
-        ]
-    )
-
-
-class Nested(BaseModel):
-    x: int
-
-
-async def test_root_level_input_is_serialized_once_per_distinct_value():
-    """A retried tool return echoes the arguments the model sent without repeating them per error.
-
-    Root-level errors share one `input` — the whole arguments object — so serializing it into each
-    one multiplies a large payload by the error count
-    (https://github.com/pydantic/pydantic-ai/issues/7171). The first keeps it, a later one carrying
-    that same value drops it, and an error whose `input` is its own offending value keeps it,
-    whether it sits at the root or nested.
-    """
-
-    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('check', {'b': 'oops', 'nested': {'x': 'bad'}})])
-        return ModelResponse(parts=[TextPart('understood')])
-
-    agent = Agent(FunctionModel(respond))
-
-    @agent.tool_plain
-    def check(a: int, b: int, c: int, nested: Nested) -> int:
-        return a + b + c + nested.x  # pragma: no cover
-
-    result = await agent.run('go')
-
-    retried = message_part(result.all_messages(), ToolReturnPart, message_index=2)
-    assert retried.outcome == 'retried'
-    assert retried.content == snapshot(
-        [
-            {'type': 'missing', 'loc': ['a'], 'msg': 'Field required', 'input': {'b': 'oops', 'nested': {'x': 'bad'}}},
-            {
-                'type': 'int_parsing',
-                'loc': ['b'],
-                'msg': 'Input should be a valid integer, unable to parse string as an integer',
-                'input': 'oops',
-            },
-            {'type': 'missing', 'loc': ['c'], 'msg': 'Field required'},
-            {
-                'type': 'int_parsing',
-                'loc': ['nested', 'x'],
-                'msg': 'Input should be a valid integer, unable to parse string as an integer',
-                'input': 'bad',
             },
         ]
     )

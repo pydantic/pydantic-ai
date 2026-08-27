@@ -63,7 +63,7 @@ from pydantic_ai import (
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import ERROR_OUTCOMES, is_multi_modal_content
+from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -1202,15 +1202,15 @@ class BedrockConverseModel(Model[BaseClient]):
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
 
-                        # Two mutually exclusive ways to render an errored return, picked here so the loop
+                        # Two mutually exclusive ways to render a failed return, picked here so the loop
                         # below stays free of per-item failure guards:
                         # - No native error status: fold the failure into one wrapped `{'error': ...}` text
                         #   block, then iterate only the files. Each file still gets its "See file X."
                         #   reference below so the model can cross-reference the media with the result.
-                        # - Otherwise (success, or errored with `status='error'` set below): send every
+                        # - Otherwise (success, or failed with `status='error'` set below): send every
                         #   content item verbatim; the status field carries the failure signal unwrapped.
                         items: Sequence[Any]
-                        if part.outcome in ERROR_OUTCOMES and not supports_tool_result_status:
+                        if part.outcome == 'failed' and not supports_tool_result_status:
                             tool_result_content.append({'text': part.model_response_str()})
                             items = part.files
                         else:
@@ -1272,7 +1272,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             'content': tool_result_content,
                         }
                         if supports_tool_result_status:
-                            success_result['status'] = 'error' if part.outcome in ERROR_OUTCOMES else 'success'
+                            success_result['status'] = 'error' if part.outcome == 'failed' else 'success'
                         bedrock_messages.append(
                             {
                                 'role': 'user',

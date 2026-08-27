@@ -3572,12 +3572,11 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                        ToolReturnPart(
+                        RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
-                            outcome='retried',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3688,12 +3687,11 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                        ToolReturnPart(
+                        RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
-                            outcome='retried',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -4019,12 +4017,11 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
-                        ToolReturnPart(
+                        RetryPromptPart(
                             content='Second output validation failed',
                             tool_name='second_output',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
-                            outcome='retried',
                         ),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
@@ -4743,12 +4740,11 @@ async def test_unknown_tool_call_events():
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                part=ToolReturnPart(
+                part=RetryPromptPart(
                     content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                    outcome='retried',
                 ),
             ),
             FunctionToolResultEvent(
@@ -4847,19 +4843,18 @@ async def test_output_tool_events():
                 args_valid=False,
             ),
             OutputToolResultEvent(
-                part=ToolReturnPart(
+                part=RetryPromptPart(
                     content=[
-                        {
-                            'type': 'missing',
-                            'loc': ['value'],
-                            'msg': 'Field required',
-                            'input': {'bad_value': 'invalid'},
-                        },
+                        ErrorDetails(
+                            type='missing',
+                            loc=('value',),
+                            msg='Field required',
+                            input={'bad_value': 'invalid'},
+                        ),
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                    outcome='retried',
                 )
             ),
             OutputToolCallEvent(
@@ -5962,12 +5957,11 @@ async def test_args_validator_failure_events():
                 args_valid=False,
             ),
             FunctionToolResultEvent(
-                part=ToolReturnPart(
+                part=RetryPromptPart(
                     content='Validation failed: x must be positive',
                     tool_name='add_numbers',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                    outcome='retried',
                 ),
             ),
             PartStartEvent(

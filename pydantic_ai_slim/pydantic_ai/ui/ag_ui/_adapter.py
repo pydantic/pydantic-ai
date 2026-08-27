@@ -523,7 +523,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # A non-success outcome claim (the return would otherwise reload as `'success'`,
                     # changing how it serializes to the provider) also keeps the return untyped.
                     tool_kind = None
-                    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success'
+                    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
                     encrypted_outcome = (
                         parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
                     )
@@ -722,17 +722,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 flush_user_content()
                 # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
                 # A non-success outcome rides the `encrypted_value` carrier alongside `tool_kind`,
-                # since a `ToolMessage` has no outcome slot. `error` is the return's own content, so a
-                # retry's feedback reaches the frontend as the feedback itself, without the
-                # instruction framing a `RetryPromptPart` renders
-                # (https://github.com/pydantic/pydantic-ai/pull/4869).
+                # since a `ToolMessage` has no outcome slot.
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
                         error=part.model_response_str(wrap_if_error=False)
-                        if part.outcome in ('failed', 'denied', 'retried')
+                        if part.outcome in ('failed', 'denied')
                         else None,
                         **tool_kind_encrypted_value_kwargs(
                             part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
@@ -872,7 +869,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
                             error=builtin_return.model_response_str(wrap_if_error=False)
-                            if builtin_return.outcome in ('failed', 'denied', 'retried')
+                            if builtin_return.outcome in ('failed', 'denied')
                             else None,
                             **tool_kind_encrypted_value_kwargs(
                                 builtin_return.tool_kind, outcome=builtin_return.outcome, supported=use_encrypted_value
@@ -952,8 +949,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           success to its readers), so those reload as plain `ToolReturnPart`.
         - A non-`'success'` `outcome` on a (native) tool return survives via the `encrypted_value`
           carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
-          via `ToolMessage.error`, `'denied'` and `'retried'` reload as `'failed'`, and
-          `'interrupted'` reloads as `'success'`.
+          via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
+          `'success'`.
         - `RetryFeedbackPart` dumps as a `SystemMessage` holding the same text the model is shown,
           with the part itself in that message's `encrypted_value`; it reloads as a
           `RetryFeedbackPart` only from there, so a system message the client wrote stays a

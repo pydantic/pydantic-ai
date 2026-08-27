@@ -1959,19 +1959,13 @@ def test_tool_return_part_model_response_str_and_user_content():
     text, user_content = p_failed.model_response_str_and_user_content()
     assert text == snapshot('[{"error":"Disk full"},"See file report."]')
     assert user_content == snapshot(
-        [
-            'This is file report:',
-            ImageUrl(url='https://example.com/failed.png', identifier='report'),
-        ]
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
     )
 
     text, user_content = p_failed.model_response_str_and_user_content(wrap_if_error=False)
     assert text == snapshot('["Disk full","See file report."]')
     assert user_content == snapshot(
-        [
-            'This is file report:',
-            ImageUrl(url='https://example.com/failed.png', identifier='report'),
-        ]
+        ['This is file report:', ImageUrl(url='https://example.com/failed.png', identifier='report')]
     )
 
 

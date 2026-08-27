@@ -946,12 +946,11 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
+                    RetryPromptPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='get_location',

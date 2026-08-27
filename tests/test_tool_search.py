@@ -52,6 +52,7 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
@@ -7613,10 +7614,8 @@ async def _call_capability_tool_directly(
         return 'refunded'  # pragma: no cover
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
-            if part.outcome != 'retried':
-                continue
-            refusals.append(str(part.content))
+        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+            refusals.append(part.content if isinstance(part.content, str) else str(part.content))
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 
@@ -7733,10 +7732,8 @@ async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
     refusals: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
-            if part.outcome != 'retried':
-                continue
-            refusals.append(str(part.content))
+        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+            refusals.append(part.content if isinstance(part.content, str) else str(part.content))
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 

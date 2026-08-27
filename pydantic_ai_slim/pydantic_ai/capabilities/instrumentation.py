@@ -25,7 +25,6 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     time_to_first_chunk_ctx,
 )
-from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -35,7 +34,7 @@ from pydantic_ai.exceptions import (
     ToolFailedError,
     ToolRetryError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
@@ -340,11 +339,11 @@ class Instrumentation(AbstractCapability[Any]):
         `pydantic_ai.tool.failure_stage: 'validation'` to distinguish it from execution
         failures.
 
-        With content capture enabled, the span records the retried tool result built from
-        the error. That is the exact result the model receives when the agent loop handles
-        the failure; raw-mode callers (e.g. sandboxed dispatch via
+        With content capture enabled, the span records the retry prompt built from the
+        error as the tool result. That is the exact message the model receives when the
+        agent loop handles the failure; raw-mode callers (e.g. sandboxed dispatch via
         `handle_call(wrap_validation_errors=False)`) surface the raw exception to the
-        calling code instead, and the recorded result is just the rendered description
+        calling code instead, and the recorded prompt is just the rendered description
         of the failure.
         """
         names = self._instrumentation_names
@@ -360,8 +359,8 @@ class Instrumentation(AbstractCapability[Any]):
             set_status_on_exception=False,
         ) as span:
             if self.settings.include_content and span.is_recording():
-                retry = build_retried_tool_return(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
-                span.set_attribute(names.tool_result_attr, retry.model_response_str(wrap_if_error=False))
+                retry = RetryPromptPart.from_error(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+                span.set_attribute(names.tool_result_attr, retry.model_response())
                 span.record_exception(error, escaped=True)
             else:
                 # Validation errors may contain rejected arguments, so omit their message and
@@ -472,15 +471,9 @@ class Instrumentation(AbstractCapability[Any]):
                 raise
             except ToolRetryError as e:
                 if handle_tool_control_flow and include_content and span.is_recording():
-                    # Tool retries are surfaced as model-visible errors; record the feedback
+                    # Tool retries are surfaced as model-visible errors; record the prompt
                     # the model will see as the tool result before re-raising.
-                    retry_part = e.tool_retry
-                    span.set_attribute(
-                        names.tool_result_attr,
-                        retry_part.model_response_str(wrap_if_error=False)
-                        if retry_part.part_kind == 'tool-return'
-                        else retry_part.model_response(),
-                    )
+                    span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise

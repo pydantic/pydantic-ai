@@ -1066,12 +1066,11 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
+                    RetryPromptPart(
                         content='The country is not supported.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        outcome='retried',
                     )
                 ],
                 instructions='You are a helpful chatbot.',

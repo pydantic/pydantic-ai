@@ -1594,12 +1594,11 @@ with capture_run_messages() as messages:  # (2)!
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
-                        tool_name='calc_volume',
+                    RetryPromptPart(
                         content='Please try again.',
+                        tool_name='calc_volume',
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
-                        outcome='retried',
                     )
                 ],
                 timestamp=datetime.datetime(...),
@@ -1615,7 +1614,7 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(
-                    cost=Decimal('0.000231'), input_tokens=68, output_tokens=8
+                    cost=Decimal('0.000238'), input_tokens=72, output_tokens=8
                 ),
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),

@@ -22,6 +22,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1645,12 +1646,11 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
+                    RetryPromptPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
-                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1824,12 +1824,11 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
+                    RetryPromptPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
-                        outcome='retried',
                     )
                 ],
                 instructions='this is the system prompt',
@@ -2273,12 +2272,11 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
+                    RetryPromptPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
-                        outcome='retried',
                     )
                 ],
                 instructions='this is the system prompt',

@@ -22,6 +22,11 @@ from reaching the model is `sanitize_messages`, which strips `RetryFeedbackPart`
 `SystemPromptPart`s whenever the server owns the system prompt. Any future part that renders into the
 system voice belongs in that strip too.
 
+`strip_system_prompts=False` (`manage_system_prompt='client'`) therefore lets a client-authored
+`RetryFeedbackPart` reach the model in the system voice, exactly as it already lets a client-authored
+`SystemPromptPart` through. That is the setting's meaning — the client owns the system prompt — but it
+is a wider surface than it was, so reach for it only when the client is as trusted as the server.
+
 ## Adapter properties are shared concepts the adapter itself consumes
 
 An unread field on a protocol's run input is not a gap. `run_input` is public, so every field is already reachable as `adapter.run_input.<field>`; a property that only forwards one adds no capability and takes on a permanent public-API commitment. AG-UI's `context`, `forwardedProps` and `parentRunId` are deliberately left that way — see [7106](https://github.com/pydantic/pydantic-ai/pull/7106#discussion_r3723844005), which closed [7105](https://github.com/pydantic/pydantic-ai/issues/7105) by documenting the wiring instead of exposing `AGUIAdapter.context`.
