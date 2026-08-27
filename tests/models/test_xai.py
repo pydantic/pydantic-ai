@@ -1442,6 +1442,8 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
                     score=0.4,
                 ),
             ),
+            chat_pb2.InlineCitation(web_citation=chat_pb2.WebCitation()),
+            chat_pb2.InlineCitation(x_citation=chat_pb2.XCitation()),
             chat_pb2.InlineCitation(collections_citation=chat_pb2.CollectionsCitation()),
             chat_pb2.InlineCitation(start_index=2, end_index=1),
         ]

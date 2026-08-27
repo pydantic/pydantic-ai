@@ -1472,9 +1472,13 @@ def _map_inline_citations(inline_citations: Sequence[chat_pb2.InlineCitation], t
     for inline_citation in inline_citations:
         match inline_citation.WhichOneof('citation'):
             case 'web_citation':
-                source = WebCitationSource(url=inline_citation.web_citation.url)
+                if not (url := inline_citation.web_citation.url):
+                    continue
+                source = WebCitationSource(url=url)
             case 'x_citation':
-                source = WebCitationSource(url=inline_citation.x_citation.url)
+                if not (url := inline_citation.x_citation.url):
+                    continue
+                source = WebCitationSource(url=url)
             case 'collections_citation':
                 collection = inline_citation.collections_citation
                 collection_ids = list(collection.collection_ids)
