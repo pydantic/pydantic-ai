@@ -903,6 +903,18 @@ async def test_lifecycle_capability_tears_down_when_a_tool_raises():
     assert lifecycle.events == ['create:created-1', 'teardown:created-1']
 
 
+async def test_lifecycle_capability_tears_down_when_run_preparation_fails():
+    lifecycle = LifecycleSandboxCapability()
+    agent = Agent(TestModel(), capabilities=[lifecycle])
+
+    def failing_metadata(ctx: RunContext[Any]) -> dict[str, Any]:
+        raise RuntimeError('metadata preparation failed')
+
+    with pytest.raises(RuntimeError, match='metadata preparation failed'):
+        await agent.run('go', metadata=failing_metadata)
+    assert lifecycle.events == ['create:created-1', 'teardown:created-1']
+
+
 async def test_create_only_capability_leans_on_platform_reaping():
     """The inherited no-op `destroy_sandbox` is what lets a capability lean on its
     platform's idle timeout instead of destroying anything itself.

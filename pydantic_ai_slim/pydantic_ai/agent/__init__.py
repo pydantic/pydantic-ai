@@ -1493,44 +1493,48 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         await preparation_stack.__aenter__()
         await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
 
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        try:
+            has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
 
-        # The string the run's model was selected from, if any — carried through to
-        # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
-        # the original selection token (e.g. an alias only a `resolve_model_id` capability
-        # can resolve) across the activity/step/task boundary.
-        model_id: str | None = None
-        default_model_id: str | None = None
-        default_model: models.Model | None = None
-        if has_default_model:
-            raw_model = self._pick_raw_model(model)
-            model_id = raw_model if isinstance(raw_model, str) else None
-            default_model_id = model_id
-            default_model = await self._resolve_model_selection(
-                raw_model,
-                capability=bootstrap_capability,
-                deps=deps,
-                resolved_models=resolved_models_by_selection,
-            )
-        if model_contribution is not None:
-            selection_ctx = models.ModelSelectionContext(
-                agent=self,
-                deps=deps,
-                model=default_model,
-                run_step=1,
-                messages=list(message_history) if message_history else [],
-                usage=usage,
-            )
-            model_used, model_id = await self._evaluate_model_contribution(
-                model_contribution,
-                capability=bootstrap_capability,
-                ctx=selection_ctx,
-                resolved_models=resolved_models_by_selection,
-            )
-        elif default_model is not None:
-            model_used = default_model
-        else:
-            raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
+            # The string the run's model was selected from, if any — carried through to
+            # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
+            # the original selection token (e.g. an alias only a `resolve_model_id` capability
+            # can resolve) across the activity/step/task boundary.
+            model_id: str | None = None
+            default_model_id: str | None = None
+            default_model: models.Model | None = None
+            if has_default_model:
+                raw_model = self._pick_raw_model(model)
+                model_id = raw_model if isinstance(raw_model, str) else None
+                default_model_id = model_id
+                default_model = await self._resolve_model_selection(
+                    raw_model,
+                    capability=bootstrap_capability,
+                    deps=deps,
+                    resolved_models=resolved_models_by_selection,
+                )
+            if model_contribution is not None:
+                selection_ctx = models.ModelSelectionContext(
+                    agent=self,
+                    deps=deps,
+                    model=default_model,
+                    run_step=1,
+                    messages=list(message_history) if message_history else [],
+                    usage=usage,
+                )
+                model_used, model_id = await self._evaluate_model_contribution(
+                    model_contribution,
+                    capability=bootstrap_capability,
+                    ctx=selection_ctx,
+                    resolved_models=resolved_models_by_selection,
+                )
+            elif default_model is not None:
+                model_used = default_model
+            else:
+                raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
+        except BaseException:
+            await preparation_stack.aclose()
+            raise
         del model
         output_schema = self._prepare_output_schema(output_type)
 
@@ -1689,7 +1693,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # so any field that becomes available later still ends up reflected in
         # `agent_run.metadata`. Factories should be pure mappings over the run
         # context, not perform IO or have side effects.
-        state.metadata = self._get_metadata(initial_ctx, metadata)
+        try:
+            state.metadata = self._get_metadata(initial_ctx, metadata)
+        except BaseException:
+            await preparation_stack.aclose()
+            raise
         initial_ctx.metadata = state.metadata
 
         # Resolve the capability layers and extract their per-run contributions. Shared with
