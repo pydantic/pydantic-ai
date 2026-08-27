@@ -1331,7 +1331,7 @@ async def test_release_survives_run_cancellation():
     async def probe(ctx: RunContext[Any]) -> str:
         entered.set()
         await asyncio.sleep(10)
-        return 'never'
+        return 'never'  # pragma: no cover
 
     # An anyio cancel scope is level-triggered: once cancelled, every await during the
     # unwind re-raises, unlike a one-shot `task.cancel()`.
