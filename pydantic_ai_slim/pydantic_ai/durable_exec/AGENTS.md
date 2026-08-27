@@ -23,7 +23,9 @@ Choose the backend tier from the engine SDK's execution model:
   result transport, cache identity, naming, and config resolution.
 - Subclass `RegisteredOperationBackend` when handlers must be registered before a worker starts.
   Implement `_register` to return the bound caller and all SDK registration handles. Expose those
-  registrations from the engine capability without rebuilding or reordering them.
+  registrations from the engine capability without rebuilding or reordering them. The base binds
+  the four model operations during agent assembly, so `registrations()` is complete before worker
+  start; pass the collected registrations to the engine SDK when creating the worker.
 
 Set every declarative field deliberately: `_codec`, `_unsupported_runtime_toolset_kinds`,
 `_wrapped_toolset_kinds`, `_toolset_lifecycles`, `_tool_call_result_upgrade_lenient`,

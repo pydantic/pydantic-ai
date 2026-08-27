@@ -77,7 +77,7 @@ from ._operation import (
     TypedResultCodec,
     ValidateToolArgumentsId,
 )
-from ._operation_backend import DurableOperationBackend, LegacyCallableBackend
+from ._operation_backend import DurableOperationBackend, LegacyCallableBackend, RegisteredOperationBackend
 from ._operation_names import DurableInvocationName, DurableOperationNamer
 from ._runtime_toolsets import (
     RuntimeToolsetKind,
@@ -371,6 +371,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound._bind_models(agent)
         bound._toolsets_by_id = {}
         bound._bind_to_agent(agent)
+        backend = bound.get_durable_operation_backend()
+        if isinstance(backend, RegisteredOperationBackend) and bound._bound_model_operations is None:
+            bound._bound_model_operations = bound._bind_model_operations(backend, model_id=None, model_name='default')
         bound._bind_capability_operations(agent)
         return bound
 

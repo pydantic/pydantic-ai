@@ -45,7 +45,12 @@ from pydantic_ai.durable_exec._operation import (
     TypedResultCodec,
     ValidateToolArgumentsId,
 )
-from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, LegacyCallableBackend
+from pydantic_ai.durable_exec._operation_backend import (
+    BoundDurableOperation,
+    CallableOperationBackend,
+    LegacyCallableBackend,
+    RegisteredOperationBackend,
+)
 from pydantic_ai.durable_exec._operation_names import (
     DBOSOperationNamer,
     DurableOperationNamer,
@@ -896,6 +901,39 @@ class _RecordingBackend(CallableOperationBackend[dict[str, str]]):
         return await body()
 
 
+class _RegisteredBoundOperation:
+    def __init__(self, operation: DurableOperation[Any, Any, Any]) -> None:
+        self.operation = operation
+
+    async def __call__(self, params: Any, *, config: object | None = None) -> Any:
+        return await self.operation.handler(params)
+
+
+class _RegisteredBackend(RegisteredOperationBackend[dict[str, str]]):
+    def __init__(self, config: _Config) -> None:
+        super().__init__(namer=JournalOperationNamer('agent'), config=config)
+        self.operations: list[DurableOperation[Any, Any, Any]] = []
+
+    def _register(
+        self,
+        operation: DurableOperation[Any, Any, Any],
+        *,
+        name: str,
+        config: dict[str, str],
+    ) -> tuple[BoundDurableOperation[Any, Any, Any], Sequence[Callable[..., object]]]:
+        self.operations.append(operation)
+        return _RegisteredBoundOperation(operation), (operation.handler,)
+
+
+class _RegisteredDurability(JournalDurability):
+    def __init__(self) -> None:
+        super().__init__()
+        self.backend = _RegisteredBackend(_Config())
+
+    def get_durable_operation_backend(self) -> _RegisteredBackend:
+        return self.backend
+
+
 class _RecordingLegacyCapability:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[object, ...], object, object]] = []
@@ -1189,6 +1227,26 @@ async def test_callable_operation_backend_resolves_and_round_trips() -> None:
     assert config.for_tool(OperationConfigRole.TOOL_CALL, CallToolId('function', 'tools'), object(), 'tool') == {
         'tool': 'tool'
     }
+
+
+def test_registered_backend_binds_model_operations_during_agent_assembly() -> None:
+    agent = Agent(TestModel(), name='registered', capabilities=[_RegisteredDurability()])
+
+    durability = _RegisteredDurability.from_agent(agent)
+    assert durability is not None
+    backend = durability.backend
+    assert backend.registrations() == [operation.handler for operation in backend.operations]
+    model_operation_ids = [
+        operation.operation_id
+        for operation in backend.operations
+        if isinstance(operation.operation_id, (ModelRequestId, CompactMessagesId, CancelSuspendedResponseId))
+    ]
+    assert model_operation_ids == [
+        ModelRequestId(None, False, 'default'),
+        ModelRequestId(None, True, 'default'),
+        CompactMessagesId(None, 'default'),
+        CancelSuspendedResponseId(None, 'default'),
+    ]
 
 
 def test_trivial_transport_cache_and_invocation_helpers() -> None:

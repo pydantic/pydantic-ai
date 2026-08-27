@@ -21,8 +21,11 @@ name, callback, cache identity, and resolved config to the SDK.
 
 Use [`RegisteredOperationBackend`][pydantic_ai.durable_exec.RegisteredOperationBackend] when the
 engine requires handlers to be registered before the worker starts. Implement `_register` to
-create a bound caller and return its registration handles. The capability exposes the collected
-handles to the worker.
+create a bound caller and return its registration handles. Its `registrations()` method returns
+the collected SDK registration handles in binding order. During agent assembly, the base binds the
+four model operations before a worker can start, so these registrations are present without first
+running a model request. Pass the complete `registrations()` result to the engine SDK when creating
+the worker.
 
 Both tiers implement [`DurableOperationBackend`][pydantic_ai.durable_exec.DurableOperationBackend].
 They own result encoding, cache projection, config resolution, and naming around the engine-specific
