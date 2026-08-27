@@ -61,7 +61,6 @@ dependencies = [
     "anyio>=4.7.0",
     "griffelib>=2.0",
     "httpx2>=2.7",
-    "publicsuffixlist>=1.0.2.20260819",
     "pydantic>=2.12",
     "pydantic-graph=={{ version }}",
     "exceptiongroup>=1.2.2; python_version < '3.11'",

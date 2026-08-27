@@ -12,13 +12,10 @@ import socket
 import zlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from functools import cache
-from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from urllib.parse import urlparse, urlunparse
-from urllib.request import Request
 
 import httpx2
-from publicsuffixlist import PublicSuffixList
 
 from ._http import create_async_httpx2_client, legacy_httpx as _legacy_httpx
 from ._utils import run_in_executor
@@ -377,29 +374,33 @@ def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     return hostname, path, port, is_https
 
 
-def build_url_with_ip(resolved: ResolvedUrl) -> str:
-    """Build a URL using a resolved IP address instead of the hostname.
-
-    For IPv6 addresses, wraps them in brackets as required by URL syntax.
-    """
+def _build_url(resolved: ResolvedUrl, host: str) -> str:
     scheme = 'https' if resolved.is_https else 'http'
     default_port = 443 if resolved.is_https else 80
 
     # IPv6 addresses need brackets in URLs
     try:
-        ip_obj = ipaddress.ip_address(resolved.resolved_ip)
+        ip_obj = ipaddress.ip_address(host)
         if isinstance(ip_obj, ipaddress.IPv6Address):
-            host_part = f'[{resolved.resolved_ip}]'
+            host_part = f'[{host}]'
         else:
-            host_part = resolved.resolved_ip
+            host_part = host
     except ValueError:
-        host_part = resolved.resolved_ip
+        host_part = host
 
     # Only include port if non-default
     if resolved.port != default_port:
         host_part = f'{host_part}:{resolved.port}'
 
     return urlunparse((scheme, host_part, resolved.path, '', '', ''))
+
+
+def build_url_with_ip(resolved: ResolvedUrl) -> str:
+    """Build a URL using a resolved IP address instead of the hostname.
+
+    For IPv6 addresses, wraps them in brackets as required by URL syntax.
+    """
+    return _build_url(resolved, resolved.resolved_ip)
 
 
 async def validate_and_resolve_url(url: str, allow_local: bool) -> ResolvedUrl:
@@ -538,120 +539,19 @@ def _keeps_credentials(from_url: str, to_url: str) -> bool:
     )
 
 
-@cache
-def _public_suffix_list() -> PublicSuffixList:
-    return PublicSuffixList()
-
-
-class _LogicalUrlCookiePolicy(DefaultCookiePolicy):
-    """Apply strict host-only and public-suffix cookie restrictions."""
-
-    def __init__(self) -> None:
-        # `CookieJar` otherwise treats host-only cookies as valid for subdomains.
-        super().__init__(strict_ns_domain=self.DomainStrictNonDomain)
-
-    @staticmethod
-    def _request_hostname(request: Request) -> str:
-        hostname = urlparse(request.get_full_url()).hostname
-        assert hostname is not None
-        return hostname
-
-    def set_ok(self, cookie: Cookie, request: Request) -> bool:
-        assert cookie.name is not None
-        cookie_name = cookie.name.lower()
-        is_secure_request = urlparse(request.get_full_url()).scheme == 'https'
-        if cookie.secure and not is_secure_request:
-            return False
-        if cookie_name.startswith(('__secure-', '__host-')) and not cookie.secure:
-            return False
-        if cookie_name.startswith('__host-') and (
-            cookie.domain_specified or not cookie.path_specified or cookie.path != '/'
-        ):
-            return False
-
-        if cookie.path_specified and not cookie.path.startswith('/'):
-            request_path = urlparse(request.get_full_url()).path
-            cookie.path = request_path.rsplit('/', 1)[0] or '/'
-            cookie.path_specified = False
-
-        if not cookie.domain_specified:
-            # `CookieJar` turns a single-label host into `<host>.local` internally.
-            cookie.domain = self._request_hostname(request)
-
-        return super().set_ok(cookie, request)
-
-    def set_ok_domain(self, cookie: Cookie, request: Request) -> bool:
-        if cookie.domain_specified:
-            domain = cookie.domain.lstrip('.')
-            request_hostname = self._request_hostname(request)
-            try:
-                ipaddress.ip_address(request_hostname)
-            except ValueError:
-                pass
-            else:
-                if domain != request_hostname:
-                    return False
-                cookie.domain = request_hostname
-                cookie.domain_specified = False
-                cookie.domain_initial_dot = False
-                return super().set_ok_domain(cookie, request)
-
-            if _public_suffix_list().publicsuffix(domain) == domain:
-                if request_hostname != domain:
-                    return False
-
-                # RFC 6265 permits a public suffix to set a cookie for itself, but
-                # requires treating the result as host-only.
-                cookie.domain = domain
-                cookie.domain_specified = False
-                cookie.domain_initial_dot = False
-
-        return super().set_ok_domain(cookie, request)
-
-    def return_ok_domain(self, cookie: Cookie, request: Request) -> bool:
-        if not cookie.domain_specified:
-            return cookie.domain == self._request_hostname(request)
-        return super().return_ok_domain(cookie, request)
-
-
-class _LogicalUrlCookies:
-    """Manage cookies against logical URLs while requests connect to resolved IPs."""
-
-    def __init__(self) -> None:
-        self._cookies = httpx2.Cookies(CookieJar(policy=_LogicalUrlCookiePolicy()))
-
-    @staticmethod
-    def _url(resolved: ResolvedUrl) -> str:
-        scheme = 'https' if resolved.is_https else 'http'
-        host = resolved.hostname
-        try:
-            if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
-                host = f'[{host}]'
-        except ValueError:
-            pass
-        if resolved.port != (443 if resolved.is_https else 80):
-            host = f'{host}:{resolved.port}'
-        return urlunparse((scheme, host, resolved.path, '', '', ''))
-
-    def apply(self, headers: dict[str, str], resolved: ResolvedUrl) -> None:
-        if any(name.lower() == 'cookie' for name in headers):
-            return
-
-        request = httpx2.Request('GET', self._url(resolved))
-        self._cookies.set_cookie_header(request)
+def _set_cookie_header(cookies: httpx2.Cookies, request: httpx2.Request, headers: dict[str, str]) -> None:
+    cookies.set_cookie_header(request)
+    if not any(name.lower() == 'cookie' for name in headers):
         if cookie_header := request.headers.get('cookie'):
             headers['Cookie'] = cookie_header
 
-    def extract(self, response: httpx2.Response, resolved: ResolvedUrl) -> None:
-        if not isinstance(response, httpx2.Response):  # Existing tests also use response mocks.
-            return
 
-        logical_response = httpx2.Response(
-            response.status_code,
-            headers=response.headers,
-            request=httpx2.Request('GET', self._url(resolved)),
-        )
-        self._cookies.extract_cookies(logical_response)
+def _extract_cookies(cookies: httpx2.Cookies, response: httpx2.Response, request: httpx2.Request) -> None:
+    if not response.headers.get('set-cookie'):
+        return
+
+    logical_response = httpx2.Response(response.status_code, headers=response.headers, request=request)
+    cookies.extract_cookies(logical_response)
 
 
 async def safe_download(
@@ -719,7 +619,8 @@ async def safe_download(
     current_url = url
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
-    cookies = _LogicalUrlCookies()
+    cookie_policy = DefaultCookiePolicy(strict_ns_domain=DefaultCookiePolicy.DomainStrictNonDomain)
+    cookies = httpx2.Cookies(CookieJar(policy=cookie_policy))
 
     async with create_async_httpx2_client(timeout=timeout) as client:
         while True:
@@ -757,16 +658,18 @@ async def safe_download(
 
             # Stream the raw response so gzip members can be decoded and validated before
             # httpx2's automatic content decoder discards member boundaries.
-            # Apply cookies using the logical URL, never the resolved-IP URL. A
-            # caller-supplied `Cookie` header retains precedence.
-            cookies.apply(request_headers, resolved)
+            # Apply cookies using the logical URL, never the resolved-IP URL. Strict
+            # host-only matching prevents a cookie from reaching another hostname,
+            # while ordinary Domain, Path and Secure cookie rules remain intact.
+            logical_request = httpx2.Request('GET', _build_url(resolved, resolved.hostname))
+            _set_cookie_header(cookies, logical_request, request_headers)
 
             request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
             response = await _send_request(client, request)
 
             # HTTPX automatically extracts against the resolved-IP request. Copy cookies
             # into the logical jar instead, then remove the unsafe IP-scoped copies.
-            cookies.extract(response, resolved)
+            _extract_cookies(cookies, response, logical_request)
             client.cookies.clear()
 
             # Check if we need to follow a redirect
