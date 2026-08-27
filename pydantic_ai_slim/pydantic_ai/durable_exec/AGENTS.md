@@ -13,7 +13,7 @@ Durable execution integrations are first-class compatibility targets.
 
 Build new integrations on the public `pydantic_ai.durable_exec` surface. Subclass
 `BaseDurabilityCapability` for the agent-facing capability and provide a `DurableOperationBackend`
-from `_build_operation_backend`. Do not copy the model, toolset, event, or capability-operation
+from `get_durable_operation_backend`. Do not copy the model, toolset, event, or capability-operation
 collection machinery into the integration.
 
 Choose the backend tier from the engine SDK's execution model:

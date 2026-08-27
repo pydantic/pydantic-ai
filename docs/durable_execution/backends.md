@@ -99,7 +99,7 @@ class ImmediateDurability(BaseDurabilityCapability[None]):
     def in_durable_context(self) -> bool:
         return True
 
-    def _build_operation_backend(self) -> ImmediateBackend:
+    def get_durable_operation_backend(self) -> ImmediateBackend:
         return ImmediateBackend(self.name)
 
 

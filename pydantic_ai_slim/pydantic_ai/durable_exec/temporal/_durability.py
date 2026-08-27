@@ -348,7 +348,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 
-    def _build_operation_backend(self) -> TemporalOperationBackend:
+    def get_durable_operation_backend(self) -> TemporalOperationBackend:
         backend = self._operation_backend
         assert backend is not None
         return backend

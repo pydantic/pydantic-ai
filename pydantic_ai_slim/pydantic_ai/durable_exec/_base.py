@@ -377,7 +377,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _bind_capability_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         self._bound_capability_operations = {}
         self._capability_declarations = {}
-        backend = self._build_operation_backend()
+        backend = self.get_durable_operation_backend()
         for capability in leaf_capabilities(agent.root_capability):
             declarations = collect_capability_operations(capability)
             if not declarations:
@@ -755,7 +755,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         raise NotImplementedError
 
-    def _build_operation_backend(self) -> DurableOperationBackend[ToolConfig]:
+    def get_durable_operation_backend(self) -> DurableOperationBackend[ToolConfig]:
         """Build the declaration backend for callable engines using their compatibility hooks."""
         return LegacyCallableBackend(
             self,
@@ -1176,7 +1176,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
                 )
 
-        backend = self._build_operation_backend()
+        backend = self.get_durable_operation_backend()
         operation = DurableOperation(
             operation_id=CallToolId('function', cast(str, toolset.id)),
             handler=call_tool_handler,
@@ -1248,7 +1248,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     )
                 )
 
-        backend = self._build_operation_backend()
+        backend = self.get_durable_operation_backend()
         get_tools = backend.bind(
             DurableOperation(
                 operation_id=GetToolsId('dynamic', cast(str, toolset.id)),
@@ -1360,7 +1360,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             result_codec=self._legacy_result_codec(dict[str, ToolDefinition]),
             config_role=OperationConfigRole.TOOL_DISCOVERY,
         )
-        return self._build_operation_backend().bind(operation)
+        return self.get_durable_operation_backend().bind(operation)
 
     def _build_mcp_toolset_after_get_tools(
         self,
@@ -1406,7 +1406,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             result_codec=self._legacy_result_codec(Instructions),
             config_role=OperationConfigRole.TOOL_DISCOVERY,
         )
-        return self._build_operation_backend().bind(operation)
+        return self.get_durable_operation_backend().bind(operation)
 
     def _build_mcp_toolset_after_discovery(
         self,
@@ -1424,7 +1424,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
                 )
 
-        backend = self._build_operation_backend()
+        backend = self.get_durable_operation_backend()
         call_operation = DurableOperation(
             operation_id=CallToolId('mcp', cast(str, toolset.id)),
             handler=call_tool_handler,
@@ -1481,7 +1481,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._validate_model_request_parameters(request_context.model_request_parameters)
         model_id = self._model_id_for_request(ctx, request_context)
         model_name = request_context.model.model_name
-        backend = self._build_operation_backend()
+        backend = self.get_durable_operation_backend()
         request_operation, request_stream_operation, compact_messages_operation, cancel_suspended_response_operation = (
             self._bound_model_operations
             or self._bind_model_operations(backend, model_id=model_id, model_name=model_name)
@@ -1681,7 +1681,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         (#5477 requirement 4). That override is the one genuine behavioral difference the hash-keyed
         family forces.
         """
-        bound_operation = self._bound_event_operation or self._bind_event_operation(self._build_operation_backend())
+        bound_operation = self._bound_event_operation or self._bind_event_operation(
+            self.get_durable_operation_backend()
+        )
         await bound_operation(EventStreamHandlerOperationParams(event, ctx))
 
     def _bind_event_operation(self, backend: Any) -> Any:

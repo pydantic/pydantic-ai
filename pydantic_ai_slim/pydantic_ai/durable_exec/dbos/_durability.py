@@ -231,7 +231,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # safe, so only guard once actually inside a workflow.
         return guard_enqueue_in_workflow(ctx)
 
-    def _build_operation_backend(self) -> DBOSOperationBackend:
+    def get_durable_operation_backend(self) -> DBOSOperationBackend:
         assert self._operation_backend is not None
         return self._operation_backend
 

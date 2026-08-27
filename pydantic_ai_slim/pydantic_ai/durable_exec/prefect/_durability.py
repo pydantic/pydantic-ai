@@ -108,7 +108,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
-    def _build_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
+    def get_durable_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
         def tool_config(kind: ToolsetKind, tool: object | None, tool_name: str) -> TaskConfig | Literal[False]:
             config = self._build_resolve_tool_config(self._toolset_base_config(kind))(
                 cast(ToolsetTool[Any] | None, tool), tool_name
