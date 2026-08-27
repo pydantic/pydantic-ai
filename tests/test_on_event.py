@@ -325,11 +325,19 @@ async def test_zero_listeners_does_not_enable_streaming() -> None:
 
 def test_marked_method_named_on_event_rejected() -> None:
     """`on_event` is the dispatcher that invokes the marked listeners; a marker can't replace it."""
-    with pytest.raises(TypeError, match="cannot decorate a method named 'on_event'"):
+    # Python < 3.12 wraps exceptions raised by `__set_name__` in a `RuntimeError`.
+    with pytest.raises((TypeError, RuntimeError)) as exc_info:
 
         class BadCapability(AbstractCapability[Any]):  # pyright: ignore[reportUnusedClass]
             @on_event(FileReadEvent)
             async def on_event(self, ctx: RunContext[Any], event: FileReadEvent) -> None: ...  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    error: BaseException = exc_info.value
+    if isinstance(error, RuntimeError):
+        assert error.__cause__ is not None
+        error = error.__cause__
+    assert isinstance(error, TypeError)
+    assert "cannot decorate a method named 'on_event'" in str(error)
 
 
 async def test_combined_capability_subclass_own_listeners() -> None:

@@ -57,7 +57,9 @@ async def _iter_completed_or_buffered(
             while event_stream_buffer:
                 yield event_stream_buffer.pop(0)
             signal.clear()
-            signal_wait = asyncio.ensure_future(signal.wait())
+            # Typed `Task[Any]` so the mixed `asyncio.wait` set unifies with the task set; the
+            # sentinel is discarded from both result sets before tasks are yielded.
+            signal_wait: asyncio.Task[Any] = asyncio.ensure_future(signal.wait())
             try:
                 done, not_done = await asyncio.wait({*pending, signal_wait}, return_when=asyncio.FIRST_COMPLETED)
             finally:

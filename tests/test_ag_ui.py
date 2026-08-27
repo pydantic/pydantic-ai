@@ -4472,7 +4472,7 @@ async def test_custom_event_maps_to_ag_ui_custom_event():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
-                'outcome': {'type': 'success'},
+                **run_finished_outcome(),
             },
         ]
     )
@@ -4507,7 +4507,7 @@ async def test_capability_event_is_not_forwarded():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
-                'outcome': {'type': 'success'},
+                **run_finished_outcome(),
             },
         ]
     )
@@ -4545,7 +4545,7 @@ async def test_typed_custom_event_maps_to_ag_ui_custom_event():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
-                'outcome': {'type': 'success'},
+                **run_finished_outcome(),
             },
         ]
     )
@@ -4578,7 +4578,7 @@ async def test_custom_event_passes_through_ag_ui_base_event():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
-                'outcome': {'type': 'success'},
+                **run_finished_outcome(),
             },
         ]
     )
