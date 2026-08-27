@@ -272,7 +272,7 @@ from pydantic_ai.capabilities import AbstractCapability, on_event
 
 
 @dataclass(kw_only=True)
-class BeforeCompactionEvent(
+class CompactionStartEvent(
     CapabilityEvent, namespace='compaction', dispatch='inline'
 ):
     cancelled: bool = False
@@ -284,14 +284,14 @@ class BeforeCompactionEvent(
 
 
 class KeepFullHistory(AbstractCapability[Any]):
-    @on_event(BeforeCompactionEvent)
+    @on_event(CompactionStartEvent)
     async def _cancel(
-        self, ctx: RunContext[Any], event: BeforeCompactionEvent
+        self, ctx: RunContext[Any], event: CompactionStartEvent
     ) -> None:
         event.cancel()
 ```
 
-For inline dispatch, Pydantic AI buffers the event before invoking listeners. After `event = await ctx.emit_event(BeforeCompactionEvent())`, the emitter can inspect `event.cancelled`, and an event emitted by a listener appears after the decision event in the stream. Inline events are still delivered exactly once. Stream-dispatch listeners run inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers. An `on_event` listener automatically enables streaming for an otherwise non-streaming `agent.run()`.
+For inline dispatch, Pydantic AI buffers the event before invoking listeners. After `event = await ctx.emit_event(CompactionStartEvent())`, the emitter can inspect `event.cancelled`, and an event emitted by a listener appears after the decision event in the stream. Inline events are still delivered exactly once. Stream-dispatch listeners run inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers. An `on_event` listener automatically enables streaming for an otherwise non-streaming `agent.run()`.
 
 ## Provider-adaptive tools
 

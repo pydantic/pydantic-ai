@@ -296,72 +296,9 @@ Alongside the framework's own events, a tool or code driving [`agent.iter()`](#i
 
 `CustomEvent` is for application-owned events; reusable capability authors define namespaced, typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s as described in [Capability events](capabilities/overview.md#capability-events).
 
-From anywhere a [`RunContext`][pydantic_ai.tools.RunContext] is available in async code, await [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] with a name and an optional data payload. Sync tools cannot emit events; write async tools when they need to emit events. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] and [`tool_name`][pydantic_ai.messages.CustomEvent.tool_name] are stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
+Define an event as a dataclass subclass of `CustomEvent` — its fields are the payload, and consumers can use an `isinstance` check against the class. From anywhere a [`RunContext`][pydantic_ai.tools.RunContext] is available in async code, await [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] with an event instance; code driving `agent.iter()` uses [`AgentRun.emit_event`][pydantic_ai.run.AgentRun.emit_event]. Sync tools cannot emit events; write async tools when they need to emit events. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] and [`tool_name`][pydantic_ai.messages.CustomEvent.tool_name] are stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
 
 ```python {title="custom_events.py"}
-from collections.abc import AsyncIterator
-
-from pydantic_ai import Agent, CustomEvent, RunContext
-from pydantic_ai.messages import ModelMessage, ToolReturnPart
-from pydantic_ai.models.function import (
-    AgentInfo,
-    DeltaToolCall,
-    DeltaToolCalls,
-    FunctionModel,
-)
-
-
-async def model_function(
-    messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[DeltaToolCalls | str]:
-    if any(
-        isinstance(part, ToolReturnPart)
-        for message in messages
-        for part in message.parts
-    ):
-        yield 'All 3 files processed.'
-    else:
-        yield {
-            0: DeltaToolCall(
-                name='process_files', json_args='{"count": 3}', tool_call_id='process'
-            )
-        }
-
-
-agent = Agent(FunctionModel(stream_function=model_function))
-
-
-@agent.tool
-async def process_files(ctx: RunContext, count: int) -> str:
-    for i in range(1, count + 1):
-        # Do some long-running work, emitting a progress event after each step.
-        await ctx.emit_event('progress', {'done': i, 'total': count})
-    return f'Processed {count} files.'
-
-
-async def main():
-    progress: list[str] = []
-    async with agent.run_stream_events('Process my files') as events:
-        async for event in events:
-            if isinstance(event, CustomEvent) and event.name == 'progress':
-                progress.append(
-                    f'{event.data["done"]}/{event.data["total"]} (from {event.tool_call_id})'
-                )
-
-    print(progress)
-    #> ['1/3 (from process)', '2/3 (from process)', '3/3 (from process)']
-```
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-!!! note
-    The `data` payload can be any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters it needs to be serializable by pydantic. Events emitted from tools running concurrently are drained in emission order on the next pull from the stream (best-effort ordering).
-
-### Typed custom events
-
-For payloads with a known structure, define a dataclass subclass of [`CustomEvent`][pydantic_ai.messages.CustomEvent]. Its fields become the payload, and consumers can use an `isinstance` check instead of matching the event name and unpacking `data`.
-
-```python {title="typed_custom_events.py"}
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 
@@ -404,6 +341,7 @@ agent = Agent(FunctionModel(stream_function=model_function))
 @agent.tool
 async def sync_files(ctx: RunContext, count: int) -> str:
     for i in range(1, count + 1):
+        # Do some long-running work, emitting a progress event after each step.
         await ctx.emit_event(SyncProgressEvent(done=i, total=count))
     return f'Synchronized {count} files.'
 
@@ -435,11 +373,13 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-Typed custom event names are derived from the class name by removing `Event` and converting the rest to snake case, so `SyncProgressEvent` uses `sync_progress`. Override the name with a class argument, for example `class SyncProgressEvent(CustomEvent, name='sync_status')`. Names are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration.
+An event is delivered to stream consumers as soon as it is emitted, so a progress event surfaces while the emitting tool is still running. Payload fields can hold any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters they need to be serializable by pydantic. Events emitted from tools running concurrently interleave in emission order (best-effort ordering).
 
-Typed events round-trip through [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] serialization as their original class. If an event is deserialized before its class is registered, it becomes an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent], with its payload preserved in `data`, and a warning is logged. Import the module that defines your event before creating the adapter that deserializes it; each pydantic `TypeAdapter` captures the event classes registered when it is created.
+Custom event names are derived from the class name by removing `Event` and converting the rest to snake case, so `SyncProgressEvent` uses `sync_progress`. Override the name with a class argument, for example `class SyncProgressEvent(CustomEvent, name='sync_status')`. Names are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration.
 
-UI adapters get the frontend payload by calling [`CustomEvent.to_payload()`][pydantic_ai.messages.CustomEvent.to_payload]. The default returns `data` for a base event and the custom fields for a typed event; override it when the UI should receive a different payload.
+Events round-trip through [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] serialization as their original class. If an event is deserialized before its class is registered, it becomes an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent], with its payload preserved in `data`, and a warning is logged. Import the module that defines your event before creating the adapter that deserializes it; each pydantic `TypeAdapter` captures the event classes registered when it is created.
+
+UI adapters get the frontend payload by calling [`CustomEvent.to_payload()`][pydantic_ai.messages.CustomEvent.to_payload], which defaults to the event's own fields; override it when the UI should receive a different payload.
 
 ### Iterating Over an Agent's Graph
 

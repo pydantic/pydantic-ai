@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -16,6 +17,8 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     CustomEvent,
     ModelMessage,
+    ModelResponse,
+    TextPart,
     ToolReturnPart,
     UnknownCustomEvent,
 )
@@ -40,6 +43,30 @@ async def _tool_then_text(messages: list[ModelMessage], info: AgentInfo) -> Asyn
         yield 'done'
 
 
+@dataclass(kw_only=True)
+class ProgressEvent(CustomEvent):
+    """Reusable payload-bearing event for tool-emission tests."""
+
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class ExternalEvent(CustomEvent):
+    """Reusable event for driver-code (`AgentRun.emit_event`) tests."""
+
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class StartingEvent(CustomEvent):
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class ValidatedEvent(CustomEvent):
+    pass
+
+
 async def _collect_events(agent: Agent[Any, str], prompt: str = 'go') -> list[AgentStreamEvent]:
     events: list[AgentStreamEvent] = []
 
@@ -57,14 +84,12 @@ async def test_emit_from_tool_auto_stamps_tool_call_id():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
+        await ctx.emit_event(ProgressEvent(payload={'pct': 50}))
         return 'ok'
 
     events = await _collect_events(agent)
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot(
-        [CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')]
-    )
+    assert custom == snapshot([ProgressEvent(payload={'pct': 50}, tool_call_id='call_1', tool_name='progress')])
 
 
 async def test_explicit_tool_call_id_preserved():
@@ -73,12 +98,12 @@ async def test_explicit_tool_call_id_preserved():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(CustomEvent(name='progress', data=None, tool_call_id='explicit'))
+        await ctx.emit_event(ProgressEvent(tool_call_id='explicit'))
         return 'ok'
 
     events = await _collect_events(agent)
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot([CustomEvent(name='progress', tool_call_id='explicit')])
+    assert custom == snapshot([ProgressEvent(tool_call_id='explicit')])
 
 
 async def test_emit_from_capability_hook():
@@ -94,14 +119,14 @@ async def test_emit_from_capability_hook():
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            await ctx.emit_event(CustomEvent(name='starting', data='before request'))
+            await ctx.emit_event(StartingEvent(payload='before request'))
             return request_context
 
     agent = Agent(FunctionModel(stream_function=only_text), capabilities=[EmitCapability()])
 
     events = await _collect_events(agent)
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot([CustomEvent(name='starting', data='before request')])
+    assert custom == snapshot([StartingEvent(payload='before request')])
 
 
 async def test_agent_run_emit_event():
@@ -114,7 +139,7 @@ async def test_agent_run_emit_event():
 
     collected: list[AgentStreamEvent] = []
     async with agent.iter('go') as run:
-        await run.emit_event(CustomEvent(name='external', data={'source': 'bus'}))
+        await run.emit_event(ExternalEvent(payload={'source': 'bus'}))
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
@@ -122,7 +147,21 @@ async def test_agent_run_emit_event():
                         collected.append(event)
 
     custom = [event for event in collected if isinstance(event, CustomEvent)]
-    assert custom == snapshot([CustomEvent(name='external', data={'source': 'bus'})])
+    assert custom == snapshot([ExternalEvent(payload={'source': 'bus'})])
+
+
+async def test_agent_run_emit_event_after_end_rejected():
+    """Emitting after the run has ended fails loudly instead of silently never delivering."""
+
+    def only_text(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(only_text))
+    async with agent.iter('go') as run:
+        async for _ in run:
+            pass
+        with pytest.raises(UserError, match='cannot be called after the run has ended'):
+            await run.emit_event(ExternalEvent())
 
 
 async def test_agent_run_emit_event_before_call_tools_stream():
@@ -141,7 +180,7 @@ async def test_agent_run_emit_event_before_call_tools_stream():
                     async for _ in request_stream:
                         pass
             elif Agent.is_call_tools_node(node):
-                await run.emit_event(CustomEvent(name='before-tools'))
+                await run.emit_event(ExternalEvent())
                 async with node.stream(run.ctx) as stream:
                     async for event in stream:
                         collected.append(event)
@@ -160,12 +199,12 @@ async def test_emit_from_output_validator():
 
     @agent.output_validator
     async def validate(ctx: RunContext[Any], output: str) -> str:
-        await ctx.emit_event(CustomEvent(name='validated'))
+        await ctx.emit_event(ValidatedEvent())
         return output
 
     events = await _collect_events(agent)
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot([CustomEvent(name='validated')])
+    assert custom == snapshot([ValidatedEvent()])
 
 
 async def test_custom_events_excluded_from_stream_output():
@@ -174,12 +213,12 @@ async def test_custom_events_excluded_from_stream_output():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(CustomEvent(name='progress'))
+        await ctx.emit_event(ProgressEvent())
         return 'ok'
 
     outputs: list[str] = []
     async with agent.iter('go') as run:
-        await run.emit_event(CustomEvent(name='external'))
+        await run.emit_event(ExternalEvent())
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
@@ -195,7 +234,7 @@ async def test_surfaced_via_run_stream_events():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
+        await ctx.emit_event(ProgressEvent(payload={'pct': 50}))
         return 'ok'
 
     events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
@@ -204,9 +243,7 @@ async def test_surfaced_via_run_stream_events():
             events.append(event)
 
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot(
-        [CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')]
-    )
+    assert custom == snapshot([ProgressEvent(payload={'pct': 50}, tool_call_id='call_1', tool_name='progress')])
 
 
 async def test_surfaced_via_run_stream():
@@ -221,34 +258,32 @@ async def test_surfaced_via_run_stream():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(CustomEvent(name='progress', data={'pct': 50}))
+        await ctx.emit_event(ProgressEvent(payload={'pct': 50}))
         return 'ok'
 
     async with agent.run_stream('go', event_stream_handler=event_stream_handler) as result:
         assert await result.get_output() == 'done'
 
     custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot(
-        [CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')]
-    )
+    assert custom == snapshot([ProgressEvent(payload={'pct': 50}, tool_call_id='call_1', tool_name='progress')])
 
 
 async def test_emit_without_buffer_raises():
     """A `RunContext` not backed by a running agent has nowhere to emit to."""
     ctx = RunContext[Any](deps=None, model=FunctionModel(stream_function=_tool_then_text), usage=None)  # type: ignore[arg-type]
     with pytest.raises(UserError, match='`emit_event` is only available during an agent run'):
-        await ctx.emit_event(CustomEvent(name='progress'))
+        await ctx.emit_event(ProgressEvent())
 
 
 def test_serialization_round_trip():
     """A `CustomEvent` round-trips through the `AgentStreamEvent` discriminated union."""
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
-    event = CustomEvent(name='progress', data={'pct': 50, 'label': 'halfway'}, tool_call_id='call_1')
+    event = ProgressEvent(payload={'pct': 50, 'label': 'halfway'}, tool_call_id='call_1')
     dumped = adapter.dump_python(event)
     assert dumped == snapshot(
         {
             'name': 'progress',
-            'data': {'pct': 50, 'label': 'halfway'},
+            'payload': {'pct': 50, 'label': 'halfway'},
             'tool_call_id': 'call_1',
             'tool_name': None,
             'event_kind': 'custom',
@@ -257,50 +292,16 @@ def test_serialization_round_trip():
     assert adapter.validate_python(dumped) == event
 
 
-async def test_emit_event_name_data_shorthand():
-    """`ctx.emit_event('name', data)` wraps the payload in a `CustomEvent` and returns it as emitted."""
-    agent = Agent(FunctionModel(stream_function=_tool_then_text))
-
-    @agent.tool
-    async def progress(ctx: RunContext[Any]) -> str:
-        emitted = await ctx.emit_event('progress', {'pct': 50})
-        assert emitted == CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')
-        return 'ok'
-
-    events = await _collect_events(agent)
-    custom = [event for event in events if isinstance(event, CustomEvent)]
-    assert custom == snapshot(
-        [CustomEvent(name='progress', data={'pct': 50}, tool_call_id='call_1', tool_name='progress')]
-    )
+def test_custom_event_requires_name():
+    """`name` has a static-only default (so typed subclasses don't require it); it can't end up empty."""
+    with pytest.raises(ValueError, match='A custom event requires a `name`'):
+        UnknownCustomEvent(name='', data={'x': 1})
 
 
-async def test_agent_run_emit_event_shorthand():
-    """`AgentRun.emit_event('name', data)` wraps the payload in a `CustomEvent`."""
-
-    async def only_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        yield 'done'
-
-    agent = Agent(FunctionModel(stream_function=only_text))
-
-    collected: list[AgentStreamEvent] = []
-    async with agent.iter('go') as run:
-        emitted = await run.emit_event('external', {'source': 'bus'})
-        assert emitted == CustomEvent(name='external', data={'source': 'bus'})
-        async for node in run:
-            if Agent.is_model_request_node(node):
-                async with node.stream(run.ctx) as stream:
-                    async for event in stream:
-                        collected.append(event)
-
-    custom = [event for event in collected if isinstance(event, CustomEvent)]
-    assert custom == snapshot([CustomEvent(name='external', data={'source': 'bus'})])
-
-
-# --- Typed `CustomEvent` subclasses ---
-#
-# These are unit tests of the event registry and its serialization: the registry is process-global
-# state keyed by event name, and the (de)serialization branches they pin — subclass round-trip,
-# unknown-name degradation, re-flattening — can't be reached through a model request.
+def test_custom_event_base_not_instantiable():
+    """`CustomEvent` is the family base; payloads are carried by typed subclasses."""
+    with pytest.raises(TypeError, match='`CustomEvent` is a base class'):
+        CustomEvent(name='x')
 
 
 @dataclass(kw_only=True)
@@ -314,12 +315,6 @@ class RenamedEvent(CustomEvent, name='sync_renamed'):
     label: str
 
 
-def test_custom_event_requires_name():
-    """`name` has a static-only default (so typed subclasses don't require it); direct construction enforces it."""
-    with pytest.raises(ValueError, match='`CustomEvent` requires a `name`'):
-        CustomEvent(data={'x': 1})
-
-
 def test_typed_subclass_round_trip():
     """A typed subclass round-trips through the union back to its own class, payload as its own fields."""
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
@@ -329,7 +324,6 @@ def test_typed_subclass_round_trip():
     assert dumped == snapshot(
         {
             'name': 'upload_progress',
-            'data': None,
             'tool_call_id': None,
             'tool_name': None,
             'event_kind': 'custom',
@@ -349,9 +343,9 @@ def test_typed_subclass_explicit_name():
 
 
 def test_typed_subclass_to_payload():
-    """`to_payload` returns the subclass's own fields; the base class returns `data`."""
+    """`to_payload` returns the subclass's own fields, excluding the envelope."""
     assert UploadProgressEvent(done=3, total=9).to_payload() == {'done': 3, 'total': 9}
-    assert CustomEvent(name='progress', data={'pct': 50}).to_payload() == {'pct': 50}
+    assert ProgressEvent(payload={'pct': 50}, tool_call_id='call_1').to_payload() == {'payload': {'pct': 50}}
 
 
 def test_duplicate_event_name_rejected():
@@ -361,6 +355,40 @@ def test_duplicate_event_name_rejected():
         @dataclass(kw_only=True)
         class _ConflictingEvent(CustomEvent, name='upload_progress'):  # pyright: ignore[reportUnusedClass]
             pass
+
+
+def test_instance_name_override_rejected():
+    """A per-instance `name` override on a typed subclass would misroute (de)serialization."""
+    with pytest.raises(ValueError, match="serializes under its registered name 'upload_progress'"):
+        UploadProgressEvent(done=1, total=2, name='other')
+
+
+def test_reserved_name_rejected():
+    """The family schema's synthetic tags can't be claimed by an event class."""
+    with pytest.raises(TypeError, match="Custom event name '__unknown__' is reserved"):
+
+        @dataclass(kw_only=True)
+        class ReservedEvent(CustomEvent, name='__unknown__'):  # pyright: ignore[reportUnusedClass]
+            pass
+
+
+def test_envelope_field_shadowing_rejected():
+    """Payload fields can't shadow envelope fields like `data`, the untyped payload carrier."""
+    with pytest.raises(TypeError, match='reserved for the event envelope: data'):
+
+        @dataclass(kw_only=True)
+        class ShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+            data: Any = None
+
+
+def test_slotted_event_class():
+    """`@dataclass(slots=True)` recreates the class; the recreated class keeps its registered name."""
+
+    @dataclass(kw_only=True, slots=True)
+    class SlottedCustomEvent(CustomEvent):
+        value: int
+
+    assert SlottedCustomEvent(value=1).name == 'slotted_custom'
 
 
 def test_redefined_event_class_replaces_registration():
@@ -378,6 +406,30 @@ def test_redefined_event_class_replaces_registration():
     assert second.name == 'redefined'
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     assert type(adapter.validate_python({'event_kind': 'custom', 'name': 'redefined', 'value': 1})) is type(second)
+
+
+async def test_event_delivered_while_tool_still_running():
+    """An emitted event reaches stream consumers while the emitting tool is still executing.
+
+    The tool blocks until the handler has seen the event, so delivery that only happened at the
+    tool's completion would deadlock (and trip the timeout) instead of passing.
+    """
+    received = asyncio.Event()
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    async def progress(ctx: RunContext[Any]) -> str:
+        await ctx.emit_event(ProgressEvent(payload={'done': 1}))
+        await asyncio.wait_for(received.wait(), timeout=5)
+        return 'ok'
+
+    async def handler(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, CustomEvent) and event.name == 'progress':
+                received.set()
+
+    await agent.run('go', event_stream_handler=handler)
+    assert received.is_set()
 
 
 async def test_typed_subclass_emitted_from_tool():
@@ -426,13 +478,13 @@ def test_unknown_event_name_with_payload_degrades():
     )
 
 
-def test_unknown_event_name_without_payload_is_base():
-    """An event dict with an unregistered name and no payload fields is a plain base event: no warning."""
+def test_unknown_event_name_with_nested_data_preserved():
+    """A wire event with an unregistered name keeps a nested `data` payload through the unknown envelope."""
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     wire = {'event_kind': 'custom', 'name': 'quick_status', 'data': {'stage': 'fetching'}}
-    event = adapter.validate_python(wire)
-    assert type(event) is CustomEvent
-    assert event == snapshot(CustomEvent(name='quick_status', data={'stage': 'fetching'}))
+    with pytest.warns(UserWarning, match="Unknown event name 'quick_status'"):
+        event = adapter.validate_python(wire)
+    assert event == snapshot(UnknownCustomEvent(name='quick_status', data={'stage': 'fetching'}))
 
 
 def test_registration_after_adapter_not_seen():

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 import sys
 import warnings
@@ -38,6 +39,25 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 """Type variable for the agent dependencies in `RunContext`."""
 
 CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
+
+
+class EventStreamBuffer(list[_messages.AgentStreamEvent]):
+    """The run's event buffer, notifying waiting stream mergers as soon as an event lands.
+
+    Extends `list` so graph-state persistence serializes it transparently; a buffer revived as a
+    plain list degrades to draining at stream position instead of waking a blocked stream merger.
+    """
+
+    __slots__ = ('waiters',)
+
+    def __init__(self, iterable: Sequence[_messages.AgentStreamEvent] = ()):
+        super().__init__(iterable)
+        self.waiters: list[asyncio.Event] = []
+
+    def append(self, event: _messages.AgentStreamEvent) -> None:
+        super().append(event)
+        for waiter in self.waiters:
+            waiter.set()
 
 
 async def dispatch_event_inline(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
@@ -512,24 +532,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
     @overload
-    async def emit_event(self, name: str, data: Any = None, /) -> _messages.CustomEvent: ...
-
-    @overload
     async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
 
     @overload
     async def emit_event(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
 
     async def emit_event(
-        self, event: str | _messages.CustomEvent | _messages.CapabilityEvent, data: Any = None, /
+        self, event: _messages.CustomEvent | _messages.CapabilityEvent, /
     ) -> _messages.CustomEvent | _messages.CapabilityEvent:
         """Emit a custom or capability event into the current run's event stream.
 
-        Pass a name and an optional payload -- `await ctx.emit_event('sync_progress', {'done': 3})` -- to emit
-        a plain [`CustomEvent`][pydantic_ai.messages.CustomEvent], or a constructed event object, typically
-        an instance of an application-defined
-        [`CustomEvent` subclass](../agent.md#typed-custom-events) with typed payload fields.
-        Capability hooks and capability-contributed tools can instead emit a typed
+        Application code emits an instance of an application-defined
+        [`CustomEvent` subclass](../agent.md#custom-events) with typed payload fields.
+        Capability hooks and capability-contributed tools instead emit a typed
         [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent].
 
         This method must be awaited, so it's available from async tools, capability hooks, history
@@ -554,10 +569,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         emitter can read decision fields set by listeners.
 
         Args:
-            event: The event name, or a constructed [`CustomEvent`][pydantic_ai.messages.CustomEvent] or
+            event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] or
                 [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] to emit.
-            data: The payload, when a name is passed; must be serializable by pydantic to flow through
-                durable execution and the UI adapters.
 
         Returns:
             The event as emitted (with any stamped attribution fields).
@@ -579,7 +592,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
             )
         elif self.tool_name is not None and self.tool_manager is not None and self.tool_manager.tools is not None:
             if (tool := self.tool_manager.tools.get(self.tool_name)) is not None:
-                capability_id = tool.toolset.id if tool.toolset.id in self.capabilities else None
+                # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
+                # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
+                tool_capability_id = tool.tool_def.capability_id
+                capability_id = tool_capability_id if tool_capability_id in self.capabilities else None
 
         if isinstance(event, _messages.CapabilityEvent):
             if capability_id is None:
@@ -596,8 +612,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 'Capabilities should define and emit `CapabilityEvent` subclasses instead of application '
                 '`CustomEvent`s.'
             )
-        if isinstance(event, str):
-            event = _messages.CustomEvent(name=event, data=data)
         if event.tool_call_id is None and self.tool_call_id is not None:
             event = dataclasses.replace(event, tool_call_id=self.tool_call_id, tool_name=self.tool_name)
         self._emit_event(event)

@@ -50,7 +50,7 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._instructions import normalize_toolset_instructions
-from ._run_context import AnchoredEvidence, dispatch_event_stream, set_current_run_context
+from ._run_context import AnchoredEvidence, EventStreamBuffer, dispatch_event_stream, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -185,12 +185,15 @@ async def _with_event_stream_buffer(
     stream: AsyncIterator[_messages.AgentStreamEvent],
     event_stream_buffer: list[_messages.AgentStreamEvent],
 ) -> AsyncIterator[_messages.AgentStreamEvent]:
-    """Drain buffered run events around each event from a node stream, preserving order."""
+    """Drain buffered run events at the start and end of a node stream.
+
+    Events buffered while the node stream is live are yielded by the stream itself, as soon as they
+    are emitted (see `_iter_completed_or_buffered`); draining them here as well could yield them
+    ahead of an earlier event the stream is about to deliver, inverting emission order.
+    """
     while event_stream_buffer:
         yield event_stream_buffer.pop(0)
     async for event in stream:
-        while event_stream_buffer:
-            yield event_stream_buffer.pop(0)
         yield event
     while event_stream_buffer:
         yield event_stream_buffer.pop(0)
@@ -325,9 +328,7 @@ class GraphAgentState:
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
-    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(
-        default_factory=list[_messages.AgentStreamEvent]
-    )
+    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(default_factory=EventStreamBuffer)
     """Internal: run event buffer, shared by reference into every `RunContext` this run (see `build_run_context`)
     as the private `_event_stream_buffer` field. Framework code appends events to it (e.g.
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]s from
@@ -1899,11 +1900,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         # `_wrapped_stream` builds this generator once per node, so there is no caching to do here.
         output_schema = ctx.deps.output_schema
 
-        async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+        async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
             if self.model_response.state == 'suspended':
                 # A suspended turn is not a completed response to handle: its partial parts could
                 # match an output schema and end the run on mid-turn output while the provider's
@@ -2087,7 +2088,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent]:
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
         # schema before emitting the call. The step-start refresh ran before the response existed.

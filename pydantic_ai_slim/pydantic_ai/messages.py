@@ -39,8 +39,10 @@ from pydantic_ai._cost import calculate_price_for_usage
 
 from . import _otel_messages, _utils
 from ._event_registry import (
-    EVENT_ENVELOPE_FIELDS as _EVENT_ENVELOPE_FIELDS,
+    RESERVED_EVENT_TAGS as _RESERVED_EVENT_TAGS,
     event_family_schema as _event_family_schema,
+    is_redefinition as _is_redefinition,
+    shadowed_envelope_fields as _shadowed_envelope_fields,
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -4352,12 +4354,6 @@ deserializable in processes that have imported the module defining it; see
 """
 
 
-def _is_redefinition(existing: type, cls: type) -> bool:
-    # The same class being defined again -- a re-run notebook cell, `importlib.reload`, or a
-    # re-executed example -- replaces its registration; only genuinely distinct classes conflict.
-    return existing.__module__ == cls.__module__ and existing.__qualname__ == cls.__qualname__
-
-
 @dataclass(repr=False, kw_only=True)
 class CustomEvent:
     """An application-defined event emitted into the agent's event stream.
@@ -4367,9 +4363,7 @@ class CustomEvent:
     [`AgentRun.emit_event`][pydantic_ai.run.AgentRun.emit_event] to surface progress updates, intermediate
     results, or status information to consumers of the stream without adding to the model's context.
 
-    There are two ways to define an event: pass a `name` and an untyped `data` payload
-    (what the `ctx.emit_event('name', data)` shorthand constructs), or subclass this class with typed
-    fields carrying the payload:
+    Define an event by subclassing this class with typed fields carrying the payload:
 
     ```python
     from dataclasses import dataclass
@@ -4393,17 +4387,7 @@ class CustomEvent:
     name: str = ''
     """The application-defined name of the event.
 
-    Required (and enforced at construction) when instantiating `CustomEvent` directly; on typed
-    subclasses it defaults to the registered event name, so it never needs to be passed.
-    """
-
-    data: Any = None
-    """The event payload of a directly-constructed (or shorthand-emitted) event; typed subclasses
-    carry their payload as their own fields instead and leave this unset.
-
-    Deliberately untyped so any application-defined payload can ride along. To flow through durable
-    execution and the UI adapters, the payload must be serializable by pydantic (e.g. a `BaseModel`,
-    a dataclass, or JSON-compatible primitives).
+    On registered subclasses it defaults to the registered event name, so it never needs to be passed.
     """
 
     tool_call_id: str | None = None
@@ -4422,36 +4406,59 @@ class CustomEvent:
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
+    _registered_name: ClassVar[str | None] = None
+    """The name this class is registered under; `None` on the base class and unregistered subclasses."""
+
     def __post_init__(self) -> None:
+        if type(self) is CustomEvent:
+            raise TypeError('`CustomEvent` is a base class; define a dataclass subclass with typed payload fields.')
         # `name` only has a static default so that typed subclasses (whose registered name is
         # injected as the real default at class definition) don't require it in their constructors.
         if not self.name:
-            raise ValueError('`CustomEvent` requires a `name`.')
+            raise ValueError('A custom event requires a `name`.')
+        if (registered := type(self)._registered_name) is not None and self.name != registered:
+            raise ValueError(
+                f'`{type(self).__name__}` serializes under its registered name {registered!r} and cannot '
+                f'override `name` per instance (got {self.name!r}).'
+            )
 
     def __init_subclass__(cls, *, name: str | None = None, _register: bool = True, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         if not _register:
             return
-        event_name = name or to_snake(cls.__name__.removesuffix('Event'))
-        if (existing := CUSTOM_EVENT_TYPES.get(event_name)) is not None and not _is_redefinition(existing, cls):
+        # `@dataclass(slots=True)` recreates the class, re-invoking registration without the
+        # original class arguments; the copied class body carries the original registration's name.
+        recreated_name: str | None = cls.__dict__.get('_registered_name') if name is None else None
+        event_name = recreated_name or name or to_snake(cls.__name__.removesuffix('Event'))
+        if event_name in _RESERVED_EVENT_TAGS:
+            raise TypeError(f'Custom event name {event_name!r} is reserved.')
+        existing = CUSTOM_EVENT_TYPES.get(event_name)
+        if existing is not None and recreated_name is None and not _is_redefinition(existing, cls):
             raise TypeError(
                 f'Duplicate custom event name {event_name!r}: already registered by {existing.__qualname__}. '
                 f"Pass an explicit name, e.g. `class {cls.__name__}(CustomEvent, name='...')`."
             )
+        if shadowed := _shadowed_envelope_fields(cls, CUSTOM_EVENT_ENVELOPE_FIELDS - {'name'}):
+            raise TypeError(
+                f'Custom event {cls.__qualname__} declares field(s) reserved for the event envelope: {shadowed}.'
+            )
         CUSTOM_EVENT_TYPES[event_name] = cls
+        cls._registered_name = event_name
         # Redeclare `name` on the subclass so it defaults to (and always serializes as) the registered name.
         cls.__annotations__ = {'name': 'str', **cls.__annotations__}
         setattr(cls, 'name', field(default=event_name, kw_only=True))
 
     def to_payload(self) -> Any:
-        """The event's payload: `data` for a directly-constructed event, the subclass's own fields for a typed one.
+        """The event's payload: the subclass's own typed fields.
 
         This is what the UI adapters send to the frontend (AG-UI `CustomEvent.value`, Vercel AI `data-{name}`
         chunk data). Override to customize the payload shape.
         """
-        if type(self) in (CustomEvent, UnknownCustomEvent):
-            return self.data
-        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self) if f.name not in _EVENT_ENVELOPE_FIELDS}
+        return {
+            f.name: getattr(self, f.name)
+            for f in dataclasses.fields(self)
+            if f.name not in CUSTOM_EVENT_ENVELOPE_FIELDS
+        }
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -4464,9 +4471,7 @@ class CustomEvent:
             registry=CUSTOM_EVENT_TYPES,
             tag_field='name',
             unknown_type=UnknownCustomEvent,
-            # An unregistered name with no extra payload fields is a directly-constructed base event,
-            # not a degraded typed one -- validate it as the base, silently.
-            base_schema=handler(source),
+            envelope_fields=CUSTOM_EVENT_ENVELOPE_FIELDS,
         )
 
 
@@ -4479,6 +4484,20 @@ class UnknownCustomEvent(CustomEvent, _register=False):
     re-flattens them, so a downstream consumer that does have the defining module imported recovers
     the typed event.
     """
+
+    data: Any = None
+    """The original event's payload fields."""
+
+    def to_payload(self) -> Any:
+        """The event's payload: the original event's fields, preserved in `data`."""
+        return self.data
+
+
+CUSTOM_EVENT_ENVELOPE_FIELDS = frozenset(f.name for f in dataclasses.fields(UnknownCustomEvent))
+"""Fields that identify and attribute a custom event, as opposed to carrying its payload.
+
+Derived from the unknown-envelope class so it always matches the declared event surface.
+"""
 
 
 CAPABILITY_EVENT_TYPES: dict[str, type[CapabilityEvent]] = {}
@@ -4503,7 +4522,7 @@ class CapabilityEvent:
 
 
     @dataclass(kw_only=True)
-    class BeforeCheckpointEvent(CapabilityEvent, namespace='checkpoint', dispatch='inline'):
+    class CheckpointStartEvent(CapabilityEvent, namespace='checkpoint', dispatch='inline'):
         cancelled: bool = False
         cancel_reason: str | None = None
 
@@ -4522,7 +4541,11 @@ class CapabilityEvent:
     """The namespaced event kind, injected as the default on registered subclasses."""
 
     capability_id: str | None = None
-    """The run id of the capability that emitted this event."""
+    """The run id of the capability that emitted this event.
+
+    Stamped at emission when unset; a pre-set value is preserved, so a capability re-emitting an
+    event on behalf of another instance can keep the original attribution.
+    """
 
     tool_call_id: str | None = None
     """The associated tool call id, when emitted by a capability-contributed tool."""
@@ -4533,11 +4556,20 @@ class CapabilityEvent:
     event_kind: Literal['capability'] = 'capability'
     """Event type identifier, used as a discriminator."""
 
+    _registered_kind: ClassVar[str | None] = None
+    """The kind this class is registered under; `None` on the base class and unregistered subclasses."""
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
     def __post_init__(self) -> None:
         if type(self) is CapabilityEvent:
             raise TypeError('`CapabilityEvent` is a base class; define a dataclass subclass with a `namespace`.')
+        if (registered := type(self)._registered_kind) is not None and self.kind != registered:
+            raise ValueError(
+                f'`{type(self).__name__}` serializes under its registered kind {registered!r} (got {self.kind!r}). '
+                'Capability event subclasses must be decorated with `@dataclass` and cannot override `kind` '
+                'per instance.'
+            )
 
     def __init_subclass__(
         cls,
@@ -4555,23 +4587,37 @@ class CapabilityEvent:
             cls.event_dispatch = dispatch
         if not _register:
             return
-        if namespace is None:
-            for base in cls.__mro__[1:]:
-                if issubclass(base, CapabilityEvent) and (base_kind := getattr(base, 'kind', '')):
-                    namespace = base_kind.partition('.')[0]
-                    break
-        if namespace is None:
-            raise TypeError(
-                f'Capability event {cls.__qualname__} requires a namespace, e.g. '
-                f"`class {cls.__name__}(CapabilityEvent, namespace='my_capability')`."
-            )
-        event_kind = f'{namespace}.{name or to_snake(cls.__name__.removesuffix("Event"))}'
-        if (existing := CAPABILITY_EVENT_TYPES.get(event_kind)) is not None and not _is_redefinition(existing, cls):
+        # `@dataclass(slots=True)` recreates the class, re-invoking registration without the
+        # original class arguments; the copied class body carries the original registration's kind.
+        recreated_kind: str | None = (
+            cls.__dict__.get('_registered_kind') if namespace is None and name is None else None
+        )
+        if recreated_kind is not None:
+            event_kind = recreated_kind
+        else:
+            if namespace is None:
+                for base in cls.__mro__[1:]:
+                    if issubclass(base, CapabilityEvent) and (base_kind := base.__dict__.get('_registered_kind')):
+                        namespace = base_kind.rpartition('.')[0]
+                        break
+            if namespace is None:
+                raise TypeError(
+                    f'Capability event {cls.__qualname__} requires a namespace, e.g. '
+                    f"`class {cls.__name__}(CapabilityEvent, namespace='my_capability')`."
+                )
+            event_kind = f'{namespace}.{name or to_snake(cls.__name__.removesuffix("Event"))}'
+        existing = CAPABILITY_EVENT_TYPES.get(event_kind)
+        if existing is not None and recreated_kind is None and not _is_redefinition(existing, cls):
             raise TypeError(
                 f'Duplicate capability event kind {event_kind!r}: already registered by {existing.__qualname__}. '
                 f"Pass an explicit name, e.g. `class {cls.__name__}(CapabilityEvent, namespace={namespace!r}, name='...')`."
             )
+        if shadowed := _shadowed_envelope_fields(cls, CAPABILITY_EVENT_ENVELOPE_FIELDS - {'kind'}):
+            raise TypeError(
+                f'Capability event {cls.__qualname__} declares field(s) reserved for the event envelope: {shadowed}.'
+            )
         CAPABILITY_EVENT_TYPES[event_kind] = cls
+        cls._registered_kind = event_kind
         cls.__annotations__ = {'kind': 'str', **cls.__annotations__}
         setattr(cls, 'kind', field(default=event_kind, kw_only=True))
 
@@ -4586,6 +4632,7 @@ class CapabilityEvent:
             registry=CAPABILITY_EVENT_TYPES,
             tag_field='kind',
             unknown_type=UnknownCapabilityEvent,
+            envelope_fields=CAPABILITY_EVENT_ENVELOPE_FIELDS,
         )
 
 
@@ -4599,6 +4646,15 @@ class UnknownCapabilityEvent(CapabilityEvent, _register=False):
     """
 
     data: Any = None
+
+
+CAPABILITY_EVENT_ENVELOPE_FIELDS = frozenset(f.name for f in dataclasses.fields(UnknownCapabilityEvent))
+"""Fields that identify and attribute a capability event, as opposed to carrying its payload.
+
+Derived from the unknown-envelope class so it always matches the declared event surface; this is why
+it includes `data`, the unknown envelope's payload container, which registered events therefore
+cannot declare as a payload field of their own.
+"""
 
 
 RealtimeSessionEvent = Annotated[

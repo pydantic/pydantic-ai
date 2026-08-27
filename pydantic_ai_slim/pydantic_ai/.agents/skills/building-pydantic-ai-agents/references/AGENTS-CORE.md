@@ -140,18 +140,26 @@ async def main():
 
 Deferred tool calls also surface as batch-level events: `DeferredToolRequestsEvent` (once per batch of deferred calls, before any `HandleDeferredToolCalls` handler runs) and `DeferredToolResultsEvent` (when a handler resolves requests inline). Use these to tell a frontend the run is paused waiting for approvals or external calls.
 
-To surface progress or intermediate results from an async tool into the same event stream without polluting the model's context, await `ctx.emit_event()`. Sync tools cannot emit events. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` and `tool_name` are auto-stamped. Code driving `agent.iter()` can inject events by awaiting `AgentRun.emit_event()`. For structured payloads, define a dataclass subclass of `CustomEvent`, emit an instance, and use `isinstance()` in consumers.
+To surface progress or intermediate results from an async tool into the same event stream without polluting the model's context, define a dataclass subclass of `CustomEvent` (its fields are the payload; the event name derives from the class name) and await `ctx.emit_event(event)`. Sync tools cannot emit events. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` and `tool_name` are auto-stamped, and consumers use `isinstance()` against the class. Code driving `agent.iter()` can inject events by awaiting `AgentRun.emit_event()`.
 
 ```python
-from pydantic_ai import Agent, RunContext
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
 
 agent = Agent('openai:gpt-5.2', name='progress_agent')
+
+
+@dataclass(kw_only=True)
+class ProgressEvent(CustomEvent):
+    done: int
+    total: int
 
 
 @agent.tool
 async def process(ctx: RunContext, count: int) -> str:
     for i in range(count):
-        await ctx.emit_event('progress', {'done': i + 1, 'total': count})
+        await ctx.emit_event(ProgressEvent(done=i + 1, total=count))
     return 'done'
 ```
 

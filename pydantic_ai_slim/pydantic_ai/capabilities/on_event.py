@@ -27,6 +27,13 @@ class OnEventMethod(Generic[CapabilityT, EventT]):
         self.func = func
         self.event_types = event_types
 
+    def __set_name__(self, owner: type[Any], name: str) -> None:
+        if name == 'on_event':
+            raise TypeError(
+                "`@on_event` cannot decorate a method named 'on_event': that name is the dispatcher that "
+                'invokes the marked listeners. Rename the method, e.g. `_on_event`.'
+            )
+
     @overload
     def __get__(self, instance: None, owner: type[CapabilityT]) -> OnEventMethod[CapabilityT, EventT]: ...
 

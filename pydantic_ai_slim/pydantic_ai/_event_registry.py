@@ -13,6 +13,7 @@ does have the defining module imported recovers the typed event.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import warnings
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -23,11 +24,26 @@ import pydantic_core
 from ._utils import is_str_dict
 from .exceptions import UserError
 
-EVENT_ENVELOPE_FIELDS = frozenset({'event_kind', 'name', 'kind', 'data', 'capability_id', 'tool_call_id', 'tool_name'})
-"""Fields that identify and attribute an emitted event, as opposed to carrying its payload."""
-
 _UNKNOWN_TAG = '__unknown__'
-_BASE_TAG = '__base__'
+
+RESERVED_EVENT_TAGS = frozenset({_UNKNOWN_TAG})
+"""Tags the family schema uses for its synthetic choices; no event class may register under them."""
+
+
+def is_redefinition(existing: type, cls: type) -> bool:
+    """Whether `cls` is the same class as `existing` being defined again.
+
+    A re-run notebook cell, `importlib.reload`, a re-executed docs example, or the class recreation
+    `@dataclass(slots=True)` performs replaces its registration; only genuinely distinct classes
+    conflict.
+    """
+    return existing.__module__ == cls.__module__ and existing.__qualname__ == cls.__qualname__
+
+
+def shadowed_envelope_fields(cls: type, reserved: frozenset[str]) -> str | None:
+    """The class's own field names that shadow the family's envelope fields, or `None`."""
+    shadowed = set(inspect.get_annotations(cls)) & reserved
+    return ', '.join(sorted(shadowed)) if shadowed else None
 
 
 def event_family_schema(
@@ -36,14 +52,9 @@ def event_family_schema(
     registry: Mapping[str, type[Any]],
     tag_field: str,
     unknown_type: type[Any],
-    base_schema: pydantic_core.core_schema.CoreSchema | None = None,
+    envelope_fields: frozenset[str],
 ) -> pydantic_core.core_schema.CoreSchema:
-    """Build the tagged union over an event registry, degrading unregistered tags to `unknown_type`.
-
-    When `base_schema` is given, a value with an unregistered tag and no non-envelope fields
-    validates as the plain base class instead (silently): that's a directly-constructed base event,
-    not a degraded typed one.
-    """
+    """Build the tagged union over an event registry, degrading unregistered tags to `unknown_type`."""
     # Snapshot the registry: the union's choices are fixed once this schema is built, so a class
     # registered later must degrade to the unknown envelope rather than produce a dangling tag.
     known_tags = frozenset(registry)
@@ -53,18 +64,14 @@ def event_family_schema(
             tag = value.get(tag_field)
             if isinstance(tag, str) and tag in known_tags:
                 return tag
-            if base_schema is not None and not (value.keys() - EVENT_ENVELOPE_FIELDS):
-                return _BASE_TAG
             return _UNKNOWN_TAG
         tag = getattr(value, tag_field, None)
         if isinstance(tag, str) and tag in known_tags:
             return tag
-        if isinstance(value, unknown_type):
-            return _UNKNOWN_TAG
-        return _BASE_TAG if base_schema is not None else None
+        return _UNKNOWN_TAG if isinstance(value, unknown_type) else None
 
     unknown_schema = pydantic_core.core_schema.no_info_before_validator_function(
-        _gather_unknown_payload(tag_field, unknown_type),
+        _gather_unknown_payload(tag_field, unknown_type, envelope_fields),
         handler.generate_schema(unknown_type),
         serialization=pydantic_core.core_schema.wrap_serializer_function_ser_schema(_flatten_unknown),
     )
@@ -76,18 +83,18 @@ def event_family_schema(
             )
         choices[tag] = handler.generate_schema(event_cls)
     choices[_UNKNOWN_TAG] = unknown_schema
-    if base_schema is not None:
-        choices[_BASE_TAG] = base_schema
     return pydantic_core.core_schema.tagged_union_schema(choices, discriminator)
 
 
-def _gather_unknown_payload(tag_field: str, unknown_type: type[Any]) -> Callable[[Any], Any]:
+def _gather_unknown_payload(
+    tag_field: str, unknown_type: type[Any], envelope_fields: frozenset[str]
+) -> Callable[[Any], Any]:
     """Before-validator for the unknown-event envelope: move unrecognized payload fields into `data`."""
 
     def gather(value: Any) -> Any:
         if is_str_dict(value):
-            envelope = {k: v for k, v in value.items() if k in EVENT_ENVELOPE_FIELDS}
-            payload = {k: v for k, v in value.items() if k not in EVENT_ENVELOPE_FIELDS}
+            envelope = {k: v for k, v in value.items() if k in envelope_fields}
+            payload = {k: v for k, v in value.items() if k not in envelope_fields}
             if payload:
                 if (data := envelope.get('data')) is not None:
                     payload['data'] = data

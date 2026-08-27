@@ -32,6 +32,7 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
 )
+from .on_event import collect_on_event_methods
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -92,7 +93,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def has_on_event(self) -> bool:
-        return any(c.has_on_event for c in self.capabilities)
+        return (
+            type(self).on_event is not CombinedCapability.on_event
+            or bool(collect_on_event_methods(type(self)))
+            or any(c.has_on_event for c in self.capabilities)
+        )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [capability.for_agent(agent) for capability in self.capabilities]
@@ -400,6 +405,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             if capability.has_on_event and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 await capability.on_event(cap_ctx, event=event)
+        # A `CombinedCapability` subclass can carry marked listeners of its own; dispatch them
+        # after the children's, matching the combination order used by the other hooks.
+        await super().on_event(ctx, event=event)
 
     async def wrap_run_event_stream(
         self,

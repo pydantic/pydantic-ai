@@ -4423,12 +4423,27 @@ async def test_file_part_emits_no_ag_ui_event():
     )
 
 
+@dataclass(kw_only=True)
+class AgUiProgressEvent(PydanticAICustomEvent, name='ag_ui_progress'):
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class AgUiPassthroughEvent(PydanticAICustomEvent, name='ag_ui_passthrough'):
+    """Overrides `to_payload` so an AG-UI event payload is passed through to the frontend verbatim."""
+
+    event: Any = None
+
+    def to_payload(self) -> Any:
+        return self.event
+
+
 async def test_custom_event_maps_to_ag_ui_custom_event():
     """A `CustomEvent` maps to an AG-UI `CustomEvent`, nesting `tool_call_id` alongside the payload when set."""
 
     async def event_generator():
-        yield PydanticAICustomEvent(name='progress', data={'pct': 50})
-        yield PydanticAICustomEvent(name='progress', data={'pct': 100}, tool_call_id='call_1')
+        yield AgUiProgressEvent(payload={'pct': 50})
+        yield AgUiProgressEvent(payload={'pct': 100}, tool_call_id='call_1')
 
     run_input = create_input(UserMessage(id='msg_1', content='go'))
     event_stream = AGUIEventStream(run_input=run_input)
@@ -4445,12 +4460,12 @@ async def test_custom_event_maps_to_ag_ui_custom_event():
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'progress', 'value': {'pct': 50}},
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_progress', 'value': {'payload': {'pct': 50}}},
             {
                 'type': 'CUSTOM',
                 'timestamp': IsInt(),
-                'name': 'progress',
-                'value': {'tool_call_id': 'call_1', 'data': {'pct': 100}},
+                'name': 'ag_ui_progress',
+                'value': {'tool_call_id': 'call_1', 'data': {'payload': {'pct': 100}}},
             },
             {
                 'type': 'RUN_FINISHED',
@@ -4540,9 +4555,7 @@ async def test_custom_event_passes_through_ag_ui_base_event():
     """A `CustomEvent` whose payload is an AG-UI event is passed through verbatim."""
 
     async def event_generator():
-        yield PydanticAICustomEvent(
-            name='snapshot', data=StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot={'key': 'value'})
-        )
+        yield AgUiPassthroughEvent(event=StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot={'key': 'value'}))
 
     run_input = create_input(UserMessage(id='msg_1', content='go'))
     event_stream = AGUIEventStream(run_input=run_input)

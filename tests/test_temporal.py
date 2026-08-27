@@ -4404,6 +4404,11 @@ def test_temporal_run_context_serializes_metadata():
     assert reconstructed.metadata == {'env': 'prod'}
 
 
+@dataclass
+class TemporalProgressEvent(CustomEvent, name='temporal_progress'):
+    pass
+
+
 async def test_temporal_run_context_rejects_emit_event():
     """Emitting a custom event from a tool (inside an activity) raises a clear error.
 
@@ -4414,8 +4419,10 @@ async def test_temporal_run_context_rejects_emit_event():
     serialized = TemporalRunContext.serialize_run_context(ctx)
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
 
-    with pytest.raises(UserError, match='Emitting custom events from a tool is not supported under Temporal yet'):
-        await reconstructed.emit_event(CustomEvent(name='progress'))
+    with pytest.raises(
+        UserError, match='Emitting events from a tool or event stream handler is not supported under Temporal yet'
+    ):
+        await reconstructed.emit_event(TemporalProgressEvent())
 
 
 def test_temporal_run_context_excludes_agent():
@@ -4592,6 +4599,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
         '_event_stream_buffer',  # live run event buffer, unreachable from an activity (`emit_event` raises there)
         '_inline_dispatched_event_ids',  # live workflow-side event deduplication state
+        '_event_stream_replacements',  # live workflow-side legacy-replacement state applied at stream position
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary

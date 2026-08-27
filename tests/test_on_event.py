@@ -22,6 +22,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
 
@@ -37,7 +39,7 @@ class DirectoryListedEvent(CapabilityEvent, namespace='on_event_files'):
 
 
 @dataclass(kw_only=True)
-class BeforeThingEvent(CapabilityEvent, namespace='on_event_decision', dispatch='inline'):
+class ThingStartEvent(CapabilityEvent, namespace='on_event_decision', dispatch='inline'):
     cancelled: bool = False
 
     def cancel(self) -> None:
@@ -47,6 +49,11 @@ class BeforeThingEvent(CapabilityEvent, namespace='on_event_decision', dispatch=
 @dataclass(kw_only=True)
 class NestedEvent(CapabilityEvent, namespace='on_event_nested'):
     value: str
+
+
+@dataclass(kw_only=True)
+class OnEventNoteEvent(CustomEvent, name='on_event_note'):
+    pass
 
 
 @dataclass
@@ -72,7 +79,7 @@ async def test_marker_filtering_order_and_direct_call() -> None:
     )
 
     await capability.on_event(ctx, event=FileReadEvent(path='a'))
-    await capability.on_event(ctx, event=CustomEvent(name='custom'))
+    await capability.on_event(ctx, event=OnEventNoteEvent())
     await capability.traversal(ctx, event=DirectoryListedEvent(path='b'))
 
     assert seen == ['traversal:a', 'any:capability', 'any:custom', 'traversal:b']
@@ -162,7 +169,7 @@ async def test_mutable_decision_event_is_inline() -> None:
     @emitter.tool
     async def read_file(ctx: RunContext[Any]) -> str:
         stream_event = await ctx.emit_event(FileReadEvent(path='later'))
-        event = await ctx.emit_event(BeforeThingEvent())
+        event = await ctx.emit_event(ThingStartEvent())
         observed.append((stream_event.path == 'changed', event.cancelled))
         return 'cancelled' if event.cancelled else 'continued'
 
@@ -172,8 +179,8 @@ async def test_mutable_decision_event_is_inline() -> None:
         async def change(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
             event.path = 'changed'
 
-        @on_event(BeforeThingEvent)
-        async def cancel(self, ctx: RunContext[Any], event: BeforeThingEvent) -> None:
+        @on_event(ThingStartEvent)
+        async def cancel(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
             event.cancel()
 
     await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Canceller()]).run('go')
@@ -219,17 +226,17 @@ async def test_framework_events_auto_enable_streaming() -> None:
 
 
 async def test_inline_event_delivered_exactly_once_in_stream_events() -> None:
-    seen: list[BeforeThingEvent] = []
+    seen: list[ThingStartEvent] = []
 
     @dataclass
     class Emitter(AbstractCapability[Any]):
         async def before_run(self, ctx: RunContext[Any]) -> None:
-            await ctx.emit_event(BeforeThingEvent())
+            await ctx.emit_event(ThingStartEvent())
 
     @dataclass
     class Listener(AbstractCapability[Any]):
-        @on_event(BeforeThingEvent)
-        async def record(self, ctx: RunContext[Any], event: BeforeThingEvent) -> None:
+        @on_event(ThingStartEvent)
+        async def record(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
             seen.append(event)
 
     agent = Agent(FunctionModel(stream_function=_text_stream), capabilities=[Emitter(), Listener()])
@@ -249,8 +256,8 @@ async def test_nested_emit_from_inline_listener_is_cause_first() -> None:
 
     @dataclass
     class Listener(AbstractCapability[Any]):
-        @on_event(BeforeThingEvent)
-        async def cause(self, ctx: RunContext[Any], event: BeforeThingEvent) -> None:
+        @on_event(ThingStartEvent)
+        async def cause(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
             listener_log.append('cause')
             await ctx.emit_event(NestedEvent(value='effect'))
 
@@ -261,12 +268,12 @@ async def test_nested_emit_from_inline_listener_is_cause_first() -> None:
     @dataclass
     class Emitter(AbstractCapability[Any]):
         async def before_run(self, ctx: RunContext[Any]) -> None:
-            await ctx.emit_event(BeforeThingEvent())
+            await ctx.emit_event(ThingStartEvent())
 
     agent = Agent(FunctionModel(stream_function=_text_stream), capabilities=[Emitter(), Listener()])
     async with agent.run_stream_events('go') as stream:
         async for event in stream:
-            if isinstance(event, BeforeThingEvent):
+            if isinstance(event, ThingStartEvent):
                 stream_log.append('cause')
             elif isinstance(event, NestedEvent):
                 stream_log.append(event.value)
@@ -297,7 +304,7 @@ async def test_deferred_listener_only_runs_when_loaded() -> None:
         capabilities={'unloaded': unloaded, 'loaded': loaded},
         loaded_capability_ids={'loaded'},
     )
-    await root.on_event(ctx, event=CustomEvent(name='test'))
+    await root.on_event(ctx, event=OnEventNoteEvent())
     assert seen == ['loaded']
 
 
@@ -314,3 +321,48 @@ async def test_zero_listeners_does_not_enable_streaming() -> None:
 
     await Agent(FunctionModel(function=function, stream_function=stream), capabilities=[AbstractCapability()]).run('go')
     assert calls == ['function']
+
+
+def test_marked_method_named_on_event_rejected() -> None:
+    """`on_event` is the dispatcher that invokes the marked listeners; a marker can't replace it."""
+    with pytest.raises(TypeError, match="cannot decorate a method named 'on_event'"):
+
+        class BadCapability(AbstractCapability[Any]):  # pyright: ignore[reportUnusedClass]
+            @on_event(FileReadEvent)
+            async def on_event(self, ctx: RunContext[Any], event: FileReadEvent) -> None: ...  # pyright: ignore[reportIncompatibleMethodOverride]
+
+
+async def test_combined_capability_subclass_own_listeners() -> None:
+    """A `CombinedCapability` subclass's own marked listeners dispatch after its children's.
+
+    Direct dispatch: combining such a subclass under another `CombinedCapability` splats its
+    children into the outer container, so its own listeners matter when it is the dispatch root.
+    """
+    received: list[str] = []
+
+    class Child(AbstractCapability[Any]):
+        @on_event(FileReadEvent)
+        async def _on_read(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            received.append('child')
+
+    class Harness(CombinedCapability[Any]):
+        @on_event(FileReadEvent)
+        async def _on_read(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            received.append('combined')
+
+    harness = Harness(capabilities=[Child()])
+    assert harness.has_on_event
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run')
+    await harness.on_event(ctx, event=FileReadEvent(path='a.txt'))
+    assert received == ['child', 'combined']
+
+
+def test_combined_capability_subclass_listeners_alone_enable_dispatch() -> None:
+    """A subclass's own listeners count toward `has_on_event` even with no listening children."""
+
+    class Harness(CombinedCapability[Any]):
+        @on_event(FileReadEvent)
+        async def _on_read(self, ctx: RunContext[Any], event: FileReadEvent) -> None: ...
+
+    assert Harness(capabilities=[AbstractCapability()]).has_on_event
+    assert not CombinedCapability[Any](capabilities=[AbstractCapability()]).has_on_event

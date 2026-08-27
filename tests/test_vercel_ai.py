@@ -1744,12 +1744,27 @@ async def test_tool_call_delta_dict_args_are_serialized_compactly():
     ]
 
 
+@dataclass(kw_only=True)
+class VercelProgressEvent(CustomEvent, name='vercel_progress'):
+    payload: Any = None
+
+
+@dataclass(kw_only=True)
+class VercelPassthroughEvent(CustomEvent, name='vercel_passthrough'):
+    """Overrides `to_payload` so a `DataChunk` payload is passed through to the frontend verbatim."""
+
+    chunk: Any = None
+
+    def to_payload(self) -> Any:
+        return self.chunk
+
+
 async def test_custom_event_maps_to_data_chunk():
     """A `CustomEvent` maps to a `data-{name}` chunk, nesting `tool_call_id` alongside the payload when set."""
 
     async def event_generator():
-        yield CustomEvent(name='progress', data={'pct': 50})
-        yield CustomEvent(name='progress', data={'pct': 100}, tool_call_id='call_1')
+        yield VercelProgressEvent(payload={'pct': 50})
+        yield VercelProgressEvent(payload={'pct': 100}, tool_call_id='call_1')
 
     request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
     event_stream = VercelAIEventStream(run_input=request)
@@ -1761,8 +1776,8 @@ async def test_custom_event_maps_to_data_chunk():
     assert events == snapshot(
         [
             {'type': 'start'},
-            {'type': 'data-progress', 'data': {'pct': 50}},
-            {'type': 'data-progress', 'data': {'tool_call_id': 'call_1', 'data': {'pct': 100}}},
+            {'type': 'data-vercel_progress', 'data': {'payload': {'pct': 50}}},
+            {'type': 'data-vercel_progress', 'data': {'tool_call_id': 'call_1', 'data': {'payload': {'pct': 100}}}},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -1822,7 +1837,7 @@ async def test_custom_event_passes_through_data_chunk():
     """A `CustomEvent` whose payload is already a data-carrying chunk is passed through verbatim."""
 
     async def event_generator():
-        yield CustomEvent(name='progress', data=DataChunk(type='data-custom', data={'key': 'value'}))
+        yield VercelPassthroughEvent(chunk=DataChunk(type='data-custom', data={'key': 'value'}))
 
     request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
     event_stream = VercelAIEventStream(run_input=request)

@@ -34,7 +34,12 @@ class FileProgressEvent(FileReadEvent, name='progress'):
 
 
 @dataclass(kw_only=True)
-class BeforeThingEvent(CapabilityEvent, namespace='decision'):
+class BridgeEvent(CustomEvent, name='capability_bridge'):
+    pass
+
+
+@dataclass(kw_only=True)
+class ThingStartEvent(CapabilityEvent, namespace='decision'):
     cancelled: bool = False
 
     def cancel(self) -> None:
@@ -87,6 +92,61 @@ def test_base_instantiation_rejected():
         CapabilityEvent()
 
 
+def test_slotted_event_class():
+    """`@dataclass(slots=True)` recreates the class, re-invoking registration without the class
+    arguments; the recreated class must keep its registered kind."""
+
+    @dataclass(kw_only=True, slots=True)
+    class SlottedEvent(CapabilityEvent, namespace='slotted'):
+        value: int
+
+    assert SlottedEvent(value=1).kind == 'slotted.slotted'
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = {'event_kind': 'capability', 'kind': 'slotted.slotted', 'value': 1}
+    assert type(adapter.validate_python(wire)) is SlottedEvent
+
+
+def test_instance_kind_override_rejected():
+    """A per-instance `kind` override would misroute (de)serialization, so construction rejects it."""
+    with pytest.raises(ValueError, match=r"serializes under its registered kind 'test_file_system\.file_read'"):
+        FileReadEvent(path='a.txt', kind='other.kind')
+
+
+def test_non_dataclass_subclass_rejected_at_construction():
+    """A registered subclass missing `@dataclass` never receives its injected `kind` default."""
+
+    class PlainEvent(CapabilityEvent, namespace='plain'):
+        pass
+
+    with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
+        PlainEvent()
+
+
+def test_envelope_field_shadowing_rejected():
+    """Payload fields can't shadow envelope fields: `data` is the unknown envelope's payload container."""
+    with pytest.raises(TypeError, match='reserved for the event envelope: capability_id, data'):
+
+        @dataclass(kw_only=True)
+        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):  # pyright: ignore[reportUnusedClass]
+            data: dict[str, int]
+            capability_id: str | None = None
+
+
+def test_multi_segment_namespace_inherited():
+    """A subclass of an event in a dotted namespace derives the full namespace, not its first segment."""
+
+    @dataclass(kw_only=True)
+    class NestedNamespaceEvent(CapabilityEvent, namespace='acme.files'):
+        pass
+
+    @dataclass(kw_only=True)
+    class DerivedNestedEvent(NestedNamespaceEvent):
+        pass
+
+    assert NestedNamespaceEvent().kind == 'acme.files.nested_namespace'
+    assert DerivedNestedEvent().kind == 'acme.files.derived_nested'
+
+
 def test_round_trip():
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     event = FileReadEvent(path='a.txt', capability_id='files')
@@ -131,7 +191,7 @@ def test_unknown_kind_and_late_registration():
 
 
 def test_mutable_decision_field_serializes():
-    event = BeforeThingEvent()
+    event = ThingStartEvent()
     event.cancel()
     assert pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent).dump_python(event)['cancelled'] is True
 
@@ -179,8 +239,14 @@ async def test_hook_emission_stamps_run_id(capability: EmitCapability, expected_
     assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == [expected_id]
 
 
-async def test_capability_tool_emission_stamps_attribution():
-    capability = Capability[Any](id='files')
+@pytest.mark.parametrize(
+    ('capability_id', 'expected_id'),
+    [('files', 'files'), (None, 'capability')],
+    ids=['explicit-id', 'implicit-id'],
+)
+async def test_capability_tool_emission_stamps_attribution(capability_id: str | None, expected_id: str):
+    """Tools contributed by a capability stamp its run id, whether explicitly set or derived."""
+    capability = Capability[Any](id=capability_id)
 
     @capability.tool
     async def read_file(ctx: RunContext[Any]) -> str:
@@ -188,9 +254,9 @@ async def test_capability_tool_emission_stamps_attribution():
         return 'ok'
 
     events = await _collect(Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[capability]))
-    assert [event for event in events if isinstance(event, FileReadEvent)] == snapshot(
-        [FileReadEvent(path='tool.txt', capability_id='files', tool_call_id='call_1', tool_name='read_file')]
-    )
+    assert [event for event in events if isinstance(event, FileReadEvent)] == [
+        FileReadEvent(path='tool.txt', capability_id=expected_id, tool_call_id='call_1', tool_name='read_file')
+    ]
 
 
 async def test_app_tool_cannot_emit_capability_event():
@@ -215,7 +281,7 @@ async def test_agent_run_cannot_emit_capability_event():
 
     async with agent.iter('go') as run:
         with pytest.raises(UserError, match='Capability events belong to capabilities'):
-            await run.emit_event(FileReadEvent(path='tool.txt'))  # pyright: ignore[reportArgumentType,reportCallIssue]
+            await run.emit_event(FileReadEvent(path='tool.txt'))  # pyright: ignore[reportArgumentType]
         async for _ in run:
             pass
 
@@ -226,7 +292,7 @@ async def test_capability_cannot_emit_custom_event():
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            await ctx.emit_event(CustomEvent(name='bad'))
+            await ctx.emit_event(BridgeEvent())
             return request_context
 
     agent = Agent(FunctionModel(stream_function=_only_text), capabilities=[BadCapability()])
@@ -239,8 +305,8 @@ async def test_hooks_can_emit_custom_event():
 
     @hooks.on.before_model_request
     async def emit(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
-        await ctx.emit_event(CustomEvent(name='bridge'))
+        await ctx.emit_event(BridgeEvent())
         return request_context
 
     events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[hooks]))
-    assert [event for event in events if isinstance(event, CustomEvent)] == [CustomEvent(name='bridge')]
+    assert [event for event in events if isinstance(event, CustomEvent)] == [BridgeEvent()]

@@ -511,19 +511,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         return self._graph_run.state.pending_messages
 
-    @overload
-    async def emit_event(self, name: str, data: Any = None, /) -> _messages.CustomEvent: ...
-
-    @overload
-    async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
-
-    async def emit_event(
-        self, event: str | _messages.CustomEvent | _messages.CapabilityEvent, data: Any = None, /
-    ) -> _messages.CustomEvent:
+    async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent:
         """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into this run's event stream.
-
-        Pass a name and an optional payload, or a constructed event object -- see
-        [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
 
         Lets code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] inject application-defined
         events (e.g. from an external harness or event bus) into the stream, alongside events emitted from
@@ -535,24 +524,26 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         (e.g. `asyncio.run_coroutine_threadsafe(agent_run.emit_event(event), loop)`).
 
         Args:
-            event: The event name, or a constructed [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
-            data: The payload, when a name is passed.
+            event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
 
         Returns:
             The event as emitted.
 
         Raises:
-            UserError: If passed a [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]: those belong
+            UserError: If the run has already ended (no stream remains to deliver the event), or if
+                passed a [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]: those belong
                 to capabilities, and code driving the run is application code.
         """
+        if self.result is not None:
+            raise exceptions.UserError(
+                '`emit_event` cannot be called after the run has ended: nothing remains to deliver the event.'
+            )
         if isinstance(event, _messages.CapabilityEvent):
             raise exceptions.UserError(
                 'Capability events belong to capabilities and can only be emitted from a capability hook or '
                 'capability-contributed tool. Application code should emit a `CustomEvent`; it can re-emit a '
                 'received capability event as one.'
             )
-        if isinstance(event, str):
-            event = _messages.CustomEvent(name=event, data=data)
         self._graph_run.state.event_stream_buffer.append(event)
         return event
 

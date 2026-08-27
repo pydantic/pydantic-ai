@@ -992,6 +992,9 @@ class Hooks(AbstractCapability[AgentDepsT]):
             await _utils.aclose_all(reversed(wrapped_streams))
 
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        # Replacements chain: each callback sees the previous callback's replacement, while the
+        # replacement map stays keyed by the original event, which is what the stream position holds.
+        original_event = event
         for entry in self._get('on_event'):
             if isinstance(entry, _EventHookEntry) and entry.event_types and not isinstance(event, entry.event_types):
                 continue
@@ -1004,8 +1007,9 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            if not isinstance(event, CapabilityEvent) or event.event_dispatch != 'inline':
-                ctx._event_stream_replacements[id(event)] = replacement  # pyright: ignore[reportPrivateUsage]
+            event = replacement
+            if not isinstance(original_event, CapabilityEvent) or original_event.event_dispatch != 'inline':
+                ctx._event_stream_replacements[id(original_event)] = replacement  # pyright: ignore[reportPrivateUsage]
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

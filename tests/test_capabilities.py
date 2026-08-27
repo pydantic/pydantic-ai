@@ -162,6 +162,11 @@ pytestmark = [
 ]
 
 
+@dataclass(kw_only=True)
+class ReplacementEvent(CustomEvent, name='replacement'):
+    payload: Any = None
+
+
 def test_capability_top_level_export() -> None:
     assert TopLevelCapability is Capability
 
@@ -12795,7 +12800,7 @@ class TestHooksCapability:
         @hooks.on.event
         async def replace(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent | None:
             if isinstance(event, PartStartEvent):
-                return CustomEvent(name='replacement')
+                return ReplacementEvent()
 
         events: list[Any] = []
         agent = Agent(
@@ -12810,6 +12815,35 @@ class TestHooksCapability:
             async with agent.run_stream_events('hello') as stream:
                 events = [event async for event in stream]
         assert any(isinstance(event, CustomEvent) and event.name == 'replacement' for event in events)
+
+    async def test_on_event_legacy_replacements_compose(self):
+        """A second replacing callback sees the first's replacement, and the last replacement wins."""
+        hooks = Hooks()
+
+        @hooks.on.event
+        async def replace_first(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent | None:
+            if isinstance(event, PartStartEvent):
+                return ReplacementEvent(payload='first')
+
+        seen_by_second: list[Any] = []
+
+        @hooks.on.event
+        async def replace_second(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent | None:
+            if isinstance(event, ReplacementEvent):
+                seen_by_second.append(event.payload)
+                return ReplacementEvent(payload=f'{event.payload}+second')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        with pytest.warns(PydanticAIDeprecationWarning, match='returning a replacement event'):
+            async with agent.run_stream_events('hello') as stream:
+                events = [event async for event in stream]
+        assert 'first' in seen_by_second
+        assert any(isinstance(event, ReplacementEvent) and event.payload == 'first+second' for event in events), (
+            'the composed replacement should reach the stream'
+        )
 
     async def test_prepare_tools_hook(self):
         """on.prepare_tools filters tool definitions."""
@@ -17172,8 +17206,12 @@ async def test_enqueue_delivery_event_via_run_stream():
 
 
 async def test_with_event_stream_buffer_drains_around_node_stream():
-    """`_with_event_stream_buffer` yields buffered events before, between, and after node events."""
-    buffer: list[AgentStreamEvent] = []
+    """`_with_event_stream_buffer` yields buffered events before and after the node stream.
+
+    It deliberately does not drain between node events: a live node stream yields buffered events
+    itself as they are emitted, and draining here as well could invert emission order.
+    """
+    buffer: list[AgentStreamEvent] = [initial := EnqueuedMessagesEvent(enqueue_id='initial', messages=())]
     during = EnqueuedMessagesEvent(enqueue_id='during', messages=())
     after = EnqueuedMessagesEvent(enqueue_id='after', messages=())
     model_event = PartStartEvent(index=0, part=TextPart(content='done'))
@@ -17184,7 +17222,7 @@ async def test_with_event_stream_buffer_drains_around_node_stream():
         buffer.append(after)
 
     drained = [event async for event in _agent_graph._with_event_stream_buffer(stream(), buffer)]  # pyright: ignore[reportPrivateUsage]
-    assert drained == [during, model_event, after]
+    assert drained == [initial, model_event, during, after]
 
 
 async def test_agent_stream_events_iter_drains_buffer_before_each_pull():
