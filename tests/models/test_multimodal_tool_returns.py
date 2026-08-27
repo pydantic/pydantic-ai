@@ -1506,7 +1506,9 @@ async def test_tool_media_framing_reaches_the_provider(
     from record time and not a regression guard — reverting the framing would still replay green.
     `test_tool_media_is_framed_with_its_originating_call` is what pins the framing itself.
     """
-    if not is_provider_available(provider):  # pragma: no cover
+    # No `pragma: no cover`: unlike the matrix test this one takes no `bedrock_provider`, so on a
+    # shard without the provider extras it reaches this skip instead of being skipped at setup.
+    if not is_provider_available(provider):
         pytest.skip(f'{provider} dependencies not installed')
 
     model = create_model(provider, api_keys, xai_provider=xai_provider)
