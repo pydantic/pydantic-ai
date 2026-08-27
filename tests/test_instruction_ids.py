@@ -9,7 +9,7 @@ appending a segment (`agent:x`, `capability:x:y`) addresses one block declared w
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -38,8 +38,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets.approval_required import ApprovalRequiredToolset
+from pydantic_ai.toolsets.filtered import FilteredToolset
+from pydantic_ai.toolsets.prefixed import PrefixedToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
+from pydantic_ai.toolsets.renamed import RenamedToolset
 
 from .conftest import try_import
 
@@ -520,6 +525,67 @@ async def test_a_combined_toolset_subclass_get_instructions_override_is_authorit
     agent = Agent(toolsets=[Overridden([InstructionsToolset('Child.', id='child')])])
 
     assert await run_and_capture(agent) == [InstructionPart(content='Override.', dynamic=True)]
+
+
+def _keep_every_tool(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+    return True  # pragma: no cover -- these containers are exercised for instructions, not tools
+
+
+def _keep_every_tool_def(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    return tool_defs  # pragma: no cover -- as above
+
+
+DELEGATING_TOOLSET_CONTAINERS: list[tuple[str, Callable[[AbstractToolset[Any]], AbstractToolset[Any]]]] = [
+    ('wrapper', lambda leaf: _delegating_wrapper(leaf)),
+    ('combined', lambda leaf: _delegating_combined([leaf])),
+    ('prefixed', lambda leaf: _delegating(PrefixedToolset)(leaf, 'p')),
+    ('filtered', lambda leaf: _delegating(FilteredToolset)(leaf, _keep_every_tool)),
+    ('renamed', lambda leaf: _delegating(RenamedToolset)(leaf, {})),
+    ('approval_required', lambda leaf: _delegating(ApprovalRequiredToolset)(leaf)),
+    ('prepared', lambda leaf: _delegating(PreparedToolset)(leaf, _keep_every_tool_def)),
+    ('combined_of_wrapper', lambda leaf: _delegating_combined([_delegating_wrapper(leaf)])),
+    ('wrapper_of_combined', lambda leaf: _delegating_wrapper(_delegating_combined([leaf]))),
+]
+
+
+def _delegating(base: type[Any]) -> type[Any]:
+    """A subclass of `base` whose `get_instructions` does nothing but call `super()`."""
+
+    class Delegating(base):
+        async def get_instructions(
+            self, ctx: RunContext[Any]
+        ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+            return await super().get_instructions(ctx)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+
+    return Delegating
+
+
+def _delegating_wrapper(wrapped: AbstractToolset[Any]) -> AbstractToolset[Any]:
+    return _delegating(WrapperToolset)(wrapped)
+
+
+def _delegating_combined(toolsets: list[AbstractToolset[Any]]) -> AbstractToolset[Any]:
+    return _delegating(CombinedToolset)(toolsets)
+
+
+@pytest.mark.parametrize(
+    'container',
+    [container for _, container in DELEGATING_TOOLSET_CONTAINERS],
+    ids=[name for name, _ in DELEGATING_TOOLSET_CONTAINERS],
+)
+async def test_every_toolset_container_relays_through_a_delegating_subclass(
+    container: Callable[[AbstractToolset[Any]], AbstractToolset[Any]],
+):
+    """Overriding `get_instructions` to call `super()` is the ordinary way to extend a container.
+
+    Every container has to survive it identically, in either nesting order. Two failure modes have
+    been reached this way already, and both are silent from the outside: the key is dropped, or the
+    override is routed back into itself and never returns. Sweeping every container keeps a new one
+    from being added with only one of the two halves right.
+    """
+    agent = Agent(toolsets=[container(InstructionsToolset('Leaf.', id='leaf'))])
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Leaf.', dynamic=True, id='toolset:leaf')]
 
 
 def test_instruction_id_segments_reject_colons_at_registration():
