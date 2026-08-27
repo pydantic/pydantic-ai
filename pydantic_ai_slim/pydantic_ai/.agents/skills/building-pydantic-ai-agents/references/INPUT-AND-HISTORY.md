@@ -78,7 +78,15 @@ Rules of thumb:
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
 
-In `before_model_request` and `wrap_model_request`, assigning `request_context.messages` changes only the current model request, while mutating the `ctx.messages` list changes persistent history; update both for both effects. `request_context.messages` is a `Sequence`, but nested messages/parts may still share references with `ctx.messages`, so build copies to the depth being modified instead of mutating shared objects in place. `ProcessHistory` and compaction intentionally update both contexts; a processor transforms the current request view and makes its complete result persistent, so capability order still matters around processors.
+In `before_model_request` and `wrap_model_request`, use the two message views deliberately:
+
+- `request_context.messages = rewritten` changes only the current model request.
+- `ctx.messages[:] = rewritten` changes persistent history and later requests, but not the current model request.
+- Use both assignments when both effects are intended.
+
+The separation is only at the outer collection. `request_context.messages` is a `Sequence`, but retained messages and nested parts may be the same objects as those in `ctx.messages`. Filtering, reordering, or replacing the outer sequence is isolated; mutating a contained message or part in place is not and can affect persistent history. For request-only changes below the message level, use `dataclasses.replace` to construct new messages and parts down to the level being changed, then assign the new sequence to `request_context.messages`.
+
+`ProcessHistory` and compaction intentionally update both contexts. A processor transforms the current request view and makes its complete result persistent, so capability order still matters around processors.
 
 ```python
 from pydantic_ai import Agent, ModelMessage

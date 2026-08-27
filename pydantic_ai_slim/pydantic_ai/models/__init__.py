@@ -307,9 +307,10 @@ class ModelRequestContext:
     message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
     instead, or update both explicitly when both effects are intended.
 
-    Messages and parts in the sequence may share references with persistent history. The
-    `Sequence` type discourages top-level in-place mutation, but does not provide runtime
-    immutability or copy nested objects. Construct copies appropriate to the depth being changed
+    This is an independent top-level sequence, not an independent object graph. Retained messages
+    and their parts may be the same objects as those in persistent history. Filtering, reordering,
+    or assigning the outer sequence is request-only, but mutating a contained message or part in
+    place can affect persistent history. Construct replacements down to the level being changed
     when isolation is required.
     """
     model_settings: ModelSettings | None
