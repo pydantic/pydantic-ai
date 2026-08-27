@@ -100,11 +100,13 @@ def reject_unsupported_runtime_toolsets(
         toolset.apply(collect)
 
     if bad_toolsets:
-        offenders = [
-            'MCPToolset' if kind == 'mcp' and not toolset.id else toolset.label
-            for kind in sorted(bad_toolsets)
-            for toolset in bad_toolsets[kind]
-        ]
+        offenders: list[str] = []
+        for kind in sorted(bad_toolsets):
+            for toolset in bad_toolsets[kind]:
+                label = toolset.label
+                if kind == 'mcp' and not toolset.id and label == repr(toolset):
+                    label = 'MCPToolset'
+                offenders.append(label)
         offenders_text = ', '.join(offenders)
         opt_out = (
             f" Async tools that don't need durable wrapping can opt out with "
