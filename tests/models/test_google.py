@@ -5628,15 +5628,23 @@ def test_google_grounding_skips_unlocatable_segment(case: str) -> None:
 
 
 @pytest.mark.parametrize(
-    'chunk',
+    'case',
     [
-        pytest.param(GroundingChunk(), id='unsupported'),
-        pytest.param(GroundingChunk(retrieved_context=GroundingChunkRetrievedContext()), id='empty-retrieved-context'),
-        pytest.param(GroundingChunk(maps=GroundingChunkMaps()), id='maps-without-uri'),
-        pytest.param(GroundingChunk(image=GroundingChunkImage()), id='image-without-source-uri'),
+        pytest.param('unsupported', id='unsupported'),
+        pytest.param('empty-retrieved-context', id='empty-retrieved-context'),
+        pytest.param('maps-without-uri', id='maps-without-uri'),
+        pytest.param('image-without-source-uri', id='image-without-source-uri'),
     ],
 )
-def test_google_grounding_skips_unrenderable_source(chunk: GroundingChunk) -> None:
+def test_google_grounding_skips_unrenderable_source(case: str) -> None:
+    if case == 'unsupported':
+        chunk = GroundingChunk()
+    elif case == 'empty-retrieved-context':
+        chunk = GroundingChunk(retrieved_context=GroundingChunkRetrievedContext())
+    elif case == 'maps-without-uri':
+        chunk = GroundingChunk(maps=GroundingChunkMaps())
+    else:
+        chunk = GroundingChunk(image=GroundingChunkImage())
     metadata = GroundingMetadata(
         grounding_chunks=[chunk],
         grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=0, end_index=1))],
