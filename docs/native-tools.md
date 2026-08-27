@@ -179,7 +179,7 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ✅ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
-| `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `provider_settings.openai.external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `provider_settings.anthropic.response_inclusion` | ❌ | ✅ | ❌ | ❌ | ❌ |
 | `provider_settings.openrouter.engine`, `mode`, `max_results`, `max_total_results`, `max_characters` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
@@ -509,21 +509,26 @@ The `ImageGenerationTool` supports several configuration parameters:
 ```py {title="image_generation_configured.py"}
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import OpenAIImageGenerationToolSettings
 
 agent = Agent(
     'openai-responses:gpt-5.2',
     capabilities=[
         NativeTool(
             ImageGenerationTool(
-                action='generate',
-                background='transparent',
-                input_fidelity='high',
-                model='gpt-image-2',
-                moderation='low',
+                provider_settings={
+                    'openai': OpenAIImageGenerationToolSettings(
+                        action='generate',
+                        background='transparent',
+                        input_fidelity='high',
+                        model='gpt-image-2',
+                        moderation='low',
+                        partial_images=3,
+                        quality='high',
+                    )
+                },
                 output_compression=100,
                 output_format='png',
-                partial_images=3,
-                quality='high',
                 size='1024x1024',
             )
         )
@@ -542,8 +547,8 @@ Pydantic AI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> 
 results in an error, and if you also set `size` it must match the computed value.
 
 The OpenAI Responses image generation tool defaults to `action='auto'`, where the model decides whether to generate a new
-image or edit one already in context. Use `action='generate'` or `action='edit'` to force either behavior. You can also set
-`model` to select the underlying image generation model used by the tool, for example `model='gpt-image-2'`; this does not
+image or edit one already in context. Set `provider_settings.openai.action` to `'generate'` or `'edit'` to force either
+behavior. You can also set `provider_settings.openai.model` to select the underlying image generation model; this does not
 change the agent's conversational model.
 
 To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
@@ -588,15 +593,15 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 
 | Parameter | OpenAI | Google |
 |-----------|--------|--------|
-| `action` | ✅ (auto (default), generate, edit) | ❌ |
-| `background` | ✅ | ❌ |
-| `input_fidelity` | ✅ | ❌ |
-| `moderation` | ✅ | ❌ |
-| `model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
+| `provider_settings.openai.action` | ✅ (auto (default), generate, edit) | ❌ |
+| `provider_settings.openai.background` | ✅ | ❌ |
+| `provider_settings.openai.input_fidelity` | ✅ | ❌ |
+| `provider_settings.openai.moderation` | ✅ | ❌ |
+| `provider_settings.openai.model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Google Cloud only) |
 | `output_format` | ✅ | ✅ (Google Cloud only) |
-| `partial_images` | ✅ | ❌ |
-| `quality` | ✅ | ❌ |
+| `provider_settings.openai.partial_images` | ✅ | ❌ |
+| `provider_settings.openai.quality` | ✅ | ❌ |
 | `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (512, 1K (default), 2K, 4K) |
 | `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
 
@@ -827,7 +832,7 @@ result = agent.run_sync('Design a caching strategy for our API. Consult your adv
 print(result.output)
 ```
 
-For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. `max_uses` and the Anthropic-specific caching setting are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
 
 With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
 
@@ -838,7 +843,7 @@ With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in
 | `model` | ✅ (required — the advisor model to consult) | ✅ (required — an OpenRouter catalog slug) |
 | `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
-| `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
+| `provider_settings.anthropic.caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
 | `provider_settings.openrouter.forward_transcript` | ❌ | ✅ (forward the parent conversation to the advisor) |
 
 ## MCP Server Tool
@@ -1120,7 +1125,7 @@ async def main():
 asyncio.run(main())
 ```
 
-xAI's collections search also accepts options to control result count, ranking guidance, and retrieval strategy. These map to the `max_num_results`, `instructions`, and `retrieval_mode` fields on [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]. When omitted, the server applies its own defaults (10 results, hybrid retrieval).
+xAI's collections search also accepts options to control result count, ranking guidance, and retrieval strategy. Result count is configured with `max_num_results`; the xAI-specific `instructions` and `retrieval_mode` options belong under `provider_settings.xai`. When omitted, the server applies its own defaults (10 results, hybrid retrieval).
 
 ```py {title="file_search_xai_options.py" test="skip"}
 import asyncio
@@ -1137,8 +1142,12 @@ async def main():
                 FileSearchTool(
                     file_store_ids=['collection_abc123'],
                     max_num_results=5,
-                    instructions='Focus on up-to-date, highly relevant documents.',
-                    retrieval_mode='semantic',
+                    provider_settings={
+                        'xai': {
+                            'instructions': 'Focus on up-to-date, highly relevant documents.',
+                            'retrieval_mode': 'semantic',
+                        }
+                    },
                 )
             )
         ],

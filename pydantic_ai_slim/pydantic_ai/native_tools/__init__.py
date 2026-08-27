@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -10,11 +11,13 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
     'AnthropicWebSearchToolSettings',
+    'OpenAIWebSearchToolSettings',
     'OpenRouterWebSearchToolSettings',
     'WebSearchProviderSettings',
     'WebSearchTool',
@@ -25,12 +28,17 @@ __all__ = (
     'WebFetchProviderSettings',
     'WebFetchTool',
     'ImageGenerationModelName',
+    'OpenAIImageGenerationToolSettings',
+    'ImageGenerationProviderSettings',
     'ImageGenerationTool',
     'ImageAspectRatio',
     'MemoryTool',
     'MCPServerTool',
+    'XaiFileSearchToolSettings',
+    'FileSearchProviderSettings',
     'FileSearchTool',
     'AdvisorModelName',
+    'AnthropicAdvisorToolSettings',
     'OpenRouterAdvisorToolSettings',
     'AdvisorProviderSettings',
     'AdvisorTool',
@@ -44,6 +52,22 @@ NATIVE_TOOL_TYPES: dict[str, type[AbstractNativeTool]] = {}
 
 This dict is populated automatically via `__init_subclass__` when tool classes are defined.
 """
+
+
+def _warn_deprecated_provider_fields(tool_name: str, system: str, fields: Sequence[str]) -> None:
+    if not fields:
+        return
+
+    formatted_fields = ', '.join(f'`{name}`' for name in fields)
+    label = 'field' if len(fields) == 1 else 'fields'
+    verb = 'is' if len(fields) == 1 else 'are'
+    warnings.warn(
+        f'`{tool_name}` {label} {formatted_fields} {verb} deprecated and will be removed in v3; '
+        f'use `provider_settings={{"{system}": {{...}}}}` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=4,
+    )
+
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools."""
@@ -139,6 +163,13 @@ class AnthropicWebSearchToolSettings(TypedDict, total=False):
     """Whether results consumed by completed code execution calls remain in the response."""
 
 
+class OpenAIWebSearchToolSettings(TypedDict, total=False):
+    """OpenAI-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
+
+    external_web_access: bool
+    """Whether OpenAI Responses may fetch live web content."""
+
+
 class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
@@ -162,6 +193,7 @@ class WebSearchProviderSettings(TypedDict, total=False):
     """Provider-specific web search settings, indexed by the model system."""
 
     anthropic: AnthropicWebSearchToolSettings
+    openai: OpenAIWebSearchToolSettings
     openrouter: OpenRouterWebSearchToolSettings
 
 
@@ -249,6 +281,8 @@ class WebSearchTool(AbstractNativeTool):
     external_web_access: bool | None = None
     """Whether the hosted web search tool may fetch live web content.
 
+    Deprecated: use `provider_settings.openai.external_web_access` instead.
+
     If `False`, the tool uses only cached or indexed results. If `None`, the parameter is omitted and the provider
     default is used. OpenAI currently defaults to `True`.
 
@@ -261,6 +295,11 @@ class WebSearchTool(AbstractNativeTool):
 
     kind: str = 'web_search'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        _warn_deprecated_provider_fields(
+            'WebSearchTool', 'openai', ['external_web_access'] if self.external_web_access is not None else []
+        )
 
 
 class WebSearchUserLocation(TypedDict, total=False):
@@ -491,6 +530,37 @@ class WebFetchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+class OpenAIImageGenerationToolSettings(TypedDict, total=False):
+    """OpenAI-specific settings for [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]."""
+
+    action: Literal['generate', 'edit', 'auto']
+    """Whether to generate a new image, edit an input image, or let OpenAI choose. Defaults to `'auto'`."""
+
+    background: Literal['transparent', 'opaque', 'auto']
+    """The image background. `'transparent'` requires PNG or WebP output. Defaults to `'auto'`."""
+
+    input_fidelity: Literal['high', 'low']
+    """How closely edits should preserve features from input images. Defaults to `'low'`."""
+
+    moderation: Literal['auto', 'low']
+    """The OpenAI image moderation level. Defaults to `'auto'`."""
+
+    model: ImageGenerationModelName
+    """The OpenAI image generation model. By default, OpenAI selects the model."""
+
+    partial_images: int
+    """The number of partial images to stream, from 0 to 3. Defaults to 0."""
+
+    quality: Literal['low', 'medium', 'high', 'auto']
+    """The OpenAI image quality level. Defaults to `'auto'`."""
+
+
+class ImageGenerationProviderSettings(TypedDict, total=False):
+    """Provider-specific image generation settings, indexed by the model system."""
+
+    openai: OpenAIImageGenerationToolSettings
+
+
 @dataclass(kw_only=True)
 class ImageGenerationTool(AbstractNativeTool):
     """A native tool that allows your agent to generate images.
@@ -501,8 +571,13 @@ class ImageGenerationTool(AbstractNativeTool):
     * Google
     """
 
+    provider_settings: ImageGenerationProviderSettings | None = None
+    """Provider-specific image generation settings, indexed by the model system."""
+
     action: Literal['generate', 'edit', 'auto'] = 'auto'
     """Whether to generate a new image or edit an existing image.
+
+    Deprecated: use `provider_settings.openai.action` instead.
 
     Supported by:
 
@@ -511,6 +586,8 @@ class ImageGenerationTool(AbstractNativeTool):
 
     background: Literal['transparent', 'opaque', 'auto'] = 'auto'
     """Background type for the generated image.
+
+    Deprecated: use `provider_settings.openai.background` instead.
 
     Supported by:
 
@@ -522,6 +599,8 @@ class ImageGenerationTool(AbstractNativeTool):
     Control how much effort the model will exert to match the style and features,
     especially facial features, of input images.
 
+    Deprecated: use `provider_settings.openai.input_fidelity` instead.
+
     Supported by:
 
     * OpenAI Responses. Default: 'low'.
@@ -530,6 +609,8 @@ class ImageGenerationTool(AbstractNativeTool):
     moderation: Literal['auto', 'low'] = 'auto'
     """Moderation level for the generated image.
 
+    Deprecated: use `provider_settings.openai.moderation` instead.
+
     Supported by:
 
     * OpenAI Responses
@@ -537,6 +618,8 @@ class ImageGenerationTool(AbstractNativeTool):
 
     model: ImageGenerationModelName | None = None
     """The image generation model to use.
+
+    Deprecated: use `provider_settings.openai.model` instead.
 
     Supported by:
 
@@ -571,6 +654,8 @@ class ImageGenerationTool(AbstractNativeTool):
     """
     Number of partial images to generate in streaming mode.
 
+    Deprecated: use `provider_settings.openai.partial_images` instead.
+
     Supported by:
 
     * OpenAI Responses. Supports 0 to 3.
@@ -578,6 +663,8 @@ class ImageGenerationTool(AbstractNativeTool):
 
     quality: Literal['low', 'medium', 'high', 'auto'] = 'auto'
     """The quality of the generated image.
+
+    Deprecated: use `provider_settings.openai.quality` instead.
 
     Supported by:
 
@@ -602,6 +689,22 @@ class ImageGenerationTool(AbstractNativeTool):
 
     kind: str = 'image_generation'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        deprecated_fields = [
+            name
+            for name, is_set in (
+                ('action', self.action != 'auto'),
+                ('background', self.background != 'auto'),
+                ('input_fidelity', self.input_fidelity is not None),
+                ('moderation', self.moderation != 'auto'),
+                ('model', self.model is not None),
+                ('partial_images', self.partial_images != 0),
+                ('quality', self.quality != 'auto'),
+            )
+            if is_set
+        ]
+        _warn_deprecated_provider_fields('ImageGenerationTool', 'openai', deprecated_fields)
 
 
 @dataclass(kw_only=True)
@@ -688,6 +791,22 @@ class MCPServerTool(AbstractNativeTool):
         return f'MCP: {self.id}'
 
 
+class XaiFileSearchToolSettings(TypedDict, total=False):
+    """xAI-specific settings for [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]."""
+
+    instructions: str
+    """Instructions for interpreting and ranking xAI collections search results."""
+
+    retrieval_mode: Literal['hybrid', 'semantic', 'keyword']
+    """The xAI collections search retrieval strategy."""
+
+
+class FileSearchProviderSettings(TypedDict, total=False):
+    """Provider-specific file search settings, indexed by the model system."""
+
+    xai: XaiFileSearchToolSettings
+
+
 @dataclass(kw_only=True)
 class FileSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search through uploaded files using vector search.
@@ -702,6 +821,9 @@ class FileSearchTool(AbstractNativeTool):
     * xAI (mapped to collections search)
     """
 
+    provider_settings: FileSearchProviderSettings | None = None
+    """Provider-specific file search settings, indexed by the model system."""
+
     file_store_ids: Sequence[str]
     """The file store IDs to search through.
 
@@ -711,15 +833,17 @@ class FileSearchTool(AbstractNativeTool):
     """
 
     max_num_results: int | None = None
-    """The maximum number of results to return.
+    """The portable maximum number of results to return.
 
-    Supported by:
+    Currently supported by:
 
     * xAI (mapped to collections search `limit`, defaults to 10 server-side)
     """
 
     instructions: str | None = None
     """Optional instructions that guide how the collections search results are interpreted and ranked.
+
+    Deprecated: use `provider_settings.xai.instructions` instead.
 
     Supported by:
 
@@ -729,6 +853,8 @@ class FileSearchTool(AbstractNativeTool):
     retrieval_mode: Literal['hybrid', 'semantic', 'keyword'] | None = None
     """The retrieval strategy for the search.
 
+    Deprecated: use `provider_settings.xai.retrieval_mode` instead.
+
     Supported by:
 
     * xAI (defaults to `hybrid` server-side)
@@ -736,6 +862,24 @@ class FileSearchTool(AbstractNativeTool):
 
     kind: str = 'file_search'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        deprecated_fields = [
+            name
+            for name, is_set in (
+                ('instructions', self.instructions is not None),
+                ('retrieval_mode', self.retrieval_mode is not None),
+            )
+            if is_set
+        ]
+        _warn_deprecated_provider_fields('FileSearchTool', 'xai', deprecated_fields)
+
+
+class AnthropicAdvisorToolSettings(TypedDict, total=False):
+    """Anthropic-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
+
+    caching: Literal['5m', '1h']
+    """The ephemeral cache TTL for the Anthropic advisor context."""
 
 
 class OpenRouterAdvisorToolSettings(TypedDict, total=False):
@@ -748,6 +892,7 @@ class OpenRouterAdvisorToolSettings(TypedDict, total=False):
 class AdvisorProviderSettings(TypedDict, total=False):
     """Provider-specific advisor settings, indexed by the model system."""
 
+    anthropic: AnthropicAdvisorToolSettings
     openrouter: OpenRouterAdvisorToolSettings
 
 
@@ -755,9 +900,8 @@ class AdvisorProviderSettings(TypedDict, total=False):
 class AdvisorTool(AbstractNativeTool):
     """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
 
-    The fields map 1:1 to the parameters of Anthropic's advisor tool definition. OpenRouter exposes
-    the advisor as a gateway server tool that honors a subset (`model`, `max_tokens`) and ignores
-    the unsupported fields; see the per-field docstrings for which provider supports each.
+    The first-class fields describe behavior shared by the supported systems; system-specific options
+    live in `provider_settings`. See the per-field docstrings for which provider supports each option.
 
     Supported by:
 
@@ -811,6 +955,8 @@ class AdvisorTool(AbstractNativeTool):
     """If provided, caches the advisor context ephemerally with the given TTL. Maps to
     `caching={'type': 'ephemeral', 'ttl': ...}`.
 
+    Deprecated: use `provider_settings.anthropic.caching` instead.
+
     Supported by:
 
     * Anthropic
@@ -822,6 +968,7 @@ class AdvisorTool(AbstractNativeTool):
     """The kind of tool."""
 
     def __post_init__(self) -> None:
+        _warn_deprecated_provider_fields('AdvisorTool', 'anthropic', ['caching'] if self.caching is not None else [])
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 

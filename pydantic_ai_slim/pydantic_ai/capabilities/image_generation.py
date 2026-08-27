@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning, UserError
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
+from pydantic_ai.native_tools import (
+    ImageAspectRatio,
+    ImageGenerationModelName,
+    ImageGenerationProviderSettings,
+    ImageGenerationTool,
+    OpenAIImageGenerationToolSettings,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -47,6 +54,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """
 
     # Keep these fields in sync with ImageGenerationTool in native_tools.py.
+
+    provider_settings: ImageGenerationProviderSettings | None
+    """Provider-specific image generation settings, indexed by the model system."""
 
     action: Literal['generate', 'edit', 'auto'] | None
     """Whether to generate a new image or edit an existing image.
@@ -121,6 +131,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         | str
         | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
         | None = None,
+        provider_settings: ImageGenerationProviderSettings | None = None,
         action: Literal['generate', 'edit', 'auto'] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
@@ -146,6 +157,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.native = native
         self.local = local
         self.fallback_model = fallback_model
+        self.provider_settings = provider_settings
         self.action = action
         self.background = background
         self.input_fidelity = input_fidelity
@@ -161,26 +173,36 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect non-None ImageGenerationTool config fields."""
         kwargs: dict[str, Any] = {}
+        provider_settings = dict(self.provider_settings) if self.provider_settings else None
+        openai_settings = OpenAIImageGenerationToolSettings()
         if self.action is not None:
-            kwargs['action'] = self.action
+            openai_settings['action'] = self.action
         if self.background is not None:
-            kwargs['background'] = self.background
+            openai_settings['background'] = self.background
         if self.input_fidelity is not None:
-            kwargs['input_fidelity'] = self.input_fidelity
+            openai_settings['input_fidelity'] = self.input_fidelity
         if self.moderation is not None:
-            kwargs['moderation'] = self.moderation
+            openai_settings['moderation'] = self.moderation
         if self.image_model is not None:
-            kwargs['model'] = self.image_model
+            openai_settings['model'] = self.image_model
         if self.output_compression is not None:
             kwargs['output_compression'] = self.output_compression
         if self.output_format is not None:
             kwargs['output_format'] = self.output_format
         if self.quality is not None:
-            kwargs['quality'] = self.quality
+            openai_settings['quality'] = self.quality
         if self.size is not None:
             kwargs['size'] = self.size
         if self.aspect_ratio is not None:
             kwargs['aspect_ratio'] = self.aspect_ratio
+        if self.provider_settings and (configured_openai := self.provider_settings.get('openai')):
+            openai_settings.update(configured_openai)
+        if provider_settings is not None:
+            if openai_settings:
+                provider_settings['openai'] = openai_settings
+            kwargs['provider_settings'] = provider_settings
+        elif openai_settings:
+            kwargs['provider_settings'] = {'openai': openai_settings}
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:
@@ -195,7 +217,19 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         overrides = self._image_gen_kwargs()
         if not overrides:
             return base
-        return replace(base, **overrides)
+        if provider_settings := overrides.get('provider_settings'):
+            base_provider_settings = base.provider_settings or {}
+            merged_provider_settings = {**base_provider_settings, **provider_settings}
+            if openai_settings := provider_settings.get('openai'):
+                merged_provider_settings['openai'] = {
+                    **base_provider_settings.get('openai', {}),
+                    **openai_settings,
+                }
+            overrides['provider_settings'] = merged_provider_settings
+        # Deprecated fields on `base` already warned when it was constructed; `replace()` must not warn again.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+            return replace(base, **overrides)
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         if self.fallback_model is None:

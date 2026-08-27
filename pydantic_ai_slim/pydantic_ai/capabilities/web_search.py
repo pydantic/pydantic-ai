@@ -91,7 +91,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         if self.max_uses is not None:
             kwargs['max_uses'] = self.max_uses
         if self.external_web_access is not None:
-            kwargs['external_web_access'] = self.external_web_access
+            kwargs['provider_settings'] = {'openai': {'external_web_access': self.external_web_access}}
         return WebSearchTool(**kwargs)
 
     def _native_unique_id(self) -> str:
