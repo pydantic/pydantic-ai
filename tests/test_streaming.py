@@ -918,6 +918,27 @@ def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
     assert exited
 
 
+class _LoopTurnWatchdog:
+    """Stop a loop after deterministic progress, without making the test depend on wall-clock time."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, turns: int = 100) -> None:
+        self.loop = loop
+        self.remaining = turns
+        self.forced_stop = False
+        self.handle = loop.call_soon(self._tick)
+
+    def _tick(self) -> None:
+        self.remaining -= 1
+        if self.remaining == 0:  # pragma: no cover
+            self.forced_stop = True
+            self.loop.stop()
+        else:
+            self.handle = self.loop.call_soon(self._tick)
+
+    def cancel(self) -> None:
+        self.handle.cancel()
+
+
 @pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
 def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[BaseException]):
     """A base exception from `__aenter__` escapes immediately instead of hanging the event loop.
@@ -928,7 +949,6 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     error = error_type('entry failed')
-    forced_stop = False
 
     class FailingContextManager:
         async def __aenter__(self) -> object:
@@ -942,20 +962,16 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
         ) -> None:
             pytest.fail('`__aexit__` must not be called when `__aenter__` fails')  # pragma: no cover
 
-    def force_stop() -> None:  # pragma: no cover
-        nonlocal forced_stop
-        forced_stop = True
-        loop.stop()
-
-    stop_handle = loop.call_later(1, force_stop)
+    watchdog = _LoopTurnWatchdog(loop)
     try:
         with pytest.raises(error_type) as exc_info:
             SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
+        watchdog.cancel()
         assert exc_info.value is error
-        assert not forced_stop
+        assert not watchdog.forced_stop
         assert loop.run_until_complete(asyncio.sleep(0)) is None
     finally:
-        stop_handle.cancel()
+        watchdog.cancel()
         loop.close()
         asyncio.set_event_loop(original_loop)
 
@@ -1311,7 +1327,6 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
     VCR cannot inject an in-process base exception into the iterator pump task.
     """
     error = error_type('pump failed')
-    forced_stop = False
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
@@ -1325,23 +1340,18 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
     loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
     stream = bridge.stream_sync(source)
 
-    def force_stop() -> None:  # pragma: no cover
-        nonlocal forced_stop
-        forced_stop = True
-        loop.stop()
-
-    stop_handle = loop.call_later(1, force_stop)
+    watchdog = _LoopTurnWatchdog(loop)
     try:
         with pytest.raises(error_type) as exc_info:
             while True:
                 next(stream)
-        stop_handle.cancel()
+        watchdog.cancel()
         assert exc_info.value is error
-        assert not forced_stop
+        assert not watchdog.forced_stop
         assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
         assert loop.run_until_complete(asyncio.sleep(0)) is None
     finally:
-        stop_handle.cancel()
+        watchdog.cancel()
 
 
 def test_run_stream_sync_preserves_capability_contextvars():
