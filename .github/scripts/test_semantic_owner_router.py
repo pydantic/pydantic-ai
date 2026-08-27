@@ -425,18 +425,6 @@ def test_recent_maintainer_response_takes_ownership_over_topic_routing():
     }
 
 
-def test_issue_event_without_comment_routes_by_topic():
-    client = FakeClient({7: item(7, labels=['MCP'])})
-
-    selected = router.select(client, CORE, '7', None, '')
-
-    assert selected['decision'] == {
-        'number': 7,
-        'owner': 'dsfaccini',
-        'evidence': 'label:MCP',
-    }
-
-
 def test_only_the_latest_maintainer_response_can_take_ownership():
     client = FakeClient({7: item(7, labels=['streaming'])})
     client.timelines[7] = [
@@ -962,6 +950,7 @@ def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
     monkeypatch.setenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', MENTIONS)
     monkeypatch.setenv('ROUTING_ISSUE_NUMBER', '7')
+    monkeypatch.setenv('ROUTING_PARTICIPANT_LOGIN', '')
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
 
     monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
@@ -1027,6 +1016,7 @@ def test_workflow_is_notification_first_and_least_privilege():
     jobs = workflow['jobs']
 
     text = workflow_path.read_text(encoding='utf-8')
+    assert workflow[True]['issues']['types'] == ['opened', 'reopened']
     assert 'issue_comment:' in text
     assert 'types: [created]' in text
     assert jobs['route']['needs'] == 'select'
