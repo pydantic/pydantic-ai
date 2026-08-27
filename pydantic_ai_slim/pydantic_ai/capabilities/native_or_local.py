@@ -38,7 +38,8 @@ async def _resolve_native_tool(
             f'Native tool factory returned `None`; `{tool_cls.__name__}` will not be enabled '
             'with default settings. Return a tool instance to allow this request.'
         )
-    assert isinstance(native_tool, tool_cls)
+    if not isinstance(native_tool, tool_cls):
+        raise UserError(f'Native tool must resolve to a `{tool_cls.__name__}` instance, got {native_tool!r}')
     return native_tool
 
 
@@ -240,7 +241,11 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             return tool_cls(**overrides)
 
         native_factory = self.native
-        assert callable(native_factory)
+        if not callable(native_factory):
+            raise UserError(
+                f'{type(self).__name__}: `native` must be a `{tool_cls.__name__}` instance, a callable, '
+                f'`True`, or `False`, not {native_factory!r}'
+            )
 
         async def resolve_native(ctx: RunContext[AgentDepsT]) -> NativeToolT:
             native_tool = await _resolve_native_tool(native_factory, ctx, tool_cls)

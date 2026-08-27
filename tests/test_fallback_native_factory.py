@@ -83,6 +83,31 @@ async def test_xsearch_callable_native_pass_through_without_overrides():
     assert await await_maybe(resolved(_run_context())) is factory_tool
 
 
+def test_xsearch_incompatible_native_tool_raises():
+    """Invalid static native configuration raises at capability construction."""
+    with pytest.raises(UserError, match=r'`native` must be a `XSearchTool` instance'):
+        XSearch(
+            native=ImageGenerationTool(),  # pyright: ignore[reportArgumentType]
+            fallback_model='xai:grok-4-1-fast-non-reasoning',
+        )
+
+
+async def test_xsearch_callable_native_wrong_tool_type_raises():
+    """The shared resolver validates dynamic factory results before applying overrides."""
+
+    def native_factory(ctx: RunContext[Any]) -> ImageGenerationTool:
+        return ImageGenerationTool()
+
+    cap = XSearch(
+        native=native_factory,  # pyright: ignore[reportArgumentType]
+        fallback_model='xai:grok-4-1-fast-non-reasoning',
+    )
+    resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+    assert callable(resolved)
+    with pytest.raises(UserError, match=r'must resolve to a `XSearchTool` instance'):
+        await await_maybe(resolved(_run_context()))
+
+
 async def test_xsearch_callable_native_none_raises(allow_model_requests: None):
     """A callable native factory returning None raises rather than enabling default X search."""
 
