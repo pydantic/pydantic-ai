@@ -1563,6 +1563,8 @@ async def test_bedrock_trace_streamed_metadata_before_stop(
         'trace': _BEDROCK_GUARDRAIL_TRACE,
     }
     assert message.finish_reason == 'content_filter'
+
+
 async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvider) -> None:
     """Bedrock maps list-valued `sourceContent` to public source excerpts."""
     text = 'The policy allows thirty days for returns.'
