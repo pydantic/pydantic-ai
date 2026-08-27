@@ -577,13 +577,40 @@ def test_json_schema_test_data_narrow_exclusive_bounds():
         strict_fraction: Annotated[float, Gt(0), Lt(1)]
         rate: Annotated[float, Gt(0.0), Le(1.0)]
         only_one: Annotated[int, Gt(0), Lt(2)]
+        overlapping_bounds: Annotated[float, Field(ge=0, gt=0.9, lt=1)]
+        overlapping_minimum: Annotated[float, Field(ge=0, gt=0.9)]
+        overlapping_maximum: Annotated[float, Field(le=1, lt=0.1)]
+        precision_limited: Annotated[float, Gt(1e16), Lt(1e16 + 4)]
+        precision_limited_minimum: Annotated[float, Gt(1e16)]
+        precision_limited_maximum: Annotated[float, Lt(1e16)]
+        precision_limited_wide_range: Annotated[float, Gt(-1e308), Lt(1e308)]
+        subnormal_positive: Annotated[float, Gt(0.0), Le(5e-324)]
+        subnormal_negative: Annotated[float, Gt(-5e-324), Le(0.0)]
+        precision_limited_inclusive_minimum: Annotated[
+            float, Field(ge=1.0000000000000002, le=2.3, lt=1.0000000000000004)
+        ]
 
     json_schema = TestModel.model_json_schema()
-    for seed in range(3):
+    for seed in range(5):
         data = _JsonSchemaTestData(json_schema, seed=seed).generate()
         TestModel.model_validate(data)
     assert _JsonSchemaTestData(json_schema).generate() == snapshot(
-        {'probability': 0.0, 'strict_fraction': 0.5, 'rate': 1.0, 'only_one': 1}
+        {
+            'probability': 0.0,
+            'strict_fraction': 0.5,
+            'rate': 1.0,
+            'only_one': 1,
+            'overlapping_bounds': 0.95,
+            'overlapping_minimum': 0.9000000000000001,
+            'overlapping_maximum': 0.09999999999999999,
+            'precision_limited': 1.0000000000000002e16,
+            'precision_limited_minimum': 1.0000000000000002e16,
+            'precision_limited_maximum': 9999999999999998.0,
+            'precision_limited_wide_range': 0.0,
+            'subnormal_positive': 5e-324,
+            'subnormal_negative': 0.0,
+            'precision_limited_inclusive_minimum': 1.0000000000000002,
+        }
     )
 
 
@@ -602,16 +629,17 @@ def test_narrow_exclusive_bounds_tool_args():
     assert calls == snapshot([{'temperature': 0.0}])
 
 
-def test_json_schema_test_data_integer_fractional_bounds() -> None:
-    """Integer schemas can carry fractional bounds, which must still yield an integer."""
+def test_json_schema_test_data_fractional_integer_exclusive_bounds() -> None:
+    """Integer schemas with fractional exclusive bounds must still yield an integer."""
 
     schema = {
         'type': 'object',
-        'required': ['count', 'other', 'inclusive'],
+        'required': ['count', 'other', 'inclusive', 'upper_only'],
         'properties': {
             'count': {'type': 'integer', 'exclusiveMinimum': 0.1, 'maximum': 1.1},
             'other': {'type': 'integer', 'exclusiveMinimum': 0.5, 'exclusiveMaximum': 1.5},
             'inclusive': {'type': 'integer', 'minimum': 0.5, 'exclusiveMaximum': 1.5},
+            'upper_only': {'type': 'integer', 'exclusiveMaximum': 0.5},
         },
     }
 
@@ -620,8 +648,20 @@ def test_json_schema_test_data_integer_fractional_bounds() -> None:
         assert isinstance(data['count'], int) and 0.1 < data['count'] <= 1.1
         assert isinstance(data['other'], int) and 0.5 < data['other'] < 1.5
         assert isinstance(data['inclusive'], int) and 0.5 <= data['inclusive'] < 1.5
+        assert isinstance(data['upper_only'], int) and data['upper_only'] < 0.5
 
-    assert _JsonSchemaTestData(schema).generate() == snapshot({'count': 1, 'other': 1, 'inclusive': 1})
+    assert _JsonSchemaTestData(schema).generate() == snapshot({'count': 1, 'other': 1, 'inclusive': 1, 'upper_only': 0})
+
+
+def test_json_schema_test_data_overlapping_integer_bounds() -> None:
+    schema = {
+        'type': 'integer',
+        'minimum': 0,
+        'exclusiveMinimum': 0.9,
+        'exclusiveMaximum': 2,
+    }
+
+    assert [_JsonSchemaTestData(schema, seed=seed).generate() for seed in range(3)] == [1, 1, 1]
 
 
 def test_chars_wrap():
