@@ -542,10 +542,6 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
-The former top-level OpenAI-only fields (`action`, `background`, `input_fidelity`, `moderation`,
-`model`, `partial_images`, and `quality`) remain functional with a deprecation warning until the
-next breaking release. If both forms are supplied, `provider_settings.openai` takes precedence.
-
 OpenAI Responses models also respect the `aspect_ratio` parameter. Because the OpenAI API only exposes discrete image sizes,
 Pydantic AI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> `1536x1024`. Providing any other aspect ratio
 results in an error, and if you also set `size` it must match the computed value.

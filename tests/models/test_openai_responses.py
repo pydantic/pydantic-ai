@@ -951,13 +951,16 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
 
 
 def test_image_generation_tool_provider_field_deprecation() -> None:
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'fields `action`, `model` are deprecated'):
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'fields `action`, `model` are deprecated'
+    ) as warning_records:
         tool = ImageGenerationTool(
             action='generate',
             model='gpt-image-2',
             provider_settings={'openai': {'action': 'edit'}},
         )
 
+    assert warning_records[0].filename == __file__
     mapped_tool = _map_openai_image_generation_tool(tool)
     assert mapped_tool.get('action') == 'edit'
     assert mapped_tool.get('model') == 'gpt-image-2'

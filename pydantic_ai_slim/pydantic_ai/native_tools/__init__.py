@@ -499,12 +499,25 @@ class OpenAIImageGenerationToolSettings(TypedDict, total=False):
     """OpenAI-specific settings for [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]."""
 
     action: Literal['generate', 'edit', 'auto']
+    """Whether to generate a new image, edit an input image, or let OpenAI choose. Defaults to `'auto'`."""
+
     background: Literal['transparent', 'opaque', 'auto']
+    """The image background. `'transparent'` requires PNG or WebP output. Defaults to `'auto'`."""
+
     input_fidelity: Literal['high', 'low']
+    """How closely edits should preserve features from input images. Defaults to `'low'`."""
+
     moderation: Literal['auto', 'low']
+    """The OpenAI image moderation level. Defaults to `'auto'`."""
+
     model: ImageGenerationModelName
+    """The OpenAI image generation model. By default, OpenAI selects the model."""
+
     partial_images: int
+    """The number of partial images to stream, from 0 to 3. Defaults to 0."""
+
     quality: Literal['low', 'medium', 'high', 'auto']
+    """The OpenAI image quality level. Defaults to `'auto'`."""
 
 
 class ImageGenerationProviderSettings(TypedDict, total=False):
@@ -664,7 +677,7 @@ class ImageGenerationTool(AbstractNativeTool):
                 f'`ImageGenerationTool` {label} {fields} {verb} deprecated; '
                 'use `provider_settings={"openai": {...}}` instead.',
                 PydanticAIDeprecationWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
 
 
