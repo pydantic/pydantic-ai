@@ -97,7 +97,7 @@ _model_response_span_captures: ContextVar[tuple[Callable[[ModelResponse], None],
 def capture_model_request_span_context(request_context: ModelRequestContext) -> None:
     """Capture the finalized request at the model-call boundary when instrumentation is active."""
     for capture in _model_request_span_captures.get():
-        capture(replace(request_context, messages=request_context.messages.copy()))
+        capture(replace(request_context, messages=list(request_context.messages)))
 
 
 def capture_model_response_span_context(response: ModelResponse) -> None:
@@ -583,7 +583,7 @@ def open_model_request_span(
                     return prepared_request_context
 
                 settings.handle_messages(
-                    prepared_request_context.messages,
+                    list(prepared_request_context.messages),
                     response,
                     span,
                     prepared_parameters,

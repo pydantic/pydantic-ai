@@ -859,7 +859,7 @@ async def _prepare_request_parameters(
 
 
 def _split_resume_seed(
-    messages: list[_messages.ModelMessage],
+    messages: Sequence[_messages.ModelMessage],
 ) -> tuple[list[_messages.ModelMessage], _messages.ModelResponse | None]:
     """Split a trailing suspended `ModelResponse` off `messages` as the continuation seed.
 
@@ -870,8 +870,8 @@ def _split_resume_seed(
     through untouched.
     """
     if messages and isinstance(last := messages[-1], _messages.ModelResponse) and last.state == 'suspended':
-        return messages[:-1], last
-    return messages, None
+        return list(messages[:-1]), last
+    return list(messages), None
 
 
 def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: _usage.RequestUsage) -> None:
@@ -1476,7 +1476,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         request_context = ModelRequestContext(
             model=ctx.deps.model,
-            messages=ctx.state.message_history[:],
+            messages=list(ctx.state.message_history),
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
@@ -1527,7 +1527,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # response); the innermost helpers split that response off as the continuation seed.
         request_context = ModelRequestContext(
             model=ctx.deps.model,
-            messages=ctx.state.message_history[:],
+            messages=list(ctx.state.message_history),
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
@@ -1546,7 +1546,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     @staticmethod
     def _trim_suspended_tail(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        messages: list[_messages.ModelMessage],
+        messages: Sequence[_messages.ModelMessage],
     ) -> None:
         """Point the run state at the resumed turn's base history, without its suspended tail.
 
@@ -1558,20 +1558,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         `_finish_handling` then appends the final merged response after the base history.
         The request messages are untouched — they retain the suspended continuation seed.
         """
-        base_messages = messages[:-1]
-        for index in range(len(base_messages) - 1, -1, -1):
-            if isinstance(message := base_messages[index], _messages.ModelRequest):
-                ctx.deps.resumed_request = message
-                ctx.deps.resumed_request_index = index
-                break
-
-        ctx.state.message_history[:] = base_messages
-        ctx.deps.new_message_index = _first_new_message_index(
-            base_messages,
-            ctx.state.run_id,
-            resumed_request=ctx.deps.resumed_request,
-            resumed_request_index=ctx.deps.resumed_request_index,
-        )
+        _set_resumed_history(ctx, messages[:-1])
 
     async def _apply_before_model_request(
         self,
@@ -1582,7 +1569,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         original_request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Apply `before_model_request` and finalize the request inside the wrapped lifecycle."""
-        messages_before_processing = len(request_context.messages)
+        persistent_messages_before_processing = len(ctx.state.message_history)
         processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
@@ -1621,26 +1608,26 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # position (survives an in-place rebuild that changes its fields). It's the last message
                 # here, before the model output is appended, so its index is `len(messages) - 1`.
                 ctx.deps.resumed_request = self.request
-                ctx.deps.resumed_request_index = len(messages) - 1
+                ctx.deps.resumed_request_index = len(ctx.state.message_history) - 1
             elif ctx.deps.resumed_request_index is not None:
                 # Later steps (e.g. a tool-call loop) may prepend/truncate/rebuild messages ahead of the
                 # resumed request, shifting it. Translate the pinned index by the net count change; drop
                 # it (falling back to object/value matching, then run_id) if processing removed the
                 # resumed request itself. The object reference is left untouched — it still points at the
                 # step-1 request, so identity/value matching keeps working across steps.
-                shifted = ctx.deps.resumed_request_index - (messages_before_processing - len(messages))
+                shifted = ctx.deps.resumed_request_index - (
+                    persistent_messages_before_processing - len(ctx.state.message_history)
+                )
                 ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
-            # `ctx.state.message_history` is the same list used by `capture_run_messages`, so replace its contents.
-            ctx.state.message_history[:] = messages
             ctx.deps.new_message_index = _first_new_message_index(
-                messages,
+                ctx.state.message_history,
                 ctx.state.run_id,
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
 
             # Normalize consecutive trailing requests for model adapters without changing stored history.
-            messages = _clean_message_history(messages, repair_last_response=True)
+            messages = _clean_message_history(list(messages), repair_last_response=True)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
@@ -1673,11 +1660,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ):
                 raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
 
-            # Redo the pre-wrap trim on the processed messages, in case the before-chain
-            # rewrote the history this turn resumes from.
+            # A processor may have deliberately rewritten persistent history from the request
+            # view, putting the suspended continuation seed back at the tail. Trim the live
+            # persistent history, never `request_context.messages`: request-only hook changes
+            # must not cross the persistence boundary during resume bookkeeping.
+            messages = list(messages)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
-            self._trim_suspended_tail(ctx, messages)
+            persistent_messages = ctx.state.message_history
+            if (
+                persistent_messages
+                and isinstance(persistent_tail := persistent_messages[-1], _messages.ModelResponse)
+                and persistent_tail.state == 'suspended'
+            ):
+                self._trim_suspended_tail(ctx, persistent_messages)
+            else:
+                _set_resumed_history(ctx, persistent_messages)
             usage = ctx.state.usage
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
@@ -2575,6 +2573,27 @@ def _first_run_id_index(messages: Sequence[_messages.ModelMessage], run_id: str)
         if message.run_id == run_id:
             return index
     return len(messages)
+
+
+def _set_resumed_history(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    messages: Sequence[_messages.ModelMessage],
+) -> None:
+    """Replace persistent history and refresh resumed-turn boundary tracking."""
+    base_messages = list(messages)
+    for index in range(len(base_messages) - 1, -1, -1):
+        if isinstance(message := base_messages[index], _messages.ModelRequest):
+            ctx.deps.resumed_request = message
+            ctx.deps.resumed_request_index = index
+            break
+
+    ctx.state.message_history[:] = base_messages
+    ctx.deps.new_message_index = _first_new_message_index(
+        base_messages,
+        ctx.state.run_id,
+        resumed_request=ctx.deps.resumed_request,
+        resumed_request_index=ctx.deps.resumed_request_index,
+    )
 
 
 def _first_new_message_index(

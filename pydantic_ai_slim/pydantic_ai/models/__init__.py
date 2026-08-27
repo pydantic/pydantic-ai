@@ -300,7 +300,18 @@ class ModelRequestContext:
     """
 
     model: Model
-    messages: list[ModelMessage]
+    messages: Sequence[ModelMessage]
+    """Messages to send for this model request.
+
+    Assigning a new sequence changes only the current request. To rewrite the persistent
+    message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
+    instead, or update both explicitly when both effects are intended.
+
+    Messages and parts in the sequence may share references with persistent history. The
+    `Sequence` type discourages top-level in-place mutation, but does not provide runtime
+    immutability or copy nested objects. Construct copies appropriate to the depth being changed
+    when isolation is required.
+    """
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 

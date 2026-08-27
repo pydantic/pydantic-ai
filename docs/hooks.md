@@ -148,6 +148,11 @@ Node hooks fire no matter how the run is driven: [`agent.run()`][pydantic_ai.age
 
 Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
+`before_model_request` and `model_request` (wrap) use the same message-persistence rules. Assigning a new sequence to `request_context.messages` changes only the current request sent to the model. Mutating the `ctx.messages` list changes the persistent message history returned by `all_messages()` and used by later requests. Update both explicitly when a change should have both effects. [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] and compaction deliberately update both, preserving their existing history-rewriting contract. Because a history processor transforms the current request view and makes its whole result persistent, its position relative to other message hooks remains significant.
+
+!!! warning "Message objects may still be shared"
+    [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages] is typed as a `Sequence` to discourage top-level mutation such as `.append()`, but this is not a deep immutable snapshot. Messages and their nested parts may share references with persistent history, so in-place changes to those objects can persist. When isolation is required, construct new messages and parts to the depth you modify, for example with [`dataclasses.replace`](https://docs.python.org/3/library/dataclasses.html#dataclasses.replace), and assign the resulting sequence to `request_context.messages`.
+
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
 !!! note

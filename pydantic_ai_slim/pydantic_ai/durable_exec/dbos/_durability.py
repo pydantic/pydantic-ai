@@ -313,12 +313,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             return await self._request_step(
-                model_id, request.messages, request.model_settings, request.model_request_parameters, ctx
+                model_id, list(request.messages), request.model_settings, request.model_request_parameters, ctx
             )
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             result = await self._request_stream_step(
-                model_id, request.messages, request.model_settings, request.model_request_parameters, ctx
+                model_id, list(request.messages), request.model_settings, request.model_request_parameters, ctx
             )
             if isinstance(result, ModelResponse):
                 # Legacy-history-only: `DBOSAgent` recorded a bare response for stream steps.

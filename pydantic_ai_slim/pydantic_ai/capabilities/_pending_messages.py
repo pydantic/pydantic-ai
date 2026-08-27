@@ -105,7 +105,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
             messages = _stamped_messages(
                 pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
             )
-            request_context.messages.extend(messages)
+            request_context.messages = [*request_context.messages, *messages]
             ctx.messages.extend(messages)
             ctx._emit_event(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages)))  # pyright: ignore[reportPrivateUsage]
         return request_context

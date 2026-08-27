@@ -78,6 +78,8 @@ Rules of thumb:
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
 
+In `before_model_request` and `wrap_model_request`, assigning `request_context.messages` changes only the current model request, while mutating the `ctx.messages` list changes persistent history; update both for both effects. `request_context.messages` is a `Sequence`, but nested messages/parts may still share references with `ctx.messages`, so build copies to the depth being modified instead of mutating shared objects in place. `ProcessHistory` and compaction intentionally update both contexts; a processor transforms the current request view and makes its complete result persistent, so capability order still matters around processors.
+
 ```python
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.capabilities import ProcessHistory

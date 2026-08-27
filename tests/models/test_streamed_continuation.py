@@ -895,6 +895,56 @@ async def test_resume_hook_dropping_suspended_response_errors() -> None:
         await agent.run(message_history=history)
 
 
+@pytest.mark.parametrize('hook', ['before', 'wrap'])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_resume_hook_run_context_messages_remain_persistent(
+    hook: Literal['before', 'wrap'], stream: bool
+) -> None:
+    """Resume bookkeeping must not replace persistent history from request-only messages."""
+    hooks = Hooks()
+    marker = ModelRequest(parts=[UserPromptPart(content='persistent marker')])
+
+    def update_history(ctx: RunContext[Any]) -> None:
+        ctx.messages.insert(0, marker)
+
+    if hook == 'before':
+
+        @hooks.on.before_model_request
+        async def _before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            update_history(ctx)
+            return request_context
+
+    else:
+
+        @hooks.on.model_request
+        async def _wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+            update_history(ctx)
+            return await handler(request_context)
+
+    suspended = _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2)
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='go')]), suspended]
+    if stream:
+        model: Model = _ScriptedModel(
+            segments=[
+                _StreamSegment(
+                    texts=['done'], state='complete', provider_response_id='r2', input_tokens=3, output_tokens=4
+                )
+            ]
+        )
+    else:
+        model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]))
+
+    agent = Agent(model, capabilities=[hooks])
+    if stream:
+        async with agent.run_stream(message_history=history) as result:
+            await result.get_output()
+            all_messages = result.all_messages()
+    else:
+        all_messages = (await agent.run(message_history=history)).all_messages()
+
+    assert marker in all_messages
+
+
 async def test_streaming_wrap_error_propagates() -> None:
     """A `model_request` (wrap) hook raising a non-retry error in the streaming short-circuit propagates it."""
     hooks = Hooks()

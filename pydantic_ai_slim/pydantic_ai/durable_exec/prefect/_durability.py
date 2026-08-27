@@ -233,12 +233,12 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             return await self._request_task.with_options(
                 name=f'Model Request: {model_name}', **self._model_task_config
-            )(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx)
+            )(model_id, list(request.messages), request.model_settings, request.model_request_parameters, ctx)
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             return await self._request_stream_task.with_options(
                 name=f'Model Request (Streaming): {model_name}', **self._model_task_config
-            )(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx)
+            )(model_id, list(request.messages), request.model_settings, request.model_request_parameters, ctx)
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             await self._cancel_suspended_response_task.with_options(

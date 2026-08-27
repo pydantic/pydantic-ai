@@ -513,7 +513,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         def params(request: ModelRequestContext) -> _RequestParams:
             return _RequestParams(
-                request.messages,
+                list(request.messages),
                 cast(dict[str, Any] | None, request.model_settings),
                 request.model_request_parameters,
                 serialized_run_context,
