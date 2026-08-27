@@ -2054,6 +2054,25 @@ def _map_grounding_source(chunk: GroundingChunk) -> CitationSource | None:
             title=web.title,
             provider_details={'domain': web.domain} if web.domain else None,
         )
+    if (maps := chunk.maps) and maps.uri:
+        details = maps.model_dump(mode='json', exclude_none=True, by_alias=False)
+        for key in ('uri', 'title', 'text'):
+            details.pop(key, None)
+        return WebCitationSource(
+            url=maps.uri,
+            title=maps.title,
+            excerpts=[maps.text] if maps.text else [],
+            provider_details=details or None,
+        )
+    if (image := chunk.image) and image.source_uri:
+        details = image.model_dump(mode='json', exclude_none=True, by_alias=False)
+        for key in ('source_uri', 'title'):
+            details.pop(key, None)
+        return WebCitationSource(
+            url=image.source_uri,
+            title=image.title,
+            provider_details=details or None,
+        )
     if context := chunk.retrieved_context:
         details = context.model_dump(mode='json', exclude_none=True, by_alias=False)
         excerpts = list(

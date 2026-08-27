@@ -111,6 +111,8 @@ with try_import() as imports_successful:
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
         GroundingChunk,
+        GroundingChunkImage,
+        GroundingChunkMaps,
         GroundingChunkRetrievedContext,
         GroundingChunkWeb,
         GroundingMetadata,
@@ -5503,6 +5505,41 @@ def test_google_retrieved_context_excerpt(context_kind: str, expected_excerpt: s
     )
 
 
+def test_google_maps_grounding_source() -> None:
+    assert _map_grounding_source(
+        GroundingChunk(
+            maps=GroundingChunkMaps(
+                uri='https://maps.google.com/?cid=123',
+                title='Example Place',
+                text='A place description.',
+                place_id='places/example',
+            )
+        )
+    ) == WebCitationSource(
+        url='https://maps.google.com/?cid=123',
+        title='Example Place',
+        excerpts=['A place description.'],
+        provider_details={'place_id': 'places/example'},
+    )
+
+
+def test_google_image_grounding_source() -> None:
+    assert _map_grounding_source(
+        GroundingChunk(
+            image=GroundingChunkImage(
+                source_uri='https://example.com/page',
+                image_uri='https://example.com/image.jpg',
+                title='Example image',
+                domain='example.com',
+            )
+        )
+    ) == WebCitationSource(
+        url='https://example.com/page',
+        title='Example image',
+        provider_details={'image_uri': 'https://example.com/image.jpg', 'domain': 'example.com'},
+    )
+
+
 def test_google_retrieved_context_preserves_distinct_excerpts():
     context = GroundingChunkRetrievedContext(
         text='retrieved context excerpt', rag_chunk=RagChunk(text='RAG chunk excerpt')
@@ -5591,18 +5628,15 @@ def test_google_grounding_skips_unlocatable_segment(case: str) -> None:
 
 
 @pytest.mark.parametrize(
-    'case',
+    'chunk',
     [
-        pytest.param('unsupported', id='unsupported'),
-        pytest.param('empty-retrieved-context', id='empty-retrieved-context'),
+        pytest.param(GroundingChunk(), id='unsupported'),
+        pytest.param(GroundingChunk(retrieved_context=GroundingChunkRetrievedContext()), id='empty-retrieved-context'),
+        pytest.param(GroundingChunk(maps=GroundingChunkMaps()), id='maps-without-uri'),
+        pytest.param(GroundingChunk(image=GroundingChunkImage()), id='image-without-source-uri'),
     ],
 )
-def test_google_grounding_skips_unrenderable_source(case: str) -> None:
-    chunk = (
-        GroundingChunk()
-        if case == 'unsupported'
-        else GroundingChunk(retrieved_context=GroundingChunkRetrievedContext())
-    )
+def test_google_grounding_skips_unrenderable_source(chunk: GroundingChunk) -> None:
     metadata = GroundingMetadata(
         grounding_chunks=[chunk],
         grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=0, end_index=1))],
