@@ -578,19 +578,17 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
         model_settings.pop(setting, None)
 
 
-def _session_affinity_ids(messages: list[ModelMessage]) -> tuple[str, str] | None:
-    """Conversation-scoped `(session_id, thread_id)` mirroring the official Codex client's affinity.
+def _session_affinity_id(messages: list[ModelMessage]) -> str | None:
+    """The conversation-scoped session identity mirroring the official Codex client's affinity.
 
-    The session is the conversation (stable across runs sharing message history) and the thread is
-    the run (stable within a run, distinct across runs), matching how Codex threads share a session.
-    Returns `None` when the messages carry no conversation identity (e.g. direct `Model.request()`
-    usage outside an agent run), in which case the request is left unchanged.
+    The official client's root thread keeps `session-id`, `thread-id`, and `x-client-request-id`
+    equal and stable across turns; runs continuing shared message history are turns on that root
+    thread, so all three derive from the conversation. Callers modeling child threads (which
+    inherit the session but get a fresh thread id) can override individual values via
+    `extra_headers`. Returns `None` when the messages carry no conversation identity (e.g. direct
+    `Model.request()` usage outside an agent run), in which case the request is left unchanged.
     """
-    session_id = next((m.conversation_id for m in reversed(messages) if m.conversation_id), None)
-    if session_id is None:
-        return None
-    thread_id = next((m.run_id for m in reversed(messages) if m.run_id), None)
-    return session_id, thread_id or session_id
+    return next((m.conversation_id for m in reversed(messages) if m.conversation_id), None)
 
 
 @dataclass
@@ -2789,12 +2787,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_headers, timeout = self._build_request_options(model_settings)
 
         prompt_cache_key: str | Omit = model_settings.get('openai_prompt_cache_key', OMIT)
-        if profile.get('openai_responses_session_affinity', False) and (affinity := _session_affinity_ids(messages)):
-            session_id, thread_id = affinity
+        if profile.get('openai_responses_session_affinity', False) and (session_id := _session_affinity_id(messages)):
             # Explicit user-supplied headers and cache key win over the derived affinity.
             extra_headers.setdefault('session-id', session_id)
-            extra_headers.setdefault('thread-id', thread_id)
-            extra_headers.setdefault('x-client-request-id', thread_id)
+            extra_headers.setdefault('thread-id', session_id)
+            extra_headers.setdefault('x-client-request-id', session_id)
             if isinstance(prompt_cache_key, Omit):
                 prompt_cache_key = session_id
 

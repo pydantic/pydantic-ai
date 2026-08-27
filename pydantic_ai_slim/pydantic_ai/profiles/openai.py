@@ -387,10 +387,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether to emit conversation-scoped session-affinity metadata on Responses requests. Default: `False`.
 
     When `True` and the request messages carry a `conversation_id`, the canonical `session-id`,
-    `thread-id`, and `x-client-request-id` headers are emitted (the session is the conversation,
-    the thread is the run), and the body `prompt_cache_key` defaults to the session ID unless
-    `openai_prompt_cache_key` is set explicitly. Set for the Codex backend, whose official client
-    preserves these identifiers across turns for prompt-cache affinity.
+    `thread-id`, and `x-client-request-id` headers all carry that stable conversation identity
+    (matching the official client's root thread, which keeps the three equal across turns), and
+    the body `prompt_cache_key` defaults to it unless `openai_prompt_cache_key` is set explicitly.
+    Explicit `extra_headers` win, so callers modeling child threads can override `thread-id`. Set
+    for the Codex backend, whose official client preserves these identifiers across turns for
+    prompt-cache affinity.
     """
 
 

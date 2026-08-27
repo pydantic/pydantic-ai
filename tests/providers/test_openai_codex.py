@@ -1025,23 +1025,22 @@ def _turn(conversation_id: str | None, run_id: str | None) -> ModelRequest:
 
 
 async def test_session_affinity_stable_within_conversation(allow_model_requests: None):
-    """Runs sharing a conversation share `session-id` and `prompt_cache_key`; each run is its own thread.
+    """Runs sharing a conversation are turns on one root thread: all three headers stay stable.
 
-    Mirrors the official client's semantics: threads (root and subagents) differ in `thread-id` but
-    share the session id and cache key.
+    Mirrors the official client's root thread, which keeps `session-id`, `thread-id`, and
+    `x-client-request-id` equal across turns (child threads, which get fresh thread ids, are
+    modeled via explicit `extra_headers` instead).
     """
     model, mock = _codex_model_with_streams(2)
     await model.request([_turn('conv-1', 'run-1')], None, ModelRequestParameters())
     await model.request([_turn('conv-1', 'run-1'), _turn('conv-1', 'run-2')], None, ModelRequestParameters())
 
     first, second = mock.response_kwargs
-    assert first['extra_headers']['session-id'] == 'conv-1'
-    assert first['extra_headers']['thread-id'] == 'run-1'
-    assert first['extra_headers']['x-client-request-id'] == 'run-1'
-    assert first['prompt_cache_key'] == 'conv-1'
-    assert second['extra_headers']['session-id'] == 'conv-1'
-    assert second['extra_headers']['thread-id'] == 'run-2'
-    assert second['prompt_cache_key'] == 'conv-1'
+    for kwargs in (first, second):
+        assert kwargs['extra_headers']['session-id'] == 'conv-1'
+        assert kwargs['extra_headers']['thread-id'] == 'conv-1'
+        assert kwargs['extra_headers']['x-client-request-id'] == 'conv-1'
+        assert kwargs['prompt_cache_key'] == 'conv-1'
 
 
 async def test_session_affinity_isolated_between_conversations(allow_model_requests: None):
@@ -1064,18 +1063,9 @@ async def test_session_affinity_explicit_overrides_win(allow_model_requests: Non
 
     kwargs = mock.response_kwargs[0]
     assert kwargs['extra_headers']['session-id'] == 'my-session'  # the explicit header wins
-    assert kwargs['extra_headers']['thread-id'] == 'run-1'  # unspecified headers are still derived
-    assert kwargs['prompt_cache_key'] == 'my-key'  # the explicit cache key wins
-
-
-async def test_session_affinity_thread_falls_back_to_session(allow_model_requests: None):
-    # A request stamped with a conversation but no run (e.g. hand-built history) is one thread.
-    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
-    await model.request([_turn('conv-1', None)], None, ModelRequestParameters())
-
-    kwargs = mock.response_kwargs[0]
-    assert kwargs['extra_headers']['thread-id'] == 'conv-1'
-    assert kwargs['extra_headers']['x-client-request-id'] == 'conv-1'
+    assert kwargs['extra_headers']['thread-id'] == 'conv-1'  # unspecified headers are still derived
+    assert kwargs['prompt_cache_key'] == 'my-key'  # the explicit cache key only affects the body
+    assert 'my-key' not in kwargs['extra_headers'].values()  # and is never copied into headers
 
 
 async def test_no_affinity_without_conversation_identity(allow_model_requests: None):

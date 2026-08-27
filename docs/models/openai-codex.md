@@ -149,9 +149,9 @@ print(agent.run_sync('hello from my own login flow').output)
 
 ## Session affinity and prompt caching
 
-The official Codex client keys prompt-cache affinity off a stable session ID: it sends `session-id` and `thread-id` headers on every request and defaults the body `prompt_cache_key` to the session ID. Pydantic AI mirrors this per conversation: when messages carry a [`conversation_id`](../message-history.md) (every agent run does), the conversation is the session and the run is the thread, and `prompt_cache_key` defaults to the conversation ID. Runs that share message history therefore share cache affinity automatically, and separate conversations stay isolated.
+The official Codex client keys prompt-cache affinity off a stable session ID: its root thread keeps `session-id`, `thread-id`, and `x-client-request-id` equal and stable across turns, and defaults the body `prompt_cache_key` to the session ID. Pydantic AI mirrors this per conversation: when messages carry a [`conversation_id`](../message-history.md) (every agent run does), all three headers and the default `prompt_cache_key` carry that conversation identity, since runs continuing shared message history are turns on the same root thread. Runs that share message history therefore share cache affinity automatically, and separate conversations stay isolated.
 
-An explicit `openai_prompt_cache_key` model setting, or explicitly supplied `extra_headers`, always win over the derived values.
+An explicit `openai_prompt_cache_key` model setting, or explicitly supplied `extra_headers`, always win over the derived values (the cache key only affects the request body; it is never copied into headers). Callers modeling Codex-style child threads, which inherit the session but get a fresh thread ID, can override `thread-id` through `extra_headers`.
 
 ## Limitations
 
