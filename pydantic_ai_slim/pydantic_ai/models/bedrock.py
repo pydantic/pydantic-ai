@@ -496,12 +496,12 @@ def _map_bedrock_citation_source_for_replay(
     if source.excerpts:
         citation['sourceContent'] = [{'text': excerpt} for excerpt in source.excerpts]
 
-    if isinstance(source, DocumentCitationSource) and source.document_id is not None:
+    if source.document_id is not None:
         citation['source'] = source.document_id
     source_name = (source.provider_details or {}).get('source')
     if isinstance(source_name, str):
         citation['source'] = source_name
-    return citation or None
+    return citation
 
 
 def _map_bedrock_citation_blocks_for_replay(
@@ -554,14 +554,11 @@ def _map_bedrock_anchored_citation_blocks_for_replay(
             for source in grouped_sources
             if (mapped_source := _map_bedrock_citation_source_for_replay(source)) is not None
         ]
-        if mapped_sources:
-            citations_content: CitationsContentBlockOutputTypeDef = {
-                'content': [{'text': text[anchor.start : anchor.end]}],
-                'citations': mapped_sources,
-            }
-            blocks.append({'citationsContent': citations_content})
-        else:
-            blocks.append({'text': text[anchor.start : anchor.end]})
+        citations_content: CitationsContentBlockOutputTypeDef = {
+            'content': [{'text': text[anchor.start : anchor.end]}],
+            'citations': mapped_sources,
+        }
+        blocks.append({'citationsContent': citations_content})
         position = anchor.end
 
     if position < len(text):
@@ -579,7 +576,8 @@ def _bedrock_citation_documents(messages: Sequence[MessageUnionTypeDef]) -> list
             return
         source = document.get('source')
         text: str | None = None
-        if _utils.is_str_dict(source):
+        if _utils.is_str_dict(source):  # pragma: no branch
+            # Bedrock document sources are always mappings; the value may be text, bytes, or an S3 location.
             if isinstance(source_text := source.get('text'), str):
                 text = source_text
             elif document.get('format') == 'txt' and isinstance(source_bytes := source.get('bytes'), bytes):
@@ -596,7 +594,8 @@ def _bedrock_citation_documents(messages: Sequence[MessageUnionTypeDef]) -> list
             tool_result = block.get('toolResult')
             if isinstance(tool_result, Mapping):
                 for nested_block in tool_result.get('content', []):
-                    if isinstance(nested_block, Mapping):
+                    if isinstance(nested_block, Mapping):  # pragma: no branch
+                        # The SDK types each tool-result content item as a mapping.
                         add_document(nested_block)
     return result
 

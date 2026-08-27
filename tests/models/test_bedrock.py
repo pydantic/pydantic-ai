@@ -1767,7 +1767,8 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
                                     anchor=ContentCitationAnchor(start=0, end=len(text)),
                                 )
                             ],
-                        )
+                        ),
+                        TextPart('Uncited note.', provider_name='bedrock'),
                     ],
                 ),
                 ModelRequest(parts=[UserPromptPart('Continue.')]),
@@ -1793,7 +1794,8 @@ async def test_bedrock_citations_replay_after_message_json_round_trip(
                             }
                         ],
                     }
-                }
+                },
+                {'text': 'Uncited note.'},
             ],
         }
     )
@@ -1821,7 +1823,11 @@ async def test_bedrock_citation_replay_drops_sources_without_valid_location(
     mocker: MockerFixture,
     provider_details: dict[str, Any],
 ) -> None:
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        settings=ModelSettings(include_citations=True),
+    )
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
@@ -1880,10 +1886,13 @@ def _foreign_citation_history(
 
 
 def _bedrock_citation_replay_model(
-    bedrock_provider: BedrockProvider, mocker: MockerFixture
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    *,
+    model_name: BedrockModelName = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
 ) -> tuple[BedrockConverseModel, Mock]:
     model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        model_name,
         provider=bedrock_provider,
         settings=ModelSettings(include_citations=True),
     )
@@ -1903,8 +1912,8 @@ def _bedrock_citation_replay_model(
 @pytest.mark.parametrize(
     'sibling_anchor',
     [
-        pytest.param(MarkerCitationAnchor(start=9, end=12), id='marker'),
-        pytest.param(ContentCitationAnchor(start=4, end=12), id='overlapping-content'),
+        pytest.param(MarkerCitationAnchor(start=16, end=19), id='marker'),
+        pytest.param(ContentCitationAnchor(start=11, end=19), id='overlapping-content'),
     ],
 )
 async def test_bedrock_does_not_broaden_attribution_for_unsupported_sibling_citation(
@@ -1915,24 +1924,24 @@ async def test_bedrock_does_not_broaden_attribution_for_unsupported_sibling_cita
 ) -> None:
     """An incompatible sibling is omitted without widening an exact citation to the whole `TextPart`."""
     model, mock_converse = _bedrock_citation_replay_model(bedrock_provider, mocker)
-    text = 'Returns. [1]'
+    text = 'Prefix Returns. [1]'
     history = _foreign_citation_history(
         text,
         [
             Citation(
                 sources=[
                     DocumentCitationSource(
-                        title='Returns policy',
+                        document_id='document-123',
                         provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8}}},
                     )
                 ],
-                anchor=ContentCitationAnchor(start=0, end=8),
+                anchor=ContentCitationAnchor(start=7, end=15),
             ),
             Citation(
                 sources=[
                     DocumentCitationSource(
                         title='Rendered marker',
-                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 9, 'end': 12}}},
+                        provider_details={'location': {'documentChar': {'documentIndex': 0, 'start': 16, 'end': 19}}},
                     )
                 ],
                 anchor=sibling_anchor,
@@ -1946,12 +1955,13 @@ async def test_bedrock_does_not_broaden_attribution_for_unsupported_sibling_cita
     assert mock_converse.call_args.kwargs['messages'][1] == {
         'role': 'assistant',
         'content': [
+            {'text': 'Prefix '},
             {
                 'citationsContent': {
                     'content': [{'text': 'Returns.'}],
                     'citations': [
                         {
-                            'title': 'Returns policy',
+                            'source': 'document-123',
                             'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 8}},
                         }
                     ],
@@ -2074,6 +2084,112 @@ async def test_bedrock_does_not_replay_unbound_foreign_document_citation(
     assert mock_converse.call_args.kwargs['messages'][1] == {
         'role': 'assistant',
         'content': [{'text': 'Document answer.'}],
+    }
+
+
+async def test_bedrock_does_not_replay_anchored_or_mismatched_anthropic_document_citation(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Anthropic document citations need an unanchored, exact match against the destination document."""
+    model, mock_converse = _bedrock_citation_replay_model(bedrock_provider, mocker)
+    document = 'The return window is thirty days from purchase.'
+    source = DocumentCitationSource(
+        excerpts=['The return window is sixty days from purchase.'],
+        provider_details={
+            'type': 'char_location',
+            'document_index': 0,
+            'start_char_index': 0,
+            'end_char_index': len(document),
+        },
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    ['What is the return window?', BinaryContent(data=document.encode(), media_type='text/plain')]
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Returns are accepted for thirty days.',
+                    citations=[
+                        Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=7)),
+                        Citation(sources=[source]),
+                    ],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert mock_converse.call_args.kwargs['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'text': 'Returns are accepted for thirty days.'}],
+    }
+
+
+async def test_bedrock_does_not_bind_anthropic_citation_to_unverifiable_tool_result_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Invalid UTF-8 and non-text tool-result documents cannot prove an Anthropic character range."""
+    model, mock_converse = _bedrock_citation_replay_model(
+        bedrock_provider,
+        mocker,
+        model_name='us.meta.llama4-maverick-17b-instruct-v1:0',
+    )
+    document = 'The return window is thirty days.'
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Load the policy.')]),
+        ModelResponse(parts=[ToolCallPart('load_policy', {}, tool_call_id='call-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'load_policy',
+                    [
+                        'Loaded:',
+                        BinaryContent(data=b'\xff', media_type='text/plain'),
+                        BinaryContent(data=b'%PDF', media_type='application/pdf'),
+                    ],
+                    tool_call_id='call-1',
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Returns are accepted for thirty days.',
+                    citations=[
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    excerpts=[document],
+                                    provider_details={
+                                        'type': 'char_location',
+                                        'document_index': 0,
+                                        'start_char_index': 0,
+                                        'end_char_index': len(document),
+                                    },
+                                )
+                            ]
+                        )
+                    ],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert mock_converse.call_args.kwargs['messages'][3] == {
+        'role': 'assistant',
+        'content': [{'text': 'Returns are accepted for thirty days.'}],
     }
 
 
