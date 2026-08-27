@@ -516,7 +516,7 @@ async def test_bedrock_mantle_nonstd_finish_reason_stream() -> None:
     # Normalisation maps to the standard pydantic-ai FinishReason str-Literal.
     mapped: FinishReason = BedrockMantleStreamedResponse._map_finish_reason(  # type: ignore[reportPrivateUsage, reportArgumentType, assignment]
         resp,
-        terminal_choice.finish_reason,  # type: ignore[reportArgumentType]
+        terminal_choice.finish_reason,
     )
     assert mapped is not None
     assert mapped == 'content_filter'
@@ -605,7 +605,7 @@ async def test_bedrock_mantle_malformed_chunk_fails_loudly_in_stream() -> None:
     }
 
     async def chunk_source() -> AsyncIterator[chat.ChatCompletionChunk]:
-        yield malformed  # type: ignore[misc]
+        yield malformed
 
     resp = object.__new__(BedrockMantleStreamedResponse)
     object.__setattr__(resp, '_response', chunk_source())
