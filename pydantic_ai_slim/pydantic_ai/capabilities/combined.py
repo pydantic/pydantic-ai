@@ -10,6 +10,7 @@ from pydantic_ai._instructions import (
     AgentInstruction,
     AgentInstructions,
     SourcedInstruction,
+    normalize_instructions,
     validate_instruction_id_segment,
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
@@ -164,8 +165,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             capability._validate_runtime_capabilities(ctx, capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
+        # The children's contributions, not `_collect_instructions`: that asks whether a subclass
+        # took this method over, and answering it by calling this method is a loop.
         instructions: list[AgentInstruction[AgentDepsT]] = [
-            sourced.instruction for sourced in self._collect_instructions()
+            sourced.instruction for sourced in self._collect_child_instructions()
         ]
         return instructions or None
 
@@ -195,20 +198,24 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return sorted(self._instruction_sources, key=position)
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        relayed = self._collect_child_instructions()
+        if type(self).get_instructions is CombinedCapability.get_instructions:
+            return relayed
+        # `get_instructions` is a public extension point, so a subclass that overrides it decides what
+        # this container says. What it hands back is usually its children's own blocks, and those stay
+        # attributed to whoever authored them; anything else it wrote itself.
+        return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
+
+    def _collect_child_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Collect what the children contribute, without asking whether this container overrode them.
+
+        Reached without the override check so a subclass delegating to `super().get_instructions()`
+        is answered by its children rather than routed back into its own override.
+        """
         instructions: list[SourcedInstruction[AgentDepsT]] = []
         for capability in self._ordered_instruction_sources():
-            if capability.defer_loading is True:
-                continue
-            if (
-                isinstance(capability, CombinedCapability)
-                and type(capability).get_instructions is not CombinedCapability.get_instructions
-            ):
-                # `get_instructions()` is a public extension point, so a subclass override must remain
-                # authoritative even though ordinary combined capabilities preserve their children's ids.
-                instructions.extend(capability._collect_own_instructions())
-            else:
+            if capability.defer_loading is not True:
                 instructions.extend(capability._collect_instructions())
-
         return instructions
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:

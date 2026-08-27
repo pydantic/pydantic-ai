@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC
+from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
@@ -10,6 +11,7 @@ from typing_extensions import deprecated
 
 from pydantic_ai import _utils
 from pydantic_ai._instructions import (
+    AgentInstruction,
     AgentInstructions,
     SourcedInstruction,
     capability_instruction_id,
@@ -360,16 +362,43 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     def _collect_own_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         """Collect this capability's public contribution without container recursion."""
-        instruction_id = capability_instruction_id(self.id) if self.id is not None else None
         return [
-            SourcedInstruction(
-                instruction,
-                id=resolve_declared_id(
-                    instruction_id, instruction.id if isinstance(instruction, InstructionPart) else None
-                ),
-                dynamic=not isinstance(instruction, (str, InstructionPart)),
-            )
-            for instruction in normalize_instructions(self.get_instructions())
+            self._attribute_instruction(instruction) for instruction in normalize_instructions(self.get_instructions())
+        ]
+
+    def _attribute_instruction(self, instruction: AgentInstruction[AgentDepsT]) -> SourcedInstruction[AgentDepsT]:
+        """Attribute one instruction recipe to this capability."""
+        instruction_id = capability_instruction_id(self.id) if self.id is not None else None
+        return SourcedInstruction(
+            instruction,
+            id=resolve_declared_id(
+                instruction_id, instruction.id if isinstance(instruction, InstructionPart) else None
+            ),
+            dynamic=not isinstance(instruction, (str, InstructionPart)),
+        )
+
+    def _attribute_container_instructions(
+        self,
+        authored: Sequence[AgentInstruction[AgentDepsT]],
+        relayed: Sequence[SourcedInstruction[AgentDepsT]],
+    ) -> list[SourcedInstruction[AgentDepsT]]:
+        """Attribute what an overriding container returned, keeping what it merely passed along.
+
+        Public container overrides return bare recipes, so identity is the only information that
+        connects a relayed recipe to the child that authored it. An object appearing under more
+        than one child is deliberately not connected: equal interned strings can be the same
+        object, and leaving their keys unidentified is safer than assigning either child at random.
+        """
+        occurrences = Counter(id(sourced.instruction) for sourced in relayed)
+        relayed_by_identity = {
+            id(sourced.instruction): sourced for sourced in relayed if occurrences[id(sourced.instruction)] == 1
+        }
+        # `relayed` keeps every recipe alive for the whole call, so these identities stay meaningful.
+        return [
+            self._attribute_instruction(instruction)
+            if (sourced := relayed_by_identity.get(id(instruction))) is None
+            else sourced
+            for instruction in authored
         ]
 
     def get_description(self) -> CapabilityDescription[AgentDepsT] | None:

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -136,8 +136,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         if type(self).get_instructions is not WrapperCapability.get_instructions:
-            # The subclass provides its own instructions, so they're attributed to the wrapper.
-            return super()._collect_instructions()
+            relayed = self.wrapped._collect_instructions()
+            return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
         # Pass through the wrapped capability's own attribution: a wrapper adopts the id of the
         # capability it wraps, but a wrapper over a container has none to adopt and would
         # otherwise flatten every leaf's contribution into one unaddressable block.

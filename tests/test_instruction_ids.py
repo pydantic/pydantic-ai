@@ -17,6 +17,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ModelRequestContext
+from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
@@ -680,6 +681,106 @@ async def test_wrapper_capability_passes_through_leaf_ids():
     assert await run_and_capture(agent) == [
         InstructionPart(content='Memory instructions.', id='capability:memory'),
         InstructionPart(content='Wrapper instructions.', id='capability:search'),
+    ]
+
+
+async def test_an_overriding_wrapper_relays_a_combined_capabilitys_instruction_keys():
+    """A container wrapper must preserve the authorship of every child it passes through."""
+
+    class Relaying(WrapperCapability[Any]):
+        def get_instructions(self):
+            return super().get_instructions()
+
+    combined = CombinedCapability[Any](
+        [
+            Capability[Any](instructions='First.', id='first'),
+            Capability[Any](instructions='Second.', id='second'),
+        ]
+    )
+
+    assert await run_and_capture(Agent(capabilities=[Relaying(combined)])) == [
+        InstructionPart(content='First.', id='capability:first'),
+        InstructionPart(content='Second.', id='capability:second'),
+    ]
+
+
+async def test_an_overriding_combined_capability_relays_its_childrens_instruction_keys():
+    """Delegating to `super()` must not turn a combined capability into the author of its children."""
+
+    class Relaying(CombinedCapability[Any]):
+        def get_instructions(self):
+            return super().get_instructions()
+
+    combined = Relaying(
+        [
+            Capability[Any](instructions='First.', id='first'),
+            Capability[Any](instructions='Second.', id='second'),
+        ]
+    )
+
+    assert await run_and_capture(Agent(capabilities=[combined])) == [
+        InstructionPart(content='First.', id='capability:first'),
+        InstructionPart(content='Second.', id='capability:second'),
+    ]
+
+
+async def test_an_overriding_wrapper_relays_static_and_callable_instruction_keys():
+    """Recipe identity must retain declared callable segments that bare public recipes cannot carry."""
+
+    class Relaying(WrapperCapability[Any]):
+        def get_instructions(self):
+            return super().get_instructions()
+
+    dynamic = Capability[Any](id='dyn')
+
+    @dynamic.instructions(id='now')
+    def now() -> str:
+        return 'Time is 10:00.'
+
+    combined = CombinedCapability[Any]([dynamic, Capability[Any](instructions='Lit.', id='lit')])
+
+    assert await run_and_capture(Agent(capabilities=[Relaying(combined)])) == [
+        InstructionPart(content='Lit.', id='capability:lit'),
+        InstructionPart(content='Time is 10:00.', id='capability:dyn:now', dynamic=True),
+    ]
+
+
+async def test_an_overriding_wrapper_attributes_only_the_instructions_it_adds():
+    """Extending a container must preserve child keys without assigning a child to wrapper-owned text."""
+
+    class Extending(WrapperCapability[Any]):
+        def get_instructions(self) -> AgentInstructions[Any]:
+            return [*normalize_instructions(super().get_instructions()), 'Wrapper extra.']
+
+    combined = CombinedCapability[Any](
+        [
+            Capability[Any](instructions='First.', id='first'),
+            Capability[Any](instructions='Second.', id='second'),
+        ]
+    )
+
+    assert await run_and_capture(Agent(capabilities=[Extending(combined)])) == [
+        InstructionPart(content='First.', id='capability:first'),
+        InstructionPart(content='Second.', id='capability:second'),
+        InstructionPart(content='Wrapper extra.'),
+    ]
+
+
+async def test_an_overriding_container_does_not_guess_between_the_same_recipe_object():
+    """A shared recipe has multiple possible authors, so assigning either key would make it lie."""
+
+    class Relaying(WrapperCapability[Any]):
+        def get_instructions(self):
+            return super().get_instructions()
+
+    shared = 'Same text.'
+    combined = CombinedCapability[Any](
+        [Capability[Any](instructions=shared, id='first'), Capability[Any](instructions=shared, id='second')]
+    )
+
+    assert await run_and_capture(Agent(capabilities=[Relaying(combined)])) == [
+        InstructionPart(content='Same text.'),
+        InstructionPart(content='Same text.'),
     ]
 
 
