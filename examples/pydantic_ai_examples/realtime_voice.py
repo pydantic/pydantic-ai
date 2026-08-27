@@ -174,13 +174,7 @@ async def handle_event(
 
 
 async def stream_mic(session: RealtimeSession, mic: Any) -> None:
-    """Read microphone blocks in a worker thread and forward them to the session.
-
-    The blocking `read` waits for PortAudio to capture one block; if the network falls behind,
-    PortAudio's own input buffer absorbs the slack and drops audio on overflow, so latency stays
-    bounded without any queue of our own. Cancellation waits for the in-flight read (at most one
-    100 ms block) so the stream is never closed under an active native read.
-    """
+    """Read microphone blocks in a worker thread and forward them to the session."""
     read = partial(mic.read, BLOCK_SIZE)
     while True:
         data, _overflowed = await anyio.to_thread.run_sync(read)
