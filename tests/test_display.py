@@ -7,12 +7,13 @@ from io import StringIO
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 
 import pydantic_ai._display as _display
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
+
+from ._inline_snapshot import snapshot
 
 _find_spec = importlib.util.find_spec
 
@@ -70,7 +71,19 @@ def display_banner(**overrides: Any) -> None:
     _display.display_agent_banner(**kwargs)
 
 
-def test_render_banner_with_logfire():
+def find_nothing(name: str) -> None:
+    return None
+
+
+def find_anything(name: str) -> object:
+    return object()
+
+
+def test_render_banner_with_logfire(monkeypatch: pytest.MonkeyPatch):
+    # Pin the branch via `sys.modules` rather than the install, so the slim jobs — where `logfire`
+    # genuinely isn't importable — assert the same banner as the full ones.
+    monkeypatch.setitem(sys.modules, 'logfire', None)
+
     assert render() == snapshot("""\
                       HEADING
          / \\          agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
@@ -81,14 +94,6 @@ def test_render_banner_with_logfire():
   ·.______|______.·     docs: https://pydantic.dev/docs/ai/logfire/
                         hide this banner: PYDANTIC_AI_NO_BANNER=1\
 """)
-
-
-def find_nothing(name: str) -> None:
-    return None
-
-
-def find_anything(name: str) -> object:
-    return object()
 
 
 def test_render_banner_without_logfire(monkeypatch: pytest.MonkeyPatch):
