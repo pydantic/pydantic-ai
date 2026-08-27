@@ -950,7 +950,9 @@ def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
     monkeypatch.setenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', MENTIONS)
     monkeypatch.setenv('ROUTING_ISSUE_NUMBER', '7')
+    monkeypatch.setenv('ROUTING_PULL_REQUEST_NUMBER', '')
     monkeypatch.setenv('ROUTING_PARTICIPANT_LOGIN', '')
+    monkeypatch.setenv('ROUTING_LEGACY_RECOVERY', '')
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
 
     monkeypatch.setattr(sys, 'argv', ['semantic_owner_router.py', 'select'])
