@@ -1432,6 +1432,63 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
+        # Sandbox preparation is a whole-run boundary and must be entered before model resolution.
+        # In particular, durable wrappers use it to reject live handles before provider selection
+        # can perform I/O. Static instrumentation can join the same boundary at this point.
+        instrumentation_raw_model = (
+            explicit_raw_model
+            if explicit_raw_model is not None
+            else model_contribution
+            if _is_model(model_contribution)
+            else self.model
+        )
+        if isinstance(instrumentation_raw_model, InstrumentedModel):
+            instrumentation_settings: InstrumentationSettings | None = (
+                instrumentation_raw_model.instrumentation_settings
+            )
+        else:
+            instrumentation_settings = self._resolve_instrumentation_settings()
+        if instrumentation_settings is not None:
+            tracer = instrumentation_settings.tracer
+            instrumentation_cap: InstrumentationCap | None = InstrumentationCap(settings=instrumentation_settings)
+        else:
+            tracer = NoOpTracer()
+            instrumentation_cap = None
+        preparation_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        if instrumentation_cap is not None and not has_capability_type(preparation_layers, InstrumentationCap):
+            preparation_layers.insert(0, instrumentation_cap)
+        preparation_capability = (
+            CombinedCapability(preparation_layers) if len(preparation_layers) > 1 else preparation_layers[0]
+        )
+
+        state = _agent_graph.GraphAgentState(
+            message_history=list(message_history) if message_history else [],
+            usage=usage,
+            output_retries_used=0,
+            run_step=0,
+            run_id=_agent_graph.resolve_run_id(run_id, message_history),
+            conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
+        )
+        run_state_key = object()
+        if isinstance(sandbox, SandboxRef):
+            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, lambda ref: _resolve_sandbox_ref(ref))
+        else:
+            sandbox_facade = Sandbox.wrap(sandbox) if sandbox is not None else None
+        preparation_ctx = RunPreparationContext[AgentDepsT](
+            agent=self,
+            deps=deps,
+            model=explicit_raw_model if isinstance(explicit_raw_model, models.Model) else None,
+            sandbox=sandbox_facade,
+            messages=list(state.message_history),
+            usage=usage,
+            run_id=state.run_id,
+            conversation_id=state.conversation_id,
+            _run_state_key=run_state_key,
+        )
+        preparation_stack = AsyncExitStack()
+        await preparation_stack.__aenter__()
+        await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
+
         has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
 
         # The string the run's model was selected from, if any — carried through to
@@ -1506,17 +1563,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
-        # Build the initial state
-        state = _agent_graph.GraphAgentState(
-            message_history=list(message_history) if message_history else [],
-            usage=usage,
-            output_retries_used=0,
-            run_step=0,
-            run_id=_agent_graph.resolve_run_id(run_id, message_history),
-            conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
-        )
-        run_state_key = object()
-
         # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
         model_settings_override = self._override_model_settings.get()
         agent_model_settings = (
@@ -1553,24 +1599,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # run uses the plain model — the `Instrumentation` capability injected below
         # provides the spans.
         if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings: InstrumentationSettings | None = model_used.instrumentation_settings
+            if instrumentation_settings is None:
+                instrumentation_settings = model_used.instrumentation_settings
+                tracer = instrumentation_settings.tracer
+                instrumentation_cap = InstrumentationCap(settings=instrumentation_settings)
             model_used = model_used.wrapped
-        else:
-            instrumentation_settings = self._resolve_instrumentation_settings()
-
-        if instrumentation_settings is not None:
-            tracer = instrumentation_settings.tracer
-            instrumentation_cap: InstrumentationCap | None = InstrumentationCap(settings=instrumentation_settings)
-        else:
-            tracer = NoOpTracer()
-            instrumentation_cap = None
-
-        preparation_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
-        if instrumentation_cap is not None and not has_capability_type(preparation_layers, InstrumentationCap):
-            preparation_layers.insert(0, instrumentation_cap)
-        preparation_capability = (
-            CombinedCapability(preparation_layers) if len(preparation_layers) > 1 else preparation_layers[0]
-        )
 
         initial_ctx: RunContext[AgentDepsT] | None = None
 
@@ -1592,25 +1625,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return backend
 
         if isinstance(sandbox, SandboxRef):
-            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, _resolve_sandbox_ref)
-        else:
-            sandbox_facade = Sandbox.wrap(sandbox) if sandbox is not None else None
+            sandbox_facade = Sandbox.from_ref(sandbox, _resolve_sandbox_ref)
         explicit_sandbox = sandbox_facade is not None
-
-        preparation_ctx = RunPreparationContext[AgentDepsT](
-            agent=self,
-            deps=deps,
-            model=explicit_raw_model if isinstance(explicit_raw_model, models.Model) else None,
-            sandbox=sandbox_facade,
-            messages=list(state.message_history),
-            usage=usage,
-            run_id=state.run_id,
-            conversation_id=state.conversation_id,
-            _run_state_key=run_state_key,
-        )
-        preparation_stack = AsyncExitStack()
-        await preparation_stack.__aenter__()
-        await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
 
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`

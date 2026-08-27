@@ -95,6 +95,8 @@ class CreateOnlySandboxCapability(AbstractCapability[Any]):
     order in which creation, connection, and destruction happened.
     """
 
+    id = 'test-sandbox'
+
     def __init__(self) -> None:
         self.events: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
@@ -126,6 +128,18 @@ class LifecycleSandboxCapability(CreateOnlySandboxCapability):
 
     async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         self.events.append(f'teardown:{ref.sandbox_id}')
+
+
+class PerRunLifecycleSandboxCapability(LifecycleSandboxCapability):
+    """Rebuild the lifecycle supplier from `RunContext` while sharing test observations."""
+
+    def __init__(self, events: list[str] | None = None) -> None:
+        super().__init__()
+        if events is not None:
+            self.events = events
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return PerRunLifecycleSandboxCapability(self.events)
 
 
 class DecliningSandboxCapability(AbstractCapability[Any]):

@@ -49,7 +49,7 @@ from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.durable_exec._sandbox import contributes_sandbox, run_sandbox_supplier
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -1626,8 +1626,7 @@ def test_dbos_durability_base_sandbox_routing_is_not_a_user_supplier(dbos: DBOS)
     """The base `create_sandbox` override only guards durable runs, so it must not read as a
     supplier itself; a subclass override is a genuine supplier."""
     assert contributes_sandbox(DBOSDurability()) is False
-    durability = SandboxSupplyingDBOSDurability()
-    assert run_sandbox_supplier(durability) is durability
+    assert contributes_sandbox(SandboxSupplyingDBOSDurability()) is True
 
 
 async def test_dbos_durability_reconnects_sandbox_ref_after_reexecution(dbos: DBOS):

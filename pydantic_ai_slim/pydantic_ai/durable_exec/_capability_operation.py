@@ -14,7 +14,12 @@ from pydantic_ai._function_schema import (
     function_schema,
 )
 from pydantic_ai._run_context import get_current_run_context
+from pydantic_ai.capabilities._durable_operation import (
+    DurableOperationMarker,
+    operation_name as _operation_name,
+)
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -128,17 +133,6 @@ class CapabilityCacheIdentity:
         return (params.model_id, params.arguments, params.run_context)
 
 
-@dataclass(frozen=True)
-class _DurableOperationMarker:
-    name: str
-    function: Callable[..., Awaitable[Any]]
-    tier_one: bool = False
-
-
-def _operation_name(function: Callable[..., Any], name: str | None) -> str:
-    return name or function.__name__.removeprefix('_')
-
-
 @overload
 def durable_operation(function: Callable[P, A], /) -> Callable[P, A]: ...
 
@@ -185,11 +179,11 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                 setattr(
                     target,
                     '__pydantic_ai_durable_operation__',
-                    _DurableOperationMarker(_operation_name(target, name), cast(Callable[..., Awaitable[Any]], target)),
+                    DurableOperationMarker(_operation_name(target, name), cast(Callable[..., Awaitable[Any]], target)),
                 )
                 return target
             raise TypeError('`durable_operation` can only decorate async methods')
-        marker = _DurableOperationMarker(_operation_name(target, name), target)
+        marker = DurableOperationMarker(_operation_name(target, name), target)
 
         @wraps(target)
         async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> R:
@@ -248,17 +242,8 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
     return decorate(function) if function is not None else decorate
 
 
-def tier_one_durable_operation(function: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
-    """Mark a base hook whose overrides are inherently durable."""
-    setattr(
-        function,
-        '__pydantic_ai_durable_operation__',
-        _DurableOperationMarker(_operation_name(function, None), cast(Callable[..., Awaitable[Any]], function), True),
-    )
-    return function
-
-
 _NEVER_DURABLE_HOOKS = {
+    'get_sandbox': '`get_sandbox` returns a live sandbox handle and cannot be a durable operation.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
     'wrap_run': '`wrap_run` receives a handler callable, which cannot cross a durable boundary.',
@@ -272,23 +257,27 @@ _NEVER_DURABLE_HOOKS = {
 }
 
 
-def collect_capability_operations(
+def collect_capability_operations(  # noqa: C901
     capability: AbstractCapability[Any],
 ) -> dict[str, CapabilityMethodDeclaration]:
     handlers: dict[str, Callable[..., Awaitable[Any]]] = {}
     for base in type(capability).__mro__[1:]:
         for method_name, base_member in vars(base).items():
             marker = cast(
-                _DurableOperationMarker | None, getattr(base_member, '__pydantic_ai_durable_operation__', None)
+                DurableOperationMarker | None, getattr(base_member, '__pydantic_ai_durable_operation__', None)
             )
             if marker is None or not marker.tier_one:
                 continue
             member = getattr(type(capability), method_name)
             if member is not base_member:
+                if isinstance(capability, WrapperCapability) and member is getattr(
+                    WrapperCapability, method_name, None
+                ):
+                    continue
                 handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
 
     for method_name, member in inspect.getmembers(type(capability)):
-        marker = cast(_DurableOperationMarker | None, getattr(member, '__pydantic_ai_durable_operation__', None))
+        marker = cast(DurableOperationMarker | None, getattr(member, '__pydantic_ai_durable_operation__', None))
         if marker is None:
             continue
         if marker.tier_one and member is marker.function:
@@ -304,7 +293,7 @@ def collect_capability_operations(
 
     declarations: dict[str, CapabilityMethodDeclaration] = {}
     for operation_name, handler in handlers.items():
-        original = cast(_DurableOperationMarker | None, getattr(handler, '__pydantic_ai_durable_operation__', None))
+        original = cast(DurableOperationMarker | None, getattr(handler, '__pydantic_ai_durable_operation__', None))
         function = original.function if original is not None else handler
         bound = function.__get__(capability, type(capability))
         model_request_hook = function.__name__ == 'before_model_request'

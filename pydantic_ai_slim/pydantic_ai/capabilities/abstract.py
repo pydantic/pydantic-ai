@@ -15,6 +15,7 @@ from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -25,6 +26,8 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+
+from ._durable_operation import tier_one_durable_operation
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -40,7 +43,6 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
     from pydantic_graph import End
 
 # --- Handler type aliases for use in hook method signatures ---
@@ -433,6 +435,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
+    @tier_one_durable_operation
     async def create_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         """Provision or select this run's sandbox and return its serializable identity.
 
@@ -451,14 +454,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def _create_sandbox_answer_is_final(self, ctx: RunContext[AgentDepsT]) -> bool:
-        """Whether a `None` from this capability's `create_sandbox` ends sandbox resolution.
-
-        Durability capabilities return True inside workflow code: they run the real suppliers
-        inside a durable unit, so their answer — including "no sandbox" — must be final.
-        """
-        return False
-
     async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
         """Return a live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] for `ref`: connect, never create.
 
@@ -472,6 +467,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    @tier_one_durable_operation
     async def destroy_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
         """Destroy the sandbox identified by `ref`.
 
@@ -1265,8 +1261,4 @@ async def resolve_run_sandbox(
         ref = await leaf.create_sandbox(ctx)
         if ref is not None:
             return leaf, ref
-        if leaf._create_sandbox_answer_is_final(ctx):  # pyright: ignore[reportPrivateUsage]
-            # A durability capability already ran the real suppliers inside a durable unit;
-            # continuing the walk would re-run their hooks in workflow code.
-            return None
     return None

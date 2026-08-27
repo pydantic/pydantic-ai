@@ -14,7 +14,7 @@ import pytest
 from pydantic_ai import Agent, RunContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
-from pydantic_ai.durable_exec._sandbox import contributes_sandbox, run_sandbox_supplier, sandbox_suppliers
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -855,24 +855,10 @@ def test_contributes_sandbox_detection():
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), ConnectOnlySandboxCapability()])) is True
 
 
-def test_sandbox_suppliers_deduplicates_a_capability_reachable_twice():
-    """One capability reachable both directly and through a wrapper is one supplier: the
-    wrapper branch recurses with a fresh visited set, so the outer walk must filter its
-    results, or every count- or iteration-based consumer double-processes the supplier.
-    """
+def test_contributes_sandbox_handles_a_capability_reachable_twice():
     supplier = SandboxCapability()
     tree = CombinedCapability([supplier, WrapperCapability(wrapped=supplier)])
-    assert sandbox_suppliers(tree) == [supplier]
-
-
-def test_run_sandbox_supplier_only_reports_the_winner():
-    """Durable engines may only route the sandbox a non-durable run would actually have used."""
-    lifecycle = LifecycleSandboxCapability()
-    other = SandboxCapability(name='other')
-    assert run_sandbox_supplier(CombinedCapability([other, lifecycle])) is lifecycle
-    assert run_sandbox_supplier(WrapperCapability(wrapped=lifecycle)) is lifecycle
-    assert run_sandbox_supplier(CombinedCapability([lifecycle, other])) is other
-    assert run_sandbox_supplier(ConnectOnlySandboxCapability()) is None
+    assert contributes_sandbox(tree)
 
 
 async def test_lifecycle_capability_creates_at_run_start_and_tears_down_at_run_end():

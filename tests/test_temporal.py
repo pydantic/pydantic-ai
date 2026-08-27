@@ -92,7 +92,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.durable_exec._operation import CallToolId
-from pydantic_ai.durable_exec._sandbox import contributes_sandbox, run_sandbox_supplier, sandbox_suppliers
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -7688,10 +7688,8 @@ class SandboxSupplyingTemporalDurability(TemporalDurability[Any]):
 def test_temporal_durability_base_sandbox_routing_is_not_a_user_supplier():
     """The base `create_sandbox` override only routes the real winner's lifecycle into activities,
     so it must not read as a supplier itself; a subclass override is a genuine supplier."""
-    assert sandbox_suppliers(TemporalDurability()) == []
     assert contributes_sandbox(TemporalDurability()) is False
-    durability = SandboxSupplyingTemporalDurability()
-    assert run_sandbox_supplier(durability) is durability
+    assert contributes_sandbox(SandboxSupplyingTemporalDurability()) is True
 
 
 # --- Durability with a sandbox-supplying capability ---

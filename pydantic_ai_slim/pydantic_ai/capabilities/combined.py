@@ -12,6 +12,7 @@ from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -42,7 +43,6 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
     from pydantic_graph import End
 
 
