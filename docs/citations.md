@@ -107,7 +107,9 @@ application to use. Where the destination API has a compatible citation input, i
 precise structured citation it can without inventing provider data. Anthropic web citations cannot be reconstructed
 from another provider because Anthropic requires its own opaque `encrypted_index`. OpenAI only translates a foreign
 URL citation when its range already identifies a rendered marker; treating a supported-content range as a marker would
-change its meaning. Pydantic AI never appends citation data to the assistant's text as a fallback.
+change its meaning. If one text part mixes compatible and incompatible citations, the destination receives only the
+citations that can be reconstructed truthfully; the original text and the complete stored Pydantic AI metadata remain
+unchanged. Pydantic AI never appends citation data to the assistant's text as a fallback.
 
 !!! note "Citation metadata crosses the provider boundary"
     Cross-provider replay can send source URLs, titles, document identifiers, and excerpts to the destination provider
