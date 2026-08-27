@@ -4827,8 +4827,8 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     """Multimodal `ToolReturnPart.content` round-trips through `ToolOutputAvailablePart.output`.
 
     The `output` field always carries the dumped `ToolReturnContent` shape directly (no flag); on load,
-    `tool_return_content_ta` rehydrates `MultiModalContent` items via the explicit `Discriminator` lifted
-    onto the recursive alias.
+    `tool_return_content_ta` rehydrates `MultiModalContent` items by resolving the recursive
+    `ToolReturnContent` union.
     """
     contents: dict[str, Any] = {
         'single-image': tiny_image,

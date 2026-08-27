@@ -1166,9 +1166,9 @@ class _StrPassthrough:
     """The `str` arm of `ToolReturnContent`, matched entirely in Rust in both validation modes.
 
     Strings dominate the node count of a typical structured tool return, and every node of one
-    crosses this union, so `str` is checked before the container arms. Dropping this arm costs more
-    than the callable discriminator it replaced: a string then falls through all four remaining arms,
-    which measures ~14x slower than with it in `validate_python`.
+    crosses this union, so `str` is checked before the container arms. It is not a micro-optimisation:
+    without it a string falls through all four remaining arms, which measures ~14x slower in
+    `validate_python`.
 
     `is_instance_schema` leaves `str` subclasses (a `StrEnum` returned by a tool, say) as they are,
     where pydantic's `str` validator would coerce them to a plain `str`; it can't run against JSON,
