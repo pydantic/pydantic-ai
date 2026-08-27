@@ -152,7 +152,11 @@ from .capability_models import (
     tool_calling_model,
     tool_calling_stream_function,
 )
-from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions
+from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions, try_import
+
+with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -8549,25 +8553,15 @@ class TestImageGenerationCapability:
         ):
             ImageGeneration(fallback_model=f'{provider}:{model_name}')
 
-    @pytest.fixture
-    def openai_image_generation_types(self) -> tuple[type[Any], type[Any]]:
-        """Import the optional OpenAI SDK synchronously before Blockbuster monitors the async test."""
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-        from pydantic_ai.providers.openai import OpenAIProvider
-
-        return OpenAIResponsesModel, OpenAIProvider
-
+    @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
     @pytest.mark.vcr()
     async def test_image_generation_local_fallback(
         self,
         allow_model_requests: None,
         openai_api_key: str,
-        openai_image_generation_types: tuple[type[Any], type[Any]],
     ):
         """The fallback subagent sends factory-produced native config with capability overrides."""
         from pydantic_ai.messages import BinaryImage
-
-        OpenAIResponsesModel, OpenAIProvider = openai_image_generation_types
 
         captured_request: dict[str, Any] = {}
 
