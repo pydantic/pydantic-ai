@@ -19,6 +19,7 @@ from pydantic_ai import (
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     PartEndEvent,
@@ -931,6 +932,65 @@ async def test_openrouter_file_annotation(
     # The response should contain text (model may or may not include file annotations)
     assert isinstance(result.output, str)
     assert len(result.output) > 0
+
+
+_OPENROUTER_FILE_ANNOTATION_REPLAY_CASSETTE = (
+    Path(__file__).parent / 'cassettes' / 'test_openrouter' / 'test_openrouter_file_annotation_replay_probe.yaml'
+)
+
+
+@pytest.mark.skipif(
+    not os.getenv('OPENROUTER_API_KEY') and not _OPENROUTER_FILE_ANNOTATION_REPLAY_CASSETTE.is_file(),
+    reason='requires OPENROUTER_API_KEY to record the file-annotation replay probe',
+)
+async def test_openrouter_file_annotation_replay_probe(
+    allow_model_requests: None,
+    openrouter_api_key: str,
+    document_content: BinaryContent,
+    request_capture: RequestCapture,
+) -> None:
+    """OpenRouter returns replayable PDF state, but the current adapter resends the file and drops the annotation."""
+    model = OpenRouterModel(
+        'openai/gpt-5.1-codex-mini',
+        provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+    )
+    first_result = await Agent(model).run(
+        [
+            'What does this PDF contain? Answer in one short sentence.',
+            document_content,
+        ]
+    )
+
+    response = first_result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    [file_annotation] = [
+        annotation for annotation in response.provider_details['annotations'] if annotation.get('type') == 'file'
+    ]
+    assert file_annotation['file']['name'] == 'filename.pdf'
+
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
+    second_result = await Agent(model).run('Reply with exactly DONE.', message_history=history)
+    assert second_result.output == snapshot('DONE')
+
+    second_response = second_result.all_messages()[-1]
+    assert isinstance(second_response, ModelResponse)
+    assert second_response.provider_details is not None
+    [second_file_annotation] = [
+        annotation for annotation in second_response.provider_details['annotations'] if annotation.get('type') == 'file'
+    ]
+    assert second_file_annotation['file']['hash'] == file_annotation['file']['hash']
+
+    second_request = request_capture.bodies('/chat/completions')[-1]
+    [prior_assistant] = [message for message in second_request['messages'] if message['role'] == 'assistant']
+    assert prior_assistant['content'] == first_result.output
+    assert 'annotations' not in prior_assistant
+    assert any(
+        part.get('type') == 'file'
+        for message in second_request['messages']
+        if message['role'] == 'user' and isinstance(message['content'], list)
+        for part in message['content']
+    )
 
 
 async def test_openrouter_file_annotation_validation(openrouter_api_key: str) -> None:

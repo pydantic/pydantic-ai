@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
+import httpx2
 import pytest
 from typing_extensions import assert_never
 
@@ -28,6 +30,7 @@ from pydantic_ai.settings import ModelSettings
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 from .citation_utils import citations_from_messages
+from .conftest import RequestCapture
 
 with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -609,7 +612,9 @@ async def test_document_citations(
     assert citations_from_messages(result.all_messages()) == case.expected
 
 
-NativeCitationReplayProvider = Literal['anthropic-messages', 'bedrock-converse', 'openai-responses']
+NativeCitationReplayProvider = Literal[
+    'anthropic-messages', 'anthropic-document', 'bedrock-converse', 'openai-responses'
+]
 
 
 @pytest.mark.vcr(match_on=['method', 'scheme', 'host', 'port', 'path', 'query', 'body'])
@@ -617,6 +622,7 @@ NativeCitationReplayProvider = Literal['anthropic-messages', 'bedrock-converse',
     'provider',
     [
         pytest.param('anthropic-messages', id='anthropic-messages'),
+        pytest.param('anthropic-document', id='anthropic-document'),
         pytest.param('bedrock-converse', id='bedrock-converse'),
         pytest.param('openai-responses', id='openai-responses'),
     ],
@@ -631,14 +637,19 @@ async def test_native_citation_replay_after_persisted_history(
     """Each provider accepts its own persisted native citation history on the next request."""
     agent: Agent[None, str]
     first_prompt: str | list[str | BinaryContent]
-    if provider == 'anthropic-messages':
+    if provider in ('anthropic-messages', 'anthropic-document'):
         if not anthropic_available():
             pytest.skip('anthropic dependencies not installed')
-        agent = Agent(
-            AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
-            capabilities=[NativeTool(WebSearchTool(max_uses=1))],
-        )
-        first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+        if provider == 'anthropic-messages':
+            agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+            first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
+        else:
+            agent = Agent(model, model_settings=ModelSettings(include_citations=True))
+            first_prompt = [
+                'According to the document, what is the return window? Answer in one sentence and cite the document.',
+                BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+            ]
     elif provider == 'bedrock-converse':
         if not bedrock_available():
             pytest.skip('bedrock dependencies not installed')
@@ -668,3 +679,99 @@ async def test_native_citation_replay_after_persisted_history(
     history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
     second_result = await agent.run('Continue.', message_history=history)
     assert second_result.output
+
+
+_OPENROUTER_CITATION_CONTEXT_PROBE_PROMPT = """\
+Use web search to verify what Pydantic AI is, then reply with exactly:
+Pydantic AI is a Python agent framework.
+Do not include URLs, source titles, citation markers, or source excerpts in the answer text.\
+"""
+_CITATION_CONTEXT_FOLLOW_UP = """\
+Do not search again. Based only on structured citation metadata attached to the previous assistant message, return the
+first source URL exactly. If the message you received contains no structured citation metadata, reply exactly
+UNAVAILABLE. Do not infer or guess the URL from your own knowledge.\
+"""
+_GOOGLE_CITATION_CONTEXT_CASSETTE = (
+    Path(__file__).parent
+    / 'cassettes'
+    / 'test_citations'
+    / 'test_citation_context_without_native_replay[google-gemini].yaml'
+)
+_OPENROUTER_CITATION_CONTEXT_CASSETTE = (
+    Path(__file__).parent
+    / 'cassettes'
+    / 'test_citations'
+    / 'test_citation_context_without_native_replay[openrouter].yaml'
+)
+CitationContextProvider = Literal['google-gemini', 'openrouter']
+
+
+@pytest.mark.parametrize(
+    'provider',
+    [
+        pytest.param(
+            'google-gemini',
+            id='google-gemini',
+            marks=pytest.mark.skipif(
+                not os.getenv('GEMINI_API_KEY') and not _GOOGLE_CITATION_CONTEXT_CASSETTE.is_file(),
+                reason='requires GEMINI_API_KEY to record the citation-context probe',
+            ),
+        ),
+        pytest.param(
+            'openrouter',
+            id='openrouter',
+            marks=pytest.mark.skipif(
+                not os.getenv('OPENROUTER_API_KEY') and not _OPENROUTER_CITATION_CONTEXT_CASSETTE.is_file(),
+                reason='requires OPENROUTER_API_KEY to record the citation-context probe',
+            ),
+        ),
+    ],
+)
+async def test_citation_context_without_native_replay(
+    provider: CitationContextProvider,
+    allow_model_requests: None,
+    gemini_api_key: str,
+    openrouter_api_key: str,
+    request_capture: RequestCapture,
+) -> None:
+    """Response citations remain local while the follow-up request receives plain assistant text."""
+    if provider == 'google-gemini':
+        if not google_available():
+            pytest.skip('google dependencies not installed')
+        # Google derives its SDK deadline from the injected client's read timeout and rejects
+        # httpx's five-second default because the Gemini API minimum is ten seconds.
+        request_capture.client.timeout = httpx2.Timeout(30)
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key=gemini_api_key, http_client=request_capture.client),
+        )
+        # Gemini only creates citations when groundingMetadata includes groundingChunks and groundingSupports.
+        # Constraining it to a citation-free sentence produced only searchEntryPoint, which is not a citation.
+        first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
+        first_agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+    else:
+        if not openrouter_available():
+            pytest.skip('openrouter dependencies not installed')
+        model = OpenRouterModel(
+            'deepseek/deepseek-chat',
+            provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+        )
+        first_prompt = _OPENROUTER_CITATION_CONTEXT_PROBE_PROMPT
+        first_agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+
+    first_result = await first_agent.run(first_prompt)
+    assert citations_from_messages(first_result.all_messages())
+
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
+    second_result = await Agent(model).run(_CITATION_CONTEXT_FOLLOW_UP, message_history=history)
+
+    if provider == 'google-gemini':
+        assert second_result.output == snapshot('UNAVAILABLE')
+        second_request = request_capture.bodies()[-1]
+        [prior_assistant] = [content for content in second_request['contents'] if content['role'] == 'model']
+        assert prior_assistant == {'role': 'model', 'parts': [{'text': first_result.output}]}
+    else:
+        assert second_result.output == snapshot('UNAVAILABLE')
+        second_request = request_capture.bodies()[-1]
+        [prior_assistant] = [message for message in second_request['messages'] if message['role'] == 'assistant']
+        assert prior_assistant == {'role': 'assistant', 'content': first_result.output}

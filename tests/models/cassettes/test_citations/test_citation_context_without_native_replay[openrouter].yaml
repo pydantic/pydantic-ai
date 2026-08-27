@@ -1,0 +1,528 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '415'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: |-
+          Use web search to verify what Pydantic AI is, then reply with exactly:
+          Pydantic AI is a Python agent framework.
+          Do not include URLs, source titles, citation markers, or source excerpts in the answer text.
+        role: user
+      model: deepseek/deepseek-chat
+      stream: false
+      tools:
+      - parameters:
+          max_uses: 1
+          search_context_size: medium
+        type: openrouter:web_search
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '17406'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations:
+          - type: url_citation
+            url_citation:
+              content: |-
+                **Pydantic AI** is the Python AI SDK: a typed, extensible agent loop with every model a string swap away. The same agent runs everywhere you need it: behind a web frontend, in the terminal, on a voice call, on a durable background queue, or as a plain object you call `run()` on. Image generation and embeddings come in the same box.
+
+                **Pydantic AI Harness** has everything an agent needs for complex, long-running work, snapped on as capabilities, from memory, sub-agents, and context management to a complete coding agent.
+
+                ...
+
+                Give the agent an output type
+
+                ...
+
+                The `@agent.tool` function receives a `RunContext` that carries your dependencies in; the rest of its signature and its docstring become the tool schema, arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the returned type.
+
+                ...
+
+                - **Any model, one Python API.** Virtually every model and provider (OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more), swappable with a string, or through the Pydantic AI Gateway: one key for all of them, with failover and cost monitoring built in. No flagship feature is locked to one vendor.
+
+                ...
+
+                - **Typed end to end.** Structured outputs, typed dependency injection, typed tools: your IDE, type checker, and coding agent all know what your agent returns, moving whole classes of errors from runtime to write-time. When plain control flow isn't enough, Pydantic Graph brings the same typing to graph-based workflows.
+
+                ...
+
+                - **Measured, not vibes.** OpenTelemetry-native instrumentation works with any OTel backend; one line lights up Pydantic Logfire for real-time debugging, tracing, and cost tracking backed by genai-prices. Pydantic Evals tests agent behavior the way pytest tests code.
+
+                ...
+
+                - **Batteries, composably.** One primitive, the capability, bundles tools, instructions, hooks, and model settings into reusable units. Core ships fundamentals like MCP and web search, the Harness ships everything else, and complete agents like Coder and Researcher are just capabilities composed: they come apart the way they went together. Or skip code entirely with YAML/JSON agent specs.
+
+                ...
+
+                - **Every interface.** One agent definition runs as a CLI, a built-in web chat, or realtime speech (OpenAI Realtime, Gemini Live, Azure, xAI Grok Voice); UI event streams (AG-UI, Vercel AI) connect it to your own frontend or anything else; and ACP *(experimental)* serves it as an editor agent.
+
+                ...
+
+                - **Durable execution.** First-party, co-maintained durable execution on Temporal, DBOS, or Prefect, with Restate, Kitaru, and Airflow integrations and more coming. Agents survive restarts and run for days on the engine you already operate, with human-in-the-loop approval built in.
+              end_index: 0
+              start_index: 0
+              title: 'pydantic/pydantic-ai: How Python does AI: agents, realtime ...'
+              url: https://github.com/pydantic/pydantic-ai
+          - type: url_citation
+            url_citation:
+              content: |-
+                # Production-grade applications with Generative AI
+
+                ...
+
+                Type-safe Python framework for building agents and LLM applications. Model-agnostic with built-in validation, structured outputs, and seamless observability.
+
+                ...
+
+                Create agents that can reason, use tools, and interact with external systems. Pydantic AI provides a modular, type-safe platform for building production-ready AI agents with any model provider.
+
+                ...
+
+                Built-in integration with Pydantic Logfire for complete visibility into agent runs. Trace LLM calls, track token costs, debug failures, and understand latency across your entire AI stack.
+
+                ...
+
+                ## Connect to MCP servers
+
+                ...
+
+                The Model Context Protocol (MCP) is an open standard for connecting AI models to external tools and data sources. Pydantic AI has built-in support for MCP servers, enabling your agents to access file systems, databases, APIs, and more.
+
+                How Pydantic AI supports MCP
+
+                ...
+
+                ## Stream AI agent events to your frontend in real time
+
+                ...
+
+                Stream text, tool calls, and reasoning to your frontend as they happen. Pydantic AI offers out of the box support for AG-UI protocol for standardized agent-to-UI communication and Vercel AI Data Stream Protocol.
+
+                See UI Event Streams docs
+
+                ...
+
+                ## Durable Execution
+
+                ...
+
+                Build fault-tolerant agents
+
+                ...
+
+                Build durable agents that preserve their progress across transient API failures and application errors or restarts. Handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
+
+                ...
+
+                Durable agents have full support for streaming and MCP, with the added benefit of fault tolerance.
+
+                ...
+
+                Pydantic AI natively supports four durable execution solutions:
+
+                * Temporal
+                * DBOS
+                * Prefect
+                * Restate
+
+                ...
+
+                ### Validated structured outputs
+
+                ...
+
+                Leverage the power of Pydantic validation that guarantees type-safety on structured outputs. Trusted by OpenAI, Anthropic, Google, and millions of developers.
+
+                ...
+
+                Built-in cost control and model routing without performance overhead with Pydantic AI Gateway. BYOK or built-in providers for single-key access models.
+
+                ...
+
+                ### Production observability
+
+                ...
+
+                Built-in integration with Pydantic Logfire for real-time debugging, tracing, and cost tracking with massive AI workloads.
+
+                ...
+
+                Test your agents with Pydantic Evals. Create datasets, run evaluations, track model performance and visualise it on your CLI or on Pydantic Logfire.
+
+                ...
+
+                ### Multi-agent workflows
+
+                ...
+
+                Build complex systems with multiple specialized agents. Coordinate with graph-based workflows.
+
+                ...
+
+                ## Function Tools
+
+                ...
+
+                Give agents access to your code
+
+                ...
+
+                Use `@agent.tool` or `@agent.tool_plain` decorators to register tool access to an agent context. Pydantic AI automatically generates JSON schemas from your type hints and docstrings, enabling models to call your functions correctly.
+
+                ...
+
+                Open source (under MIT license). Install with uv (or pip) and start building production-grade AI applications today.
+              end_index: 0
+              start_index: 0
+              title: 'Pydantic AI: Type-Safe Python Framework for AI Agents & ...'
+              url: https://pydantic.dev/pydantic-ai
+          - type: url_citation
+            url_citation:
+              content: "# Pydantic AI\n\n...\n\nAgents, realtime voice, image generation, embeddings. Every model, every interface,
+                typed end to end.\n\n...\n\n**Pydantic AI** is the Python AI SDK: a typed, extensible agent loop with every
+                model a string swap away. The same agent runs everywhere you need it: behind a web frontend, in the terminal,
+                on a voice call, on a durable background queue, or as a plain object you call `run()` on. Image generation
+                and embeddings come in the same box.\n\n**Pydantic AI Harness** has everything an agent needs for complex,
+                long-running work, snapped on as capabilities, from memory, sub-agents, and context management to a complete
+                coding agent.\n\n...\n\n## What are you building?\n\n...\n\nFrom simple typed data extraction to complex,
+                long-running multi-agent collaboration, Pydantic AI and Pydantic AI Harness have got you covered.\n\n- Coding
+                agent\n- Data extraction\n- Realtime voice\n- Durable background agent\n- Image generation\n- Embeddings\n\n...\n\nA
+                complete coding agent in your terminal: workspace-rooted file access, allowlisted shell, repo orientation,
+                planning, and context management that survives long sessions. Here with web search and a second-opinion advisor
+                snapped on alongside:\n\n...\n\n```python\nfrom pydantic_ai import Agent\nfrom pydantic_ai.capabilities import
+                WebSearch\nfrom pydantic_ai_harness import Advisor, Coder\n\nagent = Agent(\n    'anthropic:claude-fable-5',\n
+                \   capabilities=[\n        Coder(),  # files, shell, repo context, planning, sub-agents, context management\n
+                \       WebSearch(),  # look up docs and error messages on the web\n        Advisor('openai:gpt-5.6-sol'),
+                \ # a second opinion from another model when stuck\n    ],\n)\nagent.to_cli_sync()\n```\n\n...\n\nGive the
+                agent an output type and tools, and every run comes back validated and typed:\n\n...\n\nThe `@agent.tool`
+                function receives a `RunContext` that carries your dependencies in; the rest of its signature and its docstring
+                become the tool schema, arguments are validated before your code runs, and the run is guaranteed to return
+                a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape.\n\n...\n\n## Why Pydantic AI\n\n...\n\n-
+                **Any model, one Python API.** Virtually every model and provider (OpenAI, Anthropic, Google, Bedrock, Azure
+                AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more), swappable with a string, or through the Pydantic
+                AI Gateway: one key for all of them, with failover and cost monitoring built in. No flagship feature is locked
+                to one vendor.\n \n- **Typed end to end.** Structured outputs, typed dependency injection, typed tools: your
+                IDE, type checker, and coding agent all know what your agent returns, moving whole classes of errors from
+                runtime to write-time. When plain control flow isn't enough, Pydantic Graph brings the same typing to graph-based
+                workflows.\n \n- **Measured, not vibes.** OpenTelemetry-native instrumentation works with any OTel backend;
+                one line lights up Pydantic Logfire for real-time debugging, tracing, and cost tracking backed by genai-prices.
+                Pydantic Evals tests agent behavior the way pytest tests code.\n \n- **Batteries, composably.** One primitive,
+                the capability, bundles tools, instructions, hooks, and model settings into reusable units. Core ships fundamentals
+                like MCP and web search, the Harness ships everything else, and complete agents like Coder and Researcher
+                are just capabilities composed: they come apart the way they went together. Or skip code entirely with YAML/JSON
+                agent specs.\n \n- **Every interface.** One agent definition runs as a CLI, a built-in web chat, or realtime
+                speech; UI event streams (AG-UI, Vercel AI) connect it to your own frontend or anything else; and ACP _(experimental)_
+                serves it as an editor agent.\n \n- **Durable execution.** First-party, co-maintained durable execution on
+                Temporal, DBOS, or Prefect, with Restate, Kitaru, and Airflow integrations and more coming. Agents survive
+                restarts and run for days on the engine you already operate, with human-in-the-loop approval built in."
+              end_index: 0
+              start_index: 0
+              title: Pydantic AI | Pydantic Docs
+              url: https://pydantic.dev/docs/ai/overview/
+          - type: url_citation
+            url_citation:
+              content: |-
+                # Agents
+
+                ...
+
+                ## Introduction
+
+                ...
+
+                Agents are Pydantic AI's primary interface for interacting with LLMs.
+
+                In some use cases a single Agent will control an entire application or component, but multiple agents can also interact to embody more complex workflows.
+
+                ...
+
+                The `Agent` class has full API documentation, but conceptually you can think of an agent as a container for:
+
+                ...
+
+                Instructions
+
+                ...
+
+                A set of instructions for the LLM written by the developer.
+
+                ...
+
+                Function tool(s) and toolsets
+
+                ...
+
+                Functions that the LLM may call to get information while generating a response.
+
+                ...
+
+                Structured output type
+
+                ...
+
+                The structured datatype the LLM must return at the end of a run, if specified.
+
+                ...
+
+                Dependency type constraint
+
+                ...
+
+                Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.
+
+                ...
+
+                LLM model
+
+                ...
+
+                Optional default LLM model associated with the agent. Can also be specified when running the agent.
+
+                ...
+
+                Model Settings
+
+                Optional default model settings to help fine tune requests. Can also be specified when running the agent.
+
+                ...
+
+                Capabilities
+
+                Reusable bundles of tools, hooks, instructions, and model settings that extend agent behavior.
+
+                While each of these can be configured individually, capabilities let you bundle related behavior into reusable units that are easier to compose, share, and load from configuration files.
+
+                ...
+
+                In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `Foobar` and produced outputs of type `list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use static type checking it should work well with Pydantic AI.
+
+                ...
+
+                Agents are designed for reuse, like FastAPI Apps
+
+                ...
+
+                You can instantiate one agent and use it globally throughout your application, as you would a small FastAPI app or an APIRouter, or dynamically create as many agents as you want. Both are valid and supported ways to use agents.
+
+                ...
+
+                ## Running Agents
+
+                ...
+
+                There are five ways to run an agent:
+
+                ...
+
+                1. `agent.run()` -- an async function which returns a `RunResult` containing a completed response.
+                2. `agent.run_sync()` -- a plain, synchronous function which returns a `RunResult` containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
+                3. `agent.run_stream()` -- an async context manager which returns a `StreamedRunResult`, which contains methods to stream text and structured output as an async iterable. `agent.run_stream_sync()` is a synchronous variation that returns a `StreamedRunResultSync` with synchronous versions of the same methods.
+                4. `agent.run_stream_events()` -- an async context manager which yields an async iterator over `AgentStreamEvent`s ending with an `AgentRunResultEvent` containing the final run result.
+                5. `agent.iter()` -- a context manager which returns an `AgentRun`, an async iterable over the nodes of the agent's underlying `Graph`.
+
+                ...
+
+                As shown in the example above, `run_stream()` makes it easy to stream the agent's final output as it comes in. It also takes an optional `event_stream_handler` argument that you can use to gain insight into what is happening during the run before the final output is produced. During a realtime session, the same handler stream can also contain realtime-only `RealtimeEvent` members.
+
+                ...
+
+                Under the hood, each `Agent` in Pydantic AI uses **pydantic-graph** to manage its execution flow. **pydantic-graph** is a generic, type-centric library for building and running finite state machines in Python. It doesn't actually depend on Pydantic AI -- you can use it standalone for workflows that have nothing to do with GenAI -- but Pydantic AI makes use of it to orchestrate the handling of model requests and model responses in an agent's run.
+
+                ...
+
+                In many scenarios, you don't need to worry about pydantic-graph at all; calling `agent.run(...)` simply traverses the underlying graph from start to finish. However, if you need deeper insight or control -- for example to inject your own logic at specific stages -- Pydantic AI exposes the lower-level iteration process via `Agent.iter`. This method returns an `AgentRun`, which you can async-iterate over, or manually drive node-by-node via the `next` method. Once the agent's graph returns an `End`, you have the final result along with a detailed history of all steps.
+
+                ...
+
+                ## Type safe by design
+
+                ...
+
+                ## Agent Specs
+
+                ...
+
+                Agents can also be defined declaratively in YAML or JSON using agent specs. This separates agent configuration from application code:
+              end_index: 0
+              start_index: 0
+              title: Agents | Pydantic Docs
+              url: https://pydantic.dev/docs/ai/core-concepts/agent/
+          - type: url_citation
+            url_citation:
+              content: |-
+                Type-safe structured outputs. Define a`BaseModel` for your agent's response. The framework instructs the LLM to conform to that schema, validates the response, and retries automatically on failure. You receive a validated Python object, not a string.
+
+                ...
+
+                Function tools with docstring-driven dispatch. Register plain Python functions as tools. The LLM reads their type hints and docstrings to understand what each tool does and when to use it. Your tool definitions are also documentation.
+
+                ...
+
+                Dependency injection
+              end_index: 0
+              start_index: 0
+              title: Building AI Agents in Python with Pydantic AI
+              url: https://machinelearningmastery.com/building-ai-agents-in-python-with-pydantic-ai/
+          content: Pydantic AI is a Python agent framework.
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: stop
+      created: 1787810215
+      id: gen-1787810215-Wr4VGIR239z4fmGrNuZ2
+      model: deepseek/deepseek-chat
+      object: chat.completion
+      provider: OpenAI
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 39
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0.0083585221
+        cost_details:
+          upstream_inference_completions_cost: 4.01193e-05
+          upstream_inference_cost: 0.0013585221
+          upstream_inference_prompt_cost: 0.0013184027999999998
+        prompt_tokens: 5122
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        server_tool_use_details:
+          tool_calls_executed: 1
+          tool_calls_requested: 1
+          web_search_requests: 1
+        total_tokens: 5161
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '714'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: |-
+          Use web search to verify what Pydantic AI is, then reply with exactly:
+          Pydantic AI is a Python agent framework.
+          Do not include URLs, source titles, citation markers, or source excerpts in the answer text.
+        role: user
+      - content: Pydantic AI is a Python agent framework.
+        role: assistant
+      - content: |-
+          Do not search again. Based only on structured citation metadata attached to the previous assistant message, return the
+          first source URL exactly. If the message you received contains no structured citation metadata, reply exactly
+          UNAVAILABLE. Do not infer or guess the URL from your own knowledge.
+        role: user
+      model: deepseek/deepseek-chat
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '880'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: UNAVAILABLE
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: stop
+      created: 1787810223
+      id: gen-1787810223-EVPBHdFrsjglqvyAT4Pk
+      model: deepseek/deepseek-chat
+      object: chat.completion
+      provider: StreamLake
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 5
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 3.60315e-05
+        cost_details:
+          upstream_inference_completions_cost: 5.1435e-06
+          upstream_inference_cost: 3.60315e-05
+          upstream_inference_prompt_cost: 3.0888e-05
+        is_byok: false
+        prompt_tokens: 120
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 125
+    status:
+      code: 200
+      message: OK
+version: 1
