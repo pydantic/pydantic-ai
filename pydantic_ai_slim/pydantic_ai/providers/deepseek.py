@@ -71,9 +71,8 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # without listing each one.
                 openai_supports_tool_choice_required=model_name != 'deepseek-reasoner',
                 openai_supports_forced_tool_choice_with_thinking=not is_v4,
-                # Thinking is on by default on every DeepSeek model but `deepseek-chat`, so a request
-                # that sets no effort at all is still a thinking request as far as the tool-choice
-                # restriction is concerned.
+                # Thinking is on by default on DeepSeek V4 models and `deepseek-reasoner`; every other
+                # model name (including `deepseek-chat`) is treated as thinking-off by default.
                 openai_reasoning_enabled_by_default=thinks_by_default,
                 # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
                 # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.

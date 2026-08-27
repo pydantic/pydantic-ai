@@ -104,7 +104,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, ToolOrOutput, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -4976,13 +4976,19 @@ def _support_tool_forcing(
 ) -> bool:
     """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
     if not openai_profile.get('openai_supports_tool_choice_required', True):
-        return _reject_tool_forcing(model_name, model_settings, 'This model does not support forcing tool use.')
+        return _reject_tool_forcing(
+            model_name,
+            model_settings,
+            model_request_parameters,
+            'This model does not support forcing tool use.',
+        )
     if not openai_profile.get('openai_supports_forced_tool_choice_with_thinking', True) and _reasoning_active(
         openai_profile, model_settings, model_request_parameters
     ):
         return _reject_tool_forcing(
             model_name,
             model_settings,
+            model_request_parameters,
             'This model does not support forcing tool use while thinking is enabled. '
             "Disable thinking with `thinking=False` or `openai_reasoning_effort='none'`, "
             "or use `tool_choice='auto'`.",
@@ -4993,11 +4999,22 @@ def _support_tool_forcing(
 def _reject_tool_forcing(
     model_name: str,
     model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
+    model_request_parameters: ModelRequestParameters,
     reason: str,
 ) -> bool:
     """Fall back to unforced tool choice, unless the user asked for forcing explicitly."""
     explicit_choice = model_settings.get('tool_choice')
-    if explicit_choice == 'required' or isinstance(explicit_choice, list):
+    # `resolve_tool_choice` maps `ToolOrOutput` to required mode when direct output isn't allowed,
+    # so that shape requests forcing just as explicitly as `'required'` or a tool list.
+    explicit_forcing = (
+        explicit_choice == 'required'
+        or isinstance(explicit_choice, list)
+        or (
+            isinstance(explicit_choice, ToolOrOutput)
+            and not (model_request_parameters.allow_text_output or model_request_parameters.allow_image_output)
+        )
+    )
+    if explicit_forcing:
         raise UserError(f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {reason}')
     return False
 

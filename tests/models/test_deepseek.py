@@ -1,12 +1,10 @@
 from __future__ import annotations as _annotations
 
-import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone, tzinfo
 from decimal import Decimal
-from typing import Any
 
-import httpx2
 import pytest
 from pydantic import BaseModel
 
@@ -21,11 +19,14 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Capability
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.output import NativeOutput
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
+from .conftest import RequestCapture
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
@@ -246,7 +247,10 @@ class Answer(BaseModel):
 
 @pytest.mark.parametrize('case', TOOL_CHOICE_CASES, ids=lambda c: c.id)
 async def test_deepseek_tool_choice_follows_thinking(
-    case: ToolChoiceCase, allow_model_requests: None, deepseek_api_key: str
+    case: ToolChoiceCase,
+    allow_model_requests: None,
+    deepseek_api_key: str,
+    request_capture: RequestCapture,
 ):
     """DeepSeek rejects a forced tool choice only while thinking is on, so the downgrade is per request.
 
@@ -254,14 +258,8 @@ async def test_deepseek_tool_choice_follows_thinking(
     API answers `Thinking mode does not support this tool_choice`; with thinking off, forcing must
     survive, which is what makes tool-based structured output reliable on `deepseek-v4-pro`.
     """
-    sent_bodies: list[dict[str, Any]] = []
-
-    async def capture_request(request: httpx2.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
-
-    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
     model = OpenAIChatModel(
-        case.model_name, provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=http_client)
+        case.model_name, provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
     )
     settings = OpenAIChatModelSettings(thinking=False) if case.thinking_disabled else None
     agent = Agent(model, output_type=Answer, model_settings=settings)
@@ -269,5 +267,15 @@ async def test_deepseek_tool_choice_follows_thinking(
     result = await agent.run('Say hi.')
 
     assert isinstance(result.output, Answer)
-    assert sent_bodies[0]['tool_choice'] == case.expected_tool_choice
-    assert sent_bodies[0].get('reasoning_effort') == case.expected_reasoning_effort
+    body = request_capture.body('/chat/completions')
+    assert body['tool_choice'] == case.expected_tool_choice
+    assert body.get('reasoning_effort') == case.expected_reasoning_effort
+
+
+async def test_deepseek_chat_native_output_refused(allow_model_requests: None, deepseek_api_key: str):
+    """Chat Completions has no `json_schema` tool choice, so `NativeOutput` must fail before any request."""
+    model = OpenAIChatModel('deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key))
+    agent = Agent(model, output_type=NativeOutput(Answer))
+
+    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
+        await agent.run('Say hi.')
