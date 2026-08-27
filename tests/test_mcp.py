@@ -1840,13 +1840,39 @@ class TestLoadMCPToolsets:
                 ('mcpServers', 'alpha', 'headers'),
                 id='headers-not-a-mapping',
             ),
+            # The `Raises:` block and the PR body name these inner types specifically: each used to
+            # load without complaint and only misbehave once the server was contacted.
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'args': ['-p', 8080]}}},
+                ('mcpServers', 'alpha', 'args', 1),
+                id='args-item-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'cwd': 123}}},
+                ('mcpServers', 'alpha', 'cwd'),
+                id='cwd-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'env': {'PORT': 8080}}}},
+                ('mcpServers', 'alpha', 'env', 'PORT'),
+                id='env-value-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'url': 'http://localhost:8000/mcp', 'headers': {'X-Count': 5}}}},
+                ('mcpServers', 'alpha', 'headers', 'X-Count'),
+                id='headers-value-not-a-str',
+            ),
         ],
     )
-    async def test_load_mcp_toolsets_rejects_config_not_matching_the_schema(self, config: object, loc: tuple[str, ...]):
+    async def test_load_mcp_toolsets_rejects_config_not_matching_the_schema(
+        self, config: object, loc: tuple[str | int, ...]
+    ):
         """A config that doesn't match the `mcpServers` shape raises `ValidationError`, pointing at the field.
 
-        The wrongly-typed `command` / `args` / `env` / `headers` cases used to load without complaint
-        and only misbehave later, at connection time.
+        Covers the inner types as well as the fields themselves — an item inside `args`, a `cwd`, and
+        the values inside `env` and `headers`. Those are the shapes that used to load without
+        complaint and only misbehave later, once the server was contacted, so `loc` is asserted down
+        to the offending index or key.
         """
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
