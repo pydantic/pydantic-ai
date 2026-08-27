@@ -12,10 +12,10 @@ Demonstrates:
 The agent exposes a single `get_weather` tool the model can call mid-conversation, and the terminal
 shows a running transcript of both sides of the conversation plus any tool calls.
 
-Both audio directions use bounded buffers, dropping the oldest audio rather than growing without
-limit: microphone capture that outruns the network drops the oldest block to preserve conversational
-latency, and playback that falls more than five seconds behind the model drops its oldest audio, so a
-machine that stutters glitches instead of ending the call.
+Both audio directions stay bounded rather than growing without limit: microphone capture relies on
+PortAudio's own input buffer, which drops audio on overflow if the network falls behind, and playback
+that falls more than five seconds behind the model drops its oldest audio, so a machine that stutters
+glitches instead of ending the call.
 
 Barge-in itself is handled by the provider — the model stops as soon as the user speaks. What the
 example adds is the half the provider can't see: it clears queued *and* partially consumed playback
