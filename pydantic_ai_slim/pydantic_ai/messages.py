@@ -1634,18 +1634,30 @@ class NativeToolReturnPart(BaseToolReturnPart):
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-def _validation_error_description(errors: list[pydantic_core.ErrorDetails], *, include_input: bool) -> str:
+def _validation_error_description(
+    errors: list[pydantic_core.ErrorDetails], *, include_input: Literal['all', 'nested', 'none']
+) -> str:
     """Render Pydantic error details as the JSON block a model is shown.
 
     `ctx` is always dropped: it can hold arbitrary objects that don't survive serialization, and it
-    repeats what `msg` already says. `input` is kept only where the model can't already see the value
-    it produced — a tool call's arguments are worth echoing back next to the error, while the JSON a
-    structured-output retry complains about is already in the model's context, so there top-level
-    errors drop it. Nested errors keep it either way: their `input` is the offending sub-value, which
-    a long generated document doesn't make obvious.
+    repeats what `msg` already says.
+
+    `include_input` decides how much of the offending value is echoed back, and the answer depends on
+    what channel the text is bound for:
+
+    - `'all'` — a tool call's arguments are worth echoing next to the error. This text reaches the
+      model as that call's own result.
+    - `'nested'` — the JSON a structured-output retry complains about is already in the model's
+      context, so top-level errors drop it while a nested error keeps the offending sub-value a long
+      generated document doesn't make obvious.
+    - `'none'` — the text is bound for the system voice, where a value the *model* wrote must not
+      land: the model chooses it, so echoing it there would let a response steer the highest-privilege
+      channel it is later shown. `loc` still names the field, and the model already has what it sent.
     """
-    if include_input:
+    if include_input == 'all':
         exclude = {'__all__': {'ctx'}}
+    elif include_input == 'none':
+        exclude = {'__all__': {'ctx', 'input'}}
     else:
         exclude = {i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(errors)}
     json_errors = error_details_ta.dump_json(errors, exclude=exclude, indent=2)
@@ -1726,7 +1738,9 @@ class RetryPromptPart:
             else:
                 description = self.content
         else:
-            description = _validation_error_description(self.content, include_input=self.tool_name is not None)
+            description = _validation_error_description(
+                self.content, include_input='all' if self.tool_name is not None else 'nested'
+            )
         return f'{description}\n\nFix the errors and try again.'
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
@@ -1775,7 +1789,14 @@ class RetryFeedbackPart:
     """Details of why the response couldn't be used.
 
     If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a
-    list of error details.
+    list of error details, and the offending values are dropped when the part is rendered — a value
+    the model chose must not reach the system voice, where a later turn would read it with the
+    harness's authority.
+
+    A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
+    is rendered verbatim. Interpolating model output into that message puts the model's words in the
+    system voice, the same way interpolating them into `instructions` would; pass a fixed message and
+    let the errors carry the specifics.
     """
 
     _: KW_ONLY
@@ -1803,7 +1824,7 @@ class RetryFeedbackPart:
         """
         if isinstance(self.content, str):
             return self.content
-        return _validation_error_description(self.content, include_input=False)
+        return _validation_error_description(self.content, include_input='none')
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         return [

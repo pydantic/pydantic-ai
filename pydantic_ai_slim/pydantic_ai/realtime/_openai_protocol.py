@@ -81,7 +81,10 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
-from ..models import _render_retry_feedback  # pyright: ignore[reportPrivateUsage]
+from ..models import (
+    _render_retry_feedback,  # pyright: ignore[reportPrivateUsage]
+    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+)
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
@@ -533,10 +536,15 @@ async def _seed_request_items(
                     }
                 )
         elif isinstance(part, RetryFeedbackPart):
-            # Seeded as text like the tool-less `RetryPromptPart` above: the session has no system
-            # role to carry it, and dropping it would leave the model unable to see why the response
-            # it is being replayed was rejected.
-            items.append(_message_item('user', [_text_content('input_text', _render_retry_feedback(part))]))
+            # A seeded item takes `user` or `assistant` only — a `SystemPromptPart` is routed to the
+            # session `instructions` instead — and this feedback answers one response rather than
+            # standing over the session, so routing it there would be wrong. It takes the same
+            # `<system>` tagging every model without a mid-conversation system message gets, which
+            # is what keeps the model from reading it as something a person said
+            # (https://github.com/pydantic/pydantic-ai/issues/6404).
+            items.append(
+                _message_item('user', [_text_content('input_text', _wrap_in_system_tags(_render_retry_feedback(part)))])
+            )
         else:
             assert_never(part)
     return items

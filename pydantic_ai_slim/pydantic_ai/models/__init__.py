@@ -2177,6 +2177,17 @@ exactly as written.
 """
 
 
+def _wrap_in_system_tags(content: str) -> str:
+    """Tag text as the harness speaking, for a channel with no system role of its own.
+
+    Every spelling of a closing tag inside `content` is escaped first: the text can hold values the
+    model itself produced (retry feedback renders nested validation input) or names a remote MCP
+    server chose, and an unescaped close would end the statement early and let whatever follows read
+    as if it stood outside it.
+    """
+    return f'<system>{_SYSTEM_CLOSE_TAG_OPENER.sub("&lt;", content)}</system>'
+
+
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
@@ -2208,8 +2219,9 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
             new_parts: list[ModelRequestPart] = []
             for index, part in enumerate(msg.parts):
                 if index >= start and isinstance(part, SystemPromptPart):
-                    content = _SYSTEM_CLOSE_TAG_OPENER.sub('&lt;', part.content)
-                    new_parts.append(UserPromptPart(content=f'<system>{content}</system>', timestamp=part.timestamp))
+                    new_parts.append(
+                        UserPromptPart(content=_wrap_in_system_tags(part.content), timestamp=part.timestamp)
+                    )
                 else:
                     new_parts.append(part)
             new_messages.append(replace(msg, parts=new_parts))

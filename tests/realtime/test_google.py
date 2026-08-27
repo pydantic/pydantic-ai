@@ -1725,8 +1725,8 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
                     {
                         'text': """\
-The response was not accepted:
-answer in prose\
+<system>The response was not accepted:
+answer in prose</system>\
 """
                     },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},

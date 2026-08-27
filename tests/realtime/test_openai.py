@@ -1675,8 +1675,8 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                         {
                             'type': 'input_text',
                             'text': """\
-The response was not accepted:
-answer in prose\
+<system>The response was not accepted:
+answer in prose</system>\
 """,
                         }
                     ],

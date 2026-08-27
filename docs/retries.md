@@ -171,6 +171,11 @@ _(This example is complete, it can be run "as is")_
 
 The part reaches the model in Pydantic AI's own voice, not the user's: each model renders it as a mid-conversation system message, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation. Its [`cause`][pydantic_ai.messages.RetryFeedbackPart.cause] — `'validation_error'`, `'no_output'`, or `'model_retry'` — decides the wording, which is why the stored part carries none: the same history can be replayed against any model.
 
+!!! warning "What goes in the system voice"
+    The system channel is the highest-privilege text a model reads, so a value the *model* chose must not land there — a later turn would read it with Pydantic AI's authority rather than its own. Validation feedback therefore renders without the offending values: the errors' `loc` names the field that failed, `msg` says why, and the value itself is dropped (a tool-call retry still echoes its arguments, because that text is that call's own result, not the system voice).
+
+    A [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] message renders verbatim, because your own code wrote it — the same trust you already give [`instructions`][pydantic_ai.Agent]. Interpolating model output into that message hands the model's words the system voice; pass a fixed message and let the errors carry the specifics.
+
 !!! note "Upgrading from a tool-less `RetryPromptPart`"
     This kind of feedback used to be a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] with `tool_name=None`, which arrived at the model as ordinary user text it couldn't tell from something a person wrote. Only that case moved: a retry that answers a tool call is still a `RetryPromptPart`, unchanged. The class also still deserializes from stored histories and is still accepted from [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults], so histories recorded before the change keep replaying exactly as they did.
 
