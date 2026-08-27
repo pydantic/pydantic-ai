@@ -20,7 +20,7 @@ from ._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
-FILE_SYSTEM_EVENTS = 'file_system'
+FILE_SYSTEM_EVENTS = 'test_file_system'
 
 
 @dataclass(kw_only=True)
@@ -42,8 +42,8 @@ class BeforeThingEvent(CapabilityEvent, namespace='decision'):
 
 
 def test_event_kind_definition():
-    assert FileReadEvent(path='a.txt').kind == 'file_system.file_read'
-    assert FileProgressEvent(path='a.txt', progress=0.5).kind == 'file_system.progress'
+    assert FileReadEvent(path='a.txt').kind == 'test_file_system.file_read'
+    assert FileProgressEvent(path='a.txt', progress=0.5).kind == 'test_file_system.progress'
 
 
 def test_missing_namespace_rejected():
@@ -55,13 +55,31 @@ def test_missing_namespace_rejected():
 
 
 def test_duplicate_kind_rejected():
-    with pytest.raises(TypeError, match=r"Duplicate capability event kind 'file_system\.file_read'"):
+    with pytest.raises(TypeError, match=r"Duplicate capability event kind 'test_file_system\.file_read'"):
 
         @dataclass(kw_only=True)
         class DuplicateEvent(  # pyright: ignore[reportUnusedClass]
             CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'
         ):
             pass
+
+
+def test_redefined_event_class_replaces_registration():
+    """Re-executing the same class definition (notebook cell re-run, reload) replaces, not errors."""
+
+    def define() -> CapabilityEvent:
+        @dataclass(kw_only=True)
+        class RedefinedEvent(CapabilityEvent, namespace='redefinition'):
+            value: int
+
+        return RedefinedEvent(value=1)
+
+    first, second = define(), define()
+    assert type(first) is not type(second)
+    assert second.kind == 'redefinition.redefined'
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = {'event_kind': 'capability', 'kind': 'redefinition.redefined', 'value': 1}
+    assert type(adapter.validate_python(wire)) is type(second)
 
 
 def test_base_instantiation_rejected():
@@ -75,7 +93,7 @@ def test_round_trip():
     dumped = adapter.dump_python(event)
     assert dumped == snapshot(
         {
-            'kind': 'file_system.file_read',
+            'kind': 'test_file_system.file_read',
             'capability_id': 'files',
             'tool_call_id': None,
             'tool_name': None,
@@ -189,6 +207,7 @@ async def test_app_tool_cannot_emit_capability_event():
 
 async def test_agent_run_cannot_emit_capability_event():
     """`AgentRun.emit_event` is a driver-code (application) surface; the guard also holds at runtime."""
+
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='done')])
 

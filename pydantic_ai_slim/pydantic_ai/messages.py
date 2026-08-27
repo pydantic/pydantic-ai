@@ -4503,7 +4503,7 @@ class CapabilityEvent:
 
 
     @dataclass(kw_only=True)
-    class BeforeCompactionEvent(CapabilityEvent, namespace='compaction', dispatch='inline'):
+    class BeforeCheckpointEvent(CapabilityEvent, namespace='checkpoint', dispatch='inline'):
         cancelled: bool = False
         cancel_reason: str | None = None
 
@@ -4566,7 +4566,7 @@ class CapabilityEvent:
                 f"`class {cls.__name__}(CapabilityEvent, namespace='my_capability')`."
             )
         event_kind = f'{namespace}.{name or to_snake(cls.__name__.removesuffix("Event"))}'
-        if (existing := CAPABILITY_EVENT_TYPES.get(event_kind)) is not None:
+        if (existing := CAPABILITY_EVENT_TYPES.get(event_kind)) is not None and not _is_redefinition(existing, cls):
             raise TypeError(
                 f'Duplicate capability event kind {event_kind!r}: already registered by {existing.__qualname__}. '
                 f"Pass an explicit name, e.g. `class {cls.__name__}(CapabilityEvent, namespace={namespace!r}, name='...')`."
