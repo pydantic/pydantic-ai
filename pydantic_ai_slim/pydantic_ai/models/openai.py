@@ -2212,6 +2212,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         elif self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
             # streamed-response path, which handles `response.completed` arriving with an empty `output`.
+            # Note: if a higher-level path to enforce streaming is ever added, this branch belongs there instead.
             stream = await self._responses_create(messages, True, settings, model_request_parameters)
             async with stream:
                 streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
