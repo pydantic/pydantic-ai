@@ -200,16 +200,30 @@ def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
 
 
 def test_bedrock_converse_rejects_proprietary_openai() -> None:
-    # Proprietary GPT models are not served by the Converse API: the profile flags them
-    # (`bedrock_supported_on_converse=False`) and `BedrockConverseModel` raises at construction with a
-    # pointer to `BedrockMantleProvider`. Family-based (not GPT-OSS), so it survives future GPT generations.
-    for model_name in ('openai.gpt-5.6-luna', 'openai.gpt-6', 'openai.gpt-8-turbo'):
+    # Proprietary GPT models other than GPT-5.6 are not served by the Converse API: the profile
+    # flags them (`bedrock_supported_on_converse=False`) and `BedrockConverseModel` raises at
+    # construction with a pointer to `BedrockMantleProvider`.
+    for model_name in ('openai.gpt-5.4', 'openai.gpt-5.5', 'openai.gpt-6', 'openai.gpt-8-turbo'):
         assert BedrockProvider.model_profile(model_name) == snapshot({'bedrock_supported_on_converse': False})
         with pytest.raises(UserError, match='BedrockMantleProvider'):
             infer_model(f'bedrock:{model_name}')
     # The open-weight GPT-OSS family remains available on Converse.
     assert isinstance(infer_model('bedrock:openai.gpt-oss-120b'), BedrockConverseModel)
     assert isinstance(infer_model('bedrock:openai.gpt-oss-safeguard-20b'), BedrockConverseModel)
+
+
+def test_bedrock_converse_accepts_gpt56() -> None:
+    # AWS serves GPT-5.6 (Sol/Luna/Terra) on bedrock-runtime Converse, including cross-region
+    # inference-profile IDs. Construction must not raise the Mantle-only UserError.
+    for model_name in (
+        'openai.gpt-5.6-sol',
+        'openai.gpt-5.6-luna',
+        'openai.gpt-5.6-terra',
+        'us.openai.gpt-5.6-sol',
+        'global.openai.gpt-5.6-luna',
+    ):
+        assert BedrockProvider.model_profile(model_name) == snapshot({'bedrock_supported_on_converse': True})
+        assert isinstance(infer_model(f'bedrock:{model_name}'), BedrockConverseModel)
 
 
 def test_gateway_bedrock_remains_on_converse() -> None:

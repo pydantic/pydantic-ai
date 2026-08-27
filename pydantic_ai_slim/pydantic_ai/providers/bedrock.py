@@ -240,8 +240,9 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Whether this model is served by the Bedrock Converse API. Default: `True`.
 
     Set to `False` for models that Bedrock serves only through the Mantle OpenAI-compatible API (today,
-    the proprietary OpenAI GPT models); `BedrockConverseModel` raises at construction so the user gets an
-    actionable pointer to `BedrockMantleProvider` instead of an opaque Converse error at request time.
+    proprietary OpenAI GPT models other than GPT-5.6); `BedrockConverseModel` raises at construction so
+    the user gets an actionable pointer to `BedrockMantleProvider` instead of an opaque Converse error at
+    request time.
     """
 
 
@@ -497,20 +498,23 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
-    # Only the open-weight GPT-OSS family is served on Converse; every proprietary GPT model (GPT-5.4+
-    # today, and future GPT-6/7/… tomorrow) is Bedrock Mantle-only. Flag those as unsupported so
-    # `BedrockConverseModel` raises an actionable error at construction rather than failing later with an
-    # opaque Converse error.
-    if not model_name.startswith('gpt-oss'):
-        return BedrockModelProfile(bedrock_supported_on_converse=False)
-    # TODO(v3): default `bedrock:` to Bedrock Mantle (with a deprecation warning steering users who want
-    # Converse to a `bedrock-converse:` prefix), mirroring the OpenAI Responses transition.
-    # Converse rejects `reasoning_effort='none'` — mark always-on.
-    return BedrockModelProfile(
-        bedrock_thinking_variant='openai',
-        supports_thinking=True,
-        thinking_always_enabled=True,
-    )
+    # GPT-OSS and GPT-5.6 are served on Converse. Other proprietary GPT models (GPT-5.4/5.5 and
+    # not-yet-shipped generations) remain Bedrock Mantle-only. Flag those as unsupported so
+    # `BedrockConverseModel` raises an actionable error at construction rather than failing later
+    # with an opaque Converse error.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
+    if model_name.startswith('gpt-oss'):
+        # TODO(v3): default `bedrock:` to Bedrock Mantle (with a deprecation warning steering users who want
+        # Converse to a `bedrock-converse:` prefix), mirroring the OpenAI Responses transition.
+        # Converse rejects `reasoning_effort='none'` — mark always-on.
+        return BedrockModelProfile(
+            bedrock_thinking_variant='openai',
+            supports_thinking=True,
+            thinking_always_enabled=True,
+        )
+    if model_name.startswith('gpt-5.6'):
+        return BedrockModelProfile(bedrock_supported_on_converse=True)
+    return BedrockModelProfile(bedrock_supported_on_converse=False)
 
 
 def _strip_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
