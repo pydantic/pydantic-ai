@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.id_types import ForkID, JoinID
 from pydantic_graph.join import (
     ReduceFirstValue,
     ReducerContext,
@@ -438,3 +439,72 @@ async def test_reduce_first_value_keeps_side_effect_of_cancelled_sibling():
     # side-effect line and never recorded. The winner writes only after the event is set, so it
     # always trails the surviving side effect.
     assert state.completed == ['effect-then-suspend', 'winner']
+
+
+async def test_join_with_fanned_producer_does_not_drop_branch():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/7785.
+
+    A join (`merge`) with two producers -- one the tail of a fanned/mapped branch and the
+    other an ordinary step -- must reduce both contributions. Previously the fallback
+    finalization loop finalized `merge` in the same pass that finalized the fanned join and
+    dispatched the branch's tail task (which had not run yet), silently dropping the fanned
+    branch's contribution.
+
+    This is deterministic (no timing involved), so we run it several times to be sure.
+    """
+
+    for _ in range(10):
+        fan_started = asyncio.Event()
+        g = GraphBuilder(name="repro_7785", input_type=str, output_type=list)
+
+        @g.step
+        async def root(ctx: StepContext[None, None, str]) -> str:
+            return ctx.inputs
+
+        @g.step
+        async def fan_prepare(ctx: StepContext[None, None, object]) -> list[int]:
+            fan_started.set()
+            return [1, 2, 3]
+
+        @g.step
+        async def fan_unit(ctx: StepContext[None, None, int]) -> int:
+            return ctx.inputs * 10
+
+        fan_join = g.join(reduce_list_append, initial_factory=list, node_id="fan_join")
+
+        @g.step
+        async def fan_result(ctx: StepContext[None, None, list]) -> list[int]:
+            return sorted(ctx.inputs)
+
+        @g.step
+        async def plain_producer(ctx: StepContext[None, None, object]) -> str:
+            await fan_started.wait()
+            return "plain"
+
+        merge = g.join(reduce_list_append, initial_factory=list, node_id="merge")
+
+        @g.step
+        async def downstream(ctx: StepContext[None, None, list]) -> list:
+            return ctx.inputs
+
+        g.add_edge(g.start_node, root)
+        g.add_edge(root, fan_prepare)
+        g.add_edge(root, plain_producer)
+        g.add_mapping_edge(
+            fan_prepare, fan_unit, fork_id=ForkID("fan_fork"), downstream_join_id=JoinID("fan_join")
+        )
+        g.add_edge(fan_unit, fan_join)
+        g.add_edge(fan_join, fan_result)
+        g.add_edge(fan_result, merge)
+        g.add_edge(plain_producer, merge)
+        g.add_edge(merge, downstream)
+        g.add_edge(downstream, g.end_node)
+
+        result = await g.build().run(inputs="go")
+
+        # `merge` collects both contributions: the plain string and the fanned list.
+        flat = [x for sub in result for x in (sub if isinstance(sub, list) else [sub])]
+        assert "plain" in flat
+        for value in (10, 20, 30):
+            assert value in flat, f"fanned branch value {value} dropped: {result}"
+

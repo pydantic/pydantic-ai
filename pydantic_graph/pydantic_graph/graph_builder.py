@@ -832,6 +832,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     if t.task_id not in new_task_ids:  # pragma: no cover
                                         await self._finish_task(t.task_id)
                                 self._handle_execution_request(maybe_overridden_result)
+
+                                # Finalizing this join dispatched new tasks (e.g. the tail of a fanned-out
+                                # branch). Those tasks may feed another join that is still pending in
+                                # `active_reducers`. If we keep finalizing joins from this pre-snapshotted
+                                # list, the downstream join could be finalized in the same pass -- before the
+                                # newly dispatched task has run and delivered its contribution -- and silently
+                                # drop its input. Stop here so the new tasks run first; the pending join(s)
+                                # will be finalized on a later pass once those tasks complete.
+                                # See https://github.com/pydantic/pydantic-ai/issues/7785
+                                if new_tasks:
+                                    break
             except GeneratorExit:
                 self.task_group.cancel_scope.cancel()
                 return
