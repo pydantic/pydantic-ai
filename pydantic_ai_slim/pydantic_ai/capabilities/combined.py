@@ -109,11 +109,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         new_self.__normalize_capabilities()
         return new_self
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         for capability in self.capabilities:
-            capability._validate_runtime_capabilities(ctx, capabilities)
+            capability._validate_runtime_capabilities(capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[str | SystemPromptFunc[AgentDepsT]] = []

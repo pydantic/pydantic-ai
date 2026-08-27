@@ -8840,6 +8840,17 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
             await agent.run('hello', capabilities=[extra_factory])
 
 
+async def test_temporal_durability_rejects_a_per_run_sandbox_supplier_before_creation():
+    supplier = LifecycleSandboxCapability()
+    agent = Agent(TestModel(), name='temporal_per_run_supplied_sandbox', capabilities=[TemporalDurability()])
+
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
+            await agent.run('Hello', capabilities=[supplier])
+
+    assert supplier.events == []
+
+
 # --- get_serialization_name returns None ---
 
 

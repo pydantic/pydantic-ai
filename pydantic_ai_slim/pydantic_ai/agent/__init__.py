@@ -1416,6 +1416,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
         extra_capabilities = self._bind_run_capabilities(extra_capabilities)
+        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
+            [capability for extra in extra_capabilities for capability in leaf_capabilities(extra)]
+        )
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -3055,8 +3058,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
-            ctx,
-            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
+            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)]
         )
         run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
 

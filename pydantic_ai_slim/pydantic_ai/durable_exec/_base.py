@@ -1697,9 +1697,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         return toolset.visit_and_replace(swap)
 
-    def _validate_runtime_capabilities(
-        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    ) -> None:
+    def _validate_runtime_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
         if self.in_durable_context and any(collect_capability_operations(capability) for capability in capabilities):
             raise UserError(
                 f'Capabilities added per run cannot contribute {self.engine_name} durable operations because '
