@@ -569,6 +569,39 @@ def test_json_schema_test_data_equal_inclusive_bounds():
     TestModel.model_validate(data)
 
 
+def test_json_schema_test_data_narrow_exclusive_bounds():
+    """Narrow ranges with exclusive bounds must not crash or produce out-of-range values."""
+
+    class TestModel(BaseModel):
+        probability: Annotated[float, Ge(0), Lt(1)]
+        strict_fraction: Annotated[float, Gt(0), Lt(1)]
+        rate: Annotated[float, Gt(0.0), Le(1.0)]
+        only_one: Annotated[int, Gt(0), Lt(2)]
+
+    json_schema = TestModel.model_json_schema()
+    for seed in range(3):
+        data = _JsonSchemaTestData(json_schema, seed=seed).generate()
+        TestModel.model_validate(data)
+    assert _JsonSchemaTestData(json_schema).generate() == snapshot(
+        {'probability': 0.0, 'strict_fraction': 0.5, 'rate': 1.0, 'only_one': 1}
+    )
+
+
+def test_narrow_exclusive_bounds_tool_args():
+    """An agent tool with `Field(ge=0, lt=1)`-style parameters runs without errors."""
+
+    agent = Agent()
+    calls: list[dict[str, Any]] = []
+
+    @agent.tool_plain
+    def set_sampling(temperature: Annotated[float, Field(ge=0, lt=1)]) -> str:
+        calls.append({'temperature': temperature})
+        return 'ok'
+
+    agent.run_sync('hello', model=TestModel())
+    assert calls == snapshot([{'temperature': 0.0}])
+
+
 def test_chars_wrap():
     class TestModel(BaseModel):
         a: Annotated[set[str], MinLen(4)]

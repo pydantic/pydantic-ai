@@ -549,13 +549,22 @@ class _JsonSchemaTestData:
 
         if minimum is not None and maximum is not None:
             span = maximum - minimum
+            if span == 0:
+                # The `+/- 1` adjustments for exclusive bounds collapsed the range to a single
+                # valid value, e.g. `Field(gt=0, lt=2)` for an integer or `Field(ge=0, lt=1)` for a float.
+                return minimum
+            elif span < 0:
+                # The `+/- 1` adjustments for exclusive bounds overshot a narrow float range,
+                # e.g. `Field(gt=0, lt=1)`; pick the midpoint of the original range instead.
+                low = schema.get('minimum', schema.get('exclusiveMinimum', minimum))
+                high = schema.get('maximum', schema.get('exclusiveMaximum', maximum))
+                return low + (high - low) / 2
             if (
                 schema.get('type') == 'integer'
                 and minimum % 1 == 0
                 and maximum % 1 == 0
                 and 'exclusiveMinimum' not in schema
                 and 'exclusiveMaximum' not in schema
-                and span > 0
             ):
                 minimum = int(minimum)
                 span = int(maximum) - minimum + 1
