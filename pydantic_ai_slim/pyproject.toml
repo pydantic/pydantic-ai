@@ -66,7 +66,9 @@ dependencies = [
     "exceptiongroup>=1.2.2; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    "genai-prices>=0.1.0",
+    # 0.1.4 is the first release that prices `openai.gpt-5.6-luna` on Bedrock Mantle, so below it
+    # `RequestUsage.cost` comes back `None` for a model `tests/models/test_bedrock_mantle.py` pins.
+    "genai-prices>=0.1.4",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -154,7 +156,9 @@ retries = ["tenacity>=8.2.3", "httpx>=0.27"]
 # Temporal
 temporal = ["temporalio>=1.24.0"]
 # DBOS
-dbos = ["dbos>=2.10.0"]
+# `<2.31.0`: their default `DBOS.__init__` path needs `opentelemetry-instrumentation-logging` without
+# requiring their `[otel]` extra. https://github.com/dbos-inc/dbos-transact-py/issues/832
+dbos = ["dbos>=2.10.0,<2.31.0"]
 # Prefect
 prefect = ["prefect>=3.7.5"]
 # Spec (YAML agent specs)
@@ -164,7 +168,7 @@ spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 allow-direct-references = true
 
 [project.scripts]
-pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
+pai = "pydantic_ai._cli:cli_exit" # TODO(v3): remove this alias; clai has been on PyPI since 2025-05. https://pypi.org/project/clai/#history
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
