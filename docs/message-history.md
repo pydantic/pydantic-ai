@@ -374,6 +374,12 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
+    A tool return keyed by something other than a string runs the opposite way. Its keys have no
+    JSON form, so only a `dump_python` round-trip preserves them — and because such a mapping is
+    carried through as-is, a [multi-modal item][pydantic_ai.messages.MultiModalContent] nested
+    underneath one comes back as a plain dict there, while the JSON round-trip stringifies the key
+    and restores the item. Use string keys in a tool return if you need both.
+
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
     those fields are dropped entirely. That loss is by design, not a state-loss bug.

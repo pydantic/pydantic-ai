@@ -1778,9 +1778,10 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     guards adds thousands of frames, so a handful of tolerance costs no signal and removes any
     dependence on ambient interpreter activity.
 
-    `dump_json` is pinned alongside `validate_json` because the obvious simplification of the
-    `_StrPassthrough` arm — `pydantic.InstanceOf[str]` — builds the same validator but attaches a wrap
-    serializer, reintroducing a Python call per string node on the dump path only.
+    `dump_json` is pinned alongside `validate_json` because it is the leg that notices the two ways
+    the `_StrPassthrough` arm can be lost: `pydantic.InstanceOf[str]` builds the same validator but
+    attaches a wrap serializer, and deleting the arm outright drops strings onto `Any`. Both
+    reintroduce a Python call per string node on the dump path while leaving `validate_json` flat.
 
     Scoped to the JSON paths deliberately: `validate_python` still costs a Python frame per *sequence*
     node inside pydantic's own `sequence_validator`, which predates this union and is untouched here.
@@ -1880,9 +1881,18 @@ def test_tool_return_mapping_with_non_str_key_stays_mapping():
     via_json = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
     kept_int_key: Any = message_part(via_python, ToolReturnPart).content
-    assert type(kept_int_key[1]) is dict
+    assert kept_int_key[1] == snapshot(
+        {
+            'url': 'https://example.com/x.png',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'image-url',
+            'media_type': 'image/png',
+            'identifier': 'f27cce',
+        }
+    )
     stringified_key: Any = message_part(via_json, ToolReturnPart).content
-    assert type(stringified_key['1']) is ImageUrl
+    assert stringified_key['1'] == ImageUrl(url='https://example.com/x.png')
 
 
 class _Flavour(str, Enum):
@@ -1904,11 +1914,14 @@ def test_tool_return_string_like_content_is_not_treated_as_a_sequence(value: Any
     """`str`, `bytes` and `bytearray` must survive python-mode validation as their own type.
 
     All three are `Sequence`s, so the `Sequence[ToolReturnContent]` arm could shred them into
-    per-character/per-byte lists. `str` is caught by the leading `_StrPassthrough` arm — via
-    `is_instance_schema`, so a `str` subclass keeps its type rather than being coerced to `str` —
-    while `bytes`/`bytearray` fall past `Sequence` (pydantic's sequence validator rejects them) onto
-    `Any`. Both are load-bearing and neither is otherwise pinned, so an arm reorder would regress
-    them silently.
+    per-character/per-byte lists. #6191's approving review named that short-circuit by hand and
+    nothing pinned it.
+
+    The `str` subclass case guards `_StrPassthrough`'s `is_instance_schema` specifically: swapping it
+    for the shorter `Annotated[str, Strict()]` coerces the subclass to a plain `str` and fails here.
+    It does not guard the arm's existence — deleting the arm entirely leaves a `str` on `Any`, which
+    also preserves the subclass; `test_tool_return_content_json_paths_make_no_per_node_python_calls`
+    is what catches that, on its `dump_json` leg.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=value, tool_call_id='c')])
