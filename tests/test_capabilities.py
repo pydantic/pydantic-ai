@@ -18,6 +18,7 @@ from typing import Any, cast
 from uuid import UUID
 
 import anyio
+import httpx2
 import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -8548,12 +8549,33 @@ class TestImageGenerationCapability:
         ):
             ImageGeneration(fallback_model=f'{provider}:{model_name}')
 
-    @pytest.mark.vcr()
-    async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
-        """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
-        from pydantic_ai.messages import BinaryImage
+    @pytest.fixture
+    def openai_image_generation_types(self) -> tuple[type[Any], type[Any]]:
+        """Import the optional OpenAI SDK synchronously before Blockbuster monitors the async test."""
         from pydantic_ai.models.openai import OpenAIResponsesModel
         from pydantic_ai.providers.openai import OpenAIProvider
+
+        return OpenAIResponsesModel, OpenAIProvider
+
+    @pytest.mark.vcr()
+    async def test_image_generation_local_fallback(
+        self,
+        allow_model_requests: None,
+        openai_api_key: str,
+        openai_image_generation_types: tuple[type[Any], type[Any]],
+    ):
+        """The fallback subagent sends factory-produced native config with capability overrides."""
+        from pydantic_ai.messages import BinaryImage
+
+        OpenAIResponsesModel, OpenAIProvider = openai_image_generation_types
+
+        captured_request: dict[str, Any] = {}
+
+        async def capture_request(request: httpx2.Request) -> None:
+            captured_request.update(TypeAdapter(dict[str, Any]).validate_json(request.content))
+
+        def native_factory(ctx: RunContext[Any]) -> ImageGenerationTool:
+            return ImageGenerationTool(quality='low')
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # If we see a tool return, the image was generated — return final text
@@ -8570,16 +8592,39 @@ class TestImageGenerationCapability:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
-        inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(
-            outer_model,
-            capabilities=[
-                ImageGeneration(fallback_model=inner_model),
-            ],
-        )
-        result = await agent.run('Generate an image of a cute baby sea otter')
+        async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
+            inner_model = OpenAIResponsesModel(
+                'gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key, http_client=http_client)
+            )
+            outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+            agent = Agent(
+                outer_model,
+                capabilities=[
+                    ImageGeneration(
+                        native=native_factory,
+                        fallback_model=inner_model,
+                        background='opaque',
+                    ),
+                ],
+            )
+            result = await agent.run('Generate an image of a cute baby sea otter')
+
         assert result.output == 'Here is the generated image.'
+        assert captured_request['tools'] == snapshot(
+            [
+                {
+                    'type': 'image_generation',
+                    'action': 'auto',
+                    'background': 'opaque',
+                    'moderation': 'auto',
+                    'output_compression': 100,
+                    'output_format': 'png',
+                    'partial_images': 0,
+                    'quality': 'low',
+                    'size': 'auto',
+                }
+            ]
+        )
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
