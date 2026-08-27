@@ -239,6 +239,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Mistral
     * xAI
+    * Cerebras
     * Crusoe
     * Ollama
     * OpenRouter
@@ -322,6 +323,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * xAI
     * HuggingFace
+    * Cerebras
     * Crusoe
     * Ollama
     * OpenRouter
@@ -342,6 +344,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * xAI
     * HuggingFace
+    * Cerebras
     * Crusoe
     * Ollama
     * OpenRouter
@@ -461,6 +464,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Google (Gemini API and Google Cloud)
     * Bedrock
+    * Cerebras (sent and enum-validated — HTTP 200 on an ordinary key; the tiers are in private
+      preview, so no effect is observable without access)
     * Crusoe
     * Ollama
     * OpenRouter

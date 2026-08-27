@@ -206,7 +206,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     run — including the fresh instance a [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
     override may return — rather than a specific object.
 
-    Required when `defer_loading=True`. If omitted for an always-available
+    Required when `defer_loading=True`. If omitted for an always-on
     capability, the run derives a local id from the class name.
     """
 
@@ -452,7 +452,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
         On a deferred capability this runs only once the capability is loaded, and then receives
-        every function tool, as an always-available capability does. There is nothing to govern
+        every function tool, as an always-on capability does. There is nothing to govern
         before that: an unloaded capability's tools are neither advertised to the model nor
         callable, so no filtering here could change what the model can reach.
         """

@@ -45,6 +45,7 @@ for file in mimetypes.knownfiles:
     if os.path.isfile(file):
         _mime_types.read(file)  # pragma: lax no cover
 # TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
+# https://github.com/python/cpython/blob/3.11/Lib/mimetypes.py
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
@@ -347,10 +348,17 @@ class VideoUrl(FileUrl):
 
     @property
     def is_youtube(self) -> bool:
-        """True if the URL has a YouTube domain."""
-        parsed = urlparse(self.url)
-        hostname = parsed.hostname
-        return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
+        """True if the URL is on a YouTube host that models can resolve directly.
+
+        This is a specific set of hosts rather than every YouTube-owned domain, so
+        `music.youtube.com` is deliberately not one of them.
+        """
+        # Exact hosts, not a `.youtube.com` suffix match: Google rejects
+        # `music.youtube.com` as a `file_uri` with 400 INVALID_ARGUMENT, on the Gemini API
+        # and on Vertex alike, so a suffix match would hand it a URL it cannot resolve.
+        # Membership is also read by `download_item`, so a host added here stops being
+        # downloadable on every other provider too — verify both before extending this.
+        return urlparse(self.url).hostname in ('youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com')
 
     @property
     def format(self) -> VideoFormat:
@@ -3951,7 +3959,7 @@ class ToolCallEvent:
 
     args_valid: bool | None = None
     """Whether the tool arguments passed validation.
-    See the [custom validation docs](https://ai.pydantic.dev/tools-advanced/#args-validator) for more info.
+    See the [custom validation docs](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#args-validator) for more info.
 
     - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
     - `False`: Validation was performed and failed.
@@ -4101,10 +4109,11 @@ class DeferredToolResultsEvent:
 
 @dataclass(repr=False)
 class RealtimeTurnCompleteEvent:
-    """The exchange is over: the model has finished replying and nothing is outstanding.
+    """The model exchange is over: generation and tool work are complete.
 
-    This is the event to stop consuming on. It is synthesized by the session once no tool calls are
-    still running and no further response is in flight.
+    It is synthesized by the session once no tool calls are still running and no further response is
+    in flight. Input transcription can finish after this event. On WebRTC sidebands, provider playback
+    can also continue until [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """
 
     _: KW_ONLY
@@ -4184,7 +4193,7 @@ class RealtimeOutputSpeechStartEvent:
     """The provider started playing the model's audio to the listener.
 
     Only reported where the provider, rather than your code, holds the audio on its way to the
-    listener: on a [WebRTC sideband](../realtime/lifecycle.md#browser-webrtc) the media flows
+    listener: on a [WebRTC sideband](../realtime/deployment.md#browser-webrtc-server-sideband) the media flows
     browser ↔ provider, so the session never sees audio and this is its only signal that the model has
     become audible. An ordinary session owns the audio and knows when it starts playing it, so no
     provider reports this there.

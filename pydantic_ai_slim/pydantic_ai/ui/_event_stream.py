@@ -136,11 +136,29 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     """
     _open_part_index: int = 0
     """The index of the part tracked by `_open_part`, used to reconstruct its `PartEndEvent` on error."""
+    _open_part_deltas: list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta] = field(
+        default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
+    )
+    """Deltas used to bring `_open_part` up to date only if a synthetic end event is needed."""
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
         self.message_id = str(uuid4())
         return self.message_id
+
+    def _record_part_delta(self, event: PartDeltaEvent) -> None:
+        if event.index != self._open_part_index:
+            return
+
+        match event.delta, self._open_part:
+            case TextPartDelta() as delta, TextPart():
+                self._open_part_deltas.append(delta)
+            case ThinkingPartDelta() as delta, ThinkingPart():
+                self._open_part_deltas.append(delta)
+            case ToolCallPartDelta() as delta, ToolCallPart() | NativeToolCallPart():
+                self._open_part_deltas.append(delta)
+            case _:
+                pass
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -225,6 +243,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     # Only one part is open at a time, so this end is for `_open_part` (or it's already
                     # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
                     self._open_part = None
+                    self._open_part_deltas.clear()
                 elif isinstance(event, ToolCallEvent):
                     tool_call_id = event.part.tool_call_id
                     kind: Literal['function', 'output'] = (
@@ -254,8 +273,14 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     tool_call_id = event.part.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
 
+                delta_recorded = False
                 async for e in self.handle_event(event):
+                    if isinstance(event, PartDeltaEvent) and not delta_recorded:
+                        self._record_part_delta(event)
+                        delta_recorded = True
                     yield e
+                if isinstance(event, PartDeltaEvent) and not delta_recorded:
+                    self._record_part_delta(event)
 
                 # Mark the part open only after its start event has been emitted, so a start hook that
                 # raises mid-emit doesn't leave the error path closing a part the client never saw.
@@ -264,13 +289,29 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 ):
                     self._open_part = event.part
                     self._open_part_index = event.index
+                    self._open_part_deltas.clear()
         except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
             # Close the open message part before emitting the error, so a client that aborts at the
             # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
             # first: it's a response-side event, whereas the tool-call cleanup below turns to the
             # request side, and everything after the error chunk is dropped.
             if (part := self._open_part) is not None:
+                for delta in self._open_part_deltas:
+                    # Synthetic cleanup must not replace the original stream error.
+                    try:
+                        match delta, part:
+                            case TextPartDelta() as text_delta, TextPart():
+                                part = text_delta.apply(part)
+                            case ThinkingPartDelta() as thinking_delta, ThinkingPart():
+                                part = thinking_delta.apply(part)
+                            case ToolCallPartDelta() as tool_delta, ToolCallPart() | NativeToolCallPart():
+                                part = tool_delta.apply(part)
+                            case _:
+                                pass
+                    except Exception:
+                        pass
                 self._open_part = None
+                self._open_part_deltas.clear()
                 async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
                     yield e
 

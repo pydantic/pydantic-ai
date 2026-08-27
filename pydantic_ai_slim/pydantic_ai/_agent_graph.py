@@ -47,6 +47,7 @@ from ._cost import best_effort_price, fill_response_cost
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
+    registered_loaded_capability_ids,
 )
 from ._instructions import normalize_toolset_instructions
 from ._run_context import AnchoredEvidence, set_current_run_context
@@ -826,7 +827,6 @@ async def _prepare_request_parameters(
         function_tools=function_tools,
         native_tools=native_tools,
         deferred_capability_ids=deferred_capability_ids,
-        # Preserve discovered names that aren't in the current definitions.
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
@@ -2404,7 +2404,7 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
     if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
         return
 
-    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
+    loaded_capability_ids = registered_loaded_capability_ids(ctx.state.message_history, ctx.deps.capabilities.keys())
 
     # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`
     # copies made via `replace(ctx, ...)`, so clear + update keeps them all in sync.
@@ -2428,7 +2428,13 @@ def _revealed_tool_names(
     deferred_capability_ids: set[str],
     loaded_capability_ids: set[str],
 ) -> set[str]:
-    """Drop reveals whose owning capability is not available yet.
+    """Drop reveals for tools this run doesn't define, and those whose owning capability isn't active yet.
+
+    History outlives configuration, so it can name a tool the current run has no definition for. Such
+    a name can't be revealed — there is no schema to show — and every consumer already guards on
+    membership in the definitions, so dropping it here changes nothing observable; what it buys is
+    that `revealed_tool_names` is a subset of `function_tools`' names by construction, and a future
+    consumer can't be caught out by an entry that resolves to nothing.
 
     The ordering a run holds to is load, then reveal, then call: a capability's instructions and
     hooks come as a bundle, and its tools should not reach the model ahead of the runbook for using
@@ -2445,15 +2451,13 @@ def _revealed_tool_names(
     tool is revealed by discovery alone, which is why this needs `deferred_capability_ids` read from
     the capability instances rather than a guess from the tool definitions.
     """
-    owner_by_name = {
-        tool_def.name: tool_def.capability_id for tool_def in function_tools if tool_def.capability_id is not None
-    }
-    # The complement of `RunContext.available_capability_ids` over the run's capabilities: available
-    # is "not deferred, or loaded", so unavailable is "deferred and not loaded". Spelled from the
+    owner_by_name = {tool_def.name: tool_def.capability_id for tool_def in function_tools}
+    # The complement of `RunContext.active_capability_ids` over the run's capabilities: active
+    # is "not deferred, or loaded", so inactive is "deferred and not loaded". Spelled from the
     # two history-derived sets because this also runs against a bare message list, with no
     # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
-    unavailable_capability_ids = deferred_capability_ids - loaded_capability_ids
-    return {name for name in discovered if owner_by_name.get(name) not in unavailable_capability_ids}
+    inactive_capability_ids = deferred_capability_ids - loaded_capability_ids
+    return {name for name in discovered if name in owner_by_name and owner_by_name[name] not in inactive_capability_ids}
 
 
 def _with_outgoing_reveal_state(

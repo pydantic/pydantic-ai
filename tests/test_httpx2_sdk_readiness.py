@@ -123,6 +123,37 @@ assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modu
 )
 
 
+_HTTPX_FREE_ANTHROPIC = (
+    _BLOCK_HTTPX
+    + """
+import asyncio
+
+import httpx2
+
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.gateway import gateway_provider
+
+
+async def construct_providers():
+    async with httpx2.AsyncClient() as client:
+        provider = AnthropicProvider(api_key='test', http_client=client)
+        assert provider.client._client is client
+        AnthropicModel('claude-sonnet-4-6', provider=provider)
+
+        gateway = gateway_provider(
+            'anthropic', api_key='test', base_url='https://gateway.example.com', http_client=client
+        )
+        assert gateway.client._client is client
+
+
+asyncio.run(construct_providers())
+
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'Anthropic providers imported httpx'
+"""
+)
+
+
 def test_core_runs_without_httpx() -> None:
     result = subprocess.run(
         [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_CORE],
@@ -143,6 +174,17 @@ def test_openai_providers_run_without_httpx() -> None:
     assert result.stderr == ''
 
 
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+def test_anthropic_providers_run_without_httpx() -> None:
+    result = subprocess.run(
+        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_ANTHROPIC],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
+
+
 async def test_httpx2_client_constructs_without_blocking() -> None:
     """`_http.py` preloads `httpcore2` at import so client construction can't block the event loop.
 
@@ -155,10 +197,11 @@ async def test_httpx2_client_constructs_without_blocking() -> None:
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-async def test_anthropic_still_rejects_httpx2_client() -> None:
+async def test_anthropic_accepts_httpx2_client() -> None:
     async with httpx2.AsyncClient() as client:
-        with pytest.raises(TypeError, match=r'Expected an instance of `httpx\.AsyncClient`'):
-            AsyncAnthropic(api_key='test', http_client=client)  # pyright: ignore[reportArgumentType]
+        anthropic_client = AsyncAnthropic(api_key='test', http_client=client)
+
+        assert anthropic_client._client is client  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.skipif(not groq_imports_successful(), reason='groq not installed')
@@ -192,10 +235,10 @@ def _requirement_names(distribution: str) -> set[str]:
 async def test_cohere_drives_an_httpx2_client_but_declares_legacy_httpx() -> None:
     """Cohere holds `CohereProvider` back for typing and packaging reasons, not runtime ones.
 
-    Unlike Anthropic and Groq, Cohere never checks the client's type: `httpx_client` is duck-typed
-    all the way down to `AsyncClient.request`, so an HTTPX2 client both constructs and completes a
-    request. What blocks the migration is the `pyright: ignore` below — `httpx_client` is still
-    annotated `httpx.AsyncClient` — plus Cohere pulling legacy HTTPX into the install unconditionally.
+    Unlike Groq, Cohere never checks the client's type: `httpx_client` is duck-typed all the way down
+    to `AsyncClient.request`, so an HTTPX2 client both constructs and completes a request. What blocks
+    the migration is the `pyright: ignore` below — `httpx_client` is still annotated
+    `httpx.AsyncClient` — plus Cohere pulling legacy HTTPX into the install unconditionally.
 
     Trips when Cohere widens that annotation, because `reportUnnecessaryTypeIgnoreComment` then fails
     the unused ignore, or when it drops the legacy HTTPX requirement: migrate `CohereProvider` then.

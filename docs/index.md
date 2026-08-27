@@ -123,7 +123,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     #> label='positive' score=0.9
     ```
 
-    The [`@agent.tool`](tools.md) function receives a [`RunContext`][pydantic_ai.tools.RunContext] that carries your [dependencies](dependencies.md) in; the rest of its signature and its docstring become the tool schema, arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape.
+    The [`@agent.tool`](tools.md) function receives a [`RunContext`][pydantic_ai.tools.RunContext] that carries your [dependencies](dependencies.md) in; the rest of its signature and its docstring become the tool schema, arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the returned type.
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 
@@ -259,7 +259,7 @@ Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](h
 
 **Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
 
-  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://ai.pydantic.dev/" class="md-typeset" style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
+  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://pydantic.dev/docs/ai/" class="md-typeset" style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
       <input
       type="email"
       id="email_input"
@@ -383,7 +383,7 @@ async def main():
 5. Dynamic [instructions](agent.md#instructions) can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
 6. The [`tool`](tools.md) decorator registers a function whose signature becomes a tool the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext]; any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
-8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), the same shape as an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
+8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), like an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
 9. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
 10. Here we configure the agent to use [OpenAI's GPT-5.6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
 11. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
@@ -449,10 +449,10 @@ This format is defined in Markdown and suited for LLMs and AI coding assistants 
 
 Two formats are available:
 
-- [`llms.txt`](https://ai.pydantic.dev/llms.txt): a file containing a brief description
+- [`llms.txt`](https://pydantic.dev/docs/ai/llms.txt): a file containing a brief description
   of the project, along with links to the different sections of the documentation. The structure
   of this file is described in details [here](https://llmstxt.org/#format).
-- [`llms-full.txt`](https://ai.pydantic.dev/llms-full.txt): Similar to the `llms.txt` file,
+- [`llms-full.txt`](https://pydantic.dev/docs/ai/llms-full.txt): Similar to the `llms.txt` file,
   but every link content is included. Note that this file may be too large for some LLMs.
 
 As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.

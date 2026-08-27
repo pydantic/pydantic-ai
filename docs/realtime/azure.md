@@ -62,7 +62,7 @@ realtime counterpart of [model run settings](../agent.md#model-run-settings) —
 - `openai_turn_detection` for server or semantic VAD (see [turn detection](turns.md#automatic-turn-detection));
 - `openai_truncation` for session context management.
 
-See [OpenAI settings](openai.md#settings) for the common settings shape. Azure realtime does not
+See [OpenAI settings](openai.md#settings) for the shared settings. Azure realtime does not
 expose `temperature` through Pydantic AI.
 
 ### Input transcription deployment
