@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import pickle
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -16,7 +17,7 @@ import pytest
 from pydantic import SecretStr
 
 from pydantic_ai import ModelRequest
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters, infer_model, infer_model_profile
 from pydantic_ai.providers import infer_provider_class
@@ -196,6 +197,19 @@ def test_account_id_claim_fallbacks():
     assert _account_id_from_id_token(make_jwt({'chatgpt_account_id': 'acc-top'})) == 'acc-top'
     assert _account_id_from_id_token(make_jwt({'account_id': 'acc-legacy'})) == 'acc-legacy'
     assert _account_id_from_id_token(make_jwt({})) is None
+
+
+@pytest.mark.parametrize('exc_type', [CredentialsRefreshError, CredentialsPersistenceError])
+def test_credentials_errors_are_model_api_errors(exc_type: type[ModelAPIError]):
+    """Credential failures are `ModelAPIError`s (so e.g. `FallbackModel` falls back on them) and
+    survive a pickle round-trip despite the narrower single-argument constructor."""
+    exc = exc_type('something broke')
+    assert isinstance(exc, ModelAPIError)
+    assert exc.model_name == 'openai-codex'
+    restored = pickle.loads(pickle.dumps(exc))
+    assert type(restored) is exc_type
+    assert restored.model_name == 'openai-codex'
+    assert restored.message == 'something broke'
 
 
 def test_token_response_validation_errors():

@@ -32,7 +32,7 @@ from pydantic import BaseModel, SecretStr, TypeAdapter, ValidationError
 from typing_extensions import Self
 
 from pydantic_ai._http import create_async_httpx2_client
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.openai_codex import openai_codex_model_profile
 
@@ -78,7 +78,22 @@ _ORIGINATOR = 'pydantic-ai'
 _TOKEN_EXPIRY_BUFFER = timedelta(seconds=30)
 
 
-class CredentialsRefreshError(RuntimeError):
+class _CredentialsError(ModelAPIError):
+    """Base for Codex credential failures.
+
+    Subclasses [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] so the standard handling of
+    provider failures (e.g. [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]) applies;
+    the auth layer runs below any specific model, so `model_name` is the provider name.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(model_name='openai-codex', message=message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.message,)
+
+
+class CredentialsRefreshError(_CredentialsError):
     """Refreshing Codex credentials against the token endpoint failed.
 
     When the underlying error is `invalid_grant`, the stored grant is no longer usable and a fresh
@@ -86,7 +101,7 @@ class CredentialsRefreshError(RuntimeError):
     """
 
 
-class CredentialsPersistenceError(RuntimeError):
+class CredentialsPersistenceError(_CredentialsError):
     """Rotated credentials were updated in memory but the persistence callback raised.
 
     The in-memory credentials are current and were handed to the callback before it failed; the

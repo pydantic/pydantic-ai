@@ -50,7 +50,7 @@ agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
 ...
 ```
 
-Tokens are refreshed automatically; rotated credentials are passed to `on_credentials_refresh` so your store stays current (if the callback raises, the in-memory credentials are still updated and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] surfaces). One provider instance carries one user's credentials; construct one per user rather than sharing globally. This is a single-process convenience: for stateless multi-replica services, use a [credential source](#multi-replica-credential-coordination) instead.
+Tokens are refreshed automatically; rotated credentials are passed to `on_credentials_refresh` so your store stays current (if the callback raises, the in-memory credentials are still updated and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] surfaces). Both it and [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError] subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] treats an unusable grant like any other provider failure and moves on to the next model. One provider instance carries one user's credentials; construct one per user rather than sharing globally. This is a single-process convenience: for stateless multi-replica services, use a [credential source](#multi-replica-credential-coordination) instead.
 
 ## Multi-replica credential coordination
 
