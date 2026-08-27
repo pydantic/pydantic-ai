@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness._usage import reserved_usage_limits
@@ -273,6 +274,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     When `None`, inherits the model the request being compacted is going to. Core starts
     that as the run's model, so the two differ only where a capability replaced
     `ModelRequestContext.model`; set this explicitly to pin the summarizer regardless.
+    """
+
+    model_settings: ModelSettings | None = field(default=None, kw_only=True)
+    """Settings for the dedicated summary model call.
+
+    These merge over defaults carried by `model`, allowing the summary call to use a
+    policy that differs from the running agent without mutating the model.
     """
 
     max_messages: int | None = None
@@ -637,6 +645,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         agent: Agent[None, str] = Agent(
             cast('Model[Any] | str', model),
             instructions=self.instructions,
+            model_settings=self.model_settings,
         )
         result = await agent.run(prompt, usage=ctx.usage, usage_limits=reserved_usage_limits(ctx.usage_limits))
         return result.output.strip()

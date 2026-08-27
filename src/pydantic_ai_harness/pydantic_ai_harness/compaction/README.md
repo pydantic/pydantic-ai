@@ -378,7 +378,9 @@ from the edit point onward -- the next request pays a cache-write. Use `ClearToo
 
 `SummarizingCompaction(model=...)` accepts a model name or `Model`; when left `None` it inherits the
 running agent's model. Its nested summary run inherits the parent usage limits and reserves one request from a
-finite request limit for the pending parent request.
+finite request limit for the pending parent request. Pass `model_settings` to give the dedicated summary call
+settings that differ from defaults carried by that model; the supplied settings merge over the model defaults
+without mutating the model or the settings dictionary.
 
 By default `incremental=True` updates the newest existing summary from a prior compaction as an
 anchor rather than regenerating it from scratch. This changes the summary-call prompt from earlier

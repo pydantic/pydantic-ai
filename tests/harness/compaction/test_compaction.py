@@ -32,6 +32,7 @@ from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameter
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -724,6 +725,37 @@ class TestCompaction:
         ctx = _make_ctx()
         result = await comp.before_model_request(ctx, rc)
         assert result.messages == messages
+
+    @pytest.mark.anyio
+    async def test_summary_model_settings_override_model_defaults_without_mutation(self, anyio_backend: str):
+        if anyio_backend != 'asyncio':
+            pytest.skip('pydantic-ai Agent execution uses asyncio')
+        observed_settings: list[ModelSettings | None] = []
+
+        def summarize(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            observed_settings.append(info.model_settings)
+            return ModelResponse(parts=[TextPart(content='A summary.')])
+
+        model_defaults = ModelSettings(temperature=1.0, max_tokens=4_096)
+        original_model_defaults = model_defaults.copy()
+        model = FunctionModel(summarize, settings=model_defaults)
+        summary_settings = ModelSettings(max_tokens=1_024)
+        original_summary_settings = summary_settings.copy()
+        comp = SummarizingCompaction(
+            model=model,
+            model_settings=summary_settings,
+            max_messages=1,
+            keep_messages=1,
+        )
+
+        await comp.compact(
+            [_user('first'), _assistant('response'), _user('latest')],
+            _make_ctx(),
+        )
+
+        assert observed_settings == [ModelSettings(temperature=1.0, max_tokens=1_024)]
+        assert summary_settings == original_summary_settings
+        assert model_defaults == original_model_defaults
 
     @pytest.mark.anyio
     async def test_compaction_replaces_old_messages(self):
