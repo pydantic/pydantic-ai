@@ -258,6 +258,17 @@ def test_mcp_config_errors(capfd: CaptureFixture[str], env: TestEnv, tmp_path: P
     assert expected in out
 
 
+def test_mcp_config_empty_value(capfd: CaptureFixture[str], env: TestEnv):
+    """`--mcp-config=` errors instead of silently starting without MCP servers.
+
+    An empty value is falsy, so a truthiness check would skip MCP entirely — which is what
+    `--mcp-config="$UNSET_VAR"` expands to in a script.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    assert cli(['--mcp-config=', 'hi']) == 1
+    assert 'needs a path to a configuration file' in capfd.readouterr().out
+
+
 def test_no_command_defaults_to_chat(mocker: MockerFixture):
     """Test that running clai with no command defaults to chat mode."""
     # Mock _run_chat_command to avoid actual execution

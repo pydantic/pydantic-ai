@@ -291,6 +291,31 @@ subcommands:
     return _run_chat_command(args, console, name_version, default_model, prog_name)
 
 
+def _load_mcp_toolsets_for_cli(config_path: str, console: Console) -> Sequence[AbstractToolset[Any]] | None:
+    """Load the `--mcp-config` toolsets, or print a friendly error and return `None`."""
+    # An empty value (`--mcp-config=`, or `--mcp-config="$UNSET_VAR"` in a script) is falsy, so a
+    # truthiness check would skip MCP entirely and leave the user thinking their servers loaded.
+    if not config_path:
+        console.print('[red]Error: --mcp-config needs a path to a configuration file[/red]')
+        return None
+
+    try:
+        from ..mcp import load_mcp_toolsets
+    except ImportError as e:  # pragma: no cover
+        raise ImportError(
+            'Please install the `mcp` package to use --mcp-config, '
+            'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
+        ) from e
+
+    try:
+        return load_mcp_toolsets(config_path)
+    # `OSError` rather than `FileNotFoundError`: a path that exists but can't be read as a file
+    # (a directory, or one without read permission) raises a sibling `OSError` subclass.
+    except (OSError, ValidationError, ValueError) as e:
+        console.print(f'[red]Error: Could not load MCP config from {config_path}:\n{e}[/red]')
+        return None
+
+
 def _run_chat_command(
     args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
 ) -> int:
@@ -304,20 +329,9 @@ def _run_chat_command(
         agent = loaded
 
     toolsets: Sequence[AbstractToolset[Any]] | None = None
-    if args.mcp_config:
-        try:
-            from ..mcp import load_mcp_toolsets
-        except ImportError as e:  # pragma: no cover
-            raise ImportError(
-                'Please install the `mcp` package to use --mcp-config, '
-                'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
-            ) from e
-        try:
-            toolsets = load_mcp_toolsets(args.mcp_config)
-        # `OSError` rather than `FileNotFoundError`: a path that exists but can't be read as a file
-        # (a directory, or one without read permission) raises a sibling `OSError` subclass.
-        except (OSError, ValidationError, ValueError) as e:
-            console.print(f'[red]Error: Could not load MCP config from {args.mcp_config}:\n{e}[/red]')
+    if args.mcp_config is not None:
+        toolsets = _load_mcp_toolsets_for_cli(args.mcp_config, console)
+        if toolsets is None:
             return 1
 
     model_arg_set = args.model is not None
