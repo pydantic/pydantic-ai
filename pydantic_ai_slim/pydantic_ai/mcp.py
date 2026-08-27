@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, T
 import anyio
 import pydantic_core
 from pydantic import AnyUrl, Field, TypeAdapter
-from typing_extensions import Self, assert_never
+from typing_extensions import Self, TypedDict, assert_never
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
@@ -1918,6 +1918,28 @@ def _expand_env_vars(value: Any) -> Any:
         return value
 
 
+class _MCPServerConfig(TypedDict, total=False):
+    """The keys `load_mcp_toolsets` reads from an `mcpServers` entry.
+
+    Keys other MCP clients write (`type`, `disabled`, `timeout`, ...) are ignored rather than
+    rejected, so a configuration file shared with another client still loads.
+    """
+
+    command: str
+    args: list[str] | None
+    env: dict[str, str] | None
+    cwd: str | None
+    url: str
+    headers: dict[str, str] | None
+
+
+class _MCPConfig(TypedDict):
+    mcpServers: dict[str, _MCPServerConfig]
+
+
+_MCP_CONFIG_ADAPTER = TypeAdapter(_MCPConfig)
+
+
 def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     """Load `MCPToolset`s from a configuration file.
 
@@ -1940,33 +1962,28 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     Raises:
         OSError: If the configuration file does not exist (`FileNotFoundError`), or exists but
             cannot be read — a directory, or a file without read permission.
-        ValidationError: If the configuration file does not match the schema.
-        ValueError: If the configuration is malformed, or an environment variable referenced in it
-            is not defined and no default is provided.
+        ValidationError: If the configuration does not match the `mcpServers` shape above. This is
+            a `ValueError` subclass, so catching `ValueError` covers it too.
+        ValueError: If the file is not valid JSON, a server entry has neither `command` nor `url`,
+            or an environment variable referenced in the configuration is not defined and no
+            default is provided.
     """
     config_path = Path(config_path)
     if not config_path.exists():
         raise FileNotFoundError(f'Config file {config_path} not found')
 
     config_data = pydantic_core.from_json(config_path.read_bytes())
-    expanded_config_data = _expand_env_vars(config_data)
-    if not isinstance(expanded_config_data, dict):
-        raise ValueError(f'Expected JSON object at root of {config_path}, got {type(expanded_config_data).__name__}')
-    servers = cast(dict[str, Any], expanded_config_data).get('mcpServers')
-    if not isinstance(servers, dict):
-        raise ValueError(f'Expected `mcpServers` object in {config_path}')
+    # Expand before validating, so `${VAR}` references are checked as the values they resolve to.
+    config = _MCP_CONFIG_ADAPTER.validate_python(_expand_env_vars(config_data))
 
     toolsets: list[AbstractToolset[Any]] = []
-    for name, server in cast(dict[str, Any], servers).items():
-        if not isinstance(server, dict):
-            raise ValueError(f'Expected MCP server config {name!r} in {config_path} to be an object')
-        server = cast(dict[str, Any], server)
+    for name, server in config['mcpServers'].items():
         if 'command' in server:
             transport = StdioTransport(
                 command=server['command'],
                 args=list(server.get('args') or []),
                 env=server.get('env'),
-                cwd=str(server['cwd']) if server.get('cwd') is not None else None,
+                cwd=server.get('cwd'),
             )
             toolset = MCPToolset(transport, id=name)
         elif 'url' in server:

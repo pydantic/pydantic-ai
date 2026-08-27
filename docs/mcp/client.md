@@ -183,6 +183,11 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 }
 ```
 
+Each entry supports `command`, `args`, `env` and `cwd` for a stdio server, or `url` and `headers`
+for an HTTP server. The configuration is validated as it's loaded, so a mistyped field is reported
+straight away instead of failing later at connection time. Keys that other MCP clients write, like
+`type` or `disabled`, are ignored, so a file shared with another client still loads.
+
 !!! note
     The MCP server is only inferred to be an SSE server because of the `/sse` suffix. Any other server with the `url` field is treated as a Streamable HTTP server. We made this decision given that the SSE transport is deprecated.
 

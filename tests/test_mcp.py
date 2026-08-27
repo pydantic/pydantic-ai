@@ -25,7 +25,7 @@ import anyio
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
@@ -42,6 +42,7 @@ with try_import() as imports_successful:
     from fastmcp.client.client import CallToolResult
     from fastmcp.client.transports import (
         SSETransport,
+        StdioTransport,
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import McpError, ToolError
@@ -1784,8 +1785,10 @@ class TestLoadMCPToolsets:
             'mcpServers': {
                 'alpha': {
                     'url': 'https://${MCP_TEST_HOST:-localhost:8000}/mcp',
-                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}', 'X-Extras': ['${MCP_TEST_TOKEN}']},
+                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}'},
                 },
+                # `args` is the list-valued field, so it covers expansion inside a list.
+                'beta': {'command': 'python', 'args': ['-m', '${MCP_TEST_TOKEN}']},
             }
         }
         with TemporaryDirectory() as tmp:
@@ -1796,11 +1799,13 @@ class TestLoadMCPToolsets:
         wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
         assert isinstance(wrapped, MCPToolset)
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {
-            'Authorization': 'Bearer secret-value',
-            'X-Extras': ['secret-value'],
-        }
+        assert wrapped.client.transport.headers == {'Authorization': 'Bearer secret-value'}
         assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
+
+        stdio = toolsets[1].wrapped  # type: ignore[attr-defined]
+        assert isinstance(stdio, MCPToolset)
+        assert isinstance(stdio.client.transport, StdioTransport)
+        assert stdio.client.transport.args == ['-m', 'secret-value']
 
     async def test_load_mcp_toolsets_undefined_env_var_raises(self):
         """A `${VAR}` reference without a default and not set in the environment raises a clear `ValueError`."""
@@ -1811,38 +1816,67 @@ class TestLoadMCPToolsets:
             with pytest.raises(ValueError, match=r'\$\{MCP_TEST_UNDEFINED\} is not defined'):
                 load_mcp_toolsets(config_path)
 
-    async def test_load_mcp_toolsets_rejects_non_object_root(self):
-        """The config root must be a JSON object; a list / scalar at the root raises a descriptive error."""
+    @pytest.mark.parametrize(
+        'config,loc',
+        [
+            pytest.param(['not an object'], (), id='root-not-an-object'),
+            pytest.param({'someOtherKey': {}}, ('mcpServers',), id='missing-mcp-servers-key'),
+            pytest.param({'mcpServers': {'alpha': None}}, ('mcpServers', 'alpha'), id='entry-not-an-object'),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 123}}}, ('mcpServers', 'alpha', 'command'), id='command-not-a-str'
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'args': 'not-a-list'}}},
+                ('mcpServers', 'alpha', 'args'),
+                id='args-not-a-list',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'env': 'not-a-mapping'}}},
+                ('mcpServers', 'alpha', 'env'),
+                id='env-not-a-mapping',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'url': 'http://localhost:8000/sse', 'headers': 'not-a-mapping'}}},
+                ('mcpServers', 'alpha', 'headers'),
+                id='headers-not-a-mapping',
+            ),
+        ],
+    )
+    async def test_load_mcp_toolsets_rejects_config_not_matching_the_schema(self, config: Any, loc: tuple[str, ...]):
+        """A config that doesn't match the `mcpServers` shape raises `ValidationError`, pointing at the field.
+
+        The wrongly-typed `command` / `args` / `env` / `headers` cases used to load without complaint
+        and only misbehave later, at connection time.
+        """
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(['not an object']), encoding='utf-8')
-            with pytest.raises(ValueError, match='Expected JSON object at root'):
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            with pytest.raises(ValidationError) as exc_info:
                 load_mcp_toolsets(config_path)
 
-    async def test_load_mcp_toolsets_rejects_missing_mcp_servers_key(self):
-        """The config must have an `mcpServers` object."""
+        assert [error['loc'] for error in exc_info.value.errors()] == [loc]
+        # `ValidationError` subclasses `ValueError`, so callers catching `ValueError` still work.
+        assert isinstance(exc_info.value, ValueError)
+
+    async def test_load_mcp_toolsets_ignores_keys_other_mcp_clients_write(self):
+        """A config shared with another MCP client still loads; its extra keys are ignored."""
+        config = {
+            'mcpServers': {
+                'alpha': {'command': 'python', 'args': ['-m', 'x'], 'type': 'stdio', 'disabled': False, 'timeout': 30}
+            }
+        }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps({'someOtherKey': {}}), encoding='utf-8')
-            with pytest.raises(ValueError, match='Expected `mcpServers` object'):
-                load_mcp_toolsets(config_path)
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            assert len(load_mcp_toolsets(config_path)) == 1
 
     async def test_load_mcp_toolsets_rejects_invalid_server_entry(self):
-        """A server entry missing both `command` and `url` raises a clear `ValueError`."""
+        """A server entry with neither `command` nor `url` is a `ValueError`, not a schema problem."""
         config = {'mcpServers': {'alpha': {'something': 'else'}}}
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
             with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
-                load_mcp_toolsets(config_path)
-
-    async def test_load_mcp_toolsets_rejects_non_object_server_entry(self):
-        """A server entry that isn't an object raises `ValueError`, not an undocumented `TypeError`."""
-        config = {'mcpServers': {'alpha': None}}
-        with TemporaryDirectory() as tmp:
-            config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(config), encoding='utf-8')
-            with pytest.raises(ValueError, match=r"Expected MCP server config 'alpha' in .* to be an object"):
                 load_mcp_toolsets(config_path)
 
     async def test_load_mcp_toolsets_passes_primitive_values_through_env_expansion(self):

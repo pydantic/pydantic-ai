@@ -214,8 +214,13 @@ DIRECTORY_CONFIG = 'directory-instead-of-file'
         ),
         pytest.param(
             json.dumps({'mcpServers': {'x': None}}),
-            'to be an object',
+            'Input should be a valid dictionary',
             id='non-object-server-entry',
+        ),
+        pytest.param(
+            json.dumps({'mcpServers': {'x': {'command': 'echo', 'args': 'not-a-list'}}}),
+            'Input should be a valid list',
+            id='wrongly-typed-field',
         ),
         pytest.param(
             DIRECTORY_CONFIG,
