@@ -275,7 +275,7 @@ class Instrumentation(AbstractCapability[Any]):
         recorded by the processor itself, including whatever conflict handling it applies.
         """
         span = run_state.run_span
-        if not span.is_recording():  # pragma: no cover
+        if not span.is_recording():
             return
         at_start = run_state.baggage_at_span_start
         attributes = {

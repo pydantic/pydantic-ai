@@ -624,7 +624,7 @@ async def test_unavailable_sandbox_run_argument_overrides_default_reason():
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        return (await ctx.sandbox.run(['echo', 'hello'])).stdout  # pragma: no cover
+        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
 
     with pytest.raises(UserError, match=reason):
         await agent.run('go', sandbox=UnavailableSandbox(reason))
@@ -1328,7 +1328,7 @@ async def test_release_survives_run_cancellation():
     entered = anyio.Event()
 
     @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:  # pragma: no cover
+    async def probe(ctx: RunContext[Any]) -> str:
         entered.set()
         await asyncio.sleep(10)
         return 'never'
@@ -1337,7 +1337,7 @@ async def test_release_survives_run_cancellation():
     # unwind re-raises, unlike a one-shot `task.cancel()`.
     async with anyio.create_task_group() as tg:
 
-        async def run_agent() -> None:  # pragma: no cover
+        async def run_agent() -> None:
             await agent.run('go')
 
         tg.start_soon(run_agent)
