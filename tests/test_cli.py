@@ -30,11 +30,21 @@ from ._inline_snapshot import snapshot
 from .conftest import IsInstance, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from prompt_toolkit.buffer import Buffer
+    from prompt_toolkit.document import Document
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command, run_chat
+    from pydantic_ai._cli import (
+        CustomAutoSuggest,
+        ask_agent,
+        cli,
+        cli_agent,
+        format_usage,
+        handle_slash_command,
+        run_chat,
+    )
     from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -531,6 +541,19 @@ async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, e
 
     # Two turns ran, but the toolset was released once — at the end of the session, not per turn.
     assert toolset.full_releases == snapshot(1)
+
+
+def test_custom_auto_suggest_completes_special_commands():
+    """Typing a prefix of a slash command suggests the rest; anything else falls back to history."""
+    suggest = CustomAutoSuggest(['/exit'])
+    buffer = Buffer()
+
+    suggestion = suggest.get_suggestion(buffer, Document('/ex'))
+    assert suggestion is not None
+    assert suggestion.text == snapshot('it')
+
+    # No special command matches, and an empty history has nothing to offer either.
+    assert suggest.get_suggestion(buffer, Document('hello')) is None
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
