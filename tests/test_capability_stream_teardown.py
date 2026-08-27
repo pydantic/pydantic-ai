@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
 
 import anyio
 import pytest
 
-from pydantic_ai import Agent, RunContext, _utils
+from pydantic_ai import Agent, RunContext, RunPreparationContext, _utils
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks, WrapperCapability
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, PartStartEvent, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -18,6 +19,36 @@ from pydantic_ai.usage import RunUsage
 from pydantic_graph import End
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_wrapper_capability_forwards_wrap_entire_run():
+    events: list[str] = []
+
+    @dataclass
+    class IterCap(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+            events.append('enter')
+            try:
+                yield
+            finally:
+                events.append('exit')
+
+    wrapper = WrapperCapability(wrapped=IterCap())
+    preparation_ctx = RunPreparationContext(
+        agent=Agent(TestModel()),
+        deps=None,
+        model=None,
+        sandbox=None,
+        messages=[],
+        usage=RunUsage(),
+        run_id='run',
+        conversation_id='conversation',
+    )
+    async with wrapper.wrap_entire_run(preparation_ctx):
+        events.append('body')
+
+    assert events == ['enter', 'body', 'exit']
 
 
 class _TrackingStream(AsyncIterator[AgentStreamEvent]):

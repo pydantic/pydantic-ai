@@ -7,9 +7,8 @@ import re
 import threading
 import time
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
@@ -23,7 +22,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from pydantic_ai import Capability as TopLevelCapability, RunPreparationContext, _agent_graph
+from pydantic_ai import Capability as TopLevelCapability, _agent_graph
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
@@ -6064,8 +6063,6 @@ class TestRunHooks:
         assert agent_run.result.output == 'recovered via iter'
 
     async def test_toolset_enter_failure_propagates_through_wrap_run(self):
-        """Toolset setup runs inside the context and error boundary established by run hooks."""
-
         events: list[str] = []
 
         @dataclass
@@ -9768,10 +9765,8 @@ class TestGetModelHook:
         assert result.output == 'done'
         assert selected_steps == [1, 2]
         assert selection_history_lengths == [0, 2]
-        assert selection_ids == [
-            (result.all_messages()[0].run_id, result.all_messages()[0].conversation_id),
-            (result.all_messages()[0].run_id, result.all_messages()[0].conversation_id),
-        ]
+        expected_ids = (result.all_messages()[0].run_id, result.all_messages()[0].conversation_id)
+        assert selection_ids == [expected_ids, expected_ids]
         assert all(run_id is not None and conversation_id is not None for run_id, conversation_id in selection_ids)
 
     async def test_explicit_run_model_skips_selector(self):
@@ -13761,38 +13756,6 @@ async def test_combined_capability_has_wrap_node_run():
         assert CombinedCapability([CustomCapability()]).has_wrap_node_run is False  # type: ignore[reportDeprecated]
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`has_wrap_node_run`.*`wrap_node_run`'):
         assert CombinedCapability([CustomCapability(), NodeRunCap()]).has_wrap_node_run is True  # type: ignore[reportDeprecated]
-
-
-async def test_wrapper_capability_forwards_wrap_entire_run():
-    """`WrapperCapability` forwards `wrap_entire_run` to the wrapped capability."""
-    events: list[str] = []
-
-    @dataclass
-    class IterCap(AbstractCapability[Any]):
-        @asynccontextmanager
-        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
-            events.append('enter')
-            try:
-                yield
-            finally:
-                events.append('exit')
-
-    wrapper = WrapperCapability(wrapped=IterCap())
-
-    preparation_ctx = RunPreparationContext(
-        agent=Agent(TestModel()),
-        deps=None,
-        model=None,
-        sandbox=None,
-        messages=[],
-        usage=RunUsage(),
-        run_id='run',
-        conversation_id='conversation',
-    )
-    async with wrapper.wrap_entire_run(preparation_ctx):
-        events.append('body')
-
-    assert events == ['enter', 'body', 'exit']
 
 
 async def test_wrapper_capability_delegates_resolve_model_id():
