@@ -138,7 +138,7 @@ def _emit_output_tool_events(
     yield _messages.OutputToolResultEvent(part)
 
 
-def _tool_bound_retry_part(error: ToolRetryError) -> _messages.RetryPromptPart:
+def tool_bound_retry_part(error: ToolRetryError) -> _messages.RetryPromptPart:
     """The `RetryPromptPart` carried by a `ToolRetryError` raised against a tool call.
 
     Every retry raised while handling a call answers that call — `ToolManager._wrap_error_as_retry`,
@@ -524,7 +524,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             assert isinstance(validated.validation_error, ToolRetryError)
             self.output_retries_increment += 1
             return _OutputCallResult(
-                call=call, args_valid=False, retry_part=_tool_bound_retry_part(validated.validation_error)
+                call=call, args_valid=False, retry_part=tool_bound_retry_part(validated.validation_error)
             )
 
         try:
@@ -536,7 +536,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             return _OutputCallResult(call=call, args_valid=True, raise_exc=wrapped)
         except ToolRetryError as e:
             self.output_retries_increment += 1
-            return _OutputCallResult(call=call, args_valid=True, retry_part=_tool_bound_retry_part(e))
+            return _OutputCallResult(call=call, args_valid=True, retry_part=tool_bound_retry_part(e))
 
         final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
         return _OutputCallResult(call=call, args_valid=True, final_result=final_result)
@@ -710,7 +710,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             else:
                 tool_result = tool_call_result
         except ToolRetryError as e:
-            return [_tool_bound_retry_part(e)], None
+            return [tool_bound_retry_part(e)], None
         except ToolFailedError as e:
             return [e.tool_failed], None
         except exceptions.RunCancelled as e:
@@ -972,7 +972,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     try:
                         await self.tool_manager.execute_tool_call(validated)
                     except (ToolRetryError, ToolFailedError) as e:
-                        part = _tool_bound_retry_part(e) if isinstance(e, ToolRetryError) else e.tool_failed
+                        part = tool_bound_retry_part(e) if isinstance(e, ToolRetryError) else e.tool_failed
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
 

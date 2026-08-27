@@ -132,8 +132,10 @@ class InstrumentationSettings:
                     as UNSET, since deferrals are control flow, not errors.
                 Version 6 is the same as version 5, but tool results are emitted in a message with
                     `role='tool'` rather than `role='user'`, which is the role the GenAI semantic
-                    conventions pair with the `tool_call_response` parts they carry. Opt in to it when
-                    your telemetry consumer keys on the message role; it is not the default.
+                    conventions pair with the `tool_call_response` parts they carry, and retry feedback
+                    that answers no tool call moves from `role='user'` to `role='system'`, the voice it
+                    reaches the model in. Opt in to it when your telemetry consumer keys on the message
+                    role; it is not the default.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Defaults to True to prevent double-counting in observability backends that aggregate span
@@ -420,8 +422,10 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
     keeps reading the role it was built for.
 
-    `RetryFeedbackPart` gets `system` because that is what it renders as: feedback that belongs to no
-    tool call reaches the model in the system voice, so the span shows the role the model actually saw.
+    `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it gets
+    `system`, because that is what it renders as: feedback that belongs to no tool call reaches the
+    model in the system voice, so the span shows the role the model actually saw. Earlier versions
+    keep it on `user`, so a consumer written against them keeps reading the role it was built for.
 
     `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
     mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
@@ -431,7 +435,9 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     withheld. `tool` is the one role that would actively mislead, being paired with
     `tool_call_response`.
     """
-    if isinstance(part, SystemPromptPart | RetryFeedbackPart | ToolAvailabilityDeltaPart):
+    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart) or (
+        version >= 6 and isinstance(part, RetryFeedbackPart)
+    ):
         return 'system'
     elif version >= 6 and (
         isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)

@@ -932,8 +932,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         # Fallback: synthesize from message history for direct model.request() callers.
         # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
-        # if the most recent request only has tool-return/retry-prompt parts (a "mock" request
-        # for result tools), use the instructions from the second-to-most-recent request.
+        # if the most recent request only has tool-return/retry-prompt/retry-feedback parts (a "mock"
+        # request for result tools), use the instructions from the second-to-most-recent request.
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -947,7 +947,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             most_recent = last_two_requests[0]
             second = last_two_requests[1]
             if (
-                all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent.parts)
+                all(
+                    p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' or p.part_kind == 'retry-feedback'
+                    for p in most_recent.parts
+                )
                 and second.instructions is not None
             ):
                 return [InstructionPart(content=second.instructions)]
@@ -2166,7 +2169,7 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
-_SYSTEM_CLOSE_TAG_OPENER = re.compile(r'<(?=/\s*system\s*>)', re.IGNORECASE)
+_SYSTEM_CLOSE_TAG_OPENER = re.compile(r'<(?=\s*/\s*system\s*>)', re.IGNORECASE)
 """Matches only the `<` of a closing system tag, in every spelling a model might reach for.
 
 Escaping just that character neutralizes the tag while leaving the rest of the text it appeared in
@@ -2292,7 +2295,7 @@ for, on a turn the user didn't write.
 """
 
 
-RETRY_FEEDBACK_VALIDATION_ERROR = 'The response failed validation:\n{feedback}'
+_RETRY_FEEDBACK_VALIDATION_ERROR = 'The response failed validation:\n{feedback}'
 """What a `RetryFeedbackPart` says to a model when its output didn't match the expected schema.
 
 Like [`TOOL_AVAILABILITY_ANNOUNCEMENT`][pydantic_ai.models.TOOL_AVAILABILITY_ANNOUNCEMENT], these
@@ -2302,15 +2305,15 @@ and try again") spends the harness's system voice on a directive nobody authored
 this part exists to keep honest.
 """
 
-RETRY_FEEDBACK_NO_OUTPUT = 'The response contained no usable output. {feedback}'
+_RETRY_FEEDBACK_NO_OUTPUT = 'The response contained no usable output. {feedback}'
 """What a `RetryFeedbackPart` says to a model when its response carried nothing usable as output."""
 
-RETRY_FEEDBACK_MODEL_RETRY = 'The response was not accepted:\n{feedback}'
+_RETRY_FEEDBACK_MODEL_RETRY = 'The response was not accepted:\n{feedback}'
 """What a `RetryFeedbackPart` says to a model when an output validator, output function, or model
 hook raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]."""
 
 
-def render_retry_feedback(part: RetryFeedbackPart) -> str:
+def _render_retry_feedback(part: RetryFeedbackPart) -> str:
     """State in the harness's own voice why the previous response couldn't be used.
 
     The per-`cause` wording lives here rather than on the part so the stored history stays
@@ -2319,11 +2322,11 @@ def render_retry_feedback(part: RetryFeedbackPart) -> str:
     shows the feedback exactly as the model was shown it.
     """
     if part.cause == 'validation_error':
-        template = RETRY_FEEDBACK_VALIDATION_ERROR
+        template = _RETRY_FEEDBACK_VALIDATION_ERROR
     elif part.cause == 'no_output':
-        template = RETRY_FEEDBACK_NO_OUTPUT
+        template = _RETRY_FEEDBACK_NO_OUTPUT
     elif part.cause == 'model_retry':
-        template = RETRY_FEEDBACK_MODEL_RETRY
+        template = _RETRY_FEEDBACK_MODEL_RETRY
     else:
         assert_never(part.cause)
     return template.format(feedback=part.model_response())
@@ -2343,10 +2346,12 @@ def _render_retry_feedback_messages(messages: list[ModelMessage]) -> list[ModelM
     runs after this — degrades it to `<system>`-tagged user text. Either way the model can tell it
     apart from something a person wrote, which is what a `RetryPromptPart` rendered as bare user text
     never allowed (https://github.com/pydantic/pydantic-ai/issues/6404).
-
-    Feedback always answers a response, so the part can never open the first request and
-    `_standing_system_prompt_count` can't mistake what it renders to for the run's standing prompt.
     """
+    # If a feedback part opens the first request — a hand-built `message_history`, an adapter load,
+    # or truncation promoting a never-sent request to first position — what it renders to counts as
+    # the run's standing system prompt, and hoists with it. All parts still precede the same
+    # assistant response, and the rendering is deterministic; no finer positional fidelity is
+    # required within one request.
     transformed: list[ModelMessage] = []
     changed = False
     for message in messages:
@@ -2362,7 +2367,7 @@ def _render_retry_feedback_messages(messages: list[ModelMessage]) -> list[ModelM
             if not isinstance(part, RetryFeedbackPart):
                 replacement_parts.append(part)
                 continue
-            replacement_parts.append(SystemPromptPart(content=render_retry_feedback(part), timestamp=part.timestamp))
+            replacement_parts.append(SystemPromptPart(content=_render_retry_feedback(part), timestamp=part.timestamp))
         transformed.append(replace(message, parts=replacement_parts))
 
     return transformed if changed else messages

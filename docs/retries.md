@@ -92,7 +92,7 @@ print([type(p).__name__ for m in result.all_messages() for p in m.parts])
 
 _(This example is complete, it can be run "as is")_
 
-A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] carries the failure as either a string (from `ModelRetry`) or a list of Pydantic error details (from a `ValidationError`), and renders for the model with `'Fix the errors and try again.'` appended. It always belongs to a tool call: a retry with no call to answer is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] instead — see [Feedback that belongs to no tool call](#feedback-that-belongs-to-no-tool-call).
+A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] carries the failure as either a string (from `ModelRetry`) or a list of Pydantic error details (from a `ValidationError`), and renders for the model with `'Fix the errors and try again.'` appended. Pydantic AI only emits it for a retry that answers a tool call, so its `tool_name` and `tool_call_id` name that call; a retry with no call to answer is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] instead — see [Feedback that belongs to no tool call](#feedback-that-belongs-to-no-tool-call). A stored history, or your own code, can still hand back a `RetryPromptPart` with `tool_name=None`, and it renders for the model exactly as it always did.
 
 Because the retry prompts stay in the history, [reusing that history](message-history.md) in a later run replays the failures to the model. If you don't want the model to see its earlier mistakes, filter them out with a [`ProcessHistory`](capabilities/process-history.md) capability.
 

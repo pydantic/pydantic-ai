@@ -17,10 +17,14 @@ reconstructs the part **only** from the adapter's own `retry_feedback` metadata 
 `providerMetadata`, AG-UI's `encrypted_value`), and everything else stays a `SystemPromptPart`. Keep
 that an explicit branch in both adapters when you touch either loader.
 
-The claim is client-echoed, so it separates provenance rather than proving it: what stops a forged one
-from reaching the model is `sanitize_messages`, which strips `RetryFeedbackPart`s alongside
-`SystemPromptPart`s whenever the server owns the system prompt. Any future part that renders into the
-system voice belongs in that strip too.
+The claim is client-echoed, so it separates provenance rather than proving it: a well-formed forged
+marker does rebuild the part, and what stops it from reaching the model is `sanitize_messages`, which
+strips `RetryFeedbackPart`s alongside `SystemPromptPart`s whenever the server owns the system prompt.
+A future part belongs in that strip when it carries **client-controlled free text** into the system
+voice — not merely because it renders there. `ToolAvailabilityDeltaPart` renders into a
+`SystemPromptPart` too and is deliberately left out: it can only name tools the developer registered,
+and [7104](https://github.com/pydantic/pydantic-ai/pull/7104#discussion_r3732386493) settled that as
+the framework's pinned trust model, not an oversight.
 
 `strip_system_prompts=False` (`manage_system_prompt='client'`) therefore lets a client-authored
 `RetryFeedbackPart` reach the model in the system voice, exactly as it already lets a client-authored

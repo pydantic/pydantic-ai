@@ -177,7 +177,7 @@ def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
     return _RETRY_FEEDBACK_PART_ADAPTER.dump_python(part, mode='json')
 
 
-def retry_feedback_from_payload(payload: Any) -> RetryFeedbackPart | None:
+def retry_feedback_from_payload(payload: object) -> RetryFeedbackPart | None:
     """Rebuild the `RetryFeedbackPart` a system-role message claims to have been dumped from, or `None`.
 
     `None` for anything that doesn't validate — including the absent payload of a system message the

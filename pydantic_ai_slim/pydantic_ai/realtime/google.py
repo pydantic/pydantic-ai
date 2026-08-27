@@ -74,7 +74,10 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..models import ModelRequestParameters, render_retry_feedback
+from ..models import (
+    ModelRequestParameters,
+    _render_retry_feedback,  # pyright: ignore[reportPrivateUsage]
+)
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
@@ -430,7 +433,7 @@ async def _seed_request_parts(
             # Seeded as text like the tool-less `RetryPromptPart` above: the session has no system
             # role to carry it, and dropping it would leave the model unable to see why the response
             # it is being replayed was rejected.
-            parts.append(genai_types.Part(text=render_retry_feedback(part)))
+            parts.append(genai_types.Part(text=_render_retry_feedback(part)))
         else:
             assert_never(part)
     return parts

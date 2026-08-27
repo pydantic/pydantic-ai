@@ -978,8 +978,12 @@ def test_messages_to_otel_messages_request_roles_v6():
     """From version 6 a request splits into one message per role, in part order.
 
     A tool return and a retry that answers a tool call both render as a `tool_call_response`, which
-    the GenAI semantic conventions put in a `tool` message. A retry that answers nothing renders as
-    text and reaches the model as user content, so it starts a new message.
+    the GenAI semantic conventions put in a `tool` message. A legacy retry that answers nothing
+    renders as text and reaches the model as user content, so it starts a new message, while a
+    `RetryFeedbackPart` reaches it in the system voice and takes `system`.
+
+    Every one of those roles is a changed value on telemetry versions 2-5 already emit, so each is
+    gated on version 6 and the earlier versions keep the single `user` message they shared.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content='Be brief.'), UserPromptPart(content='Convert 10 EUR.')]),
@@ -989,6 +993,7 @@ def test_messages_to_otel_messages_request_roles_v6():
                 ToolReturnPart(tool_name='convert', content='11 USD', tool_call_id='call_1'),
                 RetryPromptPart(content='Unknown currency.', tool_name='convert', tool_call_id='call_2'),
                 RetryPromptPart(content='Output did not validate.'),
+                RetryFeedbackPart(content='Output did not validate.', cause='validation_error'),
                 UserPromptPart(content='Thanks.'),
             ]
         ),
@@ -1028,10 +1033,11 @@ Output did not validate.
 
 Fix the errors and try again.\
 """,
-                    },
-                    {'type': 'text', 'content': 'Thanks.'},
+                    }
                 ],
             },
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Output did not validate.'}]},
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Thanks.'}]},
         ]
     )
 
@@ -1463,7 +1469,7 @@ def test_messages_without_content(document_content: BinaryContent):
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
-            {'role': 'system', 'parts': [{'type': 'text'}]},
+            {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'blob', 'mime_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'blob', 'mime_type': 'application/pdf'}]},

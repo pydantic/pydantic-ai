@@ -118,7 +118,7 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
         return origin is not None and isinstance(value, origin)
 
 
-def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
     """Build the retry signal for output that failed validation or asked to be retried.
 
     An output *tool* call answers its own call, so its retry stays that call's `RetryPromptPart`.
@@ -166,7 +166,7 @@ async def run_output_validate_hooks(
         except (ValidationError, ModelRetry) as e:
             if allow_partial:
                 if wrap_validation_errors and isinstance(e, ValidationError):  # pragma: no cover
-                    raise _make_retry_prompt(e, run_context) from e
+                    raise _make_retry_signal(e, run_context) from e
                 raise
             try:
                 validated = await capability.on_output_validate_error(
@@ -174,7 +174,7 @@ async def run_output_validate_hooks(
                 )
             except (ValidationError, ModelRetry) as hook_error:
                 if wrap_validation_errors:
-                    raise _make_retry_prompt(hook_error, run_context) from hook_error
+                    raise _make_retry_signal(hook_error, run_context) from hook_error
                 raise
 
         return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
@@ -184,7 +184,7 @@ async def run_output_validate_hooks(
         # ValidationError or ModelRetry from before_output_validate or after_output_validate
         # (e.g. a user hook that does additional Pydantic validation on the validated output)
         if wrap_validation_errors:
-            raise _make_retry_prompt(e, run_context) from e
+            raise _make_retry_signal(e, run_context) from e
         raise
 
 
@@ -231,7 +231,7 @@ async def run_output_process_hooks(
         # ValidationError or ModelRetry from before_output_process, after_output_process, or
         # on_output_process_error (e.g. a user hook doing additional Pydantic validation).
         if wrap_validation_errors:
-            raise _make_retry_prompt(e, run_context) from e
+            raise _make_retry_signal(e, run_context) from e
         raise
 
 
@@ -404,7 +404,7 @@ async def execute_output_function(
         if wrap_validation_errors:
             # Only text, native and prompted output wrap here: an output *tool* call reaches this
             # with `wrap_validation_errors=False` and rebuilds the retry from its own call in
-            # `_make_retry_prompt`, so there is never a call for this one to answer.
+            # `_make_retry_signal`, so there is never a call for this one to answer.
             raise ToolRetryError(_messages.RetryFeedbackPart(content=r.message, cause='model_retry')) from r
         else:
             raise

@@ -48,7 +48,7 @@ from ...messages import (
     parse_tool_kind,
     tool_return_content_ta,
 )
-from ...models import render_retry_feedback
+from ...models import _render_retry_feedback  # pyright: ignore[reportPrivateUsage]
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
@@ -689,7 +689,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # `SystemPromptPart` the rendered text alone would produce.
                 system_ui_parts.append(
                     TextUIPart(
-                        text=render_retry_feedback(part),
+                        text=_render_retry_feedback(part),
                         state='done',
                         provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(part)),
                     )
@@ -1004,6 +1004,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         shown, with the part itself in that message's `providerMetadata`; it reloads as a
         `RetryFeedbackPart` only from there, so a system message the client wrote stays a
         `SystemPromptPart`.
+
+        Ordering is lossy within a single `ModelRequest`: system-voice parts (`SystemPromptPart`,
+        `RetryFeedbackPart`) and user content go out as two `UIMessage`s, and the `role='system'` one
+        always comes first, so feedback authored *after* a `UserPromptPart` reloads before it. AG-UI
+        keeps the authored order; this adapter's split-by-role dump cannot.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see

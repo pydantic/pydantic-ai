@@ -6,6 +6,7 @@ import importlib.metadata
 import json
 import re
 import warnings
+from collections.abc import Mapping
 from typing import Any, Final, Literal
 
 from typing_extensions import Required, TypedDict
@@ -145,14 +146,13 @@ _ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
 provider blob in the same slot is never mistaken for our data."""
 
 
-def _namespaced_encrypted_value(payload: dict[str, Any]) -> str:
+def _namespaced_encrypted_value(payload: Mapping[str, object]) -> str:
     """Pack a payload into an AG-UI `encrypted_value` blob under the `pydantic_ai` namespace."""
     return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
 
 
 def tool_kind_encrypted_value(
-    tool_kind: ToolPartKind | None,
-    outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None,
+    tool_kind: ToolPartKind | None, outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
@@ -171,7 +171,7 @@ def tool_kind_encrypted_value(
     native error channel), that would silently change the request bytes and break the prompt-cache
     prefix stability the repaired history is designed to keep.
     """
-    payload: dict[str, Any] = {}
+    payload: dict[str, str] = {}
     if tool_kind is not None:
         payload['tool_kind'] = tool_kind
     if outcome is not None and outcome != 'success':
@@ -213,25 +213,27 @@ def retry_feedback_encrypted_value_kwargs(part: RetryFeedbackPart, *, supported:
     of which the rendered text alone can give back.
 
     Empty when the target version predates the field (`supported=False`), in which case the message
-    reloads as a plain `SystemPromptPart`.
+    reloads as a plain `SystemPromptPart` and `dump_messages` warns via
+    `warn_encrypted_value_not_persisted`.
     """
     if not supported:
         return {}
     return {'encrypted_value': _namespaced_encrypted_value({'retry_feedback': retry_feedback_payload(part)})}
 
 
-def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
-    """Warn that typed tool parts' `tool_kind` will be lost when dumping below `ENCRYPTED_VALUE_VERSION`.
+def warn_encrypted_value_not_persisted(ag_ui_version: str) -> None:
+    """Warn that the claims riding on `encrypted_value` are lost when dumping below `ENCRYPTED_VALUE_VERSION`.
 
-    The `encrypted_value` carrier only exists from 0.1.11, so on older versions features like lazy
-    capabilities and tool search silently forget their state across a round-trip; upgrading the client
-    fixes it.
+    The carrier only exists from 0.1.11, so on older versions features like lazy capabilities and tool
+    search silently forget their state across a round-trip, and harness retry feedback reloads as an
+    operator-authored system prompt; upgrading the client fixes both.
     """
     warnings.warn(
         f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
-        'the `tool_kind` of typed tool parts (e.g. lazy capabilities, tool search) cannot be carried '
-        'across a dump/load round-trip and those parts will reload as their base classes. Upgrade the '
-        'client to ag-ui-protocol >= 0.1.11 to preserve it.',
+        'the claims Pydantic AI carries there cannot survive a dump/load round-trip: the `tool_kind` '
+        'of typed tool parts (e.g. lazy capabilities, tool search) is dropped and those parts reload '
+        'as their base classes, and a `RetryFeedbackPart` reloads as a plain `SystemPromptPart`. '
+        'Upgrade the client to ag-ui-protocol >= 0.1.11 to preserve them.',
         UserWarning,
         stacklevel=3,
     )

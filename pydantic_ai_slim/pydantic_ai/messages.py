@@ -1663,10 +1663,6 @@ class RetryPromptPart:
       [`ValidationError`][pydantic_core.ValidationError]
     * a tool raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     * no tool was found for the tool name
-    * the model returned plain text when a structured response was expected
-    * Pydantic validation of a structured response failed, here content is derived from a Pydantic
-      [`ValidationError`][pydantic_core.ValidationError]
-    * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
 
     Pydantic AI only emits this part for a retry that answers a tool call. A retry that answers no
     call — structured output that failed validation, an output validator or function raising
@@ -1707,7 +1703,7 @@ class RetryPromptPart:
         tool_name: str | None = None,
         tool_call_id: str | None = None,
     ) -> RetryPromptPart:
-        """Build the retry prompt for a failed tool call or output validation.
+        """Build the retry prompt for a failed function-tool or output-tool call.
 
         This is the exact message the model receives when the error is handled by the agent loop,
         so anything else presenting the failure (e.g. instrumentation spans) must build it the same way.
@@ -3157,8 +3153,11 @@ def sanitize_messages(
 
     if stripped_system_prompt:
         warnings.warn(
-            'Client-submitted system prompts were stripped. Pass `strip_system_prompts=False` only when the '
-            "client is trusted to own the system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
+            'Parts carrying the system voice were stripped from the client-submitted messages: system '
+            'prompts, and the retry feedback that renders as one — which a round-trip brings back after '
+            'Pydantic AI emitted it, and which a client can forge just as easily. Pass '
+            '`strip_system_prompts=False` only when the client is trusted to own the system prompt, or set '
+            "`manage_system_prompt='client'` on a UI adapter.",
             UserWarning,
             stacklevel=2,
         )

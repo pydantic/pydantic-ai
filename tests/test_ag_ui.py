@@ -8097,6 +8097,7 @@ def test_retry_feedback_dumps_as_a_system_message_that_only_our_marker_reloads()
                 RetryFeedbackPart(
                     content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an int', 'input': 'lots'}],
                     cause='validation_error',
+                    timestamp=datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc),
                 )
             ]
         ),
@@ -8121,6 +8122,11 @@ The response failed validation:
 """)
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    # Pinned before `_sync_timestamps` overwrites it: the marker is what carries the timestamp back,
+    # where the `SystemPromptPart` the same message otherwise becomes would get a fresh one.
+    assert message_part(reloaded, RetryFeedbackPart, message_index=2).timestamp == snapshot(
+        datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
+    )
     _sync_timestamps(original, reloaded)
     assert reloaded == original
 
@@ -8167,12 +8173,18 @@ The response failed validation:
 
 def test_retry_feedback_below_the_encrypted_value_floor_dumps_as_a_plain_system_message() -> None:
     """Below 0.1.11 there is no carrier, so the feedback keeps the system voice but loses the claim
-    that would rebuild the part — it reloads as the `SystemPromptPart` its text renders to."""
+    that would rebuild the part — it reloads as the `SystemPromptPart` its text renders to.
+
+    Harness feedback turning into an operator-authored system prompt is exactly the provenance
+    collapse the part exists to prevent, so the dump warns even when no `tool_kind`-carrying part
+    is in the history to trigger the sibling half of the same guard.
+    """
     original: list[ModelMessage] = [
         ModelRequest(parts=[RetryFeedbackPart(content='the answer has to be a number', cause='model_retry')]),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+    with pytest.warns(UserWarning, match=r'a `RetryFeedbackPart` reloads as a plain `SystemPromptPart`'):
+        ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
 
     [system] = [msg for msg in ag_ui_msgs if isinstance(msg, SystemMessage)]
     assert 'encrypted_value' not in system.model_fields_set
