@@ -15,8 +15,15 @@ Pydantic AI resolves the sandbox once, before capability and toolset `for_run` h
    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef].
 2. A capability's
    [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] contribution.
-   The latest supplier in the resolved capability chain wins.
+   The latest supplier in the capability chain wins. Its effective capability ID is recorded on
+   the returned reference so reconnection and teardown route back to the same supplier. Give the
+   supplier an explicit stable `id` when the ref will cross runs or processes.
 3. The framework default: an `UnavailableSandbox` explaining how to attach one.
+
+The selected supplier remains the lifecycle owner for the whole run. A capability returned by
+that supplier's later `for_run()` may contribute other run-specific behavior, but it does not
+replace the owner used for `create_sandbox`, `get_sandbox`, or `destroy_sandbox`. Durable workers
+recover the owner by the stable capability ID recorded on the ref.
 
 Tools and capabilities can therefore use `ctx.sandbox` directly:
 
@@ -167,7 +174,7 @@ The same three hooks cover every lifecycle without further concepts:
 | Pooled per conversation | look up `ctx.conversation_id`, create if missing | connect | inherited no-op (reap by TTL) |
 | Connect-only (provisioned elsewhere) | don't override | connect by id | don't override |
 
-Among capability suppliers, the latest in the resolved chain wins; a supplier that returns
+Among capability suppliers, the latest in the chain wins; a supplier that returns
 `None` falls through to the next. Deferred capabilities cannot contribute a sandbox because
 sandbox resolution happens before deferred capabilities can load. Setup and teardown happen
 inside the agent-run span, so startup failures and slow provisioning are visible in traces.
@@ -336,9 +343,12 @@ class WorkspaceWorkflow:
 
 Teardown runs at the end of the run, including a failed one, but a cancelled workflow may skip
 it, so **always configure a server-side idle timeout or reaper as the backstop.**
-[DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) have no
-equivalent durable-unit boundary for the lifecycle and reject sandbox-supplying capabilities
-inside their containers; use a reference there.
+Temporal runs sandbox lifecycle operations in activities, DBOS runs them in steps, and Prefect
+runs them in tasks. Each engine records one create and one destroy operation in the logical run
+history, but failed physical attempts may be retried. Both hooks must therefore be idempotent.
+Temporal and Prefect use bounded three-attempt defaults for capability operations; customize them
+with `capability_activity_config` or `capability_task_config`. After durable teardown retries are
+exhausted, cleanup is logged and the provider-side timeout or reaper remains the final backstop.
 
 ### A sandbox that outlives the run
 
@@ -381,9 +391,11 @@ class ExistingWorkspaceWorkflow:
 A run argument wins over every capability contribution, so the run uses the referenced sandbox
 and never destroys it. Pydantic AI reconstructs a deferred
 [`Sandbox`][pydantic_ai.sandboxes.Sandbox] inside the durable I/O boundary; the first operation
-connects once and caches the live backend for that activity, step, or task. `provider` and
-`sandbox_id` are readable before connection, but the synchronous `sandbox.backend` property
-raises until an async operation has connected the facade.
+connects once and caches the live backend for that activity, step, or task. Framework-created
+refs also carry `capability_id`, which routes reconnection directly to the supplier. Caller-created
+refs may omit it and use normal chain precedence for backward compatibility. `provider` and
+`sandbox_id` are readable before connection, but the synchronous `sandbox.backend` property raises
+until an async operation has connected the facade.
 
 - **[Temporal](durable_execution/temporal.md)** serializes the reference into
   `TemporalRunContext` and rebuilds the deferred facade in activities. Workflow code may inspect
@@ -392,7 +404,7 @@ raises until an async operation has connected the facade.
   rebuilds a fresh facade that reconnects to the same `sandbox_id` through the capability
   chain. Effectful sandbox tools must still run as DBOS steps, like any other tool I/O.
 - **[Prefect](durable_execution/prefect.md)** runs tools in-process. A deferred facade
-  contributes `(provider, sandbox_id)` to task cache keys without connecting;
+  contributes `(provider, sandbox_id, capability_id)` to task cache keys without connecting;
   `UnavailableSandbox` (including the framework default) adds no sandbox component.
 
 A live backend is still rejected inside durable containers because it cannot cross their

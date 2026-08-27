@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Literal, cast
 
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
@@ -160,6 +161,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         deps_type: type[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
+        capability_activity_config: ActivityConfig | None = None,
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
@@ -196,6 +198,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 Defaults to a 60-second `start_to_close_timeout`.
             model_activity_config: Activity config merged on top of the base for
                 model request activities.
+            capability_activity_config: Activity config merged on top of the base for durable
+                capability operations. Defaults to a bounded three-attempt retry policy.
             event_stream_handler_activity_config: Activity config merged on top of the base for
                 event stream handler activities.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
@@ -228,6 +232,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             activity_config = validate_activity_config(activity_config, '`activity_config`')
         if model_activity_config is not None:
             model_activity_config = validate_activity_config(model_activity_config, '`model_activity_config`')
+        if capability_activity_config is not None:
+            capability_activity_config = validate_activity_config(
+                capability_activity_config, '`capability_activity_config`'
+            )
         if event_stream_handler_activity_config is not None:
             event_stream_handler_activity_config = validate_activity_config(
                 event_stream_handler_activity_config, '`event_stream_handler_activity_config`'
@@ -258,6 +266,16 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self._model_activity_config['retry_policy'] = with_non_retryable_errors(
             self._model_activity_config.get('retry_policy')
         )
+        self._capability_activity_config: ActivityConfig = {
+            **activity_config,
+            **(capability_activity_config or {}),
+        }
+        capability_retry_policy = (
+            self._capability_activity_config.get('retry_policy')
+            if capability_activity_config is not None and 'retry_policy' in capability_activity_config
+            else RetryPolicy(maximum_attempts=3)
+        )
+        self._capability_activity_config['retry_policy'] = with_non_retryable_errors(capability_retry_policy)
         self._event_stream_handler_activity_config: ActivityConfig = {
             **activity_config,
             **(event_stream_handler_activity_config or {}),
@@ -297,6 +315,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             deps_type=self._deps_type,
             model_config=self._model_activity_config,
             event_config=self._event_stream_handler_activity_config,
+            capability_config=self._capability_activity_config,
             tool_config=self.activity_config,
             resolve_tool_config=self._resolve_temporal_tool_config,
             runtime=self,

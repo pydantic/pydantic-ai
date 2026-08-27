@@ -379,7 +379,10 @@ async def call_declaration(
 ) -> Any:
     if declaration.model_request_hook:
         raise RuntimeError('Model-request hook declarations require the durability model scope')
-    bound = declaration.function.__get__(capability, type(capability))
+    member = cast(Callable[..., Awaitable[Any]], getattr(type(capability), declaration.function.__name__))
+    marker = cast(DurableOperationMarker | None, getattr(member, '__pydantic_ai_durable_operation__', None))
+    function = marker.function if marker is not None else member
+    bound = function.__get__(capability, type(capability))
     arguments = dict(params.arguments)
     args: list[Any] = []
     kwargs: dict[str, Any] = {}
@@ -404,10 +407,13 @@ async def call_declaration(
     return await bound(*args, **kwargs)
 
 
-async def recover_capability(ctx: RunContext[Any], capability_id: str) -> AbstractCapability[Any]:
-    run_capabilities = cast(dict[str, AbstractCapability[Any]], ctx.__dict__.get('_run_capabilities_by_id', {}))
-    if capability := run_capabilities.get(capability_id):
-        return capability
+async def recover_capability(
+    ctx: RunContext[Any], capability_id: str, *, resolve_for_run: bool = True
+) -> AbstractCapability[Any]:
+    if resolve_for_run:
+        run_capabilities = cast(dict[str, AbstractCapability[Any]], ctx.__dict__.get('_run_capabilities_by_id', {}))
+        if capability := run_capabilities.get(capability_id):
+            return capability
     agent = ctx.agent
     if agent is None:
         raise RuntimeError('A durable capability operation requires the worker agent on `RunContext`.')
@@ -415,7 +421,7 @@ async def recover_capability(ctx: RunContext[Any], capability_id: str) -> Abstra
     if len(matches) != 1:
         raise RuntimeError(f'Expected one bound capability with id {capability_id!r}, found {len(matches)}.')
     capability = matches[0]
-    if type(capability).for_run is AbstractCapability.for_run:
+    if not resolve_for_run or type(capability).for_run is AbstractCapability.for_run:
         return capability
     return await capability.for_run(ctx)
 

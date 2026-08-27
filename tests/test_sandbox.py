@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -36,6 +38,7 @@ from pydantic_ai.usage import RunUsage
 from .sandbox_fakes import (
     ConnectOnlySandboxCapability,
     CreateOnlySandboxCapability,
+    DecliningSandboxCapability,
     FakeSandboxResult,
     LifecycleSandboxCapability,
 )
@@ -108,6 +111,20 @@ async def test_stream_support_is_separate_from_process_protocol():
     streaming: SupportsStream = _StreamingProcess()
     assert not isinstance(wait_only, SupportsStream)
     assert isinstance(streaming, SupportsStream)
+
+
+async def test_local_filesystem_rejects_relative_paths(tmp_path: Path):
+    from pydantic_ai.sandboxes import LocalSandbox
+
+    sandbox = LocalSandbox(tmp_path)
+    with pytest.raises(ValueError, match=r"path must be absolute, got 'outside\.txt'"):
+        await sandbox.fs.write_bytes('outside.txt', b'escape')
+
+
+async def test_sandbox_resolve_rejects_relative_base():
+    sandbox = Sandbox(FakeSandbox('resolve-base'))
+    with pytest.raises(ValueError, match="base must be an absolute path, got 'relative'"):
+        await sandbox.resolve('file.txt', base='relative')
 
 
 # The facade's bounded slice form: print the window, then quit at its last line.
@@ -848,6 +865,37 @@ async def test_ref_resolution_prefers_the_latest_recognizing_capability():
     assert last.sandbox_ids == ['fake-1']
 
 
+async def test_sandbox_ref_capability_id_routes_to_exact_connector():
+    first = ConnectOnlySandboxCapability()
+    first.id = 'first'
+    last = ConnectOnlySandboxCapability()
+    last.id = 'last'
+    seen: list[str] = []
+    agent = make_connecting_probe_agent(seen, capabilities=[first, last])
+    await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1', capability_id='first'))
+    assert seen == ['1']
+    assert first.sandbox_ids == ['fake-1']
+    assert last.sandbox_ids == []
+
+
+async def test_sandbox_ref_capability_id_must_be_available():
+    agent = make_connecting_probe_agent([], capabilities=[ConnectOnlySandboxCapability()])
+    with pytest.raises(
+        UserError,
+        match=r"Cannot reconnect sandbox 'fake-1': expected one capability with id 'missing', found 0\.",
+    ):
+        await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1', capability_id='missing'))
+
+
+async def test_sandbox_ref_capability_id_cannot_activate_deferred_connector():
+    connector = ConnectOnlySandboxCapability()
+    connector.id = 'deferred'
+    connector.defer_loading = True
+    agent = make_connecting_probe_agent([], capabilities=[connector])
+    with pytest.raises(UserError, match=r'deferred capabilities cannot provide the run sandbox\.'):
+        await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1', capability_id='deferred'))
+
+
 def test_contributes_sandbox_detection():
     assert contributes_sandbox(ConnectOnlySandboxCapability()) is False  # connecting alone supplies nothing
     assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
@@ -886,6 +934,38 @@ async def test_lifecycle_capability_creates_at_run_start_and_tears_down_at_run_e
     assert [backend.commands for backend in lifecycle.backends] == [[['echo', 'hello']]]
 
 
+async def test_created_sandbox_ref_is_stamped_with_supplier_id():
+    lifecycle = LifecycleSandboxCapability()
+    observed: list[SandboxRef] = []
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[lifecycle])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        identity = ctx.sandbox.durable_identity()
+        assert isinstance(identity, SandboxRef)
+        observed.append(identity)
+        return 'ok'
+
+    await agent.run('go')
+    assert observed == [SandboxRef(provider='fake', sandbox_id='created-1', capability_id='test-sandbox')]
+
+
+async def test_created_sandbox_ref_is_stamped_with_derived_supplier_id():
+    supplier = SandboxCapability()
+    observed: list[SandboxRef] = []
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[supplier])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        identity = ctx.sandbox.durable_identity()
+        assert isinstance(identity, SandboxRef)
+        observed.append(identity)
+        return 'ok'
+
+    await agent.run('go')
+    assert observed == [SandboxRef(provider='fake', sandbox_id='fake-cap', capability_id='sandbox_capability')]
+
+
 async def test_lifecycle_capability_tears_down_when_a_tool_raises():
     lifecycle = LifecycleSandboxCapability()
 
@@ -913,6 +993,75 @@ async def test_lifecycle_capability_tears_down_when_run_preparation_fails():
     with pytest.raises(RuntimeError, match='metadata preparation failed'):
         await agent.run('go', metadata=failing_metadata)
     assert lifecycle.events == ['create:created-1', 'teardown:created-1']
+
+
+async def test_lifecycle_capability_tears_down_when_capability_resolution_fails():
+    lifecycle = LifecycleSandboxCapability()
+
+    @dataclass
+    class FailingForRun(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            raise RuntimeError('capability resolution failed')
+
+    agent = Agent(TestModel(), capabilities=[lifecycle, FailingForRun()])
+    with pytest.raises(RuntimeError, match='capability resolution failed'):
+        await agent.run('go')
+    assert lifecycle.events == ['create:created-1', 'teardown:created-1']
+
+
+async def test_failing_sandbox_creation_exits_whole_run_context():
+    events: list[str] = []
+
+    @dataclass
+    class Bracket(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_entire_run(self, ctx: Any) -> AsyncGenerator[None]:
+            events.append('enter')
+            try:
+                yield
+            finally:
+                events.append('exit')
+
+    @dataclass
+    class FailingCreator(AbstractCapability[Any]):
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            raise RuntimeError('creation failed')
+
+    with pytest.raises(RuntimeError, match='creation failed'):
+        await Agent(TestModel(), capabilities=[Bracket(), FailingCreator()]).run('go')
+    assert events == ['enter', 'exit']
+
+
+async def test_pre_sandbox_validation_failure_exits_whole_run_context():
+    events: list[str] = []
+
+    @dataclass
+    class Bracket(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_entire_run(self, ctx: Any) -> AsyncGenerator[None]:
+            events.append('enter')
+            try:
+                yield
+            finally:
+                events.append('exit')
+
+    agent = Agent(TestModel(), capabilities=[Bracket()])
+    with pytest.raises(UserError, match=r"`tool_choice='required'` prevents"):
+        await agent.run('go', model_settings={'tool_choice': 'required'})
+    assert events == ['enter', 'exit']
+
+
+async def test_duplicate_per_run_supplier_ids_fail_before_creation():
+    creator = LifecycleSandboxCapability()
+    creator.id = 'duplicate'
+    decliner = DecliningSandboxCapability()
+    decliner.id = 'duplicate'
+    agent = Agent(TestModel(), capabilities=[creator])
+
+    with pytest.raises(UserError, match=r"Capability id 'duplicate' is used by multiple capabilities\."):
+        await agent.run('go', capabilities=[decliner])
+    assert creator.events == []
+    assert decliner.create_calls == 0
 
 
 async def test_create_only_capability_leans_on_platform_reaping():

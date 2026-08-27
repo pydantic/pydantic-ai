@@ -57,11 +57,13 @@ class TemporalOperationConfig:
         *,
         model: ActivityConfig,
         event: ActivityConfig,
+        capability: ActivityConfig,
         tool: ActivityConfig,
         resolve_tool: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
     ) -> None:
         self._model = model
         self._event = event
+        self._capability = capability
         self._tool = tool
         self._resolve_tool = resolve_tool
 
@@ -70,6 +72,8 @@ class TemporalOperationConfig:
             return self._model
         if role is OperationConfigRole.EVENT:
             return self._event
+        if role is OperationConfigRole.CAPABILITY:
+            return self._capability
         return self._tool
 
     def for_tool(
@@ -147,6 +151,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         deps_type: type[Any],
         model_config: ActivityConfig,
         event_config: ActivityConfig,
+        capability_config: ActivityConfig,
         tool_config: ActivityConfig,
         resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
         runtime: object | None = None,
@@ -154,7 +159,11 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         super().__init__(
             namer=TemporalOperationNamer(agent_name),
             config=TemporalOperationConfig(
-                model=model_config, event=event_config, tool=tool_config, resolve_tool=resolve_tool_config
+                model=model_config,
+                event=event_config,
+                capability=capability_config,
+                tool=tool_config,
+                resolve_tool=resolve_tool_config,
             ),
         )
         self._deps_type = deps_type

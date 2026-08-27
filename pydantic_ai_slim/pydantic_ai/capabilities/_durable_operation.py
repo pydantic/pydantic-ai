@@ -52,6 +52,16 @@ async def invoke_durable_operation(
     kwargs: dict[str, Any],
 ) -> Any:
     """Invoke a capability operation through the active durability binding when present."""
+    operation = active_durable_operation(capability, operation_name, ctx)
+    if operation is not None:
+        return await operation(*args, **kwargs)
+    return await handler(*args, **kwargs)
+
+
+def active_durable_operation(
+    capability: AbstractCapability[Any], operation_name: str, ctx: RunContext[Any]
+) -> Callable[..., Awaitable[Any]] | None:
+    """Return the dispatcher when this call crosses an active durable boundary."""
     operation = None
     if capability.id is not None:
         operations = cast(
@@ -61,7 +71,7 @@ async def invoke_durable_operation(
         if operations is not None:
             operation = operations.get((capability.id, operation_name))
     if operation is not None:
-        return await operation(*args, **kwargs)
+        return operation
 
     binding = (
         capability._get_durable_operation_bindings().get(id(ctx.agent), {}).get(operation_name)  # pyright: ignore[reportPrivateUsage]
@@ -69,5 +79,9 @@ async def invoke_durable_operation(
         else None
     )
     if binding is not None and binding.in_durable_context():
-        return await binding.dispatcher(ctx, cast(tuple[object, ...], args), cast(dict[str, object], kwargs))
-    return await handler(*args, **kwargs)
+
+        async def dispatch(*args: Any, **kwargs: Any) -> Any:
+            return await binding.dispatcher(ctx, cast(tuple[object, ...], args), cast(dict[str, object], kwargs))
+
+        return dispatch
+    return None

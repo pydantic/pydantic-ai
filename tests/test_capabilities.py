@@ -6063,16 +6063,24 @@ class TestRunHooks:
         assert agent_run.result is not None
         assert agent_run.result.output == 'recovered via iter'
 
-    async def test_toolset_enter_failure_happens_before_wrap_run(self):
-        """Toolset lifecycle setup completes before the assembled-run hooks begin."""
+    async def test_toolset_enter_failure_propagates_through_wrap_run(self):
+        """Toolset setup runs inside the context and error boundary established by run hooks."""
+
+        events: list[str] = []
 
         @dataclass
         class HoldingCap(AbstractCapability[Any]):
-            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:  # pragma: no cover
-                raise AssertionError('wrap_run must not start when toolset entry fails')
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                events.append('wrap_run')
+                try:
+                    return await handler()
+                except RuntimeError:
+                    events.append('wrap_run_error')
+                    raise
 
         class ExplodingToolset(WrapperToolset[Any]):
             async def __aenter__(self) -> Any:
+                events.append('toolset_enter')
                 raise RuntimeError('toolset entry failed')
 
         agent = Agent(
@@ -6082,6 +6090,7 @@ class TestRunHooks:
         )
         with pytest.raises(RuntimeError, match='toolset entry failed'):
             await agent.run('hello')
+        assert events == ['wrap_run', 'toolset_enter', 'wrap_run_error']
 
 
 class TestModelRequestHooks:

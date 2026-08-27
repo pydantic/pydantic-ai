@@ -257,6 +257,8 @@ class Sandbox:
         """
         if posixpath.isabs(path):
             return posixpath.normpath(path)
+        if base is not None and not posixpath.isabs(base):
+            raise ValueError(f'base must be an absolute path, got {base!r}')
         return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:

@@ -25,3 +25,12 @@ class SandboxRef:
 
     sandbox_id: str
     """The implementation's stable identifier for the environment, unique per provider."""
+
+    capability_id: str | None = None
+    """Effective ID of the capability responsible for reconnecting and destroying the sandbox.
+
+    Framework-created refs are stamped with the winning supplier's run-local ID. Give a supplier
+    an explicit stable `id` when its refs cross runs or processes. A ref supplied by a caller may
+    omit this for backward compatibility, in which case the capability chain is searched using
+    normal precedence.
+    """

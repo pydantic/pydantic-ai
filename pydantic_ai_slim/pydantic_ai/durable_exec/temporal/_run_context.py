@@ -7,6 +7,7 @@ from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.capabilities.abstract import resolve_sandbox_ref
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
@@ -222,6 +223,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             serialized['_sandbox_state'] = {
                 'provider': sandbox_identity.provider,
                 'sandbox_id': sandbox_identity.sandbox_id,
+                'capability_id': sandbox_identity.capability_id,
             }
         elif isinstance(sandbox_identity, UnavailableSandbox):
             serialized['_sandbox_state'] = {'unavailable_reason': sandbox_identity.reason}
@@ -258,6 +260,7 @@ def deserialize_run_context(
     if is_str_dict(sandbox_state):
         provider = sandbox_state.get('provider')
         sandbox_id = sandbox_state.get('sandbox_id')
+        capability_id = sandbox_state.get('capability_id')
         unavailable_reason = sandbox_state.get('unavailable_reason')
         if isinstance(provider, str) and isinstance(sandbox_id, str):
             # The worker's capability tree is the connection registry: the capability that can
@@ -270,7 +273,7 @@ def deserialize_run_context(
                         'chain to resolve the reference through.'
                     )
                 try:
-                    backend = await agent.root_capability.get_sandbox(ctx, ref)
+                    backend = await resolve_sandbox_ref(agent.root_capability, ctx, ref)
                 except UserError:
                     raise
                 except Exception as error:
@@ -285,7 +288,12 @@ def deserialize_run_context(
                 return backend
 
             ctx.__dict__['_sandbox'] = Sandbox.from_ref(
-                SandboxRef(provider=provider, sandbox_id=sandbox_id), resolve_sandbox
+                SandboxRef(
+                    provider=provider,
+                    sandbox_id=sandbox_id,
+                    capability_id=capability_id if isinstance(capability_id, str) else None,
+                ),
+                resolve_sandbox,
             )
         elif isinstance(unavailable_reason, str):
             ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason

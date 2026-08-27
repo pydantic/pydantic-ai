@@ -59,6 +59,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         name: str | None = None,
         event_stream_handler_task_config: TaskConfig | None = None,
         model_task_config: TaskConfig | None = None,
+        capability_task_config: TaskConfig | None = None,
         mcp_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
     ):
@@ -87,6 +88,8 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 `name` when the capability is bound.
             event_stream_handler_task_config: Prefect task config for event stream handler tasks.
             model_task_config: Prefect task config for model request tasks.
+            capability_task_config: Prefect task config for durable capability operations.
+                Defaults to three attempts because sandbox lifecycle operations are idempotent.
             mcp_task_config: Prefect task config for MCP server tasks.
             tool_task_config: Default Prefect task config for tool call tasks. Per-tool
                 overrides are configured via tool metadata, e.g.
@@ -97,6 +100,9 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         # Model and event-handler tasks compose the same non-retryable condition as tool tasks.
         self._model_task_config = with_non_retryable_errors(default_task_config | (model_task_config or {}))
+        self._capability_task_config = with_non_retryable_errors(
+            default_task_config | {'retries': 2} | (capability_task_config or {})
+        )
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
         self._tool_task_config = default_task_config | (tool_task_config or {})
         self._event_stream_handler_task_config = with_non_retryable_errors(
@@ -123,7 +129,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             config=PrefectOperationConfig(
                 model=self._model_task_config,
                 event=self._event_stream_handler_task_config,
-                capability=default_task_config,
+                capability=self._capability_task_config,
                 tool=tool_config,
             ),
             event_sequence_key=f'pydantic_ai_event_sequence:{self.name}',

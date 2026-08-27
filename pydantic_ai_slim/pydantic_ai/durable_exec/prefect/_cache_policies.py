@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
-from pydantic_ai.sandboxes import UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext
 
 _NON_SERIALIZABLE = '<non-serializable>'
@@ -142,7 +142,11 @@ def _replace_run_context(
             # remains equivalent to the previous "no sandbox" input for caching.
             sandbox_identity = value.sandbox.durable_identity()
             if not isinstance(sandbox_identity, UnavailableSandbox):
-                projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
+                projected['sandbox'] = (
+                    value.sandbox.provider,
+                    value.sandbox.sandbox_id,
+                    sandbox_identity.capability_id if isinstance(sandbox_identity, SandboxRef) else None,
+                )
             inputs[key] = projected
 
     return inputs

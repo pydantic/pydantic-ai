@@ -56,6 +56,7 @@ from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
+    AbstractCapability,
     Capability,
     DynamicCapability,
     Instrumentation,
@@ -162,9 +163,9 @@ from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from .sandbox_fakes import (
     ConnectOnlySandboxCapability,
+    FailingTeardownSandboxCapability,
     FakeSandboxHandle,
     LifecycleSandboxCapability,
-    PerRunLifecycleSandboxCapability,
 )
 
 
@@ -2379,7 +2380,7 @@ async def test_cache_policy_includes_sandbox_identity():
     """Two runs identical except for their attached sandbox must not share a cache entry."""
     projected = _replace_run_context({'ctx': _ctx_with_sandbox('sandbox-1')})['ctx']
     # Provider-qualified: `sandbox_id` is only unique within a provider.
-    assert projected['sandbox'] == ('fake', 'sandbox-1')
+    assert projected['sandbox'] == ('fake', 'sandbox-1', None)
     # The fresh framework default is equivalent to the previous no-sandbox input.
     assert 'sandbox' not in _replace_run_context({'ctx': _ctx_with_sandbox(None)})['ctx']
     unavailable = RunContext(
@@ -2443,7 +2444,7 @@ async def test_cache_policy_includes_deferred_sandbox_identity_without_connectin
         sandbox=Sandbox.from_ref(SandboxRef(provider='fake', sandbox_id='deferred-sandbox'), refuse_to_connect),
     )
     projected = _replace_run_context({'ctx': ctx})['ctx']
-    assert projected['sandbox'] == ('fake', 'deferred-sandbox')
+    assert projected['sandbox'] == ('fake', 'deferred-sandbox', None)
 
 
 async def test_prefect_flow_forwards_sandbox_to_tools():
@@ -2909,20 +2910,71 @@ async def test_prefect_durability_runs_a_sandbox_supplying_capability(blockbuste
     )
 
     @flow
-    async def run_durable_agent() -> str:
-        return (await agent.run('Use the sandbox tool.')).output
+    async def run_durable_agent() -> tuple[str, str]:
+        first = (await agent.run('Use the sandbox tool.')).output
+        second = (await agent.run('Use the sandbox tool.')).output
+        return first, second
 
-    assert await run_durable_agent() == snapshot('success (no tool calls)')
-    assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
-    assert supplier.in_task == [True, True]
+    assert await run_durable_agent() == snapshot(('success (no tool calls)', 'success (no tool calls)'))
+    assert supplier.events == snapshot(
+        ['create:created-1', 'teardown:created-1', 'create:created-2', 'teardown:created-2']
+    )
+    assert supplier.in_task == [True, True, True, True]
 
     # Outside a flow the very same agent runs the supplier's lifecycle normally; no tool touches
     # the sandbox, so the lazily connecting facade never connects.
     assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
     assert supplier.events == snapshot(
-        ['create:created-1', 'teardown:created-1', 'create:created-2', 'teardown:created-2']
+        [
+            'create:created-1',
+            'teardown:created-1',
+            'create:created-2',
+            'teardown:created-2',
+            'create:created-3',
+            'teardown:created-3',
+        ]
     )
-    assert supplier.in_task == [True, True, False, False]
+    assert supplier.in_task == [True, True, True, True, False, False]
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_sandbox_lifecycle_cache_is_stable_across_flow_retry(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    supplier = LifecycleSandboxCapability()
+    agent = Agent(TestModel(), name='prefect_sandbox_flow_retry', capabilities=[PrefectDurability(), supplier])
+    attempts = 0
+
+    @flow(retries=1)
+    async def run_durable_agent() -> str:
+        nonlocal attempts
+        output = (await agent.run('Hello')).output
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError('retry the flow')
+        return output
+
+    assert await run_durable_agent() == 'success (no tool calls)'
+    assert attempts == 2
+    assert supplier.events == ['create:created-1', 'teardown:created-1']
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_sandbox_teardown_retries_then_is_suppressed(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    supplier = FailingTeardownSandboxCapability()
+    agent = Agent(TestModel(), name='prefect_sandbox_teardown_retry', capabilities=[PrefectDurability(), supplier])
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    assert await run_durable_agent() == 'success (no tool calls)'
+    assert supplier.events == [
+        'create:created-1',
+        'teardown-failed:created-1',
+        'teardown-failed:created-1',
+        'teardown-failed:created-1',
+    ]
 
 
 async def test_prefect_durability_rejects_a_per_run_sandbox_supplier() -> None:
@@ -2945,10 +2997,22 @@ async def test_prefect_durability_rejects_a_per_run_sandbox_supplier() -> None:
 
 
 @pytest.mark.parametrize('blockbuster_enabled', [False])
-async def test_prefect_durability_rederives_a_per_run_sandbox_supplier(blockbuster_enabled: bool) -> None:
-    """A bind-time supplier may return its run-specific implementation from `for_run()`."""
+async def test_prefect_durability_keeps_the_bound_sandbox_lifecycle_owner(blockbuster_enabled: bool) -> None:
+    """A supplier returned by `for_run()` does not replace the bound sandbox lifecycle owner."""
     assert blockbuster_enabled is False
-    supplier = PerRunLifecycleSandboxCapability()
+
+    class ReplacementLifecycle(LifecycleSandboxCapability):
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            raise AssertionError('the for_run replacement must not create the sandbox')
+
+        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            raise AssertionError('the for_run replacement must not destroy the sandbox')
+
+    class BoundLifecycle(LifecycleSandboxCapability):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return ReplacementLifecycle()
+
+    supplier = BoundLifecycle()
     agent = Agent(TestModel(), name='prefect_per_run_sandbox', capabilities=[PrefectDurability(), supplier])
 
     @flow

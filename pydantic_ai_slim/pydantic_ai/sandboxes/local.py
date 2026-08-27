@@ -41,12 +41,19 @@ class _LocalResult:
 
 
 class _LocalFilesystem:
+    @staticmethod
+    def _path(path: str) -> Path:
+        target = Path(path)
+        if not target.is_absolute():
+            raise ValueError(f'path must be absolute, got {path!r}')
+        return target
+
     async def read_bytes(self, path: str) -> bytes:
-        return await run_in_executor(Path(path).read_bytes)
+        return await run_in_executor(self._path(path).read_bytes)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         def write() -> None:
-            target = Path(path)
+            target = self._path(path)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
 
@@ -54,7 +61,7 @@ class _LocalFilesystem:
 
     async def stat(self, path: str) -> FileEntry:
         def stat() -> FileEntry:
-            target = Path(path)
+            target = self._path(path)
             size = target.stat().st_size
             is_dir = target.is_dir()
             return FileEntry(name=target.name, path=path, is_dir=is_dir, size=None if is_dir else size)
@@ -64,7 +71,7 @@ class _LocalFilesystem:
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         def list_entries() -> list[FileEntry]:
             entries: list[FileEntry] = []
-            for child in sorted(Path(path).iterdir()):
+            for child in sorted(self._path(path).iterdir()):
                 is_dir = child.is_dir()
                 try:
                     # stat, not lstat: a symlinked file reports its target's size, matching `stat()`.
@@ -78,11 +85,11 @@ class _LocalFilesystem:
         return await run_in_executor(list_entries)
 
     async def make_dir(self, path: str) -> None:
-        await run_in_executor(lambda: Path(path).mkdir(parents=True, exist_ok=True))
+        await run_in_executor(lambda: self._path(path).mkdir(parents=True, exist_ok=True))
 
     async def remove(self, path: str) -> None:
         def remove() -> None:
-            target = Path(path)
+            target = self._path(path)
             if target.is_dir() and not target.is_symlink():
                 shutil.rmtree(target)
             else:
@@ -91,7 +98,7 @@ class _LocalFilesystem:
         await run_in_executor(remove)
 
     async def exists(self, path: str) -> bool:
-        return await run_in_executor(Path(path).exists)
+        return await run_in_executor(self._path(path).exists)
 
 
 class LocalSandbox:

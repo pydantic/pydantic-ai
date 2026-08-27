@@ -3,17 +3,18 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
 
 from pydantic import ValidationError
+from pydantic.alias_generators import to_snake
 from typing_extensions import deprecated
 
 from pydantic_ai import _utils
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 from pydantic_ai.tools import (
@@ -433,7 +434,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     async def create_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         """Provision or select this run's sandbox and return its serializable identity.
 
-        Called at most once per run, before any hook sees
+        Invoked once in a non-durable run, or recorded once in a durable run's logical history, before any hook sees
         [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox], and only when no `sandbox=` run
         argument was passed. The latest overriding capability in the resolved chain wins.
         Return `None`, without side effects, to not contribute.
@@ -465,11 +466,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     async def destroy_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
         """Destroy the sandbox identified by `ref`.
 
-        Called at most once, after the run ends (also on failure), only on the capability whose
+        Recorded once in the logical run history after the run ends (also on failure), only on the capability whose
         [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] produced
-        `ref`, and never for a `sandbox=` run argument. Must tolerate an already-gone sandbox; the
-        platform's idle timeout is the backstop for paths that can never run this hook. The
-        inherited no-op suits warm or externally managed sandboxes.
+        `ref`, and never for a `sandbox=` run argument. A durable engine may physically retry the
+        operation, so it must tolerate an already-gone sandbox. The platform's idle timeout is the
+        backstop for paths that can never run this hook. The inherited no-op suits warm or externally
+        managed sandboxes.
         """
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
@@ -1249,6 +1251,7 @@ async def resolve_run_sandbox(
     Lives outside the combined-capability dispatch because the run must route
     `destroy_sandbox` back to the same capability, and that dispatch loses supplier identity.
     """
+    capability_ids = {id(leaf): capability_id for capability_id, leaf in capabilities_by_id(capability).items()}
     for leaf in reversed(leaf_capabilities(capability)):
         if leaf.defer_loading is True:
             continue
@@ -1261,5 +1264,56 @@ async def resolve_run_sandbox(
             {},
         )
         if ref is not None:
+            ref = replace(ref, capability_id=capability_ids[id(leaf)])
             return leaf, ref
     return None
+
+
+async def resolve_sandbox_ref(
+    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], ref: SandboxRef
+) -> SandboxBackend | None:
+    """Reconnect a ref through its named capability, or use chain precedence for a legacy ref."""
+    if ref.capability_id is None:
+        return await capability.get_sandbox(ctx, ref)
+
+    match = capabilities_by_id(capability).get(ref.capability_id)
+    if match is None:
+        raise UserError(
+            f'Cannot reconnect sandbox {ref.sandbox_id!r}: expected one capability with id '
+            f'{ref.capability_id!r}, found 0.'
+        )
+    if match.defer_loading is True:
+        raise UserError(
+            f'Cannot reconnect sandbox {ref.sandbox_id!r} through deferred capability '
+            f'{ref.capability_id!r}; deferred capabilities cannot provide the run sandbox.'
+        )
+    return await match.get_sandbox(ctx, ref)
+
+
+def capabilities_by_id(
+    capability: AbstractCapability[AgentDepsT],
+) -> dict[str, AbstractCapability[AgentDepsT]]:
+    """Return the capability registry, deriving the same stable run-local IDs as Agent."""
+    capabilities = leaf_capabilities(capability)
+    explicit_ids: set[str] = set()
+    for cap in capabilities:
+        if cap.id is None:
+            continue
+        if cap.id in explicit_ids:
+            raise UserError(
+                f'Capability id {cap.id!r} is used by multiple capabilities. '
+                'Capability ids must be unique within a run.'
+            )
+        explicit_ids.add(cap.id)
+    by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
+    for cap in capabilities:
+        capability_id = cap.id
+        if capability_id is None:
+            base_id = to_snake(type(cap).__name__)
+            capability_id = base_id
+            suffix = 2
+            while capability_id in by_id or capability_id in explicit_ids:
+                capability_id = f'{base_id}_{suffix}'
+                suffix += 1
+        by_id[capability_id] = cap
+    return by_id

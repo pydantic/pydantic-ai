@@ -65,6 +65,13 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         super().__init__(namer=PrefectOperationNamer(), config=config)
         self._event_sequence_key = event_sequence_key
 
+    @staticmethod
+    def _next_sequence(flow_context: FlowRunContext, key: str) -> int:
+        sequence = flow_context.task_run_dynamic_keys.get(key, 0)
+        assert isinstance(sequence, int)
+        flow_context.task_run_dynamic_keys[key] = sequence + 1
+        return sequence
+
     async def _execute(
         self,
         *,
@@ -76,10 +83,14 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         if name == PrefectOperationNamer().operation_name(EventStreamHandlerId()):
             flow_context = FlowRunContext.get()
             assert flow_context is not None
-            sequence = flow_context.task_run_dynamic_keys.get(self._event_sequence_key, 0)
-            assert isinstance(sequence, int)
-            flow_context.task_run_dynamic_keys[self._event_sequence_key] = sequence + 1
-            cache_key = (*cache_key, sequence)
+            cache_key = (*cache_key, self._next_sequence(flow_context, self._event_sequence_key))
+        elif name.endswith(('.create_sandbox', '.destroy_sandbox')):
+            flow_context = FlowRunContext.get()
+            assert flow_context is not None
+            # The ordinal distinguishes two Agent.run() calls in one flow and is replay-stable
+            # because Prefect re-executes those calls in the same order on a flow retry.
+            sequence_key = f'pydantic_ai_lifecycle_sequence:{name}'
+            cache_key = (*cache_key, self._next_sequence(flow_context, sequence_key))
 
         @task
         async def operation(operation_name: str, *logical_inputs: object) -> object:

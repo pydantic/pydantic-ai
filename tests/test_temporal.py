@@ -4775,7 +4775,10 @@ def _serialized_ref_context() -> dict[str, Any]:
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox.from_ref(SandboxRef(provider='fake', sandbox_id='sandbox-123'), _refuse_to_connect),
+        sandbox=Sandbox.from_ref(
+            SandboxRef(provider='fake', sandbox_id='sandbox-123', capability_id='connector'),
+            _refuse_to_connect,
+        ),
     )
     return TemporalRunContext.serialize_run_context(ctx)
 
@@ -4784,9 +4787,14 @@ async def test_temporal_run_context_round_trips_sandbox_ref():
     from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
 
     serialized = _serialized_ref_context()
-    assert serialized['_sandbox_state'] == {'provider': 'fake', 'sandbox_id': 'sandbox-123'}
+    assert serialized['_sandbox_state'] == {
+        'provider': 'fake',
+        'sandbox_id': 'sandbox-123',
+        'capability_id': 'connector',
+    }
 
     connector = ConnectOnlySandboxCapability()
+    connector.id = 'connector'
     agent: Agent[None, str] = Agent(TestModel(), name='ref_round_trip_agent', capabilities=[connector])
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
     assert (reconstructed.sandbox.provider, reconstructed.sandbox.sandbox_id) == ('fake', 'sandbox-123')
@@ -7926,8 +7934,10 @@ async def test_temporal_durability_sandbox_without_teardown_succeeds(client: Cli
     assert _teardownless_sandbox_capability.events == snapshot(['create:created-1', 'connect:created-1'])
 
 
-async def test_temporal_durability_logs_a_failed_sandbox_teardown(client: Client, caplog: pytest.LogCaptureFixture):
-    """A failed teardown must not fail an otherwise-finished run; the idle timeout is the backstop."""
+async def test_temporal_durability_retries_then_logs_a_failed_sandbox_teardown(
+    client: Client, caplog: pytest.LogCaptureFixture
+):
+    """A teardown failure retries in Temporal before outer cleanup logs and suppresses it."""
     _unteardownable_sandbox_capability.reset()
     async with Worker(
         client,
@@ -7945,7 +7955,13 @@ async def test_temporal_durability_logs_a_failed_sandbox_teardown(client: Client
 
     assert output == 'done'
     assert _unteardownable_sandbox_capability.events == snapshot(
-        ['create:created-1', 'connect:created-1', 'teardown-failed:created-1']
+        [
+            'create:created-1',
+            'connect:created-1',
+            'teardown-failed:created-1',
+            'teardown-failed:created-1',
+            'teardown-failed:created-1',
+        ]
     )
     assert any(record.message.startswith("Failed to tear down sandbox 'created-1'") for record in caplog.records)
 

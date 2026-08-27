@@ -418,7 +418,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     arguments = self._codec.load(dict[str, Any], self._codec.dump(dict[str, Any], params.arguments))
                     validated = cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
                     semantic_params = CapabilityOperationParams(params.run_context, validated, params.model_id)
-                    recovered = await recover_capability(params.run_context, capability_id)
+                    recovered = await recover_capability(
+                        params.run_context,
+                        capability_id,
+                        resolve_for_run=declaration.name not in ('create_sandbox', 'destroy_sandbox'),
+                    )
                     if declaration.model_request_hook:
                         projection = cast(ModelRequestContextProjection, semantic_params.arguments['request_context'])
                         async with self._durable_model_scope(projection.model_id, params.run_context) as (
@@ -447,21 +451,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                             durable_ctx, semantic_params.arguments, params.model_id
                         )
                         usage_before = copy.copy(durable_ctx.usage)
-                        if declaration.name == 'destroy_sandbox':
-                            try:
-                                result = await call_declaration(declaration, recovered, semantic_params)
-                            except Exception:
-                                ref = semantic_params.arguments['ref']
-                                logger.warning(
-                                    'Failed to tear down sandbox %r for provider %r; '
-                                    'the platform must reap it on its own idle timeout.',
-                                    ref.sandbox_id,
-                                    ref.provider,
-                                    exc_info=True,
-                                )
-                                result = None
-                        else:
-                            result = await call_declaration(declaration, recovered, semantic_params)
+                        result = await call_declaration(declaration, recovered, semantic_params)
                     return _CapabilityOperationResult(result, _usage_delta(usage_before, durable_ctx.usage))
 
                 operation = DurableOperation(
