@@ -416,7 +416,7 @@ async def test_model_provider_argument():
     assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_gateway_provider_routing_group(gateway_api_key: str):
+async def test_gateway_provider_endpoint(gateway_api_key: str):
     provider = gateway_provider('openai', route='potato', api_key=gateway_api_key, base_url=GATEWAY_BASE_URL)
     assert provider.client.base_url.path.endswith('/potato/')
 
