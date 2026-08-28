@@ -774,6 +774,20 @@ def test_bot_unassignments_do_not_suppress_gated_routing():
     assert selection['decision'] is not None
 
 
+def test_a_full_page_of_recent_bot_cleanup_still_backs_off():
+    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    cleanup: list[str | dict[str, Any]] = [
+        {'createdAt': recent, 'actor': {'__typename': 'Bot'}} for _ in range(router._UNASSIGNED_EVENT_PAGE)
+    ]
+    client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'], unassigned_at=cleanup)})
+
+    selection = router.decision_for(client, CORE, 7)
+
+    # The page is full and entirely recent: an older human removal may sit
+    # just past it, so truncation fails toward leaving the item alone.
+    assert selection == {'number': 7, 'decision': None, 'status': 'recently-unassigned'}
+
+
 def test_community_recovery_backs_off_after_a_recent_unassignment():
     recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
     old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
