@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -1752,6 +1753,7 @@ async def test_event_stream_thinking_end_with_full_metadata():
             provider_name='anthropic',
             provider_details={'model': 'claude-3', 'tokens': 100},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
 
@@ -1821,6 +1823,7 @@ async def test_event_stream_thinking_end_with_full_metadata():
 
 async def test_event_stream_back_to_back_text():
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
         yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
         yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='text')
@@ -2424,6 +2427,7 @@ async def test_run_stream_tool_metadata_yields_data_chunks():
 
 async def test_event_stream_file():
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=FilePart(content=BinaryImage(data=b'fake', media_type='image/png')))
 
     request = SubmitMessage(
@@ -6327,6 +6331,7 @@ async def test_event_stream_server_message_id():
     """Test that VercelAIEventStream passes server_message_id to the StartChunk."""
 
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
         yield PartEndEvent(index=0, part=TextPart(content='Hello'))
 
@@ -6363,6 +6368,7 @@ async def test_event_stream_emits_message_metadata():
     )
 
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=response.parts[0])
         yield PartEndEvent(index=0, part=response.parts[0])
         result = AgentRunResult(output='Hello')
@@ -8254,6 +8260,7 @@ async def test_event_stream_text_with_provider_metadata():
             provider_name='openai',
             provider_details={'model': 'gpt-4', 'tokens': 10},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
 
@@ -8332,6 +8339,7 @@ async def test_event_stream_tool_input_error_with_provider_metadata():
             provider_name='anthropic',
             provider_details={'tool_index': 0},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield FunctionToolCallEvent(part, args_valid=False)
@@ -8394,6 +8402,7 @@ async def test_event_stream_tool_input_error_sdk_v5_falls_back_to_input_availabl
 
     async def event_generator():
         part = ToolCallPart(tool_name='my_tool', tool_call_id='tc_v5_err', args={'key': 'value'})
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield FunctionToolCallEvent(part, args_valid=False)
@@ -8438,6 +8447,7 @@ async def test_event_stream_tool_call_part_end_does_not_emit_input_available():
             tool_call_id='tc_no_func_event',
             args={'key': 'value'},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
 
@@ -8468,6 +8478,7 @@ async def test_event_stream_function_tool_args_valid_none_does_not_emit_input_ch
 
     async def event_generator():
         part = ToolCallPart(tool_name='my_tool', tool_call_id='tc_none', args={'key': 'value'})
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield FunctionToolCallEvent(part)
@@ -8499,6 +8510,7 @@ async def test_event_stream_output_tool_input_available():
             id='output_tool_id',
             provider_name='openai',
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield OutputToolCallEvent(part, args_valid=True)
@@ -8554,6 +8566,7 @@ async def test_event_stream_output_tool_input_error():
             args={'value': 'bad'},
             id='output_tool_id',
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield OutputToolCallEvent(part, args_valid=False)
@@ -8613,6 +8626,7 @@ async def test_event_stream_output_tool_input_error_with_status_return_part():
             args={'value': 'bad'},
             id='output_tool_id',
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield OutputToolCallEvent(part, args_valid=False)
@@ -8677,6 +8691,7 @@ async def test_event_stream_tool_call_end_backfills_input_available_when_call_ev
             args={'value': 'x'},
             id='output_tool_id',
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         # Note: no `OutputToolCallEvent` — the agent graph would normally yield one,
@@ -8745,6 +8760,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata_v5():
             provider_name='anthropic',
             provider_details={'tool_index': 0},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield FunctionToolCallEvent(part, args_valid=True)
@@ -8803,6 +8819,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata_v6():
             provider_name='anthropic',
             provider_details={'tool_index': 0},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield FunctionToolCallEvent(part, args_valid=True)
@@ -8872,6 +8889,7 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v5():
             provider_name='openai',
             provider_details={'tool_type': 'web_search_preview'},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
 
@@ -8930,6 +8948,7 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v6():
             provider_name='openai',
             provider_details={'tool_type': 'web_search_preview'},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
 
@@ -8999,6 +9018,7 @@ async def test_event_stream_thinking_delta_with_provider_metadata():
             provider_name='anthropic',
             provider_details={'model': 'claude'},
         )
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=part)
         yield PartDeltaEvent(
             index=0,
@@ -9081,6 +9101,7 @@ async def test_event_stream_builtin_tool_return_denied():
     """Test that ToolOutputDeniedChunk is emitted for a denied NativeToolReturnPart."""
 
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(
             index=0,
             part=NativeToolReturnPart(
@@ -9121,6 +9142,7 @@ async def test_event_stream_builtin_tool_return_denied():
 
 async def test_event_stream_builtin_tool_return_error():
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(
             index=0,
             part=NativeToolReturnPart(
@@ -9908,6 +9930,7 @@ class TestSdkVersion:
                 id='tool_call_id_ver',
                 provider_name='anthropic',
             )
+            yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
             yield PartStartEvent(index=0, part=part)
             yield PartEndEvent(index=0, part=part)
 

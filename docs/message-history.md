@@ -613,6 +613,8 @@ Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.mes
 
 Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it.
 
+Use [`agent.run_stream_messages()`][pydantic_ai.agent.AbstractAgent.run_stream_messages] to consume these delivered messages alongside model requests and response snapshots without reconstructing them from part events. Each response is yielded with `state='incomplete'` while it streams, then once more as the committed final response.
+
 ### From inside a tool or hook
 
 Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a

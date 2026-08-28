@@ -905,18 +905,18 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             async with agent.run_stream_events('What is the capital of France?') as events:
                 async for event in events:
                     collected.append(event)
-            print(collected)
+            print([type(event).__name__ for event in collected])
             '''
             [
-                PartStartEvent(index=0, part=TextPart(content='The capital of ')),
-                FinalResultEvent(tool_name=None, tool_call_id=None),
-                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
-                PartEndEvent(
-                    index=0, part=TextPart(content='The capital of France is Paris. ')
-                ),
-                AgentRunResultEvent(
-                    result=AgentRunResult(output='The capital of France is Paris. ')
-                ),
+                'ModelRequestStartEvent',
+                'ModelRequestEndEvent',
+                'ModelResponseStartEvent',
+                'PartStartEvent',
+                'FinalResultEvent',
+                'PartDeltaEvent',
+                'PartEndEvent',
+                'ModelResponseEndEvent',
+                'AgentRunResultEvent',
             ]
             '''
         ```

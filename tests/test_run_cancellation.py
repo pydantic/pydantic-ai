@@ -51,6 +51,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -98,7 +99,9 @@ async def test_swallowing_event_stream_handler_run_still_cancels():
 
     async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         try:
-            async for _event in events:  # pragma: no branch
+            async for event in events:  # pragma: no branch
+                if not isinstance(event, PartStartEvent):
+                    continue
                 in_flight.set()
                 await asyncio.Event().wait()  # a slow consumer; cancel lands here
         except asyncio.CancelledError:
@@ -1118,7 +1121,18 @@ async def test_cancel_under_run_stream_events():
                 events.append(type(event).__name__)
 
     # events streamed before the cancellation are delivered
-    assert events == snapshot(['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent'])
+    assert events == snapshot(
+        [
+            'ModelRequestStartEvent',
+            'ModelRequestEndEvent',
+            'ModelResponseStartEvent',
+            'PartStartEvent',
+            'PartEndEvent',
+            'ModelResponseEndEvent',
+            'ModelRequestStartEvent',
+            'FunctionToolCallEvent',
+        ]
+    )
 
 
 async def test_run_stream_events_cancel_mid_iteration():
@@ -1863,7 +1877,9 @@ async def test_absorbed_cancellation_completes_on_py310():  # pragma: lax no cov
 
     async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         try:
-            async for _event in events:
+            async for event in events:
+                if not isinstance(event, PartStartEvent):
+                    continue
                 in_flight.set()
                 await asyncio.Event().wait()
         except asyncio.CancelledError:

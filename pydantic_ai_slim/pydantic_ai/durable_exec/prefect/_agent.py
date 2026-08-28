@@ -192,14 +192,26 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         # Create a task to handle each event
         @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
-        async def event_stream_handler_task(event: _messages.AgentStreamEvent) -> None:
+        async def event_stream_handler_task(event: _messages.AgentStreamEvent, sequence: int) -> None:
             async def streamed_response():
                 yield event
 
             await handler(ctx, streamed_response())
 
+        flow_context = FlowRunContext.get()
+        assert flow_context is not None
+        sequence_key = f'pydantic_ai_event_sequence:{self.name}'
+        # The sequence number makes content-identical events within one flow run each fire
+        # (distinct task-cache keys) while a flow retry that re-executes the same run
+        # reproduces the same numbers and replays from cache. `task_run_dynamic_keys` is
+        # Prefect's own per-flow-run counter store for task-call disambiguation, so a
+        # namespaced key gets exactly the retry-lineage lifetime Prefect's task naming
+        # relies on.
         async for event in stream:
-            await event_stream_handler_task(event)
+            sequence = flow_context.task_run_dynamic_keys.get(sequence_key, 0)
+            assert isinstance(sequence, int)
+            flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
+            await event_stream_handler_task(event, sequence)
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -809,18 +821,18 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             async with agent.run_stream_events('What is the capital of France?') as events:
                 async for event in events:
                     collected.append(event)
-            print(collected)
+            print([type(event).__name__ for event in collected])
             '''
             [
-                PartStartEvent(index=0, part=TextPart(content='The capital of ')),
-                FinalResultEvent(tool_name=None, tool_call_id=None),
-                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
-                PartEndEvent(
-                    index=0, part=TextPart(content='The capital of France is Paris. ')
-                ),
-                AgentRunResultEvent(
-                    result=AgentRunResult(output='The capital of France is Paris. ')
-                ),
+                'ModelRequestStartEvent',
+                'ModelRequestEndEvent',
+                'ModelResponseStartEvent',
+                'PartStartEvent',
+                'FinalResultEvent',
+                'PartDeltaEvent',
+                'PartEndEvent',
+                'ModelResponseEndEvent',
+                'AgentRunResultEvent',
             ]
             '''
         ```

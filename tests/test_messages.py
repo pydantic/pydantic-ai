@@ -31,7 +31,11 @@ from pydantic_ai import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelRetry,
     MultiModalContent,
     NativeToolCallPart,
@@ -570,6 +574,21 @@ def test_thinking_part_delta_callable_provider_details_serializable():
         delta=ThinkingPartDelta(content_delta='dict', provider_details={'provider': 'detail'}),
     )
     assert json.loads(adapter.dump_json(dict_event))['delta']['provider_details'] == {'provider': 'detail'}
+
+
+def test_model_message_boundary_events_round_trip():
+    """Message-boundary events round-trip through the public agent event union."""
+    request = ModelRequest.user_text_prompt('hello')
+    response = ModelResponse(parts=[TextPart(content='world')])
+    adapter: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
+
+    for event in (
+        ModelRequestStartEvent(request=ModelRequest(parts=[], state='incomplete')),
+        ModelRequestEndEvent(request=request),
+        ModelResponseStartEvent(response=ModelResponse(parts=[])),
+        ModelResponseEndEvent(response=response),
+    ):
+        assert adapter.validate_json(adapter.dump_json(event)) == event
 
 
 def test_pre_usage_refactor_messages_deserializable():

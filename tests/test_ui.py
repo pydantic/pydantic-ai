@@ -31,7 +31,11 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -278,6 +282,7 @@ async def test_run_stream_text_and_thinking():
 
 async def test_event_stream_back_to_back_text():
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
         yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
         yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='text')
@@ -303,6 +308,24 @@ async def test_event_stream_back_to_back_text():
             '</stream>',
         ]
     )
+
+
+async def test_event_stream_uses_partless_response_boundaries():
+    """Explicit response boundaries fire UI hooks even when a response emits no parts."""
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        request = ModelRequest.user_text_prompt('Hello')
+        yield ModelRequestStartEvent(request=request)
+        yield ModelRequestEndEvent(request=request)
+        response = ModelResponse(parts=[])
+        yield ModelResponseStartEvent(response=response)
+        yield ModelResponseEndEvent(response=response)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == ['<stream>', '<request>', '</request>', '<response>', '</response>', '</stream>']
 
 
 async def test_event_stream_without_run_input():
@@ -339,7 +362,7 @@ async def test_event_stream_close_finalizes_native_stream_without_protocol_trail
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
         try:
-            yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+            yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
             await asyncio.sleep(30)  # pragma: no cover
         finally:
             finalized.set()
@@ -364,6 +387,7 @@ async def test_event_stream_error_closes_open_text():
     """
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
         yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
         raise RuntimeError('boom')
@@ -390,6 +414,7 @@ async def test_event_stream_error_closes_open_thinking():
     """A mid-stream error while a thinking part is open emits `thinking-end` before the error."""
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=ThinkingPart(content='Thinking'))
         yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' hard'))
         raise RuntimeError('boom')
@@ -422,6 +447,7 @@ async def test_event_stream_error_closes_open_native_tool_call():
     """
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(
             index=0,
             part=NativeToolCallPart(
@@ -457,6 +483,7 @@ async def test_event_stream_error_closes_open_tool_call():
     """
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(
             index=0, part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={'query': 'pydantic'})
         )
@@ -605,6 +632,7 @@ async def test_run_stream_tool_call():
 
 async def test_event_stream_file():
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=FilePart(content=BinaryImage(data=b'fake', media_type='image/png')))
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])

@@ -17136,6 +17136,7 @@ async def test_agent_stream_events_iter_drains_buffer_before_each_pull():
 
     stream = cast(AgentStream[Any, str], object.__new__(AgentStream))
     stream._event_stream_buffer_getter = lambda: buffer  # pyright: ignore[reportPrivateUsage]
+    stream._emit_response_start = False  # pyright: ignore[reportPrivateUsage]
     stream._anext_lock = anyio.Lock()  # pyright: ignore[reportPrivateUsage]
 
     drained = [event async for event in stream._events_iter(base_iter())]  # pyright: ignore[reportPrivateUsage]

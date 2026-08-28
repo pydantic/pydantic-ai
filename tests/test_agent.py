@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -28,6 +28,7 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FilePart,
+    FunctionToolCallEvent,
     FunctionToolset,
     ImageUrl,
     IncompleteToolCall,
@@ -36,13 +37,18 @@ from pydantic_ai import (
     ModelProfile,
     ModelRequest,
     ModelRequestContext,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
+    ModelResponseEndEvent,
     ModelResponsePart,
+    ModelResponseStartEvent,
     ModelRetry,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
     RunContext,
+    SkipModelRequest,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -57,6 +63,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._agent_graph import ModelRequestNode, _check_continuation_usage  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -77,7 +84,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
@@ -4139,6 +4146,898 @@ async def test_agent_run_id_on_run_stream_events() -> None:
     messages = result_event.result.all_messages()
     assert len(messages) == 2
     assert all(m.run_id == 'run-events' for m in messages)
+
+
+async def test_run_stream_events_include_message_boundaries() -> None:
+    """Requests and responses have explicit boundaries around streamed parts and tool execution.
+
+    Not a VCR test: this asserts the framework's normalized event ordering.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'result'
+
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    event_types = [type(event) for event in events]
+    request_starts = [index for index, event_type in enumerate(event_types) if event_type is ModelRequestStartEvent]
+    request_ends = [index for index, event_type in enumerate(event_types) if event_type is ModelRequestEndEvent]
+    first_response_start = event_types.index(ModelResponseStartEvent)
+    first_response_end = event_types.index(ModelResponseEndEvent)
+    tool_call = event_types.index(FunctionToolCallEvent)
+
+    # Two request turns (initial prompt, tool return), each bracketed by a start/end boundary.
+    assert len(request_starts) == len(request_ends) == 2
+    assert event_types[0] is ModelRequestStartEvent
+    assert event_types[1] is ModelRequestEndEvent
+    # The second request turn opens as tools begin executing — before its returns are collected — and
+    # closes before the second response starts.
+    second_request_start, second_request_end = request_starts[1], request_ends[1]
+    assert first_response_start < first_response_end < second_request_start <= tool_call < second_request_end
+    assert event_types[second_request_end + 1] is ModelResponseStartEvent
+    assert event_types[-2] is ModelResponseEndEvent
+    assert event_types[-1] is AgentRunResultEvent
+    response_starts = [event for event in events if isinstance(event, ModelResponseStartEvent)]
+    assert all(
+        event.response.parts == [] and event.response.state == 'incomplete' and event.response.usage == RequestUsage()
+        for event in response_starts
+    )
+    # The request-turn start snapshot is provisional (`incomplete`); the paired end carries the committed request.
+    request_starts_events = [event for event in events if isinstance(event, ModelRequestStartEvent)]
+    assert all(event.request.state == 'incomplete' for event in request_starts_events)
+    request_ends_events = [event for event in events if isinstance(event, ModelRequestEndEvent)]
+    assert all(event.request.state == 'complete' for event in request_ends_events)
+
+
+async def test_run_stream_messages_projects_complete_and_partial_messages() -> None:
+    """`run_stream_messages()` yields message snapshots and the typed final result event.
+
+    Not a VCR test: this verifies the public projection over the framework event protocol.
+    """
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'streamed'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    async with agent.run_stream_messages('hi') as stream:
+        messages = [message async for message in stream]
+
+    assert isinstance(messages[0], ModelRequest)
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert len(responses) == 2
+    assert responses[0].state == 'incomplete'
+    assert responses[-1].state == 'complete'
+    assert responses[-1].parts == [TextPart(content='streamed')]
+    assert isinstance(messages[-1], AgentRunResultEvent)
+    assert messages[-1].result.output == 'streamed'
+
+
+async def test_run_stream_messages_streams_partial_request_as_tools_run() -> None:
+    """A tool-return request is projected `incomplete` as its returns land, then once as committed.
+
+    Not a VCR test: this verifies the request half of the partial-message projection.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'result'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    tool_requests = [
+        message
+        for message in messages
+        if isinstance(message, ModelRequest) and message.parts and isinstance(message.parts[0], ToolReturnPart)
+    ]
+    incomplete = [request for request in tool_requests if request.state == 'incomplete']
+    committed = [request for request in tool_requests if request.state == 'complete']
+    # The tool return streams into an `incomplete` snapshot before the request is committed exactly once.
+    assert incomplete
+    assert all(
+        isinstance(part, ToolReturnPart) and part.content == 'result'
+        for request in incomplete
+        for part in request.parts
+    )
+    assert len(committed) == 1
+    assert isinstance(messages[-1], AgentRunResultEvent)
+
+
+async def test_run_stream_events_include_request_for_skipped_model() -> None:
+    """A short-circuited model call still commits its request boundary.
+
+    Not a VCR test: short-circuiting is framework control flow.
+    """
+
+    @dataclass
+    class SkipModelCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    agent = Agent(TestModel(), capabilities=[SkipModelCapability()])
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    assert [type(event) for event in events] == [
+        ModelRequestStartEvent,
+        ModelRequestEndEvent,
+        ModelResponseStartEvent,
+        ModelResponseEndEvent,
+        AgentRunResultEvent,
+    ]
+
+
+async def test_run_stream_events_skip_resume_does_not_reemit_prior_request() -> None:
+    """Skipping a resumed run emits no request boundary for its prior prompt.
+
+    Not a VCR test: resume boundary detection is graph-local.
+    """
+
+    @dataclass
+    class SkipModelCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    history = [ModelRequest(parts=[UserPromptPart(content='prior')])]
+    agent = Agent(TestModel(), capabilities=[SkipModelCapability()])
+    async with agent.run_stream_events(message_history=history) as stream:
+        events = [event async for event in stream]
+
+    assert not any(isinstance(event, ModelRequestEndEvent) for event in events)
+    assert isinstance(events[-1], AgentRunResultEvent)
+
+
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_skip_suspended_resume_emits_no_request_event(streaming: bool) -> None:
+    """Skipping a provider continuation emits no boundary for a request that was never created.
+
+    Not a VCR test: provider-continuation skip handling is graph-local control flow.
+    """
+
+    @dataclass
+    class SkipModelCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='prior')]),
+        ModelResponse(parts=[TextPart(content='paused')], state='suspended'),
+    ]
+    agent = Agent(TestModel(), capabilities=[SkipModelCapability()])
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+    if streaming:
+        async with agent.run_stream_events(message_history=history) as stream:
+            events.extend([event async for event in stream])
+        result_event = events[-1]
+        assert isinstance(result_event, AgentRunResultEvent)
+        assert result_event.result.output == 'skipped'
+    else:
+
+        async def event_stream_handler(_: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            events.extend([event async for event in stream])
+
+        result = await agent.run(message_history=history, event_stream_handler=event_stream_handler)
+        assert result.output == 'skipped'
+
+    assert not any(isinstance(event, ModelRequestEndEvent) for event in events)
+
+
+async def test_run_stream_events_skip_emits_queued_requests_once() -> None:
+    """Skipping a queued turn preserves one request boundary for each committed request.
+
+    Not a VCR test: queue draining and skip handling are graph-local control flow.
+    """
+
+    @dataclass
+    class SkipQueuedCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if any(
+                isinstance(part, UserPromptPart) and part.content == 'queued'
+                for message in request_context.messages
+                for part in message.parts
+            ):
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+            return request_context
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        yield {0: DeltaToolCall(name='enqueue_message', json_args='{}', tool_call_id='call-1')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[SkipQueuedCapability()])
+
+    @agent.tool
+    def enqueue_message(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('queued') is not None
+        return 'queued'
+
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
+    assert [part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)] == [
+        'go',
+        'queued',
+    ]
+
+
+async def test_run_stream_events_end_each_response_before_wrap_retry() -> None:
+    """A response retained for a wrap-model retry has its own end boundary.
+
+    Not a VCR test: retry ordering is framework control flow.
+    """
+    retries = 0
+
+    @dataclass
+    class RetryOnceCapability(AbstractCapability[object]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[object],
+            *,
+            request_context: ModelRequestContext,
+            handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+        ) -> ModelResponse:
+            nonlocal retries
+            response = await handler(request_context)
+            if retries == 0:
+                retries += 1
+                raise ModelRetry('retry once')
+            return response
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[RetryOnceCapability()])
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    request_positions = [index for index, event in enumerate(events) if isinstance(event, ModelRequestEndEvent)]
+    start_positions = [index for index, event in enumerate(events) if isinstance(event, ModelResponseStartEvent)]
+    end_positions = [index for index, event in enumerate(events) if isinstance(event, ModelResponseEndEvent)]
+    assert len(request_positions) == len(start_positions) == len(end_positions) == 2
+    assert request_positions[0] < start_positions[0] < end_positions[0] < request_positions[1]
+    assert request_positions[1] < start_positions[1] < end_positions[1] < len(events) - 1
+    assert isinstance(events[-1], AgentRunResultEvent)
+
+
+async def test_run_stream_events_skip_boundaries_for_pre_handler_wrap_retry() -> None:
+    """A retry before the model handler does not create a synthetic response boundary.
+
+    Not a VCR test: this isolates local wrapper control flow.
+    """
+    retries = 0
+
+    @dataclass
+    class RetryBeforeHandlerCapability(AbstractCapability[object]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[object],
+            *,
+            request_context: ModelRequestContext,
+            handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+        ) -> ModelResponse:
+            nonlocal retries
+            if retries == 0:
+                retries += 1
+                raise ModelRetry('retry before handler')
+            return await handler(request_context)
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[RetryBeforeHandlerCapability()])
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    assert sum(isinstance(event, ModelRequestEndEvent) for event in events) == 2
+    assert sum(isinstance(event, ModelResponseStartEvent) for event in events) == 1
+    assert sum(isinstance(event, ModelResponseEndEvent) for event in events) == 1
+
+
+async def test_run_stream_events_include_output_tool_return_request() -> None:
+    """The request completing an output-tool result is emitted even though no further model call follows.
+
+    Not a VCR test: the trailing request is graph-owned message-history repair.
+    """
+
+    async def stream_fn(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"response": "done"}', tool_call_id='final')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=ToolOutput(str))
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
+    assert len(requests) == 2
+    assert isinstance(requests[-1].parts[0], ToolReturnPart)
+    assert isinstance(events[-1], AgentRunResultEvent)
+
+
+async def test_run_stream_messages_include_output_tool_return_once() -> None:
+    """The final output-tool result request is projected once before the run result.
+
+    Not a VCR test: final history repair is framework-owned.
+    """
+
+    async def stream_fn(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"response": "done"}', tool_call_id='final')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=ToolOutput(str))
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    # Committed requests only: the request also arrives as `incomplete` partials as its tool return streams in.
+    tool_return_requests = [
+        message
+        for message in messages
+        if isinstance(message, ModelRequest)
+        and message.state != 'incomplete'
+        and isinstance(message.parts[0], ToolReturnPart)
+    ]
+    assert tool_return_requests == [result_event.result.new_messages()[-1]]
+
+
+async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
+    """Delivered enqueued messages are included in the public message projection.
+
+    Not a VCR test: queue delivery is framework-owned state.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if any(isinstance(message, ModelResponse) for message in messages):
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='enqueue_message', json_args='{}', tool_call_id='call-1')}
+
+    @dataclass
+    class ReplaceRequestsCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            return replace(
+                request_context,
+                messages=[
+                    replace(message, metadata={'processed': True}) if isinstance(message, ModelRequest) else message
+                    for message in request_context.messages
+                ],
+            )
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[ReplaceRequestsCapability()])
+
+    @agent.tool
+    def enqueue_message(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('First enqueued message') is not None
+        assert ctx.enqueue('Second enqueued message') is not None
+        return 'queued'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    enqueued_contents = [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.content in {'First enqueued message', 'Second enqueued message'}
+    ]
+    assert enqueued_contents == ['First enqueued message', 'Second enqueued message']
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    # Committed requests only: tool-return requests also arrive as `incomplete` partials as they assemble.
+    projected_requests = [
+        message for message in messages if isinstance(message, ModelRequest) and message.state != 'incomplete'
+    ]
+    assert [
+        part.content
+        for message in projected_requests
+        for part in message.parts
+        if isinstance(part, UserPromptPart | ToolReturnPart)
+    ] == [
+        'go',
+        'queued',
+        'First enqueued message',
+        'Second enqueued message',
+    ]
+    assert [
+        part.content
+        for message in result_event.result.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart | ToolReturnPart)
+    ] == [
+        'go',
+        'queued',
+        'First enqueued message',
+        'Second enqueued message',
+    ]
+    assert all(request.metadata == {'processed': True} for request in projected_requests)
+
+
+async def test_run_stream_messages_yields_when_idle_requests_in_order() -> None:
+    """All when-idle requests are projected from the redirect node in committed order.
+
+    Not a VCR test: queue draining and message projection are framework behavior.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='enqueue_messages', json_args='{}', tool_call_id='call-1')}
+            return
+        if any(
+            isinstance(part, UserPromptPart) and part.content in {'first idle', 'second idle'}
+            for message in messages
+            for part in message.parts
+        ):
+            yield 'done'
+        else:
+            yield 'queue idle'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def enqueue_messages(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('first idle', priority='when_idle') is not None
+        assert ctx.enqueue('second idle', priority='when_idle') is not None
+        return 'queued'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    # Committed requests only: tool-return requests also arrive as `incomplete` partials as they assemble.
+    projected_requests = [
+        message for message in messages if isinstance(message, ModelRequest) and message.state != 'incomplete'
+    ]
+    result_requests = [message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)]
+    assert projected_requests == result_requests
+    assert [
+        part.content for message in projected_requests for part in message.parts if isinstance(part, UserPromptPart)
+    ] == ['go', 'first idle', 'second idle']
+
+
+@pytest.mark.parametrize('truncate', ['prefix', 'suffix'])
+async def test_run_stream_events_rebuilt_queue_translates_origin_across_truncation(
+    truncate: Literal['prefix', 'suffix'],
+) -> None:
+    """Rebuilt queued requests retain their event boundary across truncation on either side.
+
+    Not a VCR test: queue delivery and request-boundary reconstruction are graph-local behavior.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if any(
+            isinstance(part, UserPromptPart) and part.content == 'first idle'
+            for message in messages
+            for part in message.parts
+        ):
+            yield 'done'
+        elif any(isinstance(message, ModelResponse) for message in messages):
+            yield 'queue idle'
+        else:
+            yield {0: DeltaToolCall(name='enqueue_messages', json_args='{}', tool_call_id='call-1')}
+
+    @dataclass
+    class RebuildHistoryCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            rebuilt_messages = [
+                replace(message, timestamp=datetime(2000, 1, index + 1, tzinfo=timezone.utc))
+                for index, message in enumerate(request_context.messages)
+            ]
+            if any(
+                isinstance(part, UserPromptPart) and part.content == 'first idle'
+                for message in rebuilt_messages
+                for part in message.parts
+            ):
+                if truncate == 'prefix':
+                    rebuilt_messages = [
+                        message
+                        for message in rebuilt_messages
+                        if any(
+                            isinstance(part, UserPromptPart)
+                            and part.content in {'first idle', 'second idle', 'third idle'}
+                            for part in message.parts
+                        )
+                    ]
+                else:
+                    rebuilt_messages = [
+                        message
+                        for message in rebuilt_messages
+                        if not any(
+                            isinstance(part, UserPromptPart) and part.content in {'second idle', 'third idle'}
+                            for part in message.parts
+                        )
+                    ]
+            ctx.messages[:] = rebuilt_messages
+            request_context.messages[:] = rebuilt_messages
+            return request_context
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[RebuildHistoryCapability()])
+
+    @agent.tool
+    def enqueue_messages(ctx: RunContext[object]) -> str:
+        assert ctx.enqueue('first idle', priority='when_idle') is not None
+        assert ctx.enqueue('second idle', priority='when_idle') is not None
+        assert ctx.enqueue('third idle', priority='when_idle') is not None
+        return 'queued'
+
+    async with agent.run_stream_events('go') as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
+    expected = ['go', 'first idle', 'second idle', 'third idle'] if truncate == 'prefix' else ['go', 'first idle']
+    assert [
+        part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)
+    ] == expected
+
+
+async def test_run_stream_events_does_not_reemit_rewritten_history_requests() -> None:
+    """A processor changing prior history does not turn it into a new request boundary.
+
+    Not a VCR test: history-origin tracking is graph-local behavior.
+    """
+
+    @dataclass
+    class RewriteRequestsCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            return replace(
+                request_context,
+                messages=[
+                    replace(message, metadata={'rewritten': True}) if isinstance(message, ModelRequest) else message
+                    for message in request_context.messages
+                ],
+            )
+
+    history = [ModelRequest(parts=[UserPromptPart(content='prior')]), ModelResponse(parts=[TextPart(content='prior')])]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RewriteRequestsCapability()])
+    async with agent.run_stream_events('new', message_history=history) as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
+    assert len(requests) == 1
+    assert isinstance(requests[0].parts[0], UserPromptPart)
+    assert requests[0].parts[0].content == 'new'
+    assert requests[0].metadata == {'rewritten': True}
+
+
+async def test_run_stream_messages_emits_truncated_processed_request() -> None:
+    """A processor truncating history still emits its canonical replacement request.
+
+    Not a VCR test: this exercises framework history processing and projection.
+    """
+
+    @dataclass
+    class TruncateHistoryCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            return replace(
+                request_context,
+                messages=[
+                    replace(
+                        request_context.messages[-1],
+                        timestamp=datetime(2000, 1, 1, tzinfo=timezone.utc),
+                        metadata={'truncated': True},
+                    )
+                ],
+            )
+
+    history = [ModelRequest(parts=[UserPromptPart(content='prior')]), ModelResponse(parts=[TextPart(content='prior')])]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[TruncateHistoryCapability()])
+    async with agent.run_stream_messages('new', message_history=history) as stream:
+        messages = [message async for message in stream]
+
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    projected_requests = [message for message in messages if isinstance(message, ModelRequest)]
+    assert len(projected_requests) == 1
+    assert projected_requests == [
+        message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)
+    ]
+
+
+async def test_run_stream_messages_uses_reconstructed_current_request_as_origin() -> None:
+    """A fresh current request does not re-emit retained prior history.
+
+    Not a VCR test: request-origin reconstruction is graph-local behavior.
+    """
+
+    @dataclass
+    class RebuildCurrentRequestCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            current_request = request_context.messages[-1]
+            assert isinstance(current_request, ModelRequest)
+            return replace(
+                request_context,
+                messages=[
+                    request_context.messages[0],
+                    ModelRequest(parts=current_request.parts, instructions=current_request.instructions),
+                ],
+            )
+
+    history = [ModelRequest(parts=[UserPromptPart(content='prior')]), ModelResponse(parts=[TextPart(content='prior')])]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RebuildCurrentRequestCapability()])
+    async with agent.run_stream_messages('current', message_history=history) as stream:
+        messages = [message async for message in stream]
+
+    result_event = messages[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    projected_requests = [message for message in messages if isinstance(message, ModelRequest)]
+    assert len(projected_requests) == 1
+    assert isinstance(projected_requests[0].parts[0], UserPromptPart)
+    assert projected_requests[0].parts[0].content == 'current'
+    assert projected_requests == [
+        message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)
+    ]
+
+
+@pytest.mark.parametrize(('resume', 'skip_model'), [(False, False), (False, True), (True, False), (True, True)])
+async def test_run_stream_events_full_history_rebuild_preserves_request_boundary(
+    resume: bool, skip_model: bool
+) -> None:
+    """Fresh message objects and timestamps do not turn prior history into request events.
+
+    Not a VCR test: request-boundary reconstruction is graph-local behavior.
+    """
+
+    @dataclass
+    class RebuildHistoryCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            rebuilt_messages = [
+                replace(message, timestamp=datetime(2000, 1, index + 1, tzinfo=timezone.utc))
+                for index, message in enumerate(request_context.messages)
+            ]
+            ctx.messages[:] = rebuilt_messages
+            request_context.messages[:] = rebuilt_messages
+            if skip_model:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+            return request_context
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='prior')]),
+        ModelResponse(parts=[TextPart(content='prior')]),
+    ]
+    if resume:
+        history.append(ModelRequest(parts=[UserPromptPart(content='resumed')]))
+
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RebuildHistoryCapability()])
+    async with agent.run_stream_events(None if resume else 'current', message_history=history) as stream:
+        events = [event async for event in stream]
+
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
+    assert [part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)] == (
+        [] if resume else ['current']
+    )
+
+
+async def test_run_stream_events_request_boundaries_match_new_messages() -> None:
+    """Request events report exactly the requests the run itself counts as new.
+
+    A capability can rebuild a resumed request into a fresh object and append another alongside it, so
+    which of the two is prior context is decided by `new_message_index` — the same cutoff `new_messages()`
+    uses. Agreeing with the run's own bookkeeping is the contract; a boundary event the result disowns
+    would be worse than one that is merely conservative.
+
+    Not a VCR test: history-origin tracking is graph-local behavior.
+    """
+
+    @dataclass
+    class RebuildAndAppendCapability(AbstractCapability[object]):
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            resumed_request = request_context.messages[-1]
+            assert isinstance(resumed_request, ModelRequest)
+            rebuilt = replace(resumed_request)
+            appended = ModelRequest(parts=[UserPromptPart(content='appended')])
+            ctx.messages[:] = [rebuilt, appended]
+            request_context.messages[:] = [rebuilt, appended]
+            return request_context
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='prior')]),
+        ModelResponse(parts=[TextPart(content='prior')]),
+        ModelRequest(parts=[UserPromptPart(content='resumed')]),
+    ]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RebuildAndAppendCapability()])
+    async with agent.run_stream_events(message_history=history) as stream:
+        events = [event async for event in stream]
+
+    result_event = events[-1]
+    assert isinstance(result_event, AgentRunResultEvent)
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
+    assert requests == [message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)]
+    assert [part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)] == [
+        'appended'
+    ]
+
+
+async def test_run_stream_messages_skips_partials_without_a_response_start() -> None:
+    """Part events arriving with no response start are skipped instead of raising.
+
+    A capability can rewrite the run's event stream, so the projection cannot assume the boundary events
+    it accumulates partial snapshots against survived. Here every partial is dropped and only the
+    authoritative response from the end event is yielded. The agent is named up front, so the projection
+    also skips call-site name inference.
+
+    Not a VCR test: a capability rewriting the event stream is local behavior.
+    """
+
+    @dataclass
+    class DropResponseStartCapability(AbstractCapability[object]):
+        async def wrap_run_event_stream(
+            self, ctx: RunContext[object], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                if not isinstance(event, ModelResponseStartEvent):
+                    yield event
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello '
+        yield 'world'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn),
+        name='named_agent',
+        capabilities=[DropResponseStartCapability()],
+    )
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    assert agent.name == 'named_agent'
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    assert [response.state for response in responses] == ['complete']
+    assert responses[0].parts == [TextPart(content='hello world')]
+
+
+async def test_run_stream_messages_skips_tool_returns_without_a_request_start() -> None:
+    """Tool-result events arriving with no request start are skipped instead of raising.
+
+    The request-side mirror of `test_run_stream_messages_skips_partials_without_a_response_start`: a
+    capability rewriting the run's event stream can drop the boundary the projection accumulates tool
+    returns against, so the growing `incomplete` snapshot is skipped and only the authoritative request
+    from the end event is yielded.
+
+    Not a VCR test: a capability rewriting the event stream is local behavior.
+    """
+
+    @dataclass
+    class DropRequestStartCapability(AbstractCapability[object]):
+        async def wrap_run_event_stream(
+            self, ctx: RunContext[object], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                if not isinstance(event, ModelRequestStartEvent):
+                    yield event
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[DropRequestStartCapability()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'result'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    tool_requests = [
+        message
+        for message in messages
+        if isinstance(message, ModelRequest) and message.parts and isinstance(message.parts[0], ToolReturnPart)
+    ]
+    # Without the start boundary there is nothing to accumulate against, so no `incomplete` snapshot is
+    # yielded — only the committed request that `ModelRequestEndEvent` carries.
+    assert [request.state for request in tool_requests] == ['complete']
+    assert isinstance(messages[-1], AgentRunResultEvent)
+
+
+async def test_run_stream_messages_yields_enqueued_non_request_messages() -> None:
+    """An enqueued `ModelResponse` reaches the projection through its delivery event.
+
+    Enqueued requests surface as `ModelRequestEndEvent`s once committed, so the projection takes only the
+    other messages out of the delivery event rather than yielding a request twice.
+
+    Not a VCR test: queue delivery is framework-owned state.
+    """
+    enqueued_response = ModelResponse(parts=[TextPart(content='enqueued response')])
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='queue_pair', json_args='{}', tool_call_id='call-1')}
+            return
+        if any(
+            isinstance(part, UserPromptPart) and part.content == 'enqueued request'
+            for message in messages
+            for part in message.parts
+        ):
+            yield 'done'
+        else:
+            yield 'queue idle'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def queue_pair(ctx: RunContext[object]) -> str:
+        assert ctx.pending_messages is not None
+        ctx.pending_messages.append(
+            PendingMessage(
+                messages=[enqueued_response, ModelRequest(parts=[UserPromptPart(content='enqueued request')])],
+                priority='when_idle',
+            )
+        )
+        return 'queued'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    assert enqueued_response in messages
+
+
+async def test_run_stream_messages_infers_name_and_closes_on_early_break() -> None:
+    """The projection preserves call-site name inference and closes its underlying stream.
+
+    Not a VCR test: generator finalization is local resource management.
+    """
+    stream_closed = asyncio.Event()
+
+    async def stream_fn(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'streamed'
+            await asyncio.Event().wait()  # pragma: no cover
+        finally:
+            stream_closed.set()
+
+    my_agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    async def consume() -> None:
+        async with my_agent.run_stream_messages('go') as stream:
+            async for message in stream:  # pragma: no branch
+                if isinstance(message, ModelResponse):
+                    break
+
+    await asyncio.wait_for(consume(), timeout=READINESS_WAIT_TIMEOUT)
+    await asyncio.wait_for(stream_closed.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    assert my_agent.name == 'my_agent'
 
 
 def test_agent_preserves_model_response_run_id() -> None:
