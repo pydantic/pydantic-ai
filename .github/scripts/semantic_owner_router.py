@@ -45,7 +45,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
         comments { totalCount }
         reactions { totalCount }
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
-          nodes { ... on UnassignedEvent { createdAt actor { login } } }
+          nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
@@ -54,7 +54,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
         number state isDraft changedFiles
         author { login }
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
-          nodes { ... on UnassignedEvent { createdAt actor { login } } }
+          nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
@@ -223,12 +223,11 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     for node in _connection_nodes(cast(Mapping[str, object], timeline)):
         if not isinstance(node, Mapping):
             return True
-        # GraphQL timeline actors are the performers: a bot removing an
-        # assignee (sweeps, placeholder swaps) is cleanup, not a decision;
-        # a missing actor (deleted account) counts as human.
+        # A bot removing an assignee (sweeps, placeholder swaps) is cleanup,
+        # not a decision. GitHub types app principals as `Bot`; a missing
+        # actor (deleted account) counts as human.
         actor = cast(Mapping[str, object], node).get('actor')
-        performer = cast(Mapping[str, object], actor).get('login') if isinstance(actor, Mapping) else None
-        if isinstance(performer, str) and performer.endswith('[bot]'):
+        if isinstance(actor, Mapping) and cast(Mapping[str, object], actor).get('__typename') == 'Bot':
             continue
         removed_at = _graphql_time(cast(Mapping[str, object], node).get('createdAt'))
         if removed_at is None or now - removed_at < window:

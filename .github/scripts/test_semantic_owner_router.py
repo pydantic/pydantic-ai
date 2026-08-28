@@ -737,7 +737,7 @@ def test_bot_unassignments_do_not_suppress_gated_routing():
             7: item(
                 7,
                 labels=['MCP', 'p:1-highest'],
-                unassigned_at=[{'createdAt': recent, 'actor': {'login': 'github-actions[bot]'}}],
+                unassigned_at=[{'createdAt': recent, 'actor': {'__typename': 'Bot'}}],
             )
         }
     )
