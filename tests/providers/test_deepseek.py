@@ -1,18 +1,18 @@
 import re
 
-import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
@@ -37,12 +37,6 @@ def test_deep_seek_provider_need_api_key(env: TestEnv) -> None:
         DeepSeekProvider()
 
 
-def test_deep_seek_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = DeepSeekProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
 def test_deep_seek_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = DeepSeekProvider(openai_client=openai_client)
@@ -55,6 +49,25 @@ def test_deep_seek_model_profile():
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
     assert model.profile.get('supports_thinking', False) is True
     assert model.profile.get('thinking_always_enabled', False) is True
+
+
+# 'deepseek-v4-turbo' stands in for an unreleased SKU: the fact is set for every DeepSeek model, so a
+# new alias cannot silently miss the grouping fix.
+@pytest.mark.parametrize(
+    'model_name', ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-turbo']
+)
+def test_deep_seek_responses_function_call_grouping_profile(model_name: str) -> None:
+    model = OpenAIResponsesModel(model_name, provider=DeepSeekProvider(api_key='api-key'))
+    assert model.profile.get('openai_responses_supports_interleaved_function_calls', True) is False
+
+
+def test_openai_responses_function_call_grouping_profile_defaults_on() -> None:
+    openai_model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='api-key'))
+    assert openai_model.profile.get('openai_responses_supports_interleaved_function_calls', True) is True
+    default_model = OpenAIResponsesModel(
+        'custom-model', provider=OpenAIProvider(api_key='api-key'), profile=OpenAIModelProfile()
+    )
+    assert default_model.profile.get('openai_responses_supports_interleaved_function_calls', True) is True
 
 
 @pytest.mark.parametrize('model_name', ['deepseek-v4-flash', 'deepseek-v4-pro'])

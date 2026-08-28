@@ -107,11 +107,18 @@ def _replace_run_context(
                 # Deferred-load state must be part of the key: two runs identical except for which
                 # capabilities/tools have been loaded see different tools and must not share a cache
                 # entry. Sorted for a deterministic key (sets have no stable iteration order).
-                # `capability_loaded` is deliberately omitted (unlike Temporal's serializer, which
+                # `capability_active` is deliberately omitted (unlike Temporal's serializer, which
                 # round-trips every field a hook might read): it's derived from `loaded_capability_ids`
                 # plus the static capability set, so it adds no entropy the two fields above don't.
                 'loaded_capability_ids': sorted(value.loaded_capability_ids),
                 'discovered_tool_names': sorted(value.discovered_tool_names),
+                # The dispatch-time widening of the two sets above, keyed for the same reason and by
+                # the same rule: a tool reading `is_tool_available` sees a different answer when it
+                # differs, so two runs that differ only here must not share an entry.
+                '_anchored_evidence': (
+                    sorted(value._anchored_evidence.discovered_tool_names),  # pyright: ignore[reportPrivateUsage]
+                    sorted(value._anchored_evidence.loaded_capability_ids),  # pyright: ignore[reportPrivateUsage]
+                ),
                 # A tool or capability may read `usage_limits` to fork its behavior (e.g. budget
                 # disclosure), so two runs identical except for their limits must not share a cache
                 # entry. `_strip_cache_excluded_fields` recurses into the `UsageLimits` dataclass to

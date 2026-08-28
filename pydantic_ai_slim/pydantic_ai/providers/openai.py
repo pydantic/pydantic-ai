@@ -1,26 +1,31 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
-
-import httpx
+from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers import Provider, missing_api_key_error
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
+from pydantic_ai.providers import missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenAI provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
+from ._openai_compatible import (
+    AsyncHTTPClient as _OpenAIHTTPClient,
+    OpenAICompatibleProvider as _OpenAICompatibleProvider,
+)
 
-class OpenAIProvider(Provider[AsyncOpenAI]):
+
+class OpenAIProvider(_OpenAICompatibleProvider):
     """Provider for OpenAI API."""
 
     @property
@@ -53,6 +58,10 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             OpenAIModelProfile(tool_addition_mode='with_definitions', tool_deferral_mode='with_tool_search'),
         )
 
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return openai_realtime_model_profile(model_name)
+
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
 
@@ -62,7 +71,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -70,7 +79,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new OpenAI provider.
 
@@ -82,7 +91,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
             if base_url is None and 'OPENAI_BASE_URL' not in os.environ:
@@ -103,13 +112,5 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+            self._client = self._create_openai_client(base_url=base_url, api_key=api_key, http_client=http_client)

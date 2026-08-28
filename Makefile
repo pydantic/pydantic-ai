@@ -10,7 +10,7 @@
 
 .PHONY: install
 install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
-	uv sync --frozen --all-extras --all-packages --group lint --group docs
+	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 	# pyright typechecks the gh-aw shim, which imports pydantic-ai-harness. The
 	# harness is kept out of the lock (its pydantic-ai-slim dep collides with the
 	# workspace member under lowest-direct), so install it out-of-band; --no-deps
@@ -20,14 +20,14 @@ install: .uv .pre-commit ## Install the package, dependencies, and pre-commit fo
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
-	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
-	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
-	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
-	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
-	uv sync --all-extras --all-packages --group lint --group docs
+	uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
 .PHONY: format
 format: ## Format the code
@@ -43,7 +43,8 @@ lint: ## Lint the code
 typecheck-pyright:
 	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.10 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+	@# --threads parallelizes the check phase across logical cores (~2x faster, identical output)
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright --threads $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 
 .PHONY: typecheck-mypy
 typecheck-mypy:
@@ -62,10 +63,10 @@ test: ## Run tests without coverage (fast, for local dev)
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.10 to 3.13
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -85,24 +86,6 @@ update-examples: ## Update documentation examples
 .PHONY: update-vcr-tests
 update-vcr-tests: ## Update tests using VCR that hit LLM APIs; note you'll need to set API keys as appropriate
 	uv run -m pytest --record-mode=rewrite tests
-
-# `--no-strict` so you can build the docs without fixing all warnings
-.PHONY: docs
-docs: ## Build the documentation
-	uv run mkdocs build --no-strict
-
-# `--no-strict` so you can build the docs without fixing all warnings
-.PHONY: docs-serve
-docs-serve: ## Build and serve the documentation
-	uv run mkdocs serve --no-strict
-
-.PHONY: cf-pages-build
-cf-pages-build: ## Install uv, install dependencies and build the docs, used on CloudFlare Pages
-	curl -LsSf https://astral.sh/uv/install.sh | sh
-	uv python install 3.12
-	uv sync --python 3.12 --frozen --group docs
-	uv pip freeze
-	uv run mkdocs build
 
 .PHONY: all
 all: format lint typecheck testcov ## Run code formatting, linting, static type checks, and tests with coverage report generation
