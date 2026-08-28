@@ -77,7 +77,7 @@ from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from .conftest import IsDatetime, IsNow, IsStr
+from ..conftest import IsDatetime, IsNow, IsStr
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -121,8 +121,8 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._inline_snapshot import snapshot
-from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from .._inline_snapshot import snapshot
+from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
