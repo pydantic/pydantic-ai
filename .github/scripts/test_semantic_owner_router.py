@@ -1031,8 +1031,9 @@ def test_workflow_is_notification_first_and_least_privilege():
         'matrix': {'route': '${{ fromJSON(needs.select.outputs.routes) }}'},
     }
     assert jobs['route']['concurrency']['group'] == 'semantic-owner-${{ github.repository }}-${{ matrix.route.number }}'
-    prepare, notify, assign = jobs['route']['steps'][1:]
-    select_step = jobs['select']['steps'][1]
+    # steps: checkout, pinned pydantic install, then the script steps.
+    prepare, notify, assign = jobs['route']['steps'][2:]
+    select_step = jobs['select']['steps'][2]
     assert set(select_step['env']) == {'GITHUB_TOKEN', 'ROUTING_COMMUNITY_RECOVERY'}
     assert select_step['env']['ROUTING_COMMUNITY_RECOVERY'] == (
         "${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}"

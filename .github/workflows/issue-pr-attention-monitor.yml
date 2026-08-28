@@ -34,6 +34,10 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Reconcile active attention items
         id: reconcile
         env:
@@ -60,6 +64,10 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Revalidate attention notices immediately before delivery
         id: prepare
         env:
@@ -91,6 +99,10 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Finalize delivered attention notices
         env:
           ATTENTION_NOTICES: '{"items":${{ needs.notify.outputs.notice_items }}}'
@@ -121,6 +133,10 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Count repository-wide attention coverage
         id: census
         env:

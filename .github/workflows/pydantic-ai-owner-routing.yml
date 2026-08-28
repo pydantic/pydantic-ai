@@ -43,7 +43,12 @@ jobs:
           sparse-checkout: |
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_models.py
           sparse-checkout-cone-mode: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Select routing decisions
         id: select
         env:
@@ -80,7 +85,12 @@ jobs:
           sparse-checkout: |
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_models.py
           sparse-checkout-cone-mode: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Revalidate and prepare canonical routing intent
         id: prepare
         env:
