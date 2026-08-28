@@ -21,8 +21,9 @@ from pathlib import Path
 # scripts: pydantic, the typed boundary in `triage_models`. The repo-wide ban
 # on `typing.TypedDict` exists for pydantic validation on Python 3.10/3.11;
 # these scripts only run on the newer runner Python.
-from typing import Any, Literal, TypedDict, cast  # noqa: TID251
+from typing import Annotated, Any, Literal, TypedDict, cast  # noqa: TID251
 
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from triage_models import AgentItem, IssueEvent, agent_items, item_labels, parse_time, snapshot_candidates
 
 _API = 'https://api.github.com'
@@ -131,13 +132,34 @@ class Notice(TypedDict):
     status: str
 
 
-class NoticeRef(TypedDict):
-    """The item and state that a delivered channel notice described."""
+def _reject_bool(value: object) -> object:
+    if isinstance(value, bool):
+        raise ValueError('must be an integer stage')
+    return value
 
-    number: int
-    expected_stage: Literal[0, 1, 2]
-    transition_id: int | str
-    recipients: list[str]
+
+class NoticeRef(BaseModel):
+    """The item and state that a delivered channel notice described.
+
+    Written by this script's own `reconcile` step and read back by the
+    `notify`/`finalize` steps; machine-carried state, so validated strictly.
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+    number: int = Field(ge=1, strict=True)
+    expected_stage: Annotated[Literal[0, 1, 2], BeforeValidator(_reject_bool)]
+    transition_id: Annotated[int, Field(ge=1, strict=True)] | Annotated[str, Field(min_length=1, max_length=100)]
+    recipients: list[str] = Field(min_length=1, max_length=10)
+
+    @field_validator('recipients')
+    @classmethod
+    def _valid_unique_logins(cls, value: list[str]) -> list[str]:
+        if any(_LOGIN_PATTERN.fullmatch(login) is None for login in value):
+            raise ValueError('recipients must be valid GitHub logins')
+        if len({login.casefold() for login in value}) != len(value):
+            raise ValueError('recipients must be unique')
+        return value
 
 
 class GitHubClient:
@@ -1155,12 +1177,12 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
             )
         }
         refs = [
-            NoticeRef(
-                number=notice['number'],
-                expected_stage=notice['expected_stage'],
-                transition_id=notice['transition_id'],
-                recipients=notice['recipients'],
-            )
+            {
+                'number': notice['number'],
+                'expected_stage': notice['expected_stage'],
+                'transition_id': notice['transition_id'],
+                'recipients': notice['recipients'],
+            }
             for notice in notices
         ]
         with Path(output_path).open('a', encoding='utf-8') as output:
@@ -1609,45 +1631,8 @@ def _notice_refs(loaded: object) -> list[NoticeRef]:
     data = cast(Mapping[str, object], loaded)
     if set(data) != {'items'} or not isinstance(data['items'], list):
         raise ValueError('Notices must contain only an items list')
-    values = cast(list[object], data['items'])
-    notices: list[NoticeRef] = []
-    for value in values:
-        if not isinstance(value, Mapping):
-            raise ValueError('Notice has an invalid shape')
-        notice = cast(Mapping[str, object], value)
-        if set(notice) != {'number', 'expected_stage', 'transition_id', 'recipients'}:
-            raise ValueError('Notice has an invalid shape')
-        number = notice['number']
-        stage = notice['expected_stage']
-        transition_id = notice['transition_id']
-        recipients = notice['recipients']
-        recipient_values = cast(list[object], recipients) if isinstance(recipients, list) else []
-        if (
-            not isinstance(number, int)
-            or isinstance(number, bool)
-            or number < 1
-            or not isinstance(stage, int)
-            or isinstance(stage, bool)
-            or stage not in {0, 1, 2}
-            or not isinstance(transition_id, (int, str))
-            or isinstance(transition_id, bool)
-            or (isinstance(transition_id, int) and transition_id < 1)
-            or (isinstance(transition_id, str) and not 1 <= len(transition_id) <= 100)
-            or not isinstance(recipients, list)
-            or not 1 <= len(recipient_values) <= 10
-            or any(not isinstance(login, str) or not _LOGIN_PATTERN.fullmatch(login) for login in recipient_values)
-            or len({cast(str, login).casefold() for login in recipient_values}) != len(recipient_values)
-        ):
-            raise ValueError('Notice has invalid values')
-        notices.append(
-            NoticeRef(
-                number=number,
-                expected_stage=cast(Literal[0, 1, 2], stage),
-                transition_id=transition_id,
-                recipients=cast(list[str], recipient_values),
-            )
-        )
-    if len(notices) > _RECONCILE_LIMIT or len({notice['number'] for notice in notices}) != len(notices):
+    notices = [NoticeRef.model_validate(value) for value in cast('list[object]', data['items'])]
+    if len(notices) > _RECONCILE_LIMIT or len({notice.number for notice in notices}) != len(notices):
         raise ValueError('Notices must be unique and within the batch limit')
     return notices
 
@@ -1656,16 +1641,16 @@ def prepare_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRef
     """Revalidate notices immediately before their channel delivery."""
     prepared: list[Notice] = []
     for notice in notices:
-        stage = notice['expected_stage']
+        stage = notice.expected_stage
         kind: Literal['reminder', 'escalation'] = 'reminder' if stage == 0 else 'escalation'
         if live := _notice_if_current(
             client,
             repo,
-            notice['number'],
+            notice.number,
             kind,
             stage,
-            notice['transition_id'],
-            notice['recipients'],
+            notice.transition_id,
+            notice.recipients,
             now=now,
         ):
             prepared.append(live)
@@ -1686,26 +1671,26 @@ def _finalize_notice(
     *,
     now: dt.datetime,
 ) -> str | None:
-    number = notice['number']
+    number = notice.number
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     labels = item_labels(current)
     stage = _stage(labels)
-    if current.get('state') != 'open' or _ACTION_LABEL not in labels or stage != notice['expected_stage']:
+    if current.get('state') != 'open' or _ACTION_LABEL not in labels or stage != notice.expected_stage:
         return None
     maintainers = _maintainer_assignees(client, repo, current)
-    if {login.casefold() for login in notice['recipients']} != {login.casefold() for login in maintainers}:
+    if {login.casefold() for login in notice.recipients} != {login.casefold() for login in maintainers}:
         return None
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     transition = _transition(events, stage)
     if (
         transition is None
-        or transition[1].get('id') != notice['transition_id']
+        or transition[1].get('id') != notice.transition_id
         or _actor(transition[1]) != 'github-actions[bot]'
     ):
         return None
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     if _closed_since(timeline, transition[0]) or _acknowledged(
-        client, repo, timeline, transition[0], notice['recipients']
+        client, repo, timeline, transition[0], notice.recipients
     ):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer activity completed the delivered notice'
@@ -1719,7 +1704,7 @@ def _finalize_notice(
             kind,
             stage,
             _transition_id(transition),
-            notice['recipients'],
+            notice.recipients,
             now=now,
         )
         is None
@@ -1736,7 +1721,7 @@ def _finalize_notice(
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     completed_labels = labels | ({_PINGED_LABEL} if stage == 0 else {_ESCALATED_LABEL, _DELIVERED_LABEL})
     if _closed_since(timeline, transition[0]) or _acknowledged(
-        client, repo, timeline, transition[0], notice['recipients']
+        client, repo, timeline, transition[0], notice.recipients
     ):
         _complete(client, repo, number, completed_labels)
         return f'#{number}: maintainer activity completed the delivered notice'
@@ -1748,7 +1733,7 @@ def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRe
     lines: list[str] = []
     failures: list[str] = []
     for notice in notices:
-        number = notice['number']
+        number = notice.number
         try:
             if line := _finalize_notice(client, repo, notice, now=now):
                 lines.append(line)
