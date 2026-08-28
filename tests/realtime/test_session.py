@@ -1402,12 +1402,25 @@ async def test_interrupt_played_bytes_requires_exactly_one_audio_stream() -> Non
             await session.interrupt(played_bytes=0)
 
 
-async def test_interrupt_played_bytes_requires_output_truncation() -> None:
-    # The flag-on side runs in the attribution tests above; this pins the flag-off side.
-    conn = FakeRealtimeConnection([])
+async def test_interrupt_played_bytes_degrades_without_output_truncation() -> None:
+    """On a model without output truncation (xAI), `played_bytes` still flushes and cancels.
+
+    Only the provider-side transcript sync is unavailable, so no `TruncateOutput` frame goes out —
+    raising instead would make the one portable barge-in call crash on a whole provider. The
+    truncating side of the profile flag runs in the attribution tests above.
+    """
+    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)])
     session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
-    with pytest.raises(UserError, match=r'does not support output truncation.*played_bytes'):
-        await session.interrupt(played_bytes=0)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK  # `b` stays buffered and unheard
+
+        assert await session.interrupt(played_bytes=0) is True
+        assert conn.sent == [CancelResponse()]
+        # Once `a` finishes playing, the flushed `b` is accounted for and nothing is left unheard.
+        assert await session.interrupt(played_bytes=_CHUNK) is False
+        assert conn.sent == [CancelResponse()]
 
 
 async def test_interrupt_rejects_both_playback_positions() -> None:
@@ -1415,6 +1428,8 @@ async def test_interrupt_rejects_both_playback_positions() -> None:
     session = RealtimeSession(conn, _noop_runner)
     with pytest.raises(UserError, match='either `played_ms` or `played_bytes`, not both'):
         await session.interrupt(played_ms=100, played_bytes=4800)  # pyright: ignore[reportCallIssue]
+    with pytest.raises(UserError, match='must be a non-negative playback position'):
+        await session.interrupt(played_bytes=-1)
 
 
 async def test_played_audio_bytes_counts_a_chunk_when_the_consumer_returns_for_the_next() -> None:

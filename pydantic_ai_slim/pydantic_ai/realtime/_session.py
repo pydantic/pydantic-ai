@@ -1271,7 +1271,9 @@ class RealtimeSession:
         With `played_bytes`, the session owns the rest: it attributes the position to the current
         turn (adjusting for audio the stream dropped or that predates the subscription), discards
         buffered audio the user will never hear — chunks already queued, and the cancelled
-        response's stragglers as they arrive — then truncates and cancels, returning `True`. When
+        response's stragglers as they arrive — then truncates and cancels, returning `True`. On a
+        model without output truncation the unheard audio is still flushed and the response
+        cancelled; only the provider-side transcript sync is unavailable. When
         everything emitted was already played there is nothing to cut off, so nothing is sent and
         `False` is returned: reporting an interruption anyway would make the provider discard part
         of a completed reply. This form needs exactly one
@@ -1314,11 +1316,8 @@ class RealtimeSession:
 
     async def _interrupt_at_playback(self, played_bytes: int) -> bool:
         """Map a device playback position onto the current turn, flush unheard audio, and interrupt."""
-        if not self._profile.get('supports_output_truncation', False):
-            raise UserError(
-                'This realtime model does not support output truncation, so `interrupt(played_bytes=...)` '
-                'is unavailable. Call `interrupt()` without arguments to cancel without truncating.'
-            )
+        if played_bytes < 0:
+            raise UserError(f'`played_bytes` must be a non-negative playback position, not {played_bytes}.')
         if len(self._audio_taps) != 1:
             raise UserError(
                 '`interrupt(played_bytes=...)` needs exactly one active `stream_audio()` iterator to '
@@ -1328,9 +1327,11 @@ class RealtimeSession:
         (tap,) = self._audio_taps
         # The device consumed `played_bytes` of what this tap delivered; adding what the tap dropped
         # before delivery (overflow, earlier flushes) and what predates the subscription places that
-        # position in the session's emitted-audio coordinates. Drops land at the consumer's frontier,
-        # so treating them all as behind the playhead is approximate by at most the buffer window —
-        # the same tolerance a hand-rolled playback buffer accepts after an overflow.
+        # position in the session's emitted-audio coordinates. (Flushed audio is erased from the
+        # stream, so skipping over it is what keeps this mapping honest across barge-ins.) Overflow
+        # drops land at the consumer's frontier, so treating them as behind the playhead is
+        # approximate by at most the buffer window — the same tolerance a hand-rolled playback
+        # buffer accepts after an overflow.
         playhead = tap.subscribed_at_bytes + played_bytes + tap.dropped_bytes
         if playhead >= self._emitted_audio_bytes:
             return False
@@ -1338,6 +1339,13 @@ class RealtimeSession:
         # they arrive, so the stream carries nothing the barge-in already cut off.
         self._flush_tap(tap)
         self._interrupted_audio_part_index = self._audio_part_index
+        if not self._profile.get('supports_output_truncation', False):
+            # Best effort on a model without output truncation (xAI): the unheard audio is still
+            # flushed and the response cancelled; only the provider-side transcript sync is
+            # unavailable.
+            await self._send_frame(CancelResponse())
+            self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
+            return True
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
         played_ms = max(0, playhead - self._turn_audio_start_bytes) * 1000 // (self.audio_output_sample_rate * 2)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
@@ -1372,14 +1380,8 @@ class RealtimeSession:
             return
         (tap,) = self._audio_taps
         if isinstance(event, RealtimeInputSpeechStartEvent):
-            if not self._profile.get('supports_interruption', False):
-                return
-            if self._profile.get('supports_output_truncation', False):
+            if self._profile.get('supports_interruption', False):
                 await self._interrupt_at_playback(tap.played_bytes)
-            elif tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes < self._emitted_audio_bytes:
-                self._flush_tap(tap)
-                self._interrupted_audio_part_index = self._audio_part_index
-                await self.interrupt()
         elif isinstance(event, RealtimeResponseInterruptedEvent):
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index

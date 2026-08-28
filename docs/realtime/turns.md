@@ -93,7 +93,9 @@ async def conversation(session: RealtimeSession) -> None:
 ```
 
 A playback loop that instead buffers ahead of the device makes `played_audio_bytes` read too far —
-count actual device consumption yourself and pass that.
+count actual device consumption yourself and pass that. This handler covers the providers that
+report speech onset; on Gemini, which interrupts itself and leaves only the local flush to do,
+prefer `handle_barge_in=True`, which performs that flush for you.
 
 Finally, when playback doesn't drain a single session-long `stream_audio()` iterator — several
 consumers, a playback layer that buffers ahead of the device, or a transport where the session
