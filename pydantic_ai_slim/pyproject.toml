@@ -156,9 +156,7 @@ retries = ["tenacity>=8.2.3", "httpx>=0.27"]
 # Temporal
 temporal = ["temporalio>=1.24.0"]
 # DBOS
-# `<2.31.0`: their default `DBOS.__init__` path needs `opentelemetry-instrumentation-logging` without
-# requiring their `[otel]` extra. https://github.com/dbos-inc/dbos-transact-py/issues/832
-dbos = ["dbos>=2.10.0,<2.31.0"]
+dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.7.5"]
 # Spec (YAML agent specs)
