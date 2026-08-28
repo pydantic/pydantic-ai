@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import sys
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -178,6 +178,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent.
     A public API for emitting custom events is intentionally not exposed yet.
     """
+
+    _durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None = field(default=None, repr=False)
+    """Per-run durable capability operation dispatchers, for internal use only."""
+
+    _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
+    """Per-run capability instances used for durable recovery, for internal use only."""
 
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.

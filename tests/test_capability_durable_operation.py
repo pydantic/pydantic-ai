@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import gc
 import uuid
+import weakref
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
@@ -16,7 +18,6 @@ from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
     CapabilityOperationResult,
     ModelRequestContextProjection,
-    _model_request_schema,  # pyright: ignore[reportPrivateUsage]
     base_hook_durable_operation,
     call_declaration,
     collect_capability_operations,
@@ -180,6 +181,20 @@ class DurableBeforeModelRequest(AbstractCapability[Any]):
     ) -> ModelRequestContext:
         request_context.messages = [ModelRequest(parts=[UserPromptPart('replaced')])]
         return request_context
+
+
+class CustomModelRequestOperation(AbstractCapability[Any]):
+    id = 'custom_model_request'
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        return await self.rewrite_request(ctx, request_context)
+
+    @durable_operation
+    async def rewrite_request(self, ctx: RunContext[Any], request: ModelRequestContext) -> ModelRequestContext:
+        request.messages = [ModelRequest(parts=[UserPromptPart('custom replacement')])]
+        return request
 
 
 class ModelReplacingBeforeModelRequest(AbstractCapability[Any]):
@@ -589,6 +604,42 @@ async def test_decorated_model_request_hook_round_trips_mutation() -> None:
     assert any(name == 'before_model__capability__before_model.before_model_request' for name, _ in durability.calls)
 
 
+async def test_custom_model_request_operation_round_trips_projection() -> None:
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='custom_model_request',
+        capabilities=[CustomModelRequestOperation(), RecordingDurability()],
+    )
+
+    result = await agent.run('original')
+
+    requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    assert isinstance(requests[-1].parts[0], UserPromptPart)
+    assert requests[-1].parts[0].content == 'custom replacement'
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert any(
+        name == 'custom_model_request__capability__custom_model_request.rewrite_request' for name, _ in durability.calls
+    )
+
+
+def test_durable_operation_bindings_do_not_retain_agents() -> None:
+    capability = Operations()
+    agents = [
+        Agent(TestModel(), name=f'weak_binding_{index}', capabilities=[capability, RecordingDurability()])
+        for index in range(3)
+    ]
+    bindings = capability._get_durable_operation_bindings()  # pyright: ignore[reportPrivateUsage]
+    references = [weakref.ref(agent) for agent in agents]
+    assert len(bindings) == 3
+
+    agents.clear()
+    gc.collect()
+
+    assert not any(reference() is not None for reference in references)
+    assert len(bindings) == 0
+
+
 async def test_decorated_model_request_hook_round_trips_registered_model_replacement() -> None:
     original = TestModel(custom_output_text='original')
     restricted = TestModel(custom_output_text='restricted', model_name='restricted')
@@ -752,6 +803,25 @@ def test_two_run_context_parameters_are_rejected_at_bind() -> None:
         Agent(TestModel(), name='duplicate_context', capabilities=[DuplicateContext(), RecordingDurability()])
 
 
+def test_two_model_request_context_parameters_are_rejected_at_bind() -> None:
+    class DuplicateModelRequestContext(AbstractCapability[Any]):
+        id = 'duplicate_model_request_context'
+
+        @durable_operation
+        async def operation(self, first: ModelRequestContext, second: ModelRequestContext) -> ModelRequestContext:
+            return first
+
+    with pytest.raises(
+        UserError,
+        match=r"Durable operation '.*operation' cannot take more than one `ModelRequestContext` parameter\.",
+    ):
+        Agent(
+            TestModel(),
+            name='duplicate_model_request_context',
+            capabilities=[DuplicateModelRequestContext(), RecordingDurability()],
+        )
+
+
 def test_variadic_run_context_is_rejected_for_durable_operation() -> None:
     class VariadicContext(AbstractCapability[Any]):
         id = 'variadic_context'
@@ -786,13 +856,6 @@ async def test_defensive_capability_operation_paths() -> None:
         == 2
     )
 
-    assert isinstance(
-        await _model_request_schema(
-            ctx,
-            ModelRequestContextProjection([], None, ModelRequestParameters(), None, False),
-        ),
-        ModelRequestContextProjection,
-    )
     assert declaration.result_type is int
 
 

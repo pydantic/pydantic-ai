@@ -5,7 +5,8 @@ from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from functools import partial
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
+from weakref import ref
 
 from pydantic_core import PydanticSerializationError
 from typing_extensions import Self
@@ -36,7 +37,6 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -49,6 +49,7 @@ from ._capability_operation import (
     CapabilityOperationParams,
     CapabilityOperationResult,
     ModelRequestContextProjection,
+    _ResolvedModelRequestContext,  # pyright: ignore[reportPrivateUsage]
     bind_arguments,
     call_declaration,
     capability_operation_result_type,
@@ -107,6 +108,12 @@ from ._toolset import (
 from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, unwrap_model
 
 _T = TypeVar('_T')
+
+
+@runtime_checkable
+class _RestrictedRunContext(Protocol):
+    def _expose_field(self, name: str) -> None: ...
+
 
 if TYPE_CHECKING:
     pass
@@ -257,6 +264,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_capability_operations = {}
         self._capability_declarations = {}
         backend = self.get_durable_operation_backend()
+        durability_ref = ref(self)
         for capability in leaf_capabilities(agent.root_capability):
             declarations = collect_capability_operations(capability)
             if not declarations:
@@ -283,23 +291,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     validated = cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
                     semantic_params = CapabilityOperationParams(params.run_context, validated, params.model_id)
                     recovered = await recover_capability(params.run_context, capability_id)
-                    if declaration.model_request_hook:
-                        projection = cast(ModelRequestContextProjection, semantic_params.arguments['request_context'])
+                    if declaration.model_request_parameter is not None:
+                        projection = cast(
+                            ModelRequestContextProjection,
+                            semantic_params.arguments[declaration.model_request_parameter],
+                        )
                         async with self._durable_model_scope(projection.model_id, params.run_context) as (
                             model,
                             durable_ctx,
                         ):
-                            request_context = ModelRequestContext(
-                                model=model,
-                                messages=projection.messages,
-                                model_settings=cast(ModelSettings | None, projection.model_settings),
-                                model_request_parameters=projection.model_request_parameters,
-                            )
-                            request_context.model_id = projection.model_id
-                            request_context.streaming = projection.streaming
-                            bound_handler = declaration.function.__get__(recovered, type(recovered))
+                            request_context = projection.build_context(model)
                             usage_before = copy.copy(durable_ctx.usage)
-                            result = await bound_handler(durable_ctx, request_context)
+                            result = await call_declaration(
+                                declaration, recovered, semantic_params, model_request_context=request_context
+                            )
                             operation_result = ModelRequestContextProjection.from_context(result)
                             if result.model is not model:
                                 operation_result.model_id = self._find_registered_model_id_for_hook(result.model)
@@ -334,25 +339,22 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     _capability: AbstractCapability[Any] = capability,
                     _operation_name: str = operation_name,
                 ) -> Any:
-                    return await self._invoke_capability_operation(_capability, _operation_name, ctx, args, kwargs)
+                    durability = durability_ref()
+                    if durability is None:  # pragma: no cover
+                        raise RuntimeError('The durability capability bound to this agent is no longer available.')
+                    return await durability._invoke_capability_operation(
+                        _capability, _operation_name, ctx, args, kwargs
+                    )
 
                 bindings = capability._get_durable_operation_bindings()
-                capability._set_durable_operation_bindings(
-                    {
-                        **bindings,
-                        id(agent): {
-                            **bindings.get(id(agent), {}),
-                            operation_name: dispatch_for_run_context,
-                        },
-                    }
-                )
+                bindings.setdefault(agent)[operation_name] = dispatch_for_run_context
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
-        ctx.__dict__['_durable_operations'] = {}
+        ctx._durable_operations = {}  # pyright: ignore[reportPrivateUsage]
         if ctx.agent is None:
             return
         operations: dict[tuple[str, str], Callable[..., Awaitable[object]]] = {}
-        run_capabilities = cast(dict[str, AbstractCapability[Any]], ctx.__dict__.get('_run_capabilities_by_id', {}))
+        run_capabilities = ctx._run_capabilities_by_id or {}  # pyright: ignore[reportPrivateUsage]
         for capability_id, capability in run_capabilities.items():
             for bound_capability_id, operation_name in self._bound_capability_operations:
                 if capability_id != bound_capability_id:
@@ -367,7 +369,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     return await self._invoke_capability_operation(_capability, _operation_name, ctx, args, kwargs)
 
                 operations[(capability_id, operation_name)] = dispatch
-        ctx.__dict__['_durable_operations'] = operations
+        ctx._durable_operations = operations  # pyright: ignore[reportPrivateUsage]
 
     async def _invoke_capability_operation(
         self,
@@ -392,14 +394,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             CapabilityOperationResult[Any],
             await self._bound_capability_operations[key](CapabilityOperationParams(ctx, arguments, model_id)),
         )
-        if declaration.model_request_hook:
+        if declaration.model_request_parameter is not None:
             projection = cast(ModelRequestContextProjection, result.value)
-            inbound = cast(ModelRequestContextProjection, arguments['request_context'])
+            inbound = cast(ModelRequestContextProjection, arguments[declaration.model_request_parameter])
+            resolved_model = None
             if projection.model_id != inbound.model_id:
-                projection.__dict__['_resolved_model'] = await self._resolve_model_for_request(projection.model_id, ctx)
+                resolved_model = await self._resolve_model_for_request(projection.model_id, ctx)
+            value: Any = _ResolvedModelRequestContext(projection, resolved_model)
+        else:
+            value = result.value
         if not (ctx.usage - usage_before).has_values():
             ctx.usage.incr(result.usage_delta)
-        return result.value
+        return value
 
     def _capability_operation_parameter_transport(self, declaration: CapabilityMethodDeclaration) -> Any:
         return IdentityParameterTransport[CapabilityOperationParams]()
@@ -637,11 +643,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         with self._durable_run_context_scope(run_context) as ctx:
             model = await self._resolve_model_for_request(model_id, ctx)
             ctx.model = model
-            if isinstance(instance_fields := ctx.__dict__.get('__dataclass_fields__'), dict):
-                ctx.__dict__['__dataclass_fields__'] = {
-                    **instance_fields,
-                    'model': RunContext.__dataclass_fields__['model'],
-                }
+            if isinstance(ctx, _RestrictedRunContext):
+                ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
             yield model, ctx
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:

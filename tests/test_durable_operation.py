@@ -211,7 +211,7 @@ def test_prepare_run_context_without_agent() -> None:
 
     durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
 
-    assert ctx.__dict__['_durable_operations'] == {}
+    assert ctx._durable_operations == {}  # pyright: ignore[reportPrivateUsage]
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:

@@ -9,7 +9,7 @@ import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
-from inspect import Parameter, signature
+from inspect import Parameter, Signature, signature
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError
@@ -435,3 +435,40 @@ def _extract_return_schema_type(return_annotation: Any, function: Callable[..., 
 def _is_call_ctx(annotation: Any) -> bool:
     """Return whether the annotation is the `RunContext` class, parameterized or not."""
     return annotation is RunContext or get_origin(annotation) is RunContext
+
+
+def _find_typed_parameter(  # pyright: ignore[reportUnusedFunction]
+    function: Callable[..., Any],
+    type_hints: dict[str, Any],
+    predicate: Callable[[Any], bool],
+    type_name: str,
+    callable_kind: str = 'Callable',
+) -> str | None:
+    """Find the sole parameter matching an annotation predicate, rejecting ambiguous signatures."""
+    parameters = [name for name, annotation in type_hints.items() if name != 'return' and predicate(annotation)]
+    if len(parameters) > 1:
+        from .exceptions import UserError
+
+        raise UserError(f'{callable_kind} {function.__qualname__!r} cannot take more than one `{type_name}` parameter.')
+    return parameters[0] if parameters else None
+
+
+def _validate_schema_signature(  # pyright: ignore[reportUnusedFunction]
+    function: Callable[..., Any],
+    sig: Signature,
+    type_hints: dict[str, Any],
+    ctx_parameter: str | None,
+) -> None:
+    """Validate annotations needed to build a schema around an optional `RunContext` parameter."""
+    if ctx_parameter is not None and sig.parameters[ctx_parameter].kind is Parameter.VAR_POSITIONAL:
+        from .exceptions import UserError
+
+        raise UserError('RunContext cannot be used as a variadic positional parameter (`*args`)')
+    for parameter in sig.parameters.values():
+        if parameter.name != ctx_parameter and parameter.name not in type_hints:
+            from .exceptions import UserError
+
+            raise UserError(
+                f'Error generating schema for {function.__qualname__}:\n'
+                f'  Parameter {parameter.name!r} must have a type annotation'
+            )

@@ -2307,6 +2307,8 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
         'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
+        '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
+        '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])

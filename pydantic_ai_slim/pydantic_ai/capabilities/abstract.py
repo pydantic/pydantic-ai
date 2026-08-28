@@ -3,7 +3,8 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from weakref import WeakValueDictionary
 
 from pydantic import ValidationError
 from typing_extensions import deprecated
@@ -161,6 +162,37 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
+class _DurableOperationBindings:
+    """Agent-identity bindings that do not retain unhashable agent instances."""
+
+    def __init__(self) -> None:
+        self._agents: WeakValueDictionary[int, AbstractAgent[Any, Any]] = WeakValueDictionary()
+        self._bindings: dict[int, dict[str, DurableOperationDispatcher]] = {}
+
+    def get(
+        self, agent: AbstractAgent[Any, Any], default: dict[str, DurableOperationDispatcher]
+    ) -> dict[str, DurableOperationDispatcher]:
+        self._prune()
+        agent_id = id(agent)
+        return self._bindings.get(agent_id, default) if self._agents.get(agent_id) is agent else default
+
+    def setdefault(self, agent: AbstractAgent[Any, Any]) -> dict[str, DurableOperationDispatcher]:
+        self._prune()
+        agent_id = id(agent)
+        if self._agents.get(agent_id) is not agent:
+            self._agents[agent_id] = agent
+            self._bindings[agent_id] = {}
+        return self._bindings[agent_id]
+
+    def __len__(self) -> int:
+        self._prune()
+        return len(self._bindings)
+
+    def _prune(self) -> None:
+        live_ids = set(self._agents)
+        self._bindings = {agent_id: bindings for agent_id, bindings in self._bindings.items() if agent_id in live_ids}
+
+
 @dataclass(init=False)
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
@@ -187,14 +219,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    def _get_durable_operation_bindings(self) -> dict[int, dict[str, DurableOperationDispatcher]]:
-        return cast(
-            dict[int, dict[str, DurableOperationDispatcher]],
-            self.__dict__.get('_pydantic_ai_durable_operation_bindings', {}),
-        )
-
-    def _set_durable_operation_bindings(self, bindings: dict[int, dict[str, DurableOperationDispatcher]]) -> None:
-        object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
+    def _get_durable_operation_bindings(
+        self,
+    ) -> _DurableOperationBindings:
+        bindings = self.__dict__.get('_pydantic_ai_durable_operation_bindings')
+        if not isinstance(bindings, _DurableOperationBindings):
+            bindings = _DurableOperationBindings()
+            object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
+        return bindings
 
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
@@ -319,7 +351,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return self
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Install private per-run state before lifecycle hooks."""
+        """Install private per-run state before any capability lifecycle hook runs.
+
+        Durable dispatch tables must be available before every capability's `before_run`, because
+        one capability may call another capability's durable operation from its hook. This setup
+        therefore cannot be implemented as a `before_run` hook itself. It stays private pending the
+        capability surface decisions tracked in #5477.
+        """
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.

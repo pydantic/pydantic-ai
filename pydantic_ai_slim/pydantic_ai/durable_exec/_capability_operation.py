@@ -9,7 +9,9 @@ from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints, overl
 from pydantic_ai._function_schema import (
     FunctionSchema,
     _extract_return_schema_type,  # pyright: ignore[reportPrivateUsage]
+    _find_typed_parameter,  # pyright: ignore[reportPrivateUsage]
     _is_call_ctx,  # pyright: ignore[reportPrivateUsage]
+    _validate_schema_signature,  # pyright: ignore[reportPrivateUsage]
     function_schema,
 )
 from pydantic_ai._run_context import get_current_run_context
@@ -52,6 +54,13 @@ def capability_operation_result_type(result_type: object) -> type[CapabilityOper
 
 @dataclass
 class ModelRequestContextProjection:
+    """Serializable projection of a model request context for a durable boundary.
+
+    `ModelRequestContext` carries a live `Model`, which cannot cross a durable boundary. This
+    projection carries the serializable request state plus the registered `model_id`, then rebuilds
+    or updates the live context on the other side.
+    """
+
     messages: list[ModelMessage]
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
@@ -68,15 +77,32 @@ class ModelRequestContextProjection:
             context.streaming,
         )
 
-    def apply(self, context: ModelRequestContext) -> None:
-        resolved_model = cast(Model | None, self.__dict__.pop('_resolved_model', None))
-        if resolved_model is not None:
-            context.model = resolved_model
+    def build_context(self, model: Model) -> ModelRequestContext:
+        """Build the worker-side live model request context from this projection."""
+        context = ModelRequestContext(
+            model=model,
+            messages=self.messages,
+            model_settings=cast(ModelSettings | None, self.model_settings),
+            model_request_parameters=self.model_request_parameters,
+        )
+        context.model_id = self.model_id
+        context.streaming = self.streaming
+        return context
+
+    def apply(self, context: ModelRequestContext, model: Model | None = None) -> None:
+        if model is not None:
+            context.model = model
         context.messages = self.messages
         context.model_settings = cast(ModelSettings | None, self.model_settings)
         context.model_request_parameters = self.model_request_parameters
         context.model_id = self.model_id
         context.streaming = self.streaming
+
+
+@dataclass(frozen=True)
+class _ResolvedModelRequestContext:
+    projection: ModelRequestContextProjection
+    model: Model | None = None
 
 
 @dataclass(frozen=True)
@@ -87,7 +113,11 @@ class CapabilityMethodDeclaration:
     schema: FunctionSchema
     result_type: object
     ctx_parameter: str | None
-    model_request_hook: bool = False
+    model_request_parameter: str | None = None
+
+    @property
+    def model_request_hook(self) -> bool:
+        return self.model_request_parameter is not None
 
 
 class CapabilityCacheIdentity:
@@ -187,10 +217,7 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                 dispatch_args = args
                 dispatch_kwargs = kwargs
             handler = target.__get__(self, type(self))
-            operations = cast(
-                dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None,
-                ctx.__dict__.get('_durable_operations'),
-            )
+            operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
             operation = (
                 operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
             )
@@ -198,7 +225,7 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                 result = await operation(*dispatch_args, **dispatch_kwargs)
             else:
                 dispatcher = (
-                    self._get_durable_operation_bindings().get(id(ctx.agent), {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
+                    self._get_durable_operation_bindings().get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
                     if ctx.agent is not None
                     else None
                 )
@@ -210,8 +237,8 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                         cast(tuple[object, ...], dispatch_args),
                         cast(dict[str, object], dispatch_kwargs),
                     )
-            if request_context is not None and isinstance(result, ModelRequestContextProjection):
-                result.apply(request_context)
+            if request_context is not None and isinstance(result, _ResolvedModelRequestContext):
+                result.projection.apply(request_context, result.model)
                 return cast(R, request_context)
             return cast(R, result)
 
@@ -280,60 +307,53 @@ def collect_capability_operations(
         original = cast(_DurableOperationMarker | None, getattr(handler, '__pydantic_ai_durable_operation__', None))
         function = original.function if original is not None else handler
         bound = function.__get__(capability, type(capability))
-        model_request_hook = function.__name__ == 'before_model_request'
-        schema_target = _model_request_schema if model_request_hook else bound
-        signature = inspect.signature(schema_target)
-        ctx_parameters = [
-            name
-            for name, annotation in get_type_hints(bound, include_extras=True).items()
-            if name != 'return' and _is_call_ctx(annotation)
-        ]
-        if len(ctx_parameters) > 1:
-            raise UserError(
-                f'Durable operation {function.__qualname__!r} cannot take more than one `RunContext` parameter.'
-            )
-        if model_request_hook and ctx_parameters and ctx_parameters[0] != 'ctx':
-            signature = signature.replace(
-                parameters=[
-                    parameter.replace(name=ctx_parameters[0]) if parameter.name == 'ctx' else parameter
-                    for parameter in signature.parameters.values()
-                ]
-            )
-        for parameter in signature.parameters.values():
-            if parameter.name not in ctx_parameters and parameter.annotation is inspect.Parameter.empty:
-                raise UserError(
-                    f'Error generating schema for {function.__qualname__}:\n'
-                    f'  Parameter {parameter.name!r} must have a type annotation'
-                )
-        schema = _capability_operation_schema(schema_target, signature, ctx_parameters[0] if ctx_parameters else None)
+        signature = inspect.signature(bound)
+        type_hints = get_type_hints(bound, include_extras=True)
+        ctx_parameter = _find_typed_parameter(
+            function, type_hints, _is_call_ctx, 'RunContext', callable_kind='Durable operation'
+        )
+        model_request_parameter = _find_typed_parameter(
+            function,
+            type_hints,
+            lambda annotation: annotation is ModelRequestContext,
+            'ModelRequestContext',
+            callable_kind='Durable operation',
+        )
+        _validate_schema_signature(function, signature, type_hints, ctx_parameter)
+        if (
+            model_request_parameter is not None
+            and signature.parameters[model_request_parameter].kind is inspect.Parameter.VAR_POSITIONAL
+        ):
+            raise UserError('ModelRequestContext cannot be used as a variadic positional parameter (`*args`)')
+        replacements = (
+            {model_request_parameter: ModelRequestContextProjection, 'return': ModelRequestContextProjection}
+            if model_request_parameter is not None
+            else {}
+        )
+        schema = _capability_operation_schema(bound, signature, ctx_parameter, type_hints, replacements)
         declarations[operation_name] = CapabilityMethodDeclaration(
             operation_name,
             function,
             signature,
             schema,
             ModelRequestContextProjection
-            if model_request_hook
+            if model_request_parameter is not None
             else _extract_return_schema_type(get_type_hints(bound, include_extras=True).get('return'), bound),
-            ctx_parameters[0] if ctx_parameters else None,
-            model_request_hook,
+            ctx_parameter,
+            model_request_parameter,
         )
     return declarations
 
 
 def _capability_operation_schema(
-    function: Callable[..., Awaitable[Any]], signature: inspect.Signature, ctx_parameter: str | None
+    function: Callable[..., Awaitable[Any]],
+    signature: inspect.Signature,
+    ctx_parameter: str | None,
+    type_hints: dict[str, Any],
+    annotation_replacements: dict[str, Any],
 ) -> FunctionSchema:
-    if ctx_parameter is None:
+    if ctx_parameter is None and not annotation_replacements:
         return function_schema(function, GenerateToolJsonSchema)
-
-    context = signature.parameters[ctx_parameter]
-    if context.kind is inspect.Parameter.VAR_POSITIONAL:
-        raise UserError('RunContext cannot be used as a variadic positional parameter (`*args`)')
-
-    type_hints = get_type_hints(function, include_extras=True)
-    if ctx_parameter not in type_hints:
-        source_ctx_parameter = next(name for name, annotation in type_hints.items() if _is_call_ctx(annotation))
-        type_hints[ctx_parameter] = type_hints.pop(source_ctx_parameter)
 
     async def schema_target(**kwargs: Any) -> Any:  # pragma: no cover
         return kwargs
@@ -342,7 +362,9 @@ def _capability_operation_schema(
     schema_target.__qualname__ = function.__qualname__
     schema_target.__doc__ = function.__doc__
     schema_target.__annotations__ = {
-        name: annotation for name, annotation in type_hints.items() if name != ctx_parameter
+        name: annotation_replacements.get(name, annotation)
+        for name, annotation in type_hints.items()
+        if name != ctx_parameter
     }
     schema_signature = signature.replace(
         parameters=[p for p in signature.parameters.values() if p.name != ctx_parameter]
@@ -374,9 +396,8 @@ async def call_declaration(
     declaration: CapabilityMethodDeclaration,
     capability: AbstractCapability[Any],
     params: CapabilityOperationParams,
+    model_request_context: ModelRequestContext | None = None,
 ) -> Any:
-    if declaration.model_request_hook:
-        raise RuntimeError('Model-request hook declarations require the durability model scope')
     bound = declaration.function.__get__(capability, type(capability))
     arguments = dict(params.arguments)
     args: list[Any] = []
@@ -391,19 +412,25 @@ async def call_declaration(
         if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             kwargs.update(arguments)
             continue
-        value = arguments.pop(name)
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            args.extend(arguments.pop(name))
+            continue
+        if name == declaration.model_request_parameter:
+            if model_request_context is None:
+                raise RuntimeError('Model-request declarations require the durability model scope')
+            value = model_request_context
+        else:
+            value = arguments.pop(name)
 
         if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
             args.append(value)
-        elif parameter.kind is inspect.Parameter.VAR_POSITIONAL:
-            args.extend(value)
         else:
             kwargs[name] = value
     return await bound(*args, **kwargs)
 
 
 async def recover_capability(ctx: RunContext[Any], capability_id: str) -> AbstractCapability[Any]:
-    run_capabilities = cast(dict[str, AbstractCapability[Any]], ctx.__dict__.get('_run_capabilities_by_id', {}))
+    run_capabilities = ctx._run_capabilities_by_id or {}  # pyright: ignore[reportPrivateUsage]
     if capability := run_capabilities.get(capability_id):
         return capability
     agent = ctx.agent
@@ -419,9 +446,3 @@ async def recover_capability(ctx: RunContext[Any], capability_id: str) -> Abstra
 
 
 CapabilityBoundOperation = BoundDurableOperation[CapabilityOperationParams, Any, Any]
-
-
-async def _model_request_schema(
-    ctx: RunContext[Any], request_context: ModelRequestContextProjection
-) -> ModelRequestContextProjection:
-    return request_context
