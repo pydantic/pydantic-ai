@@ -3,7 +3,7 @@
 Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers to use their tools as part of an agent run. The [`MCPToolset`][pydantic_ai.mcp.MCPToolset] [toolset](../toolsets.md) wraps the [FastMCP Client](https://gofastmcp.com/clients/) and works with both local (stdio) and remote (Streamable HTTP, SSE) MCP servers.
 
 !!! tip "Recommended: the `MCP` capability"
-    For most use cases, use the [`MCP` capability](../capabilities/mcp.md) — it takes a URL (or any `MCPToolset` input via `local=`) and additionally lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag. Reach for `MCPToolset` directly when you need to manage the client lifecycle yourself, attach the same MCP server to multiple agents, or pass advanced transport / client configuration that doesn't fit the capability shape.
+    For most use cases, use the [`MCP` capability](../capabilities/mcp.md) — it takes a URL (or any `MCPToolset` input via `local=`) and additionally lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag. Reach for `MCPToolset` directly when you need to manage the client lifecycle yourself, attach the same MCP server to multiple agents, or pass advanced transport or client configuration the capability does not expose.
 
 ## Install
 
@@ -12,6 +12,13 @@ You need to either install [`pydantic-ai`](../install.md), or [`pydantic-ai-slim
 ```bash
 pip/uv-add "pydantic-ai-slim[mcp]"
 ```
+
+!!! note "FastMCP 4 preview"
+    FastMCP 4 is currently a pre-release and must be installed explicitly. `MCPToolset` supports it,
+    but its modern protocol mode does not support server-initiated sampling or elicitation, and
+    cannot apply `log_level`. `MCPToolset` warns when these options are configured; filter logs in
+    `log_handler` instead. For these options, FastMCP 4's legacy protocol mode retains the
+    FastMCP 3 behavior.
 
 ## Usage
 
@@ -91,7 +98,7 @@ logfire.instrument_pydantic_ai()
 
 ### SSE
 
-The [HTTP + Server-Sent Events](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`](https://gofastmcp.com/clients/transports).
+The [HTTP + Server-Sent Events](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`](https://gofastmcp.com/clients/transports).
 
 !!! note
     The SSE transport in MCP is deprecated. You should prefer Streamable HTTP for new deployments.
@@ -106,7 +113,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 ### Stdio
 
-MCP also offers the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio), where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. Pass a path to a Python or Node.js script, or build a [`StdioTransport`](https://gofastmcp.com/clients/transports) for full control over the command, arguments, and environment.
+MCP also offers the [stdio transport](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#stdio), where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. Pass a path to a Python or Node.js script, or build a [`StdioTransport`](https://gofastmcp.com/clients/transports) for full control over the command, arguments, and environment.
 
 ```python {title="mcp_stdio_client.py" test="skip"}
 from fastmcp.client.transports import StdioTransport
@@ -145,7 +152,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-## Loading MCP toolsets from configuration
+## Loading MCP toolsets from configuration {#loading-mcp-toolsets-from-configuration}
 
 Instead of constructing `MCPToolset` instances individually, you can load multiple toolsets from a JSON configuration file using [`load_mcp_toolsets()`][pydantic_ai.mcp.load_mcp_toolsets].
 
@@ -175,6 +182,13 @@ The configuration file should be a JSON file with an `mcpServers` object contain
   }
 }
 ```
+
+Each entry supports `command`, `args`, `env` and `cwd` for a stdio server, or `url` and `headers`
+for an HTTP server. The configuration is validated as it's loaded, so a wrongly-typed field is reported
+straight away instead of failing later at connection time. Unknown keys are ignored, so a file shared with
+another MCP client still loads — but they are only ignored, never honoured. In particular
+`disabled` does not skip a server, and `type` does not choose the transport: that is inferred from
+the URL, as described below.
 
 !!! note
     The MCP server is only inferred to be an SSE server because of the `/sse` suffix. Any other server with the `url` field is treated as a Streamable HTTP server. We made this decision given that the SSE transport is deprecated.
@@ -358,7 +372,7 @@ MCP tools can include metadata that provides additional information about the to
 | `"optional"` | Calls with `task=True` by default. Set [`prefer_tasks=False`][pydantic_ai.mcp.MCPToolset.prefer_tasks] to call normally instead. |
 | `"forbidden"` or absent | Calls normally. |
 
-The newer MCP [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) (SEP-2663) uses server-directed task creation instead, so this client-side preference does not apply.
+FastMCP 4 uses the newer MCP [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) (SEP-2663), where the server directs task creation. The `task` metadata and `prefer_tasks` client preference above therefore apply to FastMCP 3, not FastMCP 4. An ordinary call drives a task-only tool to completion with nothing extra installed; explicitly selecting the tasks extension with `use_task=True` requires the separate `fastmcp-tasks` package, available via the `mcp-tasks` optional group: `pip install "pydantic-ai-slim[mcp-tasks]"`.
 
 For [FastMCP 3](https://gofastmcp.com/v3/servers/tasks) servers, install the tasks extra with
 `pip install "fastmcp[tasks]>=3,<4"` and declare task support per tool with
@@ -500,7 +514,7 @@ Because the per-run toolset's session is established inside the run itself, cred
 
 As an alternative to a dynamic toolset, you can construct a new `MCPToolset` yourself for each request and pass it to the [`toolsets` argument](../toolsets.md) of the agent run methods.
 
-## Custom TLS / SSL configuration
+## Custom TLS / SSL configuration {#custom-tls-ssl-configuration}
 
 In some environments you need to tweak how HTTPS connections are established — for example to trust an internal Certificate Authority, present a client certificate for **mTLS**, or (during local development only!) disable certificate verification altogether. `MCPToolset` exposes an `http_client` parameter so you can pass your own pre-configured [`httpx.AsyncClient`](https://www.python-httpx.org/async/):
 

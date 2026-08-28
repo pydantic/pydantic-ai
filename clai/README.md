@@ -54,7 +54,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ## Help
 
 ```
-usage: clai [-h] [-l] [--version] [-m MODEL] [-a AGENT] [-t CODE_THEME] [--no-stream] [prompt]
+usage: clai [-h] [-l] [--version] [-m MODEL] [-a AGENT] [-t CODE_THEME] [--no-stream] [--mcp-config MCP_CONFIG] [prompt]
 
 Pydantic AI CLI v...
 
@@ -76,9 +76,11 @@ options:
   -t CODE_THEME, --code-theme CODE_THEME
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
+  --mcp-config MCP_CONFIG
+                        Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Claude Code, and Cursor).
 ```
 
-For more information on how to use it, see the [CLI documentation](https://ai.pydantic.dev/cli/).
+For more information on how to use it, see the [CLI documentation](https://pydantic.dev/docs/ai/integrations/cli/).
 
 ## Web Chat UI
 
@@ -88,7 +90,7 @@ Launch a web-based chat interface:
 clai web -m openai:gpt-5.2
 ```
 
-![Web Chat UI](https://ai.pydantic.dev/img/web-chat-ui.png)
+![Web Chat UI](https://pydantic.dev/docs/ai/img/web-chat-ui.png)
 
 This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
 
@@ -106,4 +108,4 @@ Launch the web UI with:
 clai web --agent my_agent:my_agent
 ```
 
-For full Web UI documentation, see [Web Chat UI](https://ai.pydantic.dev/web/).
+For full Web UI documentation, see [Web Chat UI](https://pydantic.dev/docs/ai/guides/web/).

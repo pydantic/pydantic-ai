@@ -60,6 +60,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsNow, IsStr
@@ -1556,6 +1557,57 @@ async def test_nested_run_in_for_run_hook_does_not_steal_binding():
 
     assert inner_outputs == ['inner done']
     assert exc_info.value.all_messages()
+
+
+async def test_capability_for_run_cancel_ends_run_before_model_request():
+    """`RunContext.cancel()` from a capability `for_run()` hook records the request — the run's
+    controller exists before any setup hook runs — and the run ends with `RunCancelled` before
+    the first model request. Recording is not interruption: the hook itself and the remaining
+    setup hooks (here the toolset's `for_run()`) still run to completion."""
+    hooks_ran: list[str] = []
+
+    class CancelsInForRun(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> CancelsInForRun:
+            ctx.cancel()
+            hooks_ran.append('capability')
+            return self
+
+    class RecordsForRun(WrapperToolset[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
+            hooks_ran.append('toolset')
+            return await super().for_run(ctx)
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        raise AssertionError('the model must not be called after a setup-phase cancellation')
+
+    agent = Agent(
+        FunctionModel(model_function),
+        capabilities=[CancelsInForRun()],
+        toolsets=[RecordsForRun(FunctionToolset())],
+    )
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('hello')
+
+    assert exc_info.value.all_messages() == []  # cancelled before any model request
+    assert hooks_ran == ['capability', 'toolset']
+
+
+async def test_toolset_for_run_cancel_ends_run_before_model_request():
+    """`RunContext.cancel()` from a toolset `for_run()` hook is likewise recorded, not a `UserError`."""
+
+    class CancelsInForRun(WrapperToolset[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
+            ctx.cancel()
+            return await super().for_run(ctx)
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        raise AssertionError('the model must not be called after a setup-phase cancellation')
+
+    agent = Agent(FunctionModel(model_function), toolsets=[CancelsInForRun(FunctionToolset())])
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('hello')
+
+    assert exc_info.value.all_messages() == []
 
 
 async def test_cancel_during_blocked_before_run_is_delivered():

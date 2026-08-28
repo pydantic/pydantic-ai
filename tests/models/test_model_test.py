@@ -558,6 +558,68 @@ def test_json_schema_test_data_additional():
     TestModel.model_validate(data)
 
 
+def test_json_schema_test_data_equal_inclusive_bounds():
+    class TestModel(BaseModel):
+        my_int_eq: Annotated[int, Ge(7), Le(7)]
+        my_float_eq: Annotated[float, Ge(7.5), Le(7.5)]
+
+    json_schema = TestModel.model_json_schema()
+    data = _JsonSchemaTestData(json_schema).generate()
+    assert data == snapshot({'my_int_eq': 7, 'my_float_eq': 7.5})
+    TestModel.model_validate(data)
+
+
+def test_json_schema_test_data_narrow_exclusive_bounds():
+    """Narrow ranges with exclusive bounds must not crash or produce out-of-range values."""
+
+    class TestModel(BaseModel):
+        probability: Annotated[float, Ge(0), Lt(1)]
+        strict_fraction: Annotated[float, Gt(0), Lt(1)]
+        rate: Annotated[float, Gt(0.0), Le(1.0)]
+        only_one: Annotated[int, Gt(0), Lt(2)]
+
+    json_schema = TestModel.model_json_schema()
+    for seed in range(3):
+        data = _JsonSchemaTestData(json_schema, seed=seed).generate()
+        TestModel.model_validate(data)
+    assert _JsonSchemaTestData(json_schema).generate() == snapshot(
+        {'probability': 0.0, 'strict_fraction': 0.5, 'rate': 0.5, 'only_one': 1}
+    )
+
+
+def test_json_schema_number_uses_strictest_bounds():
+    class TestModel(BaseModel):
+        lower: Annotated[float, Field(ge=0, gt=0.5, le=1)]
+        upper: Annotated[float, Field(ge=0, le=2, lt=0.5)]
+
+    json_schema = TestModel.model_json_schema()
+    for seed in range(3):
+        data = _JsonSchemaTestData(json_schema, seed=seed).generate()
+        TestModel.model_validate(data)
+    assert _JsonSchemaTestData(json_schema).generate() == snapshot({'lower': 0.75, 'upper': 0.0})
+
+
+def test_narrow_exclusive_bounds_tool_args():
+    """An agent tool with `Field(ge=0, lt=1)`-style parameters runs without errors."""
+
+    agent = Agent()
+    calls: list[dict[str, Any]] = []
+
+    @agent.tool_plain
+    def set_sampling(temperature: Annotated[float, Field(ge=0, lt=1)]) -> str:
+        calls.append({'temperature': temperature})
+        return 'ok'
+
+    agent.run_sync('hello', model=TestModel())
+    assert calls == snapshot([{'temperature': 0.0}])
+
+
+def test_json_schema_number_generation():
+    assert _JsonSchemaTestData({'type': 'number', 'exclusiveMinimum': 0}).generate() == 1.0
+    assert _JsonSchemaTestData({'type': 'number', 'exclusiveMaximum': 0}).generate() == -1.0
+    assert _JsonSchemaTestData({'type': 'number'}).generate() == 0.0
+
+
 def test_chars_wrap():
     class TestModel(BaseModel):
         a: Annotated[set[str], MinLen(4)]
@@ -587,6 +649,32 @@ def test_max_items():
     assert data == snapshot([])
 
 
+@pytest.mark.parametrize('const', ['', False, 0, None])
+def test_json_schema_test_data_falsy_const(const: Any) -> None:
+    schema = {
+        'type': 'object',
+        'required': ['value'],
+        'properties': {'value': {'const': const}},
+    }
+
+    assert _JsonSchemaTestData(schema).generate() == {'value': const}
+
+
+def test_falsy_const_tool_args() -> None:
+    """Regression test for #7629: falsy JSON Schema `const` values must be generated as-is."""
+
+    agent = Agent()
+    calls: list[dict[str, Any]] = []
+
+    @agent.tool_plain
+    def my_tool(empty: Literal[''], flag: Literal[False], zero: Literal[0]) -> str:
+        calls.append({'empty': empty, 'flag': flag, 'zero': zero})
+        return 'ok'
+
+    agent.run_sync('hello', model=TestModel())
+    assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
+
+
 @pytest.mark.parametrize(
     'content',
     [
@@ -601,3 +689,40 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+
+
+def test_int_inclusive_upper_bound_reachable():
+    """Plain inclusive integer ranges include their ceiling without changing other ranges."""
+
+    class MyOutput(BaseModel):
+        integer: Annotated[int, Field(ge=2, le=5)]
+        integer_float_bounds: Annotated[int, Field(ge=2.0, le=5.0)]
+        exclusive_minimum: Annotated[int, Field(ge=2, gt=1, le=5)]
+        exclusive_integer: Annotated[int, Field(ge=2, le=5, lt=5)]
+        number: Annotated[float, Field(ge=2, le=5)]
+
+    agent = Agent(output_type=MyOutput)
+    outputs = [agent.run_sync('hello', model=TestModel(seed=seed)).output for seed in range(4)]
+
+    assert [
+        (
+            output.integer,
+            output.integer_float_bounds,
+            output.exclusive_minimum,
+            output.exclusive_integer,
+            output.number,
+        )
+        for output in outputs
+    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 4, 4.0), (5, 5, 2, 2, 2.0)])
+
+    def generated_values(minimum: float, maximum: float, seeds: list[int]) -> list[Any]:
+        schema = {
+            'type': 'object',
+            'required': ['value'],
+            'properties': {'value': {'type': 'integer', 'minimum': minimum, 'maximum': maximum}},
+        }
+        return [_JsonSchemaTestData(schema, seed=seed).generate()['value'] for seed in seeds]
+
+    assert generated_values(2.5, 5.5, list(range(4))) == [2.5, 3.5, 4.5, 2.5]
+    assert generated_values(2.0, 5.5, list(range(5))) == [2.0, 3.0, 4.0, 5.0, 2.5]
+    assert generated_values(0.0, 1e20, [10**20]) == [10**20]

@@ -305,6 +305,34 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_without_run_input():
+    """A `UIEventStream` encodes events on its own, with no run input to build it from.
+
+    Transports that carry native events out of band — a durable execution workflow, a queue, a
+    websocket fan-out — encode them where no HTTP request exists. See #6970.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    event_stream = DummyUIEventStream[None, str]()
+    assert event_stream.run_input is None
+
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_event_stream_close_finalizes_native_stream_without_protocol_trailer():
     """A disconnected consumer cannot receive protocol trailers, but its native stream must be closed."""
     finalized = anyio.Event()
@@ -818,7 +846,7 @@ async def test_run_stream_response_error():
             '<request>',
             "<function-tool-call name='unknown_tool'>None</function-tool-call>",
             "<function-tool-result name='unknown_tool'>Tool execution was interrupted by an error.</function-tool-result>",
-            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries</error>",
+            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries</error>",
             '</request>',
             '</stream>',
         ]
@@ -857,6 +885,158 @@ async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
             '</stream>',
         ]
     )
+
+
+class PartEndEventStream(UIEventStream[None, str | PartEndEvent, None, str]):
+    def encode_event(self, event: str | PartEndEvent) -> str:
+        return repr(event)  # pragma: no cover
+
+    async def before_stream(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def after_stream(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def before_response(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def after_response(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[str | PartEndEvent]:
+        yield event
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def on_error(self, error: Exception) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+
+@pytest.mark.parametrize(
+    ('part', 'deltas', 'expected_part'),
+    [
+        pytest.param(
+            TextPart(content='The'),
+            [TextPartDelta(content_delta=' quick brown fox'), TextPartDelta(content_delta=' jumps over')],
+            TextPart(content='The quick brown fox jumps over'),
+            id='text',
+        ),
+        pytest.param(
+            ThinkingPart(content='Looking'),
+            [ThinkingPartDelta(content_delta=' for an'), ThinkingPartDelta(content_delta=' answer')],
+            ThinkingPart(content='Looking for an answer'),
+            id='thinking',
+        ),
+        pytest.param(
+            ToolCallPart(tool_name='search', args=None, tool_call_id='call_1'),
+            [
+                ToolCallPartDelta(args_delta='{"query":', tool_call_id='call_1'),
+                ToolCallPartDelta(args_delta='"pydantic"}', tool_call_id='call_1'),
+            ],
+            ToolCallPart(tool_name='search', args='{"query":"pydantic"}', tool_call_id='call_1'),
+            id='tool-call',
+        ),
+        pytest.param(
+            NativeToolCallPart(tool_name='code_execution', args=None, tool_call_id='call_2'),
+            [
+                ToolCallPartDelta(args_delta='{"code":', tool_call_id='call_2'),
+                ToolCallPartDelta(args_delta='"print(1)"}', tool_call_id='call_2'),
+            ],
+            NativeToolCallPart(tool_name='code_execution', args='{"code":"print(1)"}', tool_call_id='call_2'),
+            id='native-tool-call',
+        ),
+    ],
+)
+async def test_cancelled_part_end_contains_accumulated_part(
+    part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart,
+    deltas: list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta],
+    expected_part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart,
+):
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        for delta in deltas:
+            yield PartDeltaEvent(index=0, delta=delta)
+        raise RunCancelled('The agent run was cancelled.')
+
+    events = [event async for event in PartEndEventStream(run_input=None).transform_stream(event_generator())]
+
+    assert events == [PartEndEvent(index=0, part=expected_part)]
+
+
+async def test_cancelled_part_end_ignores_delta_for_different_part():
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' world'))
+        raise RunCancelled('The agent run was cancelled.')
+
+    events = [event async for event in PartEndEventStream().transform_stream(event_generator())]
+
+    assert events == [PartEndEvent(index=0, part=TextPart(content='Hello'))]
+
+
+@pytest.mark.parametrize(
+    ('yield_delta', 'expected_events'),
+    [
+        pytest.param(
+            True,
+            [' world', PartEndEvent(index=0, part=TextPart(content='Hello world'))],
+            id='after-yield',
+        ),
+        pytest.param(False, [PartEndEvent(index=0, part=TextPart(content='Hello'))], id='before-yield'),
+    ],
+)
+async def test_part_end_delta_matches_handler_output_on_error(
+    yield_delta: bool, expected_events: list[str | PartEndEvent]
+):
+    class FailingEventStream(PartEndEventStream):
+        async def handle_event(self, event: NativeEvent) -> AsyncIterator[str | PartEndEvent]:
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                if yield_delta:
+                    yield event.delta.content_delta
+                raise RuntimeError('handler failed')
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+
+    events = [event async for event in FailingEventStream().transform_stream(event_generator())]
+
+    assert events == expected_events
+
+
+async def test_part_cleanup_error_does_not_replace_stream_error():
+    class ErrorEventStream(PartEndEventStream):
+        async def on_error(self, error: Exception) -> AsyncIterator[str | PartEndEvent]:
+            yield f'{type(error).__name__}: {error}'
+
+    def raise_cleanup_error(_: dict[str, Any] | None) -> dict[str, Any]:
+        raise ValueError('cleanup failed')
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Thinking'))
+        yield PartDeltaEvent(
+            index=0,
+            delta=ThinkingPartDelta(content_delta='...', provider_details=raise_cleanup_error),
+        )
+        raise RuntimeError('stream failed')
+
+    events = [event async for event in ErrorEventStream().transform_stream(event_generator())]
+
+    assert events == [
+        PartEndEvent(index=0, part=ThinkingPart(content='Thinking')),
+        'RuntimeError: stream failed',
+    ]
 
 
 async def test_run_stream_on_cancel():

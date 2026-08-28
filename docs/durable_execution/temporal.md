@@ -152,7 +152,7 @@ async def main():
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
-8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own `PayloadSizeError` failure type (see [Large Payloads](#large-payloads)), while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], and `UnsupportedEventLoopError` as `workflow_failure_exception_types`.
+8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], and `UnsupportedEventLoopError` as `workflow_failure_exception_types`.
 9. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
 10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
@@ -196,11 +196,19 @@ To ensure that Temporal knows what code to run when an activity fails or is inte
 
 When [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] dynamically creates activities for the agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
 
+Upgrading to this version changes the activity sequence for tools that have an `args_validator`, so workflows already in flight that call such a tool need [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a [patch](https://python.temporal.io/temporalio.workflow.html#patched). Workflows that don't call a tool with an `args_validator` are unaffected.
+
 [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] and toolsets contributed by [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] are supported. Their factory is re-resolved inside activities when tools are listed and called, so it must be deterministic given the run dependencies. Like other wrapped toolsets, every `DynamicToolset` requires an explicit `id`: pass `id=` when constructing one directly, set the `id` parameter of the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator, or set a stable capability `id` on `DynamicCapability`. Note that with Temporal, `per_run_step=False` is not respected, as the toolset always needs to be created on-the-fly in the activity.
 
 [Capabilities](../capabilities/overview.md) that contribute a toolset — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or an [`MCP`][pydantic_ai.capabilities.MCP] server running locally — derive the toolset's `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. (`MCP` falls back to an id derived from the server URL's host and path when no `id` is given.) A toolset passed to a capability via `toolsets=` keeps its own `id`, which must be set on the toolset itself.
 
-Other than that, any agent and toolset will just work!
+All other agents and toolsets are supported.
+
+### Tool Argument Validation
+
+A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in a `validate_args` activity, so it may perform I/O and dynamic-tool validators survive the workflow boundary. A tool without one schedules no extra activity. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. A validator may also raise `ApprovalRequired` or `CallDeferred`; resuming an approved call runs validation again with `tool_call_approved` set.
+
+Each activity derives its typed arguments independently, so schema validators must be idempotent. A Pydantic validation context is rebuilt from the `validation_context` configured on [`Agent`][pydantic_ai.agent.Agent]; a callable context builder runs again with the activity's own run context.
 
 ### Agent Run Context and Dependencies
 
@@ -215,7 +223,7 @@ Values that Pydantic AI carries across the boundary as untyped dictionaries — 
 !!! warning "Persisted payload schemas"
     Temporal deserializes persisted workflow and activity payloads using the models and type annotations available in the currently deployed worker, so treat these models as durable contracts across deployments. Adding an optional field with a default stays compatible, but adding a required field or making another incompatible change can cause payload decoding to fail before the workflow or activity body executes. This is especially relevant to application-owned workflow inputs and dependency models: since Pydantic AI does not own or migrate Temporal workflow history, applications with long-running workflows should adopt a versioning or migration strategy when changing them.
 
-Specifically, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `partial_output`, `usage`, `usage_limits`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_loaded` fields are available by default. `agent` and `root_capability` are re-attached from the worker's agent instance, `tool_manager` is `None` (which is what makes `available_tool_names` fall back to `discovered_tool_names`), and `pending_messages` holds a guard that makes [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, since the activity's recorded result is replayed without re-running your code and the enqueued messages would be dropped.
+Specifically, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `partial_output`, `usage`, `usage_limits`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_active` fields are available by default. `agent` and `root_capability` are re-attached from the worker's agent instance, `tool_manager` is `None` (so [`available_tool_names`][pydantic_ai.tools.RunContext.available_tool_names] returns the snapshot resolved when the activity was dispatched, and falls back to `discovered_tool_names` only for a subclass whose `serialize_run_context` doesn't carry it; [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids] is carried the same way, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a tool owned by a capability), and `pending_messages` holds a guard that makes [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, since the activity's recorded result is replayed without re-running your code and the enqueued messages would be dropped.
 
 Trying to access any other field — `model`, `prompt`, `messages`, `model_settings`, `tracer`, `validation_context`, or `capabilities` — raises a `UserError` rather than returning that field's default value, so a field that didn't cross the boundary can't be mistaken for real run state. A multi-modal `prompt` can carry large [`BinaryContent`][pydantic_ai.messages.BinaryContent], and carrying it would put that content in every activity payload, creating the same Temporal [payload size](#large-payloads) concern as `messages`.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can opt in to carrying `prompt` if it knows its prompts are text-only.
@@ -341,7 +349,7 @@ class AssistantWorkflow:
         result = await agent.run(prompt)
         # All events are published by now. A Workflow Stream subscription is an Update long-poll
         # that can't complete once the workflow has returned, so stay alive until the consumer
-        # acknowledges it has drained the stream — otherwise a consumer that starts late or lags
+        # acknowledges it has drained the stream. Otherwise a consumer that starts late or lags
         # behind would miss the tail. Bound the wait so a consumer that never connects can't hang
         # the run.
         self._finished = True
@@ -360,7 +368,7 @@ class AssistantWorkflow:
         self._released = True
 ```
 
-An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary. The run — not any individual event — is the terminal signal (an event like `PartEndEvent` only ends a single response part, and tool calls or further parts can follow), so the consumer relays until the run has finished, then releases the workflow so it completes and the subscription ends:
+An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s. This is effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary. The run, not any individual event, is the terminal signal (an event like `PartEndEvent` only ends a single response part, and tool calls or further parts can follow), so the consumer relays until the run has finished, then releases the workflow so it completes and the subscription ends:
 
 ```python {test="skip" lint="skip"}
 import asyncio
@@ -380,8 +388,8 @@ async def relay_events(client: Client, prompt: str) -> str:
             ...  # forward `event` to the frontend over SSE
 
     relay_task = asyncio.create_task(relay())
-    # Wait until the run has finished producing events — queryable while the workflow is still
-    # alive, unlike `handle.result()` which is gated on the release below — then let the relay
+    # Wait until the run has finished producing events. This is queryable while the workflow is still
+    # alive, unlike `handle.result()` which is gated on the release below. Then let the relay
     # drain and release the workflow so it completes and the subscription ends.
     while not await handle.query(AssistantWorkflow.finished):
         await asyncio.sleep(0.2)
@@ -425,7 +433,7 @@ async def relay_with_resume(client: Client, handle: WorkflowHandle[Any, Any]) ->
             delay *= 2
 ```
 
-Offsets are assigned over the whole `WorkflowStream` rather than per topic, so a topic-filtered subscription sees gaps wherever the workflow published to another topic — you can't reconstruct them by counting events, which is why `with_offsets=True` exists. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
+Offsets are assigned over the whole `WorkflowStream` rather than per topic, so a topic-filtered subscription sees gaps wherever the workflow published to another topic. You can't reconstruct them by counting events, which is why `with_offsets=True` exists. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
 
 A model stream emits a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] per token, so to keep the volume down you can publish only a subset of events with the `event_stream_events` predicate:
 
@@ -445,9 +453,9 @@ Under the hood, `event_stream_topic` is sugar over [`workflow_stream_event_handl
     - Workflow Streams add roughly 100ms of latency per roundtrip (tunable via `event_stream_batch_interval`) and their cost scales with the number of durable batches; they're suited to driving a UI, not ultra-low-latency use cases like real-time voice. Use `event_stream_events` to publish fewer events if the volume is a concern.
     - Each `stream_agent_events` subscription holds a long-poll against the Temporal service, so opening one per frontend connection scales your Temporal usage with your user count and can run into Temporal Cloud's connection limits. Run a single consumer per workflow run and fan its events out to frontend connections yourself (e.g. through pub/sub or an SSE broadcast); a subscription per subscriber works in development but falls over at the cap.
     - Delivery is at-least-once: the publishing handler runs inside an activity, so if that activity is retried its events are re-published (at new offsets), and consumers should tolerate duplicates. The workflow's final result remains authoritative.
-    - Publishing to a Workflow Stream is non-blocking and unbounded: the SDK buffers published events in the activity and ships them in batches, so a high event rate or slow delivery grows that in-memory buffer until the activity exits. There's no backpressure at the stream layer — keep the volume down with `event_stream_events` (e.g. dropping per-token deltas) for chatty runs. (When a user `event_stream_handler` is combined with a topic, a slow handler does back-pressure the shared stream.)
+    - Publishing to a Workflow Stream is non-blocking and unbounded: the SDK buffers published events in the activity and ships them in batches, so a high event rate or slow delivery grows that in-memory buffer until the activity exits. There's no backpressure at the stream layer, so keep the volume down with `event_stream_events` (e.g. dropping per-token deltas) for chatty runs. (When a user `event_stream_handler` is combined with a topic, a slow handler does back-pressure the shared stream.)
     - The stream is durable, so events may be produced and consumed by processes running different Pydantic AI versions. `AgentStreamEvent` shapes are stable within a major version; keep producer and consumer on the same major version.
-    - `stream_agent_events` ends when the workflow reaches a terminal state; use the workflow result for the authoritative output. Live events reach external consumers only — `run_stream_events()` remains unavailable inside workflow code.
+    - `stream_agent_events` ends when the workflow reaches a terminal state; use the workflow result for the authoritative output. Live events reach external consumers only; `run_stream_events()` remains unavailable inside workflow code.
 
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 
@@ -613,6 +621,9 @@ agent = Agent(
 2. Set `'temporal': False` to skip activity wrapping entirely (only valid for `async` tools — sync tools always need an activity since threads aren't deterministic).
 3. Selector-based: [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] applies the same metadata across a selection of tools (`'all'`, a name list, a dict, or a callable).
 
+The opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
+their Temporal activity, so `metadata={'temporal': False}` on an MCP tool raises a `UserError`.
+
 !!! tip "Configuring third-party tools"
     [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is the recommended path when the activity config doesn't belong on the tool definition — for example, tools defined in third-party packages, or a group of tools that share the same timeout profile but live in different files.
 
@@ -643,7 +654,11 @@ async def main():
     )
 ```
 
-By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). To disable sending Temporal metrics to Logfire, you can pass `metrics=False` to the `LogfirePlugin` constructor.
+By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. Temporal metrics are exported every 60 seconds. You can change the interval by passing a `datetime.timedelta` as `metric_periodicity` to the `LogfirePlugin` constructor.
+
+If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`).
+
+To disable sending Temporal metrics to Logfire, pass `metrics=False` to the `LogfirePlugin` constructor. This also lets you supply your own [`Runtime`](https://python.temporal.io/temporalio.runtime.Runtime.html) to `Client.connect()` when you need to configure other Temporal telemetry options; the plugin will still configure tracing.
 
 ## Known Issues
 

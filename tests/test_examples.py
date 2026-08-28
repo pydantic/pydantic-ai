@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
 import os
 import re
 import shutil
 import ssl
 import sys
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
@@ -33,6 +35,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolsetTool,
@@ -43,10 +46,22 @@ from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeModel
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    InputTranscript,
+    OutputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
+    ResponseDone,
+    ToolCall,
+    ToolResult,
+)
 
 from .conftest import TestEnv, try_import
 
@@ -62,6 +77,14 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
 ]
 code_examples: dict[str, CodeExample] = {}
+
+
+@pytest.fixture(autouse=True)
+def blockbuster_enabled(example: CodeExample) -> bool:
+    """Skip the detector for pytest-examples' synchronous output-file reader."""
+    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+        return False
+    return True
 
 
 @dataclass
@@ -83,8 +106,15 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     root_dir = Path(__file__).parent.parent
     os.chdir(root_dir)
 
-    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
+    for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
+            continue
+        if ex.path.name == 'README.md' and (
+            'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'ClearToolResults(' in ex.source
+        ):
+            # README fences stay bare so GitHub renders them; snippets that can't run here
+            # (harness imports, the Coder blocks-equivalence fragment, interactive realtime
+            # sessions) are excluded by content instead.
             continue
         if ex.path.name != '_utils.py':
             try:
@@ -131,6 +161,62 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
         pass
 
 
+class MockRealtimeConnection(RealtimeConnection):
+    """A scripted realtime connection for executable documentation examples.
+
+    The default script speaks one assistant turn. When the example's agent defines a
+    `check_availability` tool, the script plays a full spoken exchange instead — user turn, tool
+    round, assistant answer — so the quickstart's printed conversation is produced by the real
+    session/tool loop rather than pasted into the docs.
+    """
+
+    def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
+        self._function_tool_names = function_tool_names
+        self._tool_result_received = asyncio.Event()
+
+    async def send(self, content: RealtimeInput) -> None:
+        if isinstance(content, ToolResult):
+            self._tool_result_received.set()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        if 'check_availability' in self._function_tool_names:
+            yield InputTranscript(text='Hi! Do you have a table for two tomorrow night?', is_final=True)
+            yield ToolCall(
+                tool_call_id='call_1', tool_name='check_availability', args='{"day": "tomorrow", "party_size": 2}'
+            )
+            yield ResponseDone()
+            # A real provider only answers once the tool's result has been sent back.
+            await self._tool_result_received.wait()
+            yield AudioDelta(data=b'\x00\x00')
+            yield OutputTranscript(text='We do: 7 pm, table for two. Want me to book it?', is_final=True)
+            yield ResponseDone()
+        else:
+            yield AudioDelta(data=b'\x00\x00')
+            yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
+            yield ResponseDone()
+
+
+@asynccontextmanager
+async def _mock_realtime_connect(
+    self: RealtimeModel,
+    *,
+    model_request_parameters: ModelRequestParameters,
+    **kwargs: Any,
+) -> AsyncGenerator[RealtimeConnection]:
+    yield MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
+
+
+def _patch_realtime_models(mocker: MockerFixture) -> None:
+    """Route realtime documentation examples through the scripted connection."""
+    from pydantic_ai.realtime.azure import AzureRealtimeModel
+    from pydantic_ai.realtime.google import GoogleRealtimeModel
+    from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+    from pydantic_ai.realtime.xai import XaiRealtimeModel
+
+    for model_class in (OpenAIRealtimeModel, AzureRealtimeModel, GoogleRealtimeModel, XaiRealtimeModel):
+        mocker.patch.object(model_class, 'connect', new=_mock_realtime_connect)
+
+
 def _check_python_version(min_version: str | None, max_version: str | None) -> None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
@@ -161,6 +247,10 @@ def test_docs_examples(
     mocker.patch('httpx.Client.post', side_effect=http_request)
     mocker.patch('httpx.AsyncClient.get', side_effect=async_http_request)
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
+    mocker.patch('httpx2.Client.get', side_effect=http_request)
+    mocker.patch('httpx2.Client.post', side_effect=http_request)
+    mocker.patch('httpx2.AsyncClient.get', side_effect=async_http_request)
+    mocker.patch('httpx2.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
@@ -179,6 +269,7 @@ def test_docs_examples(
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
     _patch_optional_mcp_modules(mocker)
+    _patch_realtime_models(mocker)
     try:
         mocker.patch('sentence_transformers.SentenceTransformer')
     except ModuleNotFoundError:
@@ -198,6 +289,7 @@ def test_docs_examples(
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
     env.set('NEBIUS_API_KEY', 'testing')
+    env.set('CRUSOE_API_KEY', 'testing')
     env.set('HEROKU_INFERENCE_KEY', 'testing')
     env.set('FIREWORKS_API_KEY', 'testing')
     env.set('TOGETHER_API_KEY', 'testing')
@@ -360,7 +452,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None
@@ -443,6 +535,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
+    'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
+        tool_name='load_capability', args={'id': 'refunds'}
+    ),
     'I just lost my card!': ToolCallPart(
         tool_name='final_result',
         args={
@@ -620,14 +715,15 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'How are people feeling about the Extract app?': ToolCallPart(
+        tool_name='recent_reviews',
+        args={'product': 'Extract'},
+    ),
     'Find recent papers about transformer architectures': (
         'Here are some recent papers about transformer architectures from arxiv.org:\n'
         '\n'
         '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
         '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
-    ),
-    'What was the mass of the largest meteorite found this year?': (
-        'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
     'Write a long essay about Python': (
         'Python is a versatile, high-level programming language known for its readability and simplicity. '
@@ -809,6 +905,16 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
+        elif m.content == 'Summarize the conversation.':
+            history_text = ' '.join(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            )
+            if 'book a train' in history_text:
+                return ModelResponse(parts=[TextPart('- Book a train tomorrow.')])
+            return ModelResponse(parts=[TextPart('- The assistant greeted the user.')])
         elif m.content == 'Tell me a two-sentence story about an axolotl with an illustration.':
             return ModelResponse(
                 parts=[
@@ -829,6 +935,12 @@ async def model_logic(  # noqa: C901
                 ]
             )
         elif m.content == 'Generate an image of an axolotl.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
+                ]
+            )
+        elif m.content == 'Generate a minimalist logo for a coffee shop called Extract.':
             return ModelResponse(
                 parts=[
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
@@ -926,6 +1038,29 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'customer_balance':
         args = {
             'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
+            'block_card': False,
+            'risk': 1,
+        }
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolAvailabilityDeltaPart) and 'refund_status' in m.tools_added:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'recent_reviews':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'label': 'positive', 'score': 0.9},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'refund_status':
+        args = {
+            'support_advice': 'Good news, John: the duplicate charge on your last statement was refunded on 2026-05-01.',
             'block_card': False,
             'risk': 1,
         }

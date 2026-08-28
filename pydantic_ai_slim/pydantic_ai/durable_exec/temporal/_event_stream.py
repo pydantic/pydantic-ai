@@ -24,7 +24,7 @@ _DEFAULT_BATCH_INTERVAL = timedelta(milliseconds=100)
 _DEFAULT_POLL_COOLDOWN = timedelta(milliseconds=100)
 
 # Bounded per-consumer buffer for the fan-out below. Awaited sends into a finite buffer apply
-# backpressure — a slow handler slows the shared stream rather than letting an in-memory buffer
+# backpressure: a slow handler slows the shared stream rather than letting an in-memory buffer
 # grow without limit (matching how a `ProcessEventStream` handler back-pressures the stream).
 _FANOUT_BUFFER_SIZE = 100
 
@@ -41,7 +41,7 @@ def workflow_stream_event_handler(
     event stream handler inside activities, which is exactly where `WorkflowStreamClient.from_within_activity`
     needs to be called. The returned handler publishes each `AgentStreamEvent` to `topic` on the parent
     workflow's `WorkflowStream`, so an external consumer (e.g. an HTTP layer driving a UI) can subscribe to
-    the workflow and observe events in real time — see
+    the workflow and observe events in real time. See
     [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events].
 
     Events are serialized with the same Pydantic payload converter the Temporal integration uses elsewhere,
@@ -50,8 +50,8 @@ def workflow_stream_event_handler(
     This is the building block behind the `event_stream_topic=` argument of `TemporalDurability`; pass the
     returned handler as an `event_stream_handler` (or combine it with your own) to use it explicitly.
 
-    When invoked outside a Temporal activity — the agent run directly, or a workflow-side replay through a
-    [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] handler — publishing isn't possible,
+    When invoked outside a Temporal activity, such as an agent run directly or a workflow-side replay through a
+    [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] handler, publishing isn't possible,
     so the events are simply drained. Inside an activity that no workflow scheduled (one started directly on
     the client) there is no workflow stream to publish to, so a `UserError` is raised instead.
 

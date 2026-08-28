@@ -1,4 +1,4 @@
-Welcome to the repository for [Pydantic AI](https://ai.pydantic.dev/), an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind [Pydantic Validation](https://docs.pydantic.dev/) and [Pydantic Logfire](https://docs.pydantic.dev/logfire/).
+Welcome to the repository for [Pydantic AI](https://pydantic.dev/docs/ai/), an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind [Pydantic Validation](https://docs.pydantic.dev/) and [Pydantic Logfire](https://docs.pydantic.dev/logfire/).
 
 # Your primary responsibility is to the project and its users
 
@@ -112,10 +112,9 @@ The project uses:
 - `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
     - `pytest-recording` and `vcrpy` for recording and playing back requests to model APIs
-- `mkdocs` in `docs/`, via `make docs` and `make docs-serve`, served at <https://ai.pydantic.dev>, with:
-    - `mkdocstrings-python` to generate API docs from docstrings and types
-    - `mkdocs-material` to theme the docs
-    - `tests/test_examples.py` to test all code examples in the docs (including docstrings)
+- Documentation is published by [pydantic/unified-docs](https://github.com/pydantic/unified-docs).
+  `docs/navigation.yml` owns the Pydantic AI sidebar, routes, and redirects; `tests/test_examples.py`
+  tests all code examples in the docs (including docstrings).
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
 
@@ -135,6 +134,7 @@ When generating or reviewing code anywhere in this repo, always read [agent_docs
 Additionally, always read the directory-specific instructions when working in those directories:
 
 - [docs/AGENTS.md](docs/AGENTS.md)
+- [docs/realtime/AGENTS.md](docs/realtime/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md](pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md](pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md)
@@ -142,6 +142,7 @@ Additionally, always read the directory-specific instructions when working in th
 - [pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md](pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/profiles/AGENTS.md](pydantic_ai_slim/pydantic_ai/profiles/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/providers/AGENTS.md](pydantic_ai_slim/pydantic_ai/providers/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/realtime/AGENTS.md](pydantic_ai_slim/pydantic_ai/realtime/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/toolsets/AGENTS.md](pydantic_ai_slim/pydantic_ai/toolsets/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/ui/AGENTS.md](pydantic_ai_slim/pydantic_ai/ui/AGENTS.md)
 - [tests/AGENTS.md](tests/AGENTS.md)
