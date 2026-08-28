@@ -331,6 +331,14 @@ jobs:
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
+      # Merge this job's per-worker/per-subprocess data files into one before upload: the
+      # combine work runs in parallel across the matrix instead of serially in the `coverage`
+      # job, which would otherwise merge hundreds of files on the critical path.
+      - name: combine coverage files
+        run: uv run ${{ matrix.install.command }} coverage combine
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -419,6 +427,14 @@ jobs:
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
           coverage run -m pytest --durations=20 -n logical --dist=loadgroup
           tests/durable_exec
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: >-
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
+          coverage combine
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
@@ -521,6 +537,12 @@ jobs:
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: uv run --no-sync coverage combine
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
+
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -617,6 +639,13 @@ jobs:
           coverage run -m pytest
           tests/test_mcp.py
           tests/models/test_mcp_sampling.py
+        env:
+          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+
+      # See the matching step in the `test` job. Plain `uv run`: combining is
+      # environment-independent, so the FastMCP 4 `--with` overlay isn't needed.
+      - name: combine coverage files
+        run: uv run --all-extras --no-extra mcp-tasks --all-packages coverage combine
         env:
           COVERAGE_FILE: .coverage/.coverage.fastmcp-4
 
