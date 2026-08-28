@@ -861,7 +861,7 @@ class Summaries(AbstractCapability[None]):
 agent = Agent(TestModel(), capabilities=[Summaries()])
 ```
 
-Mark each operation method with `@durable_operation`. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
+Mark each operation method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names and must remain stable, while the Python method can be freely renamed. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
