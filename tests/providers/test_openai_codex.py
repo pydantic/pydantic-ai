@@ -128,6 +128,9 @@ def test_credentials_from_codex_cli_auth():
 def test_credentials_missing_tokens_object():
     with pytest.raises(UserError, match="expected an object with a 'tokens' entry"):
         OpenAICodexCredentials.from_codex_cli_auth({'nope': {}})
+    # A `tokens` entry that is not an object fails validation outright and gets the same message.
+    with pytest.raises(UserError, match="expected an object with a 'tokens' entry"):
+        OpenAICodexCredentials.from_codex_cli_auth({'tokens': 'not-an-object'})
 
 
 def test_credentials_missing_fields():

@@ -247,9 +247,7 @@ def _credentials_from_token_response(
             'Token endpoint response is missing `refresh_token`; request the `offline_access` scope.'
         )
     account_id = (
-        data.account_id
-        or (_account_id_from_id_token(data.id_token) if data.id_token else None)
-        or fallback_account_id
+        data.account_id or (_account_id_from_id_token(data.id_token) if data.id_token else None) or fallback_account_id
     )
     if not account_id:
         raise CredentialsRefreshError('Could not determine the ChatGPT account id from the token response.')

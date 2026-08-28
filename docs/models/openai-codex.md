@@ -144,6 +144,8 @@ async def auth_callback(state: str, code: str | None = None, error: str | None =
 async def login() -> OpenAICodexCredentials:
     server = uvicorn.Server(uvicorn.Config(app, host='localhost', port=1455, log_level='error'))
     server_task = asyncio.create_task(server.serve())
+    while not server.started:  # wait for the port to bind before sending the user to it
+        await asyncio.sleep(0.01)
     webbrowser.open(flow.authorization_url())
     await callback_received.wait()  # serve until the callback with a valid state arrives
     server.should_exit = True
