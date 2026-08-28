@@ -1163,6 +1163,7 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
 
 
 @requires_prefect
+@pytest.mark.xdist_group(name='prefect')
 async def test_prefect_capability_operation_end_to_end() -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='prefect_operations', capabilities=[capability, PrefectDurability()])
@@ -1177,6 +1178,7 @@ async def test_prefect_capability_operation_end_to_end() -> None:
 
 
 @requires_prefect
+@pytest.mark.xdist_group(name='prefect')
 async def test_prefect_capability_operation_cache_identity_includes_context_and_model() -> None:
     class CacheIdentityOperation(AbstractCapability[str]):
         id = 'cache_identity'
