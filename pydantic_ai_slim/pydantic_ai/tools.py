@@ -401,7 +401,8 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -421,7 +422,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.description = description or self.function_schema.description
+        self.description = description if description is not None else self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
         self.docstring_format = docstring_format
@@ -577,7 +578,7 @@ class ToolDefinition:
     (Gemini 2.5+); Anthropic and Bedrock leave it off unless you explicitly set `strict=True`.
 
     Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. See
-    [Strict Mode](https://ai.pydantic.dev/tools-advanced/#strict-mode) for the full per-provider table.
+    [Strict Mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode) for the full per-provider table.
     """
 
     sequential: bool = False
@@ -619,7 +620,8 @@ class ToolDefinition:
 
     Set on `Tool(defer_loading=True)` (or via a custom toolset) to opt this tool into
     deferred loading. This author intent remains stable after the tool is revealed;
-    current visibility is tracked separately in the request context.
+    current wire placement is tracked separately by
+    [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility].
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
@@ -640,19 +642,18 @@ class ToolDefinition:
     """
 
     with_native: str | None = None
-    """If set, this tool is kept on the wire when the named native tool is supported, with the
-    native tool's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
-    on the request param for the framework-managed tool-search native tool).
+    """If set, this tool is a member of a corpus the named native tool manages.
 
     Symmetric pair with `unless_native`:
 
     * `unless_native='X'` — drop me from the wire when X is supported (local fallback).
-    * `with_native='X'` — keep me on the wire when X is supported, formatted via X's adapter
-      (corpus member managed by the native tool).
+    * `with_native='X'` — I belong to X's corpus, so X's adapter decides my wire format.
 
-    When the named native tool is unsupported, a tool with `with_native` and `defer_loading=True`
-    is dropped (the corpus member is currently undiscovered, so the model can't call it on
-    this provider); otherwise it's kept as a regular function tool.
+    Set by `ToolSearchToolset` on the deferred tools the model may search for, and only those: a
+    tool an on-demand capability gates is deferred without being searchable, and carries
+    `defer_loading` alone. When the named native tool isn't supported by the model, this is cleared
+    — a corpus with no manager is not a corpus — which is independent of whether the tool stays on
+    the wire; that's `defer_loading`'s question.
     """
 
     # Implementation note for new typed native tools: registering a new tool_kind value

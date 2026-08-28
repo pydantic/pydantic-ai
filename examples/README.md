@@ -8,4 +8,4 @@
 
 Examples of how to use Pydantic AI and what it can do.
 
-For full documentation of these examples and how to run them, see [ai.pydantic.dev/examples/](https://ai.pydantic.dev/examples/).
+For full documentation of these examples and how to run them, see [pydantic.dev/docs/ai/examples](https://pydantic.dev/docs/ai/examples/setup/).

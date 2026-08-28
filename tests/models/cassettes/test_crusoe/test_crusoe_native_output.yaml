@@ -1,0 +1,98 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '376'
+      content-type:
+      - application/json
+      host:
+      - api.inference.crusoecloud.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Where is the Eiffel Tower?
+        role: user
+      model: zai/GLM-5.2
+      response_format:
+        json_schema:
+          name: City
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+        type: json_schema
+      stream: false
+    uri: https://api.inference.crusoecloud.com/v1/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1667'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: null
+          audio: null
+          content: '{ "city": "Paris", "country": "France" }'
+          function_call: null
+          reasoning: |-
+            1.  **Identify the core entity and the question:** The user is asking for the location of the Eiffel Tower.
+            2.  **Retrieve knowledge about the Eiffel Tower:**
+                *   Entity: Eiffel Tower (Tour Eiffel).
+                *   Country: France.
+                *   City: Paris.
+                *   Specific location: Champ de Mars near the Seine River.
+            3.  **Formulate the answer:** Keep it clear, concise, and accurate. State the city and country directly. Optionally, add a little more context (like the Champ de Mars or the Seine river) to be helpful, but don't overcomplicate it.
+            4.  **Draft response:** "The Eiffel Tower is located in Paris, France." (Can add: "Specifically, it is situated on the Champ de Mars, near the Seine River.")
+            5.  **Final Polish:** The Eiffel Tower is located in Paris, France. Specifically, it is situated on the Champ de Mars, next to the Seine River.
+          refusal: null
+          role: assistant
+        routed_experts: null
+        stop_reason: null
+        token_ids: null
+      created: 1786479606
+      id: chatcmpl-4b2c1a1af5371f21
+      kv_transfer_params: null
+      metrics: null
+      model: zai/GLM-5.2
+      object: chat.completion
+      prompt_logprobs: null
+      prompt_text: null
+      prompt_token_ids: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 233
+        completion_tokens_details:
+          reasoning_tokens: 217
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+          multimodal_tokens: null
+        total_tokens: 253
+    status:
+      code: 200
+      message: OK
+version: 1

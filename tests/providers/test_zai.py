@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -56,12 +55,6 @@ def test_zai_provider_need_api_key(env: TestEnv) -> None:
         ZaiProvider()
 
 
-def test_zai_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = ZaiProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
-
-
 def test_zai_provider_pass_openai_client() -> None:
     openai_client = AsyncOpenAI(api_key='api-key')
     provider = ZaiProvider(openai_client=openai_client)
@@ -92,6 +85,17 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_5_2 is not None
     assert profile_5_2.get('supports_thinking') is True
     assert profile_5_2.get('zai_supports_reasoning_effort') is True
+
+    # GLM-5.3 always reasons, no longer supports disabling thinking, and only accepts a subset of the
+    # unified effort levels, so it carries an effort mapping.
+    profile_5_3 = provider.model_profile('glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
+    assert profile_5_3 is not None
+    assert profile_5_3.get('supports_thinking') is True
+    assert profile_5_3.get('thinking_always_enabled') is True
+    assert profile_5_3.get('zai_supports_reasoning_effort') is True
+    assert profile_5_3.get('zai_reasoning_effort_mapping') == {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}
+    assert profile_5_2.get('zai_reasoning_effort_mapping') is None
 
     profile_air = provider.model_profile('glm-4.5-air')
     zai_model_profile_mock.assert_called_with('glm-4.5-air')

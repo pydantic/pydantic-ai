@@ -9,10 +9,12 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Bedrock](bedrock.md)
 * [Cerebras](cerebras.md)
 * [Cohere](cohere.md)
+* [Crusoe](crusoe.md)
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
+* [Snowflake Cortex](snowflake.md)
 * [Z.AI](zai.md)
 
 ## OpenAI-compatible Providers
@@ -23,7 +25,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models)
+- [GitHub Models](openai.md#github-models) (retired, deprecated)
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
@@ -202,6 +204,14 @@ When a provider returns a 4xx or 5xx response, Pydantic AI raises a
 attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
 surface headers, such as gRPC-based providers).
 
+When [OpenAI](openai.md), [Anthropic](anthropic.md), the [Google Gemini API](google.md),
+[Amazon Bedrock](bedrock.md), or [Groq](groq.md) reports that a requested model identifier is
+unavailable, Pydantic AI adds a close known match to the error message when one exists. The
+suggestion is also available as
+[`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id]. This is
+best-effort guidance after the provider rejects a request, not local validation: unknown model
+identifiers remain valid so custom deployments and newly released models continue to work.
+
 The motivating use case is propagating the `Retry-After` header from a 429 response to a
 caller's own HTTP client.  A convenience property
 [`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses that header and
@@ -283,7 +293,7 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
-        usage=RequestUsage(input_tokens=56, output_tokens=7),
+        usage=RequestUsage(cost=Decimal('0.000273'), input_tokens=56, output_tokens=7),
         model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -409,6 +419,8 @@ The `fallback_on` parameter accepts:
 - A list mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+As the hints are resolved at runtime, every annotated type in the handler signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the handler being silently treated as an exception handler.
 
 #### Finish Reason Example
 

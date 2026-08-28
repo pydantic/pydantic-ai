@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -57,6 +56,39 @@ def test_openrouter_provider_with_app_attribution():
     assert provider.client.default_headers['HTTP-Referer'] == 'test.com'
 
 
+def test_openrouter_provider_app_attribution_from_env(env: TestEnv):
+    """`app_url` and `app_title` fall back to the environment when omitted.
+
+    Asserts the constructed client's `default_headers` rather than a recorded request, since the
+    attribution headers are set once at client construction and a cassette match is not sensitive
+    to them.
+    """
+    env.set('OPENROUTER_APP_URL', 'env.test.com')
+    env.set('OPENROUTER_APP_TITLE', 'env test')
+
+    provider = OpenRouterProvider(api_key='api-key')
+    assert provider.client.default_headers['HTTP-Referer'] == 'env.test.com'
+    assert provider.client.default_headers['X-Title'] == 'env test'
+
+
+def test_openrouter_provider_app_attribution_skipped_for_prebuilt_client(env: TestEnv):
+    """A prebuilt `openai_client` is reused as-is, so the environment fallbacks do not reach it.
+
+    The overloads already stop a caller from passing `app_url`/`app_title` alongside `openai_client`,
+    so the environment variables are the path that can silently go missing: they apply without the
+    caller writing any attribution argument at all.
+    """
+    env.set('OPENROUTER_APP_URL', 'env.test.com')
+    env.set('OPENROUTER_APP_TITLE', 'env test')
+
+    client = openai.AsyncOpenAI(api_key='api-key', base_url='https://openrouter.ai/api/v1')
+    provider = OpenRouterProvider(openai_client=client)
+
+    assert provider.client is client
+    assert 'HTTP-Referer' not in provider.client.default_headers
+    assert 'X-Title' not in provider.client.default_headers
+
+
 def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
     env.remove('OPENROUTER_API_KEY')
     with pytest.raises(
@@ -67,12 +99,6 @@ def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
         ),
     ):
         OpenRouterProvider()
-
-
-def test_openrouter_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = OpenRouterProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_openrouter_pass_openai_client() -> None:
@@ -255,6 +281,33 @@ def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_f
 
     actual = {flag: value for flag, value in profile.items() if flag in expected_flags}
     assert actual == expected_flags
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        # Anthropic rejects a forced `tool_choice` while thinking is enabled; OpenRouter swallows that
+        # incompatibility by dropping `reasoning`, so the gateway marks the combination unsupported.
+        ('anthropic/claude-sonnet-4.6', False),
+        ('~anthropic/claude-sonnet-latest', False),
+        # Other downstream providers honor `reasoning` alongside a forced `tool_choice`.
+        ('google/gemini-2.5-flash', True),
+        ('openai/gpt-5-mini', True),
+        ('unknown/model', True),
+    ],
+)
+def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: str, expected: bool) -> None:
+    """Forced-`tool_choice`-with-thinking support is derived from the downstream provider."""
+    provider = OpenRouterProvider(api_key='api-key')
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openrouter_supports_forced_tool_choice_with_thinking') is expected
+
+
+def test_openrouter_model_profile_requires_provider_prefix() -> None:
+    provider = OpenRouterProvider(api_key='api-key')
+    with pytest.raises(UserError, match=re.escape("e.g. 'openai/gpt-4o', not 'gpt-4o'")):
+        provider.model_profile('gpt-4o')
 
 
 def test_openrouter_google_json_schema_transformer():

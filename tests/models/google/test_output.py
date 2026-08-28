@@ -11,10 +11,12 @@ Test organization:
 
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
+import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
@@ -23,7 +25,6 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition, ToolKind
 
 from ..._inline_snapshot import snapshot
-from ...cassette_utils import get_first_post_body
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -171,20 +172,25 @@ def test_google_strict_resolution_via_transformer():
 # =============================================================================
 
 
-@pytest.mark.vcr(additional_matchers=['function_calling_mode', 'function_declaration_count'])
+@pytest.mark.vcr
 async def test_google_default_tools_use_validated_mode(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
-    vcr: Any,
 ):
     """On a supported model, function tools default to `VALIDATED` mode with no `strict` flag set, and Gemini
     accepts that enum end-to-end.
 
-    The mode-resolution cases above assert the request shape against a `MagicMock` client; only a live
-    recording proves `VALIDATED` is a wire value the API accepts (rather than 400-ing on it), so this test
-    inspects the recorded request to confirm the mode we sent was `VALIDATED`.
+    The mode-resolution cases above gate what `_get_tool_config` returns; the httpx event hook here gates
+    what actually leaves the client, so drift anywhere between the two fails the assertion instead of
+    hiding behind the recording.
     """
-    agent = Agent(google_model('gemini-2.5-flash'))
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx2.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
+    agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain
     def get_weather(city: str) -> str:
@@ -197,9 +203,8 @@ async def test_google_default_tools_use_validated_mode(
     result = await agent.run('What is the weather and the time in Paris? Use the tools.')
     assert result.output == snapshot('The weather in Paris is sunny and 24C. The time in Paris is 3pm.')
 
-    first_request = get_first_post_body(vcr)
-    assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
-    assert len(first_request['tools'][0]['functionDeclarations']) == 2
+    assert sent_bodies[0]['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
+    assert len(sent_bodies[0]['tools'][0]['functionDeclarations']) == 2
 
 
 class Address(BaseModel):
@@ -232,11 +237,10 @@ class HostileToStrict(BaseModel):
     address: Address
 
 
-@pytest.mark.vcr(additional_matchers=['function_calling_mode'])
+@pytest.mark.vcr
 async def test_google_validated_accepts_strict_incompatible_schema(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
-    vcr: Any,
 ):
     """Gemini `VALIDATED` accepts a schema that OpenAI/Anthropic strict mode would reject or rewrite.
 
@@ -245,7 +249,13 @@ async def test_google_validated_accepts_strict_incompatible_schema(
     under `VALIDATED` and returns a schema-adherent call — the `register` tool only runs if the args
     passed Pydantic validation — so the default doesn't break complex schemas.
     """
-    agent = Agent(google_model('gemini-2.5-flash'))
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx2.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
+    agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain
     def register(profile: HostileToStrict) -> str:
@@ -258,11 +268,9 @@ async def test_google_validated_accepts_strict_incompatible_schema(
     )
     assert result.output == snapshot('User John Doe registered successfully with 2 tags.')
 
-    # The `function_calling_mode` matcher (see conftest) makes `mode` part of the cassette match, so
-    # this assertion has teeth on replay: if the code stopped sending `VALIDATED`, no interaction would
-    # match and the test would fail rather than silently reading the stale recorded body.
-    first_request = get_first_post_body(vcr)
-    assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
+    # Read off the hook, not the cassette: if the code stopped sending `VALIDATED` this fails, where an
+    # assertion on the recorded body would keep passing against frozen YAML.
+    assert sent_bodies[0]['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
 
 
 class TreeNode(BaseModel):
@@ -321,11 +329,10 @@ class RecursiveAndDeep(BaseModel):
         ),
     ],
 )
-@pytest.mark.vcr(additional_matchers=['function_calling_mode'])
+@pytest.mark.vcr
 async def test_google_validated_accepts_what_auto_accepts(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
-    vcr: Any,
     strict: bool | None,
     expected_mode: str,
     expected_output: str,
@@ -340,7 +347,13 @@ async def test_google_validated_accepts_what_auto_accepts(
     The `strict=False` case doubles as the end-to-end proof of the documented opt-out: one non-strict
     tool puts the whole request back on `AUTO`, because Gemini's mode is request-wide.
     """
-    agent = Agent(google_model('gemini-2.5-flash'))
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx2.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
+    agent = Agent(google_model('gemini-2.5-flash', http_client=http_client))
 
     @agent.tool_plain(strict=strict)
     def record(payload: RecursiveAndDeep) -> str:
@@ -352,10 +365,9 @@ async def test_google_validated_accepts_what_auto_accepts(
     )
     assert result.output == expected_output
 
-    first_request = get_first_post_body(vcr)
-    assert first_request['toolConfig']['functionCallingConfig']['mode'] == expected_mode
+    assert sent_bodies[0]['toolConfig']['functionCallingConfig']['mode'] == expected_mode
     # Pin both shapes as actually reaching the wire — if the transformer started inlining or
     # flattening them, the mode assertion above would still pass and the test would prove nothing.
-    schema = first_request['tools'][0]['functionDeclarations'][0]['parameters_json_schema']
+    schema = sent_bodies[0]['tools'][0]['functionDeclarations'][0]['parameters_json_schema']
     assert schema['$defs']['TreeNode']['properties']['children']['items'] == {'$ref': '#/$defs/TreeNode'}
     assert schema['$defs']['DeepA']['properties']['b'] == {'$ref': '#/$defs/DeepB'}

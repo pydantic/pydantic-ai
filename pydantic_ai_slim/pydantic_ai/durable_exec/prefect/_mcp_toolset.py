@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -15,13 +15,25 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_recorded_tool_call_result,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._toolset import guard_task_enqueue, with_non_retryable_errors
+from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset, ToolResult
+
+
+def _resolve_mcp_tool_config(tool: ToolsetTool[Any] | None, name: str) -> TaskConfig:
+    config = resolve_tool_task_config(tool, name, {})
+    if config is False:
+        raise UserError(
+            f'Prefect durable config for MCP tool {name!r} has been explicitly set to `False` '
+            '(durable execution disabled), but MCP tools perform I/O and cannot run outside a durable task. '
+            'Remove the metadata so the call stays durable.'
+        )
+    return config
 
 
 def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfig) -> CallToolOperation:
@@ -39,11 +51,12 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> ToolResult:
-        task_config = with_non_retryable_errors(base_config)
+        task_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
         result = await call_tool_task.with_options(name=f'Call MCP Tool: {name}', **task_config)(
             name, tool_args, ctx, tool
         )
@@ -76,7 +89,7 @@ class PrefectMCPToolset(DurableMCPToolset[AgentDepsT]):
             get_tools_operation=None,
             get_instructions_operation=None,
             call_tool_operation=_call_tool_operation(wrapped, base_config),
-            resolve_tool_config=lambda tool, name: {},
+            resolve_tool_config=_resolve_mcp_tool_config,
             lifecycle='enter-always',
             durable_config=base_config,
         )
@@ -92,7 +105,7 @@ def prefectify_mcp_toolset(
         get_tools_operation=None,
         get_instructions_operation=None,
         call_tool_operation=_call_tool_operation(wrapped, base_config),
-        resolve_tool_config=lambda tool, name: {},
+        resolve_tool_config=_resolve_mcp_tool_config,
         lifecycle='enter-always',
         durable_config=base_config,
     )

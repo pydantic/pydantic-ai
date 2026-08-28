@@ -12,11 +12,14 @@ past user turns that ended up behind it, and then, if nothing legal precedes whe
 minimal `.` user turn to follow. These tests pin both, in that order — deciding the anchor first put
 it between a `tool_use` and its `tool_result` — plus both sides of the `supports_inline_system_prompts`
 profile flag, the client-transport gate, and the cache breakpoint that now lands on the new message.
+
+`tool_addition` / `tool_removal` blocks ride the same entry, so the tests for those live here too.
 """
 
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -30,8 +33,10 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RunContext,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -48,7 +53,7 @@ if TYPE_CHECKING:
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry
-    from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
 
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.anthropic import (
@@ -56,9 +61,10 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
     )
+    from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    from .test_anthropic import completion_message
+    from .test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -67,6 +73,9 @@ pytestmark = [
 ]
 
 INSTRUCTION = 'From now on, every suggestion must include explicit type annotations.'
+_CACHE_PREFIX = 'Stable harness state for the mid-conversation cache test.\n' + '\n'.join(
+    f'Fact {i:04d}: workspace file {i % 37} has revision {i}, owner {i % 11}, and status verified.' for i in range(50)
+)
 
 
 @pytest.fixture
@@ -228,6 +237,23 @@ async def test_mid_conversation_system_prompt(
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
     assert body['system'] == 'You are a code reviewer.'
     assert body['messages'] == case.expected_messages
+
+
+async def test_system_prompt_after_user_part_stays_inline():
+    """An instruction merged into the first request after user content is still mid-conversation."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_prompt, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), {}
+    )
+
+    assert system_prompt == ''
+    assert anthropic_messages == [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'x'}]},
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'mid'}]},
+    ]
 
 
 async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
@@ -737,3 +763,444 @@ async def test_mid_conversation_system_prompt_on_bedrock(
             },
         ]
     )
+
+
+async def test_native_tool_availability_delta(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    """A framework tool reveal reaches the model, which then calls the tool it just learned about.
+
+    A delta arriving on its own has the same problem a lone system prompt does — nothing legal to
+    sit behind — and takes the same `.` anchor, rather than the bespoke `<tool-availability-change>`
+    user message it used to get. The `tool_addition` block already says what changed; a second,
+    vaguer statement of it in the user's voice added nothing.
+
+    The response is asserted, not just the request: a recording that only shows Anthropic accepting
+    the shape leaves open whether the model saw anything, and the whole point of the block is that it
+    hands over a schema the previous turns never carried. Nothing in the history names
+    `lookup_refund_policy` or its `order_id` parameter, so a call to it can only have come from the
+    reveal.
+    """
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+        with_native='tool_search',
+    )
+
+    response = await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart(content='I need help with a refund for order A-4417.')]),
+            ModelResponse(parts=[TextPart(content='I can check that.')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])]),
+        ],
+        None,
+        ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool()]),
+    )
+
+    body = single_request_body(vcr)
+    assert body['messages'][-2] == snapshot({'role': 'user', 'content': [{'text': '.', 'type': 'text'}]})
+    assert body['messages'][-1] == snapshot(
+        {
+            'role': 'system',
+            'content': [
+                {
+                    'type': 'tool_addition',
+                    'tool': {
+                        'type': 'tool_reference',
+                        'name': 'lookup_refund_policy',
+                    },
+                },
+            ],
+        }
+    )
+    assert [
+        (part.tool_name, part.args_as_dict()) for part in response.parts if isinstance(part, ToolCallPart)
+    ] == snapshot([('lookup_refund_policy', {'order_id': 'A-4417'})])
+
+
+async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(allow_model_requests: None):
+    """A delta reaching a model without native support names the step the caller missed.
+
+    `prepare_messages` projects every delta onto the local tool-search exchange unless the profile
+    advertises native support, so only adapters that asked for it should ever see the part.
+    `Model.request` is public and doesn't run that projection, though, so a caller driving a model
+    directly reaches this with a history that is otherwise perfectly valid — which is why it's a
+    `UserError` naming the missing call rather than an assertion about an internal invariant.
+
+    Raising beats rendering it anyway: that would emit `tool_addition` blocks without the
+    `mid-conversation-tool-changes` beta header, which is added under this same flag, and collect a
+    400 instead of an explanation. The other seven adapters raise for exactly this; Anthropic was the
+    one that would have gone to the wire.
+    """
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+    assert model.profile.get('tool_addition_mode') is None
+
+    with pytest.raises(UserError, match='prepare_messages'):
+        await model._map_message(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='Help with a refund.')]),
+                ModelResponse(parts=[TextPart(content='Sure.')]),
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['always_ready'])]),
+            ],
+            ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready')]),
+            AnthropicModelSettings(),
+        )
+
+
+def _map(history: list[ModelMessage]) -> list[dict[str, Any]]:
+    """The `messages` array `claude-opus-4-8` renders for `history`."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    _, anthropic_messages = asyncio.run(
+        model._map_message(history, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    )
+    return cast('list[dict[str, Any]]', anthropic_messages)
+
+
+def test_cache_point_ending_a_request_covers_the_instruction():
+    """A `CachePoint` that ends a request caches the instruction it was authored after.
+
+    The instruction is authored before the marker but renders after this request's user blocks, in
+    its own entry, so the boundary has to move to that entry to cover it at all. Leaving it on the
+    user block instead — which is where it landed before this — silently caches less than was asked
+    for, and does it only on the models that take the native entry.
+    """
+    assert _map(
+        [
+            ModelRequest(parts=[UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
+        ]
+    )[-2:] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'context', 'type': 'text'}]},
+            {
+                'role': 'system',
+                'content': [{'text': 'S', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+        ]
+    )
+
+
+def test_cache_point_ending_a_request_covers_the_tool_availability_change():
+    """A `CachePoint` that ends a request caches the availability change it was authored after.
+
+    A `tool_addition` block renders in the same trailing `system` entry a mid-conversation
+    instruction does, so a marker following the delta has the same problem: attaching to the user
+    block that precedes it would leave the availability blocks outside the boundary, silently
+    caching less than was asked for. The deferral has to trigger on either kind of pending entry
+    content, not just instructions.
+    """
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart('first')]),
+                ModelResponse(parts=[TextPart('answer')]),
+                ModelRequest(
+                    parts=[
+                        ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy']),
+                        UserPromptPart(['context', CachePoint()]),
+                    ]
+                ),
+            ],
+            ModelRequestParameters(
+                function_tools=[ToolDefinition(name='lookup_refund_policy')],
+                tool_visibility={'lookup_refund_policy': 'deferred'},
+            ),
+            AnthropicModelSettings(),
+        )
+    )
+    assert cast('list[dict[str, Any]]', anthropic_messages)[-2:] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'context', 'type': 'text'}]},
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'tool_addition',
+                        'tool': {'type': 'tool_reference', 'name': 'lookup_refund_policy'},
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
+                ],
+            },
+        ]
+    )
+
+
+def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -> None:
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    _, anthropic_messages = asyncio.run(
+        model._map_message(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden', 'hidden', 'visible', 'missing'])]),
+                ModelResponse(parts=[TextPart(content='ok')]),
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
+            ],
+            ModelRequestParameters(
+                function_tools=[
+                    ToolDefinition(name='hidden'),
+                    ToolDefinition(name='visible'),
+                ],
+                tool_visibility={'hidden': 'deferred', 'visible': 'visible'},
+            ),
+            AnthropicModelSettings(),
+        )
+    )
+    additions = [
+        block['tool']['name']
+        for message in cast('list[dict[str, Any]]', anthropic_messages)
+        if isinstance(message.get('content'), list)
+        for block in message['content']
+        if block.get('type') == 'tool_addition'
+    ]
+    assert additions == ['hidden']
+
+
+def test_hidden_tool_choice_is_rejected_before_anthropic_mapping() -> None:
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+    with pytest.raises(UserError, match=r'No tool in `tool_choice` is currently available'):
+        model._prepare_tools_and_tool_choice(  # pyright: ignore[reportPrivateUsage]
+            AnthropicModelSettings(tool_choice=['hidden']),
+            ModelRequestParameters(
+                function_tools=[
+                    ToolDefinition(name='visible'),
+                    ToolDefinition(name='hidden'),
+                ],
+                tool_visibility={'visible': 'visible', 'hidden': 'withheld'},
+            ),
+        )
+
+
+def test_cache_point_with_content_after_it_stays_where_it_was_authored():
+    """A marker followed by more content keeps its boundary and leaves the instruction outside it.
+
+    The entry renders after every user block in the request, so a boundary that covered the
+    instruction would have to cover `after` too — content the marker was deliberately placed in front
+    of. Between caching more than was asked for and caching one block less, the marker keeps its
+    meaning and the instruction pays: the cached prefix is always a prefix of what preceded the
+    marker. The instruction stays an instruction either way.
+    """
+    assert _map(
+        [
+            ModelRequest(parts=[UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['before', CachePoint(), 'after'])]),
+        ]
+    )[-2:] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'before', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'after', 'type': 'text'},
+                ],
+            },
+            {'role': 'system', 'content': [{'text': 'S', 'type': 'text'}]},
+        ]
+    )
+
+
+def test_only_the_last_of_several_cache_points_can_reach_the_instruction():
+    """Each marker keeps its own boundary; only one of them can be the one the request ends on."""
+    assert _map(
+        [
+            ModelRequest(parts=[UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['a', CachePoint(), 'b', CachePoint()])]),
+        ]
+    )[-2:] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'a', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'b', 'type': 'text'},
+                ],
+            },
+            {
+                'role': 'system',
+                'content': [{'text': 'S', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+        ]
+    )
+
+
+def test_a_sliding_entry_leaves_its_cache_boundary_behind():
+    """An entry that has to slide forward drops its boundary rather than dragging it along.
+
+    A later user turn makes the entry's authored position illegal, so it slides past that turn. The
+    boundary can't follow: `later` was never marked, and caching it would grow the prefix every time
+    a turn arrives between the instruction and the next generation — the opposite of what the marker
+    is for. So it stays on `context`, and the entry travels without it.
+    """
+    assert _map(
+        [
+            ModelRequest(parts=[UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
+            ModelRequest(parts=[UserPromptPart('later')]),
+        ]
+    )[-3:] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'text': 'context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+            {'role': 'user', 'content': [{'text': 'later', 'type': 'text'}]},
+            {'role': 'system', 'content': [{'text': 'S', 'type': 'text'}]},
+        ]
+    )
+
+
+def test_an_entry_a_later_instruction_follows_keeps_its_cache_boundary():
+    """A `system` entry behind another doesn't slide, so its boundary is still exactly representable.
+
+    `_place_system_messages_before_generation` only hops *user* turns, and a second instruction isn't
+    one. Nothing moves, so nothing has to be given up: the boundary stays on the entry that carries it.
+    """
+    assert _map(
+        [
+            ModelRequest(parts=[UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
+            ModelRequest(parts=[SystemPromptPart('T')]),
+        ]
+    )[-3:] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'context', 'type': 'text'}]},
+            {
+                'role': 'system',
+                'content': [{'text': 'S', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+            {'role': 'system', 'content': [{'text': 'T', 'type': 'text'}]},
+        ]
+    )
+
+
+def test_a_sliding_entry_hands_its_boundary_to_an_assistant_turn():
+    """The block a boundary falls back to is whatever the entry was sitting behind, tool calls included.
+
+    Here the marker is the whole user part, so the entry is emitted straight after the assistant turn
+    that called the tool, and the tool result arrives in the next request. Anthropic takes
+    `cache_control` on a `tool_use` block, and the entry sliding past the result leaves the call and
+    its answer adjacent — which is the placement the API requires and the reason the slide is decided
+    on final positions rather than while mapping.
+    """
+    assert _map(
+        [
+            ModelRequest(parts=[UserPromptPart('start')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call_1')]),
+            ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart([CachePoint()])]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call_1')]),
+        ]
+    )[-3:] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'id': 'call_1',
+                        'input': {},
+                        'name': 'lookup',
+                        'type': 'tool_use',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'call_1',
+                        'type': 'tool_result',
+                        'content': [{'text': 'result', 'type': 'text'}],
+                        'is_error': False,
+                    }
+                ],
+            },
+            {'role': 'system', 'content': [{'text': 'S', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_an_enqueued_instruction_is_inside_the_cache_point_that_follows_it(allow_model_requests: None):
+    """The same rule through the API that produces this shape in practice.
+
+    `RunContext.enqueue` is how an instruction gets added partway through a run, and a tool that
+    enqueues one alongside a trailing `CachePoint` is asking for both to be cached. The mapping is
+    exercised end-to-end here because the enqueued parts have to arrive in that order for the marker
+    to be the request's last authored item at all.
+    """
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='inject', input={}, name='inject', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=2),
+        ),
+        completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=10, output_tokens=2)),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    agent = Agent(
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client)),
+        deps_type=type(None),
+    )
+
+    @agent.tool
+    def inject(ctx: RunContext[None]) -> str:
+        ctx.enqueue(SystemPromptPart('S'), 'context', CachePoint())
+        return 'injected'
+
+    result = await agent.run('start')
+    assert result.output == 'done'
+
+    second_request = get_mock_chat_completion_kwargs(mock_client)[1]
+    assert [
+        (message['role'], block['text'])
+        for message in second_request['messages']
+        for block in message['content']
+        if block.get('cache_control')
+    ] == snapshot([('system', 'S')])
+
+
+async def test_inline_system_prompt_cache_prefix_is_reused(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    vcr: Cassette,
+    rendered_requests: list[dict[str, Any]],
+):
+    """Anthropic writes the prefix the boundary asks for, and reads it back on an identical request.
+
+    The snapshots above are about where the `cache_control` lands; this is the part that says the API
+    agrees. Sending the same history twice, the first run writes a prefix and the second reads one at
+    least as large — which is only true if a boundary on a `system`-role block is honored rather than
+    quietly dropped.
+    """
+    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Reply with OK.'), UserPromptPart(_CACHE_PREFIX)]),
+        ModelResponse(parts=[TextPart('OK')]),
+        ModelRequest(parts=[SystemPromptPart('S'), UserPromptPart(['context', CachePoint()])]),
+    ]
+
+    first = await agent.run(message_history=history)
+    second = await agent.run(message_history=history)
+
+    recorded_bodies = [json.loads(request.body) for request in vcr.requests]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType,reportUnknownVariableType]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']} for body in recorded_bodies]
+    assert rendered_requests[0] == rendered_requests[1]
+    assert rendered_requests[0]['messages'][-2:] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'context', 'type': 'text'}]},
+            {
+                'role': 'system',
+                'content': [{'text': 'S', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+        ]
+    )
+    cached_prefix_tokens = max(first.usage.cache_write_tokens, first.usage.cache_read_tokens)
+    assert cached_prefix_tokens > 0
+    assert second.usage.cache_read_tokens >= cached_prefix_tokens

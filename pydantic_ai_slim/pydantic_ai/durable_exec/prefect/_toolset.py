@@ -4,8 +4,10 @@ import inspect
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
+from pydantic.errors import PydanticUserError
+
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.durable_exec._toolset import guard_run_context_enqueue
+from pydantic_ai.durable_exec._toolset import guard_run_context
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -15,7 +17,7 @@ from ._types import TaskConfig
 
 def guard_task_enqueue(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """Make `ctx.enqueue()` raise inside a Prefect task-wrapped tool call."""
-    return guard_run_context_enqueue(ctx, unit_noun='task', container_noun='flow')
+    return guard_run_context(ctx, unit_noun='task', container_noun='flow')
 
 
 def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
@@ -27,7 +29,7 @@ def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
         result = state.result(raise_on_failure=False)
         if inspect.isawaitable(result):
             result = await result
-        if isinstance(result, (UserError, UnexpectedModelBehavior)):
+        if isinstance(result, (UserError, PydanticUserError, UnexpectedModelBehavior)):
             return False
         if configured_condition is None:
             return True
@@ -94,9 +96,9 @@ def prefectify_toolset(
         )
 
     if isinstance(toolset, DynamicToolset):
-        # The deprecated `PrefectAgent` still accepts anonymous dynamic toolsets and
-        # must retain its existing inline behavior. The capability path validates IDs
-        # before dispatching here.
+        # Only the deprecated `PrefectAgent` reaches this module now (`PrefectDurability`
+        # builds its toolsets on the shared durable base), and it still accepts anonymous
+        # dynamic toolsets, which must retain their existing inline behavior.
         if toolset.id is None:
             return toolset
         from ._dynamic_toolset import prefectify_dynamic_toolset

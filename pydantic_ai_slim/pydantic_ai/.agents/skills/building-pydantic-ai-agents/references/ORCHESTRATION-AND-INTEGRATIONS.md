@@ -19,6 +19,9 @@ async def research(ctx: RunContext, topic: str) -> str:
     return result.output
 ```
 
+Delegating tools and output functions must be `async def` and use `await delegate.run(...)`; never call
+`run_sync()` or `run_stream_sync()` inside them. The parent may still use `run_sync()` at the application boundary.
+
 Good split:
 
 - delegation via tools when the parent keeps control
