@@ -4461,12 +4461,9 @@ async def test_custom_event_maps_to_ag_ui_custom_event():
                 'runId': (run_id := IsSameStr()),
             },
             {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_progress', 'value': {'payload': {'pct': 50}}},
-            {
-                'type': 'CUSTOM',
-                'timestamp': IsInt(),
-                'name': 'ag_ui_progress',
-                'value': {'tool_call_id': 'call_1', 'data': {'payload': {'pct': 100}}},
-            },
+            # Same value shape whether or not the event was emitted from inside a tool call: a
+            # frontend reading `value.<field>` must not fork on the emission site.
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_progress', 'value': {'payload': {'pct': 100}}},
             {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),

@@ -4467,7 +4467,9 @@ class CustomEvent:
         """The event's payload: the subclass's own typed fields.
 
         This is what the UI adapters send to the frontend (AG-UI `CustomEvent.value`, Vercel AI `data-{name}`
-        chunk data). Override to customize the payload shape.
+        chunk data), with the same shape whether or not the event was emitted from inside a tool call.
+        Override to customize the payload shape — e.g. to include `self.tool_call_id` when the frontend
+        needs to attribute the event to a tool call.
         """
         return {
             f.name: getattr(self, f.name)

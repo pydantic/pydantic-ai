@@ -1777,7 +1777,7 @@ async def test_custom_event_maps_to_data_chunk():
         [
             {'type': 'start'},
             {'type': 'data-vercel_progress', 'data': {'payload': {'pct': 50}}},
-            {'type': 'data-vercel_progress', 'data': {'tool_call_id': 'call_1', 'data': {'payload': {'pct': 100}}}},
+            {'type': 'data-vercel_progress', 'data': {'payload': {'pct': 100}}},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',

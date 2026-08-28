@@ -420,10 +420,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if isinstance(payload, DATA_CHUNK_TYPES):
             yield payload
         else:
-            # When the event is tool-scoped, nest the payload under `data` alongside the `tool_call_id`
-            # so consumers can attribute it; otherwise the payload is the data directly.
-            data = {'tool_call_id': event.tool_call_id, 'data': payload} if event.tool_call_id else payload
-            yield DataChunk(type=f'data-{event.name}', data=data)
+            # The data is always the bare payload, whether or not the event is tool-scoped: a
+            # frontend written against one shape must not break when the same event class is later
+            # emitted from inside a tool. An event that wants its attribution on the wire includes
+            # it by overriding `to_payload`.
+            yield DataChunk(type=f'data-{event.name}', data=payload)
 
     async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:
         tool_call_id = part.tool_call_id

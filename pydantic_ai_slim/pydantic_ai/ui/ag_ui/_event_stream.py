@@ -431,10 +431,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if isinstance(payload, BaseEvent):
             yield payload
         else:
-            # When the event is tool-scoped, nest the payload under `data` alongside the `tool_call_id`
-            # so consumers can attribute it; otherwise the payload is the value directly.
-            value = {'tool_call_id': event.tool_call_id, 'data': payload} if event.tool_call_id else payload
-            yield AGUICustomEvent(name=event.name, value=value)
+            # The value is always the bare payload, whether or not the event is tool-scoped: a
+            # frontend written against one shape must not break when the same event class is later
+            # emitted from inside a tool. An event that wants its attribution on the wire includes
+            # it by overriding `to_payload`.
+            yield AGUICustomEvent(name=event.name, value=payload)
 
     async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
         if isinstance(result, RetryPromptPart):
