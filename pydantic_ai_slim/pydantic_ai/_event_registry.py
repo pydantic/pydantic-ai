@@ -90,7 +90,7 @@ def shadowed_envelope_fields(cls: type, reserved: frozenset[str]) -> str | None:
 def inject_tag_field(cls: type, tag_field: str, tag_value: str) -> None:
     """Redeclare `tag_field` on the subclass so it defaults to (and serializes as) the registered tag.
 
-    The annotation is re-declared on the subclass so `@dataclass` (which runs after
+    The annotation is redeclared on the subclass so `@dataclass` (which runs after
     `__init_subclass__`) picks up the new default. On Python 3.14+ the merge wraps the class's lazy
     `__annotate__` function instead of materializing `__annotations__`, preserving PEP 649 deferred
     evaluation for payload fields that reference names defined later in the module.
