@@ -21,18 +21,30 @@ from pydantic_ai.durable_exec import (
     IDENTITY_CODEC,
     JSON_CODEC,
     BaseDurabilityCapability,
+    CallableOperationBackend,
+    CallToolId,
+    CancelSuspendedResponseId,
     CapabilityOperationId,
+    CompactMessagesId,
+    DurableOperationId,
+    EventStreamHandlerId,
+    GetInstructionsId,
+    GetToolsId,
+    JournalOperationNamer,
+    ModelRequestId,
+    OperationConfigRole,
     ToolsetKind,
+    ValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._capability_operation import (
     ModelRequestContextProjection,
     _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
     _operation_result_type,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     Lifecycle,
+    ToolConfig,
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
@@ -46,6 +58,7 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_call_result,
 )
+from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -150,12 +163,70 @@ DBOS_OPERATION_NAMES = {
 }
 
 
+class _ToolParams:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def _operation_ids() -> list[DurableOperationId]:
+    return [
+        ModelRequestId(None, False, 'test'),
+        ModelRequestId('registered', False, 'test'),
+        ModelRequestId(None, True, 'test'),
+        ModelRequestId('registered', True, 'test'),
+        CancelSuspendedResponseId(None, 'test'),
+        CancelSuspendedResponseId('registered', 'test'),
+        CompactMessagesId(None, 'test'),
+        CompactMessagesId('registered', 'test'),
+        EventStreamHandlerId(),
+        CallToolId('function', 'functions'),
+        ValidateToolArgumentsId('function', 'functions'),
+        GetToolsId('mcp', 'mcp'),
+        GetInstructionsId('mcp'),
+        CallToolId('mcp', 'mcp'),
+        GetToolsId('dynamic', 'dynamic'),
+        CallToolId('dynamic', 'dynamic'),
+        ValidateToolArgumentsId('dynamic', 'dynamic'),
+        CapabilityOperationId('compat', 'operation'),
+    ]
+
+
+def _operation_params(operation_id: DurableOperationId) -> object:
+    if isinstance(operation_id, (CallToolId, ValidateToolArgumentsId)):
+        return _ToolParams(
+            {'function': 'function_tool', 'mcp': 'mcp_tool', 'dynamic': 'dynamic_tool'}[operation_id.toolset_kind]
+        )
+    return object()
+
+
 class CompatCapability(AbstractCapability[Any]):
     id = 'compat'
 
     @durable_operation
     async def operation(self, ctx: RunContext[Any]) -> None:
         pass
+
+
+class _JournalConfig:
+    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ToolConfig:
+        return {}
+
+    def for_tool(
+        self, role: OperationConfigRole, operation_id: DurableOperationId, tool: object | None, tool_name: str
+    ) -> ToolConfig:
+        return {}
+
+
+class _JournalBackend(CallableOperationBackend[ToolConfig]):
+    def __init__(self, durability: JournalDurability) -> None:
+        super().__init__(namer=JournalOperationNamer(durability.name), config=_JournalConfig())
+        self._durability = durability
+
+    async def _execute(
+        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
+    ) -> object:
+        self._durability.recorded_names.append(name)
+        return await body()
 
 
 class JournalDurability(BaseDurabilityCapability[Any]):
@@ -179,11 +250,8 @@ class JournalDurability(BaseDurabilityCapability[Any]):
         super().__init__(**kwargs)
         self.recorded_names: list[str] = []
 
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        self.recorded_names.append(name)
-        return await fn()
+    def get_durable_operation_backend(self) -> durable_exec.DurableOperationBackend[ToolConfig]:
+        return _JournalBackend(self)
 
 
 async def test_journal_operation_name_assembly_sequence() -> None:
@@ -223,61 +291,24 @@ async def test_journal_operation_name_assembly_sequence() -> None:
 
 
 def test_default_journal_operation_name_matrix() -> None:
-    durability = JournalDurability(name='compat')
+    namer = JournalOperationNamer('compat')
     names = {
-        durability._unit_name('model.request'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.request', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.request_stream'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.request_stream', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.cancel_suspended_response'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.compact_messages'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.compact_messages', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.cancel_suspended_response', suffix='.registered'
-        ),
-        durability._unit_name('event_stream_handler'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'function_toolset', prefix='compat__function_toolset__functions', tool_name='function_tool'
-        ),
-        'compat__function_toolset__functions.validate_args',
-        durability._unit_name('mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_instructions'
-        ),
-        durability._unit_name('mcp_server', prefix='compat__mcp_server__mcp', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', suffix='.get_tools'
-        ),
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
-        ),
-        'compat__dynamic_toolset__dynamic.validate_args',
-        durability._legacy_operation_name(CapabilityOperationId('compat', 'operation')),  # pyright: ignore[reportPrivateUsage]
+        namer.invocation_name(operation_id, _operation_params(operation_id)).operation_name
+        for operation_id in _operation_ids()
     }
     assert names == JOURNAL_OPERATION_NAMES
 
 
 def test_prefect_operation_name_matrix() -> None:
-    pytest.importorskip('prefect')
-    from pydantic_ai.durable_exec.prefect import PrefectDurability
-
-    durability = PrefectDurability(name='compat')
+    operation_ids = [
+        operation_id
+        for operation_id in _operation_ids()
+        if not isinstance(operation_id, (GetToolsId, GetInstructionsId))
+    ]
+    namer = PrefectOperationNamer()
     names = {
-        durability._unit_name('model.request', label='Model Request', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.request_stream', label='Model Request (Streaming)', model_name='test'
-        ),
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.cancel_suspended_response', label='Cancel Suspended Response', model_name='test'
-        ),
-        durability._unit_name('model.compact_messages', label='Compact Messages', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        PrefectOperationNamer().operation_name(CapabilityOperationId('compat', 'operation')),
+        namer.invocation_name(operation_id, _operation_params(operation_id)).operation_name
+        for operation_id in operation_ids
     }
     assert names == PREFECT_OPERATION_NAMES
 
@@ -300,22 +331,15 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         DurableMCPToolset,
         DurableDynamicToolset,
     }
+    operation_ids = [
+        operation_id
+        for operation_id in _operation_ids()
+        if not isinstance(operation_id, (GetToolsId, GetInstructionsId))
+    ]
+    namer = PrefectOperationNamer()
     assembled_names = {
-        durability._unit_name('model.request', label='Model Request', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.request_stream', label='Model Request (Streaming)', model_name='test'
-        ),
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.cancel_suspended_response', label='Cancel Suspended Response', model_name='test'
-        ),
-        durability._unit_name('model.compact_messages', label='Compact Messages', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        PrefectOperationNamer().operation_name(CapabilityOperationId('compat', 'operation')),
+        namer.invocation_name(operation_id, _operation_params(operation_id)).operation_name
+        for operation_id in operation_ids
     }
     assert assembled_names == PREFECT_OPERATION_NAMES
 

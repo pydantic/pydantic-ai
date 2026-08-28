@@ -31,12 +31,12 @@ from pydantic_ai.durable_exec._operation import (
     ValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
-from pydantic_ai.durable_exec._operation_names import DBOSOperationNamer
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 
+from ._operation_names import DBOSOperationNamer
 from ._utils import StepConfig
 
 P = TypeVar('P')

@@ -22,9 +22,9 @@ from pydantic_ai.durable_exec._operation import (
     ValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
-from pydantic_ai.durable_exec._operation_names import TemporalOperationNamer
 
 from ._activity_execution import execute_activity
+from ._operation_names import TemporalOperationNamer
 from ._toolset import heartbeating, model_response_payload_errors
 
 P = TypeVar('P')

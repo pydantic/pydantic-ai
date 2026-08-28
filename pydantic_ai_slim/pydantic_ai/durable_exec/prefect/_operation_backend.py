@@ -16,8 +16,8 @@ from pydantic_ai.durable_exec._operation import (
     ValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
-from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer
 
+from ._operation_names import PrefectOperationNamer
 from ._types import TaskConfig
 
 

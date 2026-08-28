@@ -23,8 +23,10 @@ from pydantic_ai.durable_exec._capability_operation import (
     tier_one_durable_operation,
 )
 from pydantic_ai.durable_exec._codec import JSON_CODEC
-from pydantic_ai.durable_exec._operation import ToolsetKind
-from pydantic_ai.durable_exec._toolset import Lifecycle
+from pydantic_ai.durable_exec._operation import DurableOperationId, OperationConfigRole, ToolsetKind
+from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
+from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
+from pydantic_ai.durable_exec._toolset import Lifecycle, ToolConfig
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -90,6 +92,33 @@ def blockbuster_enabled() -> bool:
     return False
 
 
+class _RecordingConfig:
+    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ToolConfig:
+        return {}
+
+    def for_tool(
+        self, role: OperationConfigRole, operation_id: DurableOperationId, tool: object | None, tool_name: str
+    ) -> ToolConfig:
+        return {}
+
+
+class _RecordingBackend(CallableOperationBackend[ToolConfig]):
+    def __init__(self, durability: RecordingDurability) -> None:
+        super().__init__(namer=JournalOperationNamer(durability.name), config=_RecordingConfig())
+        self._durability = durability
+
+    async def _execute(
+        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
+    ) -> object:
+        durability = self._durability
+        durability.calls.append((name, cache_key))
+        if not durability.replay_capability_operations or '__capability__' not in name:
+            return await body()
+        if name not in durability.recorded_results:
+            durability.recorded_results[name] = await body()
+        return durability.recorded_results[name]
+
+
 class RecordingDurability(BaseDurabilityCapability[Any]):
     engine_name = 'recording'
     _durable_unit_noun = 'unit'
@@ -103,35 +132,23 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
         'dynamic': 'enter-never',
     }
 
+    replay_capability_operations = False
+
     def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
         super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.recorded_results: dict[str, Any] = {}
 
     @property
     def in_durable_context(self) -> bool:
         return True
 
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        self.calls.append((name, inputs))
-        return await fn()
+    def get_durable_operation_backend(self) -> CallableOperationBackend[ToolConfig]:
+        return _RecordingBackend(self)
 
 
 class ReplayingDurability(RecordingDurability):
-    def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
-        super().__init__(models=models)
-        self.recorded_results: dict[str, Any] = {}
-
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        self.calls.append((name, inputs))
-        if '__capability__' not in name:
-            return await fn()
-        if name not in self.recorded_results:
-            self.recorded_results[name] = await fn()
-        return self.recorded_results[name]
+    replay_capability_operations = True
 
 
 class Operations(AbstractCapability[Any]):

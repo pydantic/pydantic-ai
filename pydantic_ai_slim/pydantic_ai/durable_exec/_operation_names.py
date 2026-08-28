@@ -45,6 +45,7 @@ class _NamedToolInvocation(Protocol):
 
 
 def _toolset_prefix(kind: ToolsetKind) -> str:
+    # `mcp_server` preserves the naming convention already shipped on `main`.
     return 'mcp_server' if kind == 'mcp' else f'{kind}_toolset'
 
 
@@ -56,6 +57,9 @@ def _tool_name(params: object) -> str:
 
 class JournalOperationNamer:
     """Stable default naming policy for sequence-based journal engines.
+
+    Generated names are persisted compatibility data and must essentially never change. Changing
+    them can strand in-flight workflows and recorded runs.
 
     Use this with either backend tier when persisted operation names can follow Pydantic AI's
     journal convention. Pin the generated names before changing agent, model, or toolset identity.
@@ -97,79 +101,3 @@ class JournalOperationNamer:
         if isinstance(operation_id, CallToolId) and operation_id.toolset_kind != 'mcp':
             name = f'{name}:{_tool_name(params)}'
         return DurableInvocationName(name)
-
-
-class PrefectOperationNamer:
-    def operation_name(self, operation_id: DurableOperationId) -> str:
-        match operation_id:
-            case CapabilityOperationId(capability_id=capability_id, operation=operation):
-                return f'Capability: {capability_id}.{operation}'
-            case ModelRequestId(streaming=True, model_name=model_name):
-                return f'Model Request (Streaming): {model_name}'
-            case ModelRequestId(model_name=model_name):
-                return f'Model Request: {model_name}'
-            case CancelSuspendedResponseId(model_name=model_name):
-                return f'Cancel Suspended Response: {model_name}'
-            case CompactMessagesId(model_name=model_name):
-                return f'Compact Messages: {model_name}'
-            case EventStreamHandlerId():
-                return 'Handle Stream Event'
-            case GetToolsId() | GetInstructionsId():
-                raise RuntimeError(
-                    'Prefect discovery operations do not have durable unit names in the current implementation'
-                )
-            case ValidateToolArgumentsId():
-                return 'Validate Tool Args'
-            case CallToolId(toolset_kind='mcp'):
-                return 'Call MCP Tool'
-            case CallToolId():
-                return 'Call Tool'
-        assert_never(operation_id)
-
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
-        name = self.operation_name(operation_id)
-        if isinstance(operation_id, CallToolId | ValidateToolArgumentsId):
-            name = f'{name}: {_tool_name(params)}'
-        return DurableInvocationName(name, display_name=name)
-
-
-class DBOSOperationNamer(JournalOperationNamer):
-    def _model_suffix(self, model_id: str | None) -> str:
-        return ''
-
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
-        return DurableInvocationName(self.operation_name(operation_id))
-
-
-class TemporalOperationNamer:
-    def __init__(self, agent_name: str) -> None:
-        self._prefix = f'agent__{agent_name}'
-
-    def operation_name(self, operation_id: DurableOperationId) -> str:
-        match operation_id:
-            case CapabilityOperationId(capability_id=capability_id, operation=operation):
-                return f'{self._prefix}__capability__{capability_id}__{operation}'
-            case ModelRequestId(streaming=True):
-                return f'{self._prefix}__model_request_stream'
-            case ModelRequestId():
-                return f'{self._prefix}__model_request'
-            case CancelSuspendedResponseId():
-                return f'{self._prefix}__model_cancel_suspended_response'
-            case CompactMessagesId():
-                return f'{self._prefix}__model_compact_messages'
-            case EventStreamHandlerId():
-                return f'{self._prefix}__event_stream_handler'
-            case GetToolsId(toolset_kind=kind, toolset_id=toolset_id):
-                return f'{self._prefix}__{_toolset_prefix(kind)}__{toolset_id}__get_tools'
-            case GetInstructionsId(toolset_id=toolset_id):
-                return f'{self._prefix}__mcp_server__{toolset_id}__get_instructions'
-            case ValidateToolArgumentsId(toolset_kind=kind, toolset_id=toolset_id):
-                prefix = 'toolset' if kind == 'function' else _toolset_prefix(kind)
-                return f'{self._prefix}__{prefix}__{toolset_id}__validate_args'
-            case CallToolId(toolset_kind=kind, toolset_id=toolset_id):
-                prefix = 'toolset' if kind == 'function' else _toolset_prefix(kind)
-                return f'{self._prefix}__{prefix}__{toolset_id}__call_tool'
-        assert_never(operation_id)
-
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
-        return DurableInvocationName(self.operation_name(operation_id))

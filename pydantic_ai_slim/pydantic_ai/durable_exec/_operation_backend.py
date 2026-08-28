@@ -160,36 +160,3 @@ class RegisteredOperationBackend(ABC, Generic[ConfigT]):
         name: str,
         config: ConfigT,
     ) -> tuple[BoundDurableOperation[P, W, R], Sequence[Callable[..., object]]]: ...
-
-
-class LegacyDurableCapability(Protocol):
-    async def run_durable_unit(
-        self,
-        name: str,
-        fn: Callable[[], Awaitable[object]],
-        *,
-        inputs: tuple[object, ...],
-        config: object,
-    ) -> object: ...
-
-
-class LegacyCallableBackend(CallableOperationBackend[ConfigT]):
-    def __init__(
-        self,
-        capability: LegacyDurableCapability,
-        *,
-        namer: DurableOperationNamer,
-        config: DurableOperationConfig[ConfigT],
-    ) -> None:
-        super().__init__(namer=namer, config=config)
-        self._capability = capability
-
-    async def _execute(
-        self,
-        *,
-        name: str,
-        body: Callable[[], Awaitable[object]],
-        cache_key: tuple[object, ...],
-        config: object,
-    ) -> object:
-        return await self._capability.run_durable_unit(name, body, inputs=cache_key, config=config)

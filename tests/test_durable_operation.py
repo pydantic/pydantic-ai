@@ -41,23 +41,16 @@ from pydantic_ai.durable_exec._operation import (
     ModelRequestId,
     NoCacheIdentity,
     OperationConfigRole,
-    OperationInvocation,
     TypedResultCodec,
     ValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import (
     BoundDurableOperation,
     CallableOperationBackend,
-    LegacyCallableBackend,
+    DurableOperationBackend,
     RegisteredOperationBackend,
 )
-from pydantic_ai.durable_exec._operation_names import (
-    DBOSOperationNamer,
-    DurableOperationNamer,
-    JournalOperationNamer,
-    PrefectOperationNamer,
-    TemporalOperationNamer,
-)
+from pydantic_ai.durable_exec._operation_names import DurableOperationNamer, JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableDynamicToolset,
@@ -65,6 +58,7 @@ from pydantic_ai.durable_exec._toolset import (
     DynamicToolInfo,
     DynamicToolsResult,
     Lifecycle,
+    ToolConfig,
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
@@ -77,6 +71,9 @@ from pydantic_ai.durable_exec._toolset import (
     wrap_tool_call_result,
 )
 from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
+from pydantic_ai.durable_exec.dbos._operation_names import DBOSOperationNamer
+from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
+from pydantic_ai.durable_exec.temporal._operation_names import TemporalOperationNamer
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -151,6 +148,28 @@ TEMPORAL_ACTIVITY_NAMES = {
 }
 
 
+class _JournalConfig:
+    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ToolConfig:
+        return {}
+
+    def for_tool(
+        self, role: OperationConfigRole, operation_id: DurableOperationId, tool: object | None, tool_name: str
+    ) -> ToolConfig:
+        return {}
+
+
+class _JournalBackend(CallableOperationBackend[ToolConfig]):
+    def __init__(self, durability: JournalDurability) -> None:
+        super().__init__(namer=JournalOperationNamer(durability.name), config=_JournalConfig())
+        self._durability = durability
+
+    async def _execute(
+        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
+    ) -> object:
+        self._durability.calls.append((name, cache_key, config))
+        return await body()
+
+
 class JournalDurability(BaseDurabilityCapability[Any]):
     engine_name = 'Journal operation test stub'
     _durable_unit_noun = 'unit'
@@ -172,16 +191,8 @@ class JournalDurability(BaseDurabilityCapability[Any]):
         super().__init__(**kwargs)
         self.calls: list[tuple[str, tuple[Any, ...], Any]] = []
 
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        self.calls.append((name, inputs, config))
-        return await fn()
-
-
-class _OverrideNameDurability(JournalDurability):
-    def _unit_name(self, kind: str, **parts: Any) -> str:
-        return f'override:{kind}:{parts["label"]}'
+    def get_durable_operation_backend(self) -> DurableOperationBackend[ToolConfig]:
+        return _JournalBackend(self)
 
 
 async def test_durability_forces_sequential_tools_inside_durable_context() -> None:
@@ -265,42 +276,13 @@ def _params(operation_id: DurableOperationId) -> object:
     return object()
 
 
-def test_journal_name_parity_with_live_old_implementation_and_table() -> None:
-    old = JournalDurability(name='compat')
-    live = [
-        old._unit_name('model.request'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('model.request', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('model.request_stream'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('model.request_stream', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('model.cancel_suspended_response'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('model.cancel_suspended_response', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('event_stream_handler'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_instructions'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'function_toolset', prefix='compat__function_toolset__functions', tool_name='function_tool'
-        ),
-        'compat__function_toolset__functions.validate_args',
-        old._unit_name('mcp_server', prefix='compat__mcp_server__mcp', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
-        ),
-        'compat__dynamic_toolset__dynamic.validate_args',
-        old._unit_name('model.compact_messages'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('model.compact_messages', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-    ]
+def test_journal_operation_names() -> None:
     namer = JournalOperationNamer('compat')
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in _ids()]
-    assert actual == live
     assert set(actual) == JOURNAL_OPERATION_NAMES
 
 
-def test_prefect_name_parity_with_live_old_implementation_and_table() -> None:
-    pytest.importorskip('prefect')
-    from pydantic_ai.durable_exec.prefect import PrefectDurability
-
-    old = PrefectDurability(name='compat')
+def test_prefect_operation_names() -> None:
     ids = [
         *_ids()[:1],
         _ids()[2],
@@ -313,28 +295,9 @@ def test_prefect_name_parity_with_live_old_implementation_and_table() -> None:
         _ids()[14],
         _ids()[15],
     ]
-    live = [
-        old._unit_name('model.request', label='Model Request', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.request_stream', label='Model Request (Streaming)', model_name='test'
-        ),
-        old._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.cancel_suspended_response', label='Cancel Suspended Response', model_name='test'
-        ),
-        old._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('model.compact_messages', label='Compact Messages', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-    ]
     namer = PrefectOperationNamer()
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
-    assert actual == live
     assert set(actual) == PREFECT_OPERATION_NAMES
-    assert old._model_id_suffix('registered') == ''  # pyright: ignore[reportPrivateUsage]
-    assert old._legacy_operation_name(CancelSuspendedResponseId(None, 'test')) == 'Cancel Suspended Response: test'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
@@ -841,9 +804,9 @@ def test_namer_error_paths_and_unrepresented_formats() -> None:
     with pytest.raises(TypeError, match='must expose'):
         JournalOperationNamer('agent').invocation_name(CallToolId('function', 'tools'), object())
     prefect = PrefectOperationNamer()
-    with pytest.raises(RuntimeError, match='do not have durable unit names'):
+    with pytest.raises(RuntimeError, match='bug in the durability integration; please report it'):
         prefect.operation_name(GetToolsId('dynamic', 'tools'))
-    with pytest.raises(RuntimeError, match='do not have durable unit names'):
+    with pytest.raises(RuntimeError, match='bug in the durability integration; please report it'):
         prefect.operation_name(GetInstructionsId('mcp'))
     assert (
         JournalOperationNamer('agent').operation_name(GetToolsId('function', 'tools'))
@@ -943,23 +906,6 @@ class _RegisteredDurability(JournalDurability):
         return self.backend
 
 
-class _RecordingLegacyCapability:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[object, ...], object, object]] = []
-
-    async def run_durable_unit(
-        self,
-        name: str,
-        fn: Callable[[], Awaitable[object]],
-        *,
-        inputs: tuple[object, ...],
-        config: object,
-    ) -> object:
-        payload = await fn()
-        self.calls.append((name, inputs, config, payload))
-        return payload
-
-
 @dataclass(frozen=True)
 class _DispatchParams:
     inputs: tuple[object, ...]
@@ -971,170 +917,6 @@ class _LogicalInputs(CacheIdentity[_DispatchParams]):
         return params.inputs
 
 
-@dataclass(frozen=True)
-class _LegacyCase:
-    operation_id: DurableOperationId
-    role: OperationConfigRole
-    params: _DispatchParams
-    result: object
-    result_type: object
-
-
-_CTX = object()
-_TOOL = object()
-_MODEL_MESSAGES = ['request']
-_MODEL_SETTINGS = {'temperature': 0}
-_MODEL_PARAMETERS = {'allow_text_output': True}
-_MODEL_RESPONSE = ModelResponse(parts=[TextPart('hello')])
-_TOOL_ARGS = {'value': 1}
-
-
-@pytest.mark.parametrize(
-    'case',
-    [
-        _LegacyCase(
-            ModelRequestId(None, False, 'test'),
-            OperationConfigRole.MODEL,
-            _DispatchParams((None, _MODEL_MESSAGES, _MODEL_SETTINGS, _MODEL_PARAMETERS, _CTX)),
-            _MODEL_RESPONSE,
-            ModelResponse,
-        ),
-        _LegacyCase(
-            ModelRequestId(None, True, 'test'),
-            OperationConfigRole.MODEL,
-            _DispatchParams((None, _MODEL_MESSAGES, _MODEL_SETTINGS, _MODEL_PARAMETERS, _CTX)),
-            {'response': 'streamed', 'events': []},
-            object,
-        ),
-        _LegacyCase(
-            CancelSuspendedResponseId(None, 'test'),
-            OperationConfigRole.MODEL,
-            _DispatchParams((None, _MODEL_RESPONSE, _CTX)),
-            None,
-            type(None),
-        ),
-        _LegacyCase(
-            EventStreamHandlerId(),
-            OperationConfigRole.EVENT,
-            _DispatchParams(({'event': 'part-start'},)),
-            None,
-            type(None),
-        ),
-        _LegacyCase(
-            CallToolId('function', 'functions'),
-            OperationConfigRole.TOOL_CALL,
-            _DispatchParams(('function_tool', _TOOL_ARGS, _CTX, _TOOL), 'function_tool'),
-            _ToolReturn('ok'),
-            CallToolResult,
-        ),
-        _LegacyCase(
-            GetToolsId('dynamic', 'dynamic'),
-            OperationConfigRole.TOOL_DISCOVERY,
-            _DispatchParams((_CTX,)),
-            {'tool': 'definition'},
-            object,
-        ),
-        _LegacyCase(
-            CallToolId('dynamic', 'dynamic'),
-            OperationConfigRole.TOOL_CALL,
-            _DispatchParams(('dynamic_tool', _TOOL_ARGS, _CTX), 'dynamic_tool'),
-            _ToolReturn('ok'),
-            CallToolResult,
-        ),
-        _LegacyCase(
-            GetToolsId('mcp', 'mcp'),
-            OperationConfigRole.TOOL_DISCOVERY,
-            _DispatchParams((_CTX,)),
-            {'mcp_tool': 'definition'},
-            object,
-        ),
-        _LegacyCase(
-            GetInstructionsId('mcp'),
-            OperationConfigRole.TOOL_DISCOVERY,
-            _DispatchParams((_CTX,)),
-            'instructions',
-            str | None,
-        ),
-        _LegacyCase(
-            CallToolId('mcp', 'mcp'),
-            OperationConfigRole.TOOL_CALL,
-            _DispatchParams(('mcp_tool', _TOOL_ARGS, _CTX, _TOOL), 'mcp_tool'),
-            _ToolReturn('ok'),
-            CallToolResult,
-        ),
-    ],
-    ids=[
-        'model-request',
-        'model-request-stream',
-        'cancel-suspended-response',
-        'event-stream-handler',
-        'function-tool-call',
-        'dynamic-get-tools',
-        'dynamic-call',
-        'mcp-get-tools',
-        'mcp-get-instructions',
-        'mcp-call',
-    ],
-)
-async def test_legacy_callable_backend_dispatch_parity(case: _LegacyCase) -> None:
-    handled: list[_DispatchParams] = []
-
-    async def handler(params: _DispatchParams) -> object:
-        handled.append(params)
-        return case.result
-
-    config = _Config()
-    capability = _RecordingLegacyCapability()
-    namer = JournalOperationNamer('compat')
-    operation = DurableOperation(
-        operation_id=case.operation_id,
-        handler=handler,
-        parameter_transport=IdentityParameterTransport[_DispatchParams](),
-        cache_identity=_LogicalInputs(),
-        result_codec=TypedResultCodec[object](
-            case.result_type, mode='identity' if case.result_type is object else 'json'
-        ),
-        config_role=case.role,
-    )
-    bound = LegacyCallableBackend(capability, namer=namer, config=config).bind(operation)
-
-    assert bound.operation is operation
-    assert await bound(case.params) == case.result
-    name = namer.invocation_name(case.operation_id, case.params).operation_name
-    assert capability.calls == [(name, case.params.inputs, {'source': 'role-default'}, capability.calls[0][3])]
-    assert handled == [case.params]
-    assert config.base_calls == [(case.role, case.operation_id)]
-    if isinstance(case.operation_id, CallToolId):
-        assert capability.calls[0][3] == {'result': 'ok', 'kind': 'tool_return'}
-
-    assert await bound(case.params, config={'source': 'explicit'}) == case.result
-    assert capability.calls[-1][0:3] == (name, case.params.inputs, {'source': 'explicit'})
-    assert len(config.base_calls) == 1
-
-
-async def test_legacy_callable_backend_preserves_handler_exception() -> None:
-    error = RuntimeError('handler failed')
-
-    async def handler(params: _DispatchParams) -> None:
-        raise error
-
-    operation = DurableOperation(
-        operation_id=EventStreamHandlerId(),
-        handler=handler,
-        parameter_transport=IdentityParameterTransport[_DispatchParams](),
-        cache_identity=_LogicalInputs(),
-        result_codec=TypedResultCodec[None](type(None)),
-        config_role=OperationConfigRole.EVENT,
-    )
-    backend = LegacyCallableBackend(
-        _RecordingLegacyCapability(), namer=JournalOperationNamer('compat'), config=_Config()
-    )
-
-    with pytest.raises(RuntimeError, match='handler failed') as exc_info:
-        await backend.bind(operation)(_DispatchParams((object(),)))
-    assert exc_info.value is error
-
-
 class _NoneConfig:
     def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> None:
         return None
@@ -1143,70 +925,6 @@ class _NoneConfig:
         self, role: OperationConfigRole, operation_id: DurableOperationId, tool: object | None, tool_name: str
     ) -> Literal[False]:
         return False
-
-
-async def test_legacy_callable_backend_matches_live_production_assembly_inputs() -> None:
-    async def function_tool() -> str:
-        return 'function'
-
-    async def dynamic_tool() -> str:
-        return 'dynamic'
-
-    function_toolset = FunctionToolset(tools=[function_tool], id='functions')
-    dynamic_toolset = DynamicToolset(lambda _: FunctionToolset(tools=[dynamic_tool]), id='dynamic')
-    agent = Agent(
-        TestModel(),
-        name='compat',
-        toolsets=[function_toolset, dynamic_toolset],
-        capabilities=[JournalDurability(event_stream_handler=_event_handler)],
-    )
-
-    await agent.run('Call every tool')
-
-    production = JournalDurability.from_agent(agent)
-    assert production is not None
-    assert production._legacy_operation_name(GetInstructionsId('mcp')) == 'compat__mcp_server__mcp.get_instructions'  # pyright: ignore[reportPrivateUsage]
-    assert production.calls
-    operation_ids: dict[str, DurableOperationId] = {
-        'compat__model.request_stream': ModelRequestId(None, True, 'test'),
-        'compat__event_stream_handler': EventStreamHandlerId(),
-        'compat__function_toolset__functions.call_tool:function_tool': CallToolId('function', 'functions'),
-        'compat__dynamic_toolset__dynamic.get_tools': GetToolsId('dynamic', 'dynamic'),
-        'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool': CallToolId('dynamic', 'dynamic'),
-    }
-    comparable = [call for call in production.calls if call[0] in operation_ids]
-    assert set(operation_ids) <= {name for name, _, _ in comparable}
-
-    declaration_capability = _RecordingLegacyCapability()
-    backend = LegacyCallableBackend(declaration_capability, namer=JournalOperationNamer('compat'), config=_NoneConfig())
-    for name, inputs, config in comparable:
-
-        async def handler(params: _DispatchParams) -> None:
-            return None
-
-        operation_id = operation_ids[name]
-        operation = DurableOperation(
-            operation_id=operation_id,
-            handler=handler,
-            parameter_transport=IdentityParameterTransport[_DispatchParams](),
-            cache_identity=_LogicalInputs(),
-            result_codec=TypedResultCodec[None](type(None)),
-            config_role=OperationConfigRole.TOOL_CALL,
-        )
-        tool_name = inputs[0] if isinstance(operation_id, CallToolId) and isinstance(inputs[0], str) else ''
-        await backend.bind(operation)(_DispatchParams(inputs, tool_name), config=config)
-
-    assert [(name, inputs, config) for name, inputs, config, _ in declaration_capability.calls] == comparable
-
-
-async def test_live_model_declaration_honors_legacy_unit_name_override() -> None:
-    agent = Agent(TestModel(), name='compat', capabilities=[_OverrideNameDurability()])
-
-    await agent.run('hello')
-
-    durability = _OverrideNameDurability.from_agent(agent)
-    assert durability is not None
-    assert [name for name, _, _ in durability.calls] == ['override:model.request:Model Request']
 
 
 async def test_callable_operation_backend_resolves_and_round_trips() -> None:
@@ -1278,9 +996,6 @@ def test_trivial_transport_cache_and_invocation_helpers() -> None:
     assert transport.dump(value) is value
     assert transport.load(value, runtime=object()) is value
     assert NoCacheIdentity[object]().project(value) == ()
-    invocation = OperationInvocation(params=value, config='config')
-    assert invocation.params is value
-    assert invocation.config == 'config'
     assert _NoneConfig().for_tool(OperationConfigRole.TOOL_CALL, CallToolId('function', 'tools'), None, 'tool') is False
 
 

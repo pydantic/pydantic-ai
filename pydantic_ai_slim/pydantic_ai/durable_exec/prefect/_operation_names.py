@@ -1,0 +1,56 @@
+from typing_extensions import assert_never
+
+from .._operation import (
+    CallToolId,
+    CancelSuspendedResponseId,
+    CapabilityOperationId,
+    CompactMessagesId,
+    DurableOperationId,
+    EventStreamHandlerId,
+    GetInstructionsId,
+    GetToolsId,
+    ModelRequestId,
+    ValidateToolArgumentsId,
+)
+from .._operation_names import DurableInvocationName, _tool_name  # pyright: ignore[reportPrivateUsage]
+
+
+class PrefectOperationNamer:
+    """Generate Prefect task names that are persisted compatibility data.
+
+    These names must essentially never change. Changing them can strand in-flight flows and
+    recorded runs.
+    """
+
+    def operation_name(self, operation_id: DurableOperationId) -> str:
+        match operation_id:
+            case CapabilityOperationId(capability_id=capability_id, operation=operation):
+                return f'Capability: {capability_id}.{operation}'
+            case ModelRequestId(streaming=True, model_name=model_name):
+                return f'Model Request (Streaming): {model_name}'
+            case ModelRequestId(model_name=model_name):
+                return f'Model Request: {model_name}'
+            case CancelSuspendedResponseId(model_name=model_name):
+                return f'Cancel Suspended Response: {model_name}'
+            case CompactMessagesId(model_name=model_name):
+                return f'Compact Messages: {model_name}'
+            case EventStreamHandlerId():
+                return 'Handle Stream Event'
+            case GetToolsId() | GetInstructionsId():
+                raise RuntimeError(
+                    'Prefect runs discovery in flow code and never names a durable unit for it. '
+                    'Reaching this branch is a bug in the durability integration; please report it.'
+                )
+            case ValidateToolArgumentsId():
+                return 'Validate Tool Args'
+            case CallToolId(toolset_kind='mcp'):
+                return 'Call MCP Tool'
+            case CallToolId():
+                return 'Call Tool'
+        assert_never(operation_id)
+
+    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
+        name = self.operation_name(operation_id)
+        if isinstance(operation_id, (CallToolId, ValidateToolArgumentsId)):
+            name = f'{name}: {_tool_name(params)}'
+        return DurableInvocationName(name, display_name=name)

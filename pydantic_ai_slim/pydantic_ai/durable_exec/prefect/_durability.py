@@ -125,21 +125,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             event_sequence_key=f'pydantic_ai_event_sequence:{self.name}',
         )
 
-    # --- Naming (compat surface): Prefect's human-readable task display names ---
-
-    def _unit_name(self, kind: str, **parts: Any) -> str:
-        label = parts.get('label')
-        if (model_name := parts.get('model_name')) is not None:
-            return f'{label}: {model_name}'
-        if (tool_name := parts.get('tool_name')) is not None:
-            return f'{label}: {tool_name}'
-        assert isinstance(label, str)
-        return label
-
-    def _model_id_suffix(self, model_id: str | None) -> str:
-        """Keep Prefect's existing display names unchanged for runtime model selection."""
-        return ''
-
     # --- Config knobs ---
 
     def _toolset_base_config(self, kind: ToolsetKind) -> Any:

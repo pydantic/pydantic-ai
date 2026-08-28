@@ -65,8 +65,6 @@ from ._operation import (
     CapabilityOperationId,
     CompactMessagesId,
     DurableOperation,
-    DurableOperationConfig,
-    DurableOperationId,
     EventStreamHandlerId,
     GetInstructionsId,
     GetToolsId,
@@ -77,8 +75,7 @@ from ._operation import (
     TypedResultCodec,
     ValidateToolArgumentsId,
 )
-from ._operation_backend import DurableOperationBackend, LegacyCallableBackend, RegisteredOperationBackend
-from ._operation_names import DurableInvocationName, DurableOperationNamer
+from ._operation_backend import DurableOperationBackend, RegisteredOperationBackend
 from ._runtime_toolsets import (
     RuntimeToolsetKind,
     cancellation_token_unsupported_error,
@@ -206,50 +203,7 @@ class _DynamicCallToolCacheIdentity(CacheIdentity[_DynamicCallToolParams]):
         return (params.name, params.tool_args, params.ctx, params.tool_def)
 
 
-class _LegacyOperationNamer(DurableOperationNamer):
-    """Preserve callable-engine names by delegating to their existing naming hook."""
-
-    def __init__(
-        self,
-        operation_name: Callable[[DurableOperationId], str],
-        invocation_name: Callable[[DurableOperationId, object], DurableInvocationName],
-    ) -> None:
-        self._operation_name = operation_name
-        self._invocation_name = invocation_name
-
-    # Legacy callable dispatch always asks for the invocation name directly.
-    def operation_name(self, operation_id: DurableOperationId) -> str:  # pragma: no cover
-        return self._operation_name(operation_id)
-
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
-        return self._invocation_name(operation_id, params)
-
-
-class _LegacyOperationConfig(DurableOperationConfig[Any]):
-    """Route declaration roles through the callable engines' existing config hooks."""
-
-    def __init__(
-        self,
-        base_config: Callable[[OperationConfigRole, DurableOperationId], Any],
-        tool_config: Callable[[OperationConfigRole, DurableOperationId, object | None, str], Any | Literal[False]],
-    ) -> None:
-        self._base_config = base_config
-        self._tool_config = tool_config
-
-    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> Any:
-        return self._base_config(role, operation_id)
-
-    def for_tool(
-        self,
-        role: OperationConfigRole,
-        operation_id: DurableOperationId,
-        tool: object | None,
-        tool_name: str,
-    ) -> Any | Literal[False]:
-        return self._tool_config(role, operation_id, tool, tool_name)
-
-
-class _LegacyResultCodec(ResultCodec[_T]):
+class _TypedResultCodec(ResultCodec[_T]):
     """Apply the capability codec and its engine-specific serialization error mapping."""
 
     def __init__(self, dump: Callable[[_T], object], load: Callable[[object], _T]) -> None:
@@ -296,8 +250,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     # --- Declarative engine surface -------------------------------------------------------------
     # Everything below is DATA an engine sets rather than behavior it overrides. The base's
     # concrete `_wrap_leaf_toolset` / `wrap_model_request` / `_dispatch_event_stream_event`
-    # (built on `run_durable_unit` + `_codec`) consult these; a callable engine implements only
-    # `run_durable_unit` + `in_durable_context` and fills these in.
+    # Operation backends and toolset construction consult these declarative fields.
 
     _codec: ClassVar[DurabilityCodec] = IDENTITY_CODEC
     """How the base serializes at every durable boundary. Identity for object-passing engines
@@ -725,159 +678,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._toolsets_by_id[ts_id] = wrapped
         return wrapped
 
-    # ===========================================================================================
-    #  Base-owned operation assembly
-    #
-    #  These methods used to be overridden by every engine. They are now concrete defaults built
-    #  on the declarative fields above plus two behavioral hooks -- `run_durable_unit` (the durable
-    #  primitive) and `in_durable_context`. A callable engine (Prefect/DBOS/Restate/Lambda/Absurd)
-    #  inherits all of them. A pre-registration engine (Temporal) still overrides them, because a
-    #  call-time closure can't cross its workflow→activity boundary (see `run_durable_unit`).
-    # ===========================================================================================
-
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        """Run one framework-built operation `fn` durably and return its (codec-dumped) payload.
-
-        THE durable primitive for callable engines: Prefect wraps `fn` in a `@task`, Restate calls
-        `ctx.run_typed(name, fn)`, Lambda bridges `fn` onto `context.step(name, ...)`. `fn` already
-        applies `self._codec.dump`, so the returned payload is journal-ready; the base applies
-        `self._codec.load` around this call.
-
-        `inputs` are the operation's logical arguments (messages, tool args, run context, ...).
-        SEQUENCE-keyed engines (Restate/Lambda/Absurd/DBOS) ignore them -- a step's identity is its
-        encounter order. HASH-keyed engines (Prefect) MUST feed them to the durable primitive so its
-        cache key hashes them; a bare no-arg closure would hide the inputs and collapse distinct
-        calls onto one cache entry. This parameter is exactly the seam that lets one primitive serve
-        both keying families.
-
-        Temporal CANNOT implement this: its durable unit is a worker-registered activity dispatched
-        by name (`activity.defn(name=...)` + `workflow.execute_activity(...)`), not an arbitrary
-        call-time callable. Temporal therefore overrides the assembly methods below instead.
-        """
-        raise NotImplementedError
-
+    @abstractmethod
     def get_durable_operation_backend(self) -> DurableOperationBackend[ToolConfig]:
-        """Build the declaration backend for callable engines using their compatibility hooks."""
-        return LegacyCallableBackend(
-            self,
-            namer=_LegacyOperationNamer(self._legacy_operation_name, self._legacy_invocation_name),
-            config=_LegacyOperationConfig(self._legacy_base_operation_config, self._legacy_tool_operation_config),
-        )
+        """Return the backend that dispatches this capability's durable operations."""
 
-    def _legacy_base_operation_config(self, role: OperationConfigRole, operation_id: DurableOperationId) -> Any:
-        if role is OperationConfigRole.MODEL:
-            return self._model_unit_config()
-        if role is OperationConfigRole.EVENT:
-            return self._event_unit_config()
-        if role is OperationConfigRole.CAPABILITY:
-            return None
-        kind = self._legacy_toolset_kind(operation_id)
-        return self._normalize_unit_config(self._toolset_base_config(kind))
-
-    def _legacy_tool_operation_config(
-        self,
-        role: OperationConfigRole,
-        operation_id: DurableOperationId,
-        tool: object | None,
-        tool_name: str,
-    ) -> Any | Literal[False]:
-        kind = self._legacy_toolset_kind(operation_id)
-        resolve = self._build_resolve_tool_config(self._toolset_base_config(kind))
-        return resolve(cast(ToolsetTool[Any] | None, tool), tool_name)
-
-    @staticmethod
-    def _legacy_toolset_kind(operation_id: DurableOperationId) -> ToolsetKind:
-        match operation_id:
-            case (
-                GetToolsId(toolset_kind=kind)
-                | ValidateToolArgumentsId(toolset_kind=kind)
-                | CallToolId(toolset_kind=kind)
-            ):
-                return kind
-            # Discovery dispatch supplies its already-resolved base config explicitly.
-            case GetInstructionsId():  # pragma: no cover
-                return 'mcp'
-            # Only tool-operation identities are passed by the config adapter.
-            case _:  # pragma: no cover
-                raise RuntimeError(f'Durable operation {operation_id!r} does not belong to a toolset')
-
-    def _legacy_operation_name(self, operation_id: DurableOperationId) -> str:
-        """Map declaration identities to the exact kwargs accepted by the legacy naming hook."""
-        match operation_id:
-            case CapabilityOperationId(capability_id=capability_id, operation=operation):
-                return f'{self.name}__capability__{capability_id}.{operation}'
-            case ModelRequestId(model_id=model_id, streaming=streaming, model_name=model_name):
-                kind = 'model.request_stream' if streaming else 'model.request'
-                label = 'Model Request (Streaming)' if streaming else 'Model Request'
-                return self._unit_name(
-                    kind,
-                    suffix=self._model_id_suffix(model_id),
-                    model_name=model_name,
-                    label=label,
-                )
-            case CancelSuspendedResponseId(model_id=model_id, model_name=model_name):
-                return self._unit_name(
-                    'model.cancel_suspended_response',
-                    suffix=self._model_id_suffix(model_id),
-                    model_name=model_name,
-                    label='Cancel Suspended Response',
-                )
-            case CompactMessagesId(model_id=model_id, model_name=model_name):
-                return self._unit_name(
-                    'model.compact_messages',
-                    suffix=self._model_id_suffix(model_id),
-                    model_name=model_name,
-                    label='Compact Messages',
-                )
-            case EventStreamHandlerId():
-                return self._unit_name('event_stream_handler', label='Handle Stream Event')
-            case GetToolsId(toolset_kind=kind, toolset_id=toolset_id):
-                prefix = f'{self.name}__{"mcp_server" if kind == "mcp" else f"{kind}_toolset"}__{toolset_id}'
-                return self._unit_name(kind, prefix=prefix, suffix='.get_tools')
-            case GetInstructionsId(toolset_id=toolset_id):
-                prefix = f'{self.name}__mcp_server__{toolset_id}'
-                return self._unit_name('mcp_server', prefix=prefix, suffix='.get_instructions')
-            case ValidateToolArgumentsId(toolset_kind=kind, toolset_id=toolset_id):
-                legacy_kind = f'{kind}_toolset'
-                prefix = f'{self.name}__{legacy_kind}__{toolset_id}'
-                return self._unit_name(legacy_kind, prefix=prefix, suffix='.validate_args')
-            # Call identities are named by `_legacy_invocation_name`, which also has the tool name.
-            case CallToolId(toolset_kind=kind, toolset_id=toolset_id):  # pragma: no cover
-                legacy_kind = 'mcp_server' if kind == 'mcp' else f'{kind}_toolset'
-                prefix = f'{self.name}__{legacy_kind}__{toolset_id}'
-                return self._unit_name(legacy_kind, prefix=prefix)
-            # All declaration identities supported by the legacy adapter are matched above.
-            case _:  # pragma: no cover
-                raise RuntimeError(f'Legacy naming is not yet implemented for durable operation {operation_id!r}')
-
-    def _legacy_invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
-        if isinstance(operation_id, CallToolId):
-            assert isinstance(params, (_CallToolParams, _DynamicCallToolParams))
-            kind = 'mcp_server' if operation_id.toolset_kind == 'mcp' else f'{operation_id.toolset_kind}_toolset'
-            prefix = f'{self.name}__{kind}__{operation_id.toolset_id}'
-            label = 'Call MCP Tool' if operation_id.toolset_kind == 'mcp' else 'Call Tool'
-            return DurableInvocationName(self._unit_name(kind, prefix=prefix, tool_name=params.name, label=label))
-        return DurableInvocationName(self._legacy_operation_name(operation_id))
-
-    def _legacy_result_codec(self, result_type: object) -> _LegacyResultCodec[Any]:
-        return _LegacyResultCodec(partial(self._encode, result_type), partial(self._codec.load, result_type))
-
-    async def _durable_operation(
-        self, name: str, fn: Callable[[], Awaitable[_T]], *, tp: Any, inputs: tuple[Any, ...], config: Any
-    ) -> _T:
-        """Run `fn` in a durable unit with the codec applied: `dump` inside, `load` outside.
-
-        Mirrors what the JSON engines hand-write (dump inside `_inner`, validate outside). For the
-        identity codec both are no-ops, so object engines pass the live value straight through.
-        """
-
-        async def unit() -> Any:
-            return self._encode(tp, await fn())
-
-        payload = await self.run_durable_unit(name, unit, inputs=inputs, config=config)
-        return self._codec.load(tp, payload)
+    def _typed_result_codec(self, result_type: object) -> _TypedResultCodec[Any]:
+        """Build a typed result codec with the engine's serialization-failure mapping."""
+        return _TypedResultCodec(partial(self._encode, result_type), partial(self._codec.load, result_type))
 
     def _encode(self, tp: Any, value: Any) -> Any:
         """Encode a durable-unit result, mapping deterministic serialization failures when configured."""
@@ -894,30 +701,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         JSON-journal engines override this to return their terminal/non-retryable error type.
         """
-        return None
-
-    def _unit_name(self, kind: str, **parts: Any) -> str:
-        """Compose the durable-unit name for one operation.
-
-        Naming is compat surface (#5477 req 5), so this is a pure function of `(kind, parts)` an engine can override. Default is
-        the journal-engine scheme (`{agent}__{kind}...`); Prefect overrides with display names.
-        """
-        prefix = parts.get('prefix')
-        name = prefix if isinstance(prefix, str) else f'{self.name}__{kind}'
-        if suffix := parts.get('suffix'):
-            name = f'{name}{suffix}'
-        if (tool_name := parts.get('tool_name')) is not None:
-            name = f'{name}.call_tool'
-            if kind != 'mcp_server':
-                name = f'{name}:{tool_name}'
-        return name
-
-    def _model_unit_config(self) -> Any:
-        """Engine config for model-request durable units. Override for a custom config type."""
-        return None
-
-    def _event_unit_config(self) -> Any:
-        """Engine config for the event-stream-handler durable unit."""
         return None
 
     def _toolset_base_config(self, kind: ToolsetKind) -> Any:
@@ -1119,7 +902,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 handler=handler,
                 parameter_transport=parameter_transport,
                 cache_identity=cache_identity,
-                result_codec=self._legacy_result_codec(CallToolResult),
+                result_codec=self._typed_result_codec(CallToolResult),
                 config_role=OperationConfigRole.TOOL_VALIDATION,
             )
         )
@@ -1147,7 +930,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Base-owned dispatch: build the right `Durable*Toolset` for a leaf toolset kind.
 
         Consults `_wrapped_toolset_kinds` (DBOS omits `'function'`) and `_toolset_lifecycles`. The
-        operation closures call `self._durable_operation`, so the codec + control-flow-value wrapping
+        operation closures dispatch through the backend, so the codec + control-flow-value wrapping
         + upgrade-lenient decoding are all framework-owned; the engine only supplies the primitive.
         """
         if isinstance(ts, FunctionToolset):
@@ -1185,7 +968,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=call_tool_handler,
             parameter_transport=self._function_call_parameter_transport(toolset),
             cache_identity=_FunctionCallToolCacheIdentity(),
-            result_codec=self._legacy_result_codec(CallToolResult),
+            result_codec=self._typed_result_codec(CallToolResult),
             config_role=OperationConfigRole.TOOL_CALL,
         )
         call_tool = backend.bind(operation)
@@ -1258,7 +1041,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 handler=get_tools_handler,
                 parameter_transport=self._dynamic_get_tools_parameter_transport(toolset),
                 cache_identity=_GetToolsCacheIdentity(),
-                result_codec=self._legacy_result_codec(DynamicToolsResult),
+                result_codec=self._typed_result_codec(DynamicToolsResult),
                 config_role=OperationConfigRole.TOOL_DISCOVERY,
             )
         )
@@ -1267,7 +1050,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=call_tool_handler,
             parameter_transport=self._dynamic_call_parameter_transport(toolset),
             cache_identity=_DynamicCallToolCacheIdentity(),
-            result_codec=self._legacy_result_codec(CallToolResult),
+            result_codec=self._typed_result_codec(CallToolResult),
             config_role=OperationConfigRole.TOOL_CALL,
         )
         call_tool = backend.bind(call_operation)
@@ -1360,7 +1143,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=get_tools_handler,
             parameter_transport=self._get_tools_parameter_transport(toolset),
             cache_identity=_GetToolsCacheIdentity(),
-            result_codec=self._legacy_result_codec(dict[str, ToolDefinition]),
+            result_codec=self._typed_result_codec(dict[str, ToolDefinition]),
             config_role=OperationConfigRole.TOOL_DISCOVERY,
         )
         return self.get_durable_operation_backend().bind(operation)
@@ -1406,7 +1189,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=get_instructions_handler,
             parameter_transport=self._get_instructions_parameter_transport(toolset),
             cache_identity=_GetToolsCacheIdentity(),
-            result_codec=self._legacy_result_codec(Instructions),
+            result_codec=self._typed_result_codec(Instructions),
             config_role=OperationConfigRole.TOOL_DISCOVERY,
         )
         return self.get_durable_operation_backend().bind(operation)
@@ -1433,7 +1216,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=call_tool_handler,
             parameter_transport=self._mcp_call_parameter_transport(toolset),
             cache_identity=_FunctionCallToolCacheIdentity(),
-            result_codec=self._legacy_result_codec(CallToolResult),
+            result_codec=self._typed_result_codec(CallToolResult),
             config_role=OperationConfigRole.TOOL_CALL,
         )
         call_tool = backend.bind(call_operation)
@@ -1474,7 +1257,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         """Base-owned: assemble a `DurableModel` from four segment executors when in-context.
 
-        Each segment runs its model call in a durable unit via `_durable_operation`; the model is
+        Each segment runs its model call through the durable operation backend; the model is
         rebuilt worker-side from `model_id` (`_resolve_model_for_request`). Identical for every
         callable engine -- the only per-engine input is the durable primitive + codec + naming.
         """
@@ -1546,7 +1329,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 handler=self._model_request_operation,
                 parameter_transport=self._model_request_parameter_transport(ModelResponse),
                 cache_identity=_ModelRequestCacheIdentity(),
-                result_codec=self._legacy_result_codec(ModelResponse),
+                result_codec=self._typed_result_codec(ModelResponse),
                 config_role=OperationConfigRole.MODEL,
             )
         )
@@ -1556,7 +1339,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 handler=self._model_request_stream_operation,
                 parameter_transport=self._model_request_parameter_transport(StreamedActivityResult),
                 cache_identity=_ModelRequestCacheIdentity(),
-                result_codec=self._legacy_result_codec(StreamedActivityResult),
+                result_codec=self._typed_result_codec(StreamedActivityResult),
                 config_role=OperationConfigRole.MODEL,
             )
         )
@@ -1566,7 +1349,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 handler=self._compact_messages_operation,
                 parameter_transport=self._compact_messages_parameter_transport(),
                 cache_identity=_CompactMessagesCacheIdentity(),
-                result_codec=self._legacy_result_codec(ModelResponse),
+                result_codec=self._typed_result_codec(ModelResponse),
                 config_role=OperationConfigRole.MODEL,
             )
         )
@@ -1576,7 +1359,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 handler=self._cancel_suspended_response_operation,
                 parameter_transport=self._cancel_suspended_response_parameter_transport(),
                 cache_identity=_CancelSuspendedResponseCacheIdentity(),
-                result_codec=self._legacy_result_codec(type(None)),
+                result_codec=self._typed_result_codec(type(None)),
                 config_role=OperationConfigRole.MODEL,
             )
         )
@@ -1637,12 +1420,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         """Validate engine-specific model request restrictions before durable dispatch."""
 
-    def _model_id_suffix(self, model_id: str | None) -> str:
-        """Suffix non-default model units while keeping the agent's default model names stable."""
-        if model_id is None or model_id == self._default_model_id:
-            return ''
-        return f'.{model_id}'
-
     def _stamp_response(self, response: ModelResponse, messages: list[Any]) -> None:
         """Stamp run provenance on a response before an engine persists/caches it. No-op default."""
         return None
@@ -1695,7 +1472,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             handler=self._event_stream_handler_operation,
             parameter_transport=self._event_stream_handler_parameter_transport(),
             cache_identity=_EventStreamHandlerCacheIdentity(),
-            result_codec=self._legacy_result_codec(type(None)),
+            result_codec=self._typed_result_codec(type(None)),
             config_role=OperationConfigRole.EVENT,
         )
         return backend.bind(operation)

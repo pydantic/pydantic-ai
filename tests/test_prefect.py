@@ -8,7 +8,6 @@ from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
-    Awaitable,
     Callable,
     Generator,
     Iterator,
@@ -224,12 +223,9 @@ def test_durability_declarative_contract_rejects_other_invalid_fields(
 async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin base defaults that concrete engines override and that public runs cannot isolate.
 
-    The wrapper assembly, naming, config composition, serialization hooks, and abstract durable
-    primitive are internal extension points. Public capability runs exercise each concrete
-    engine's overrides instead, so direct calls keep the base implementations covered without
-    constructing a synthetic public engine for every hook.
+    Wrapper assembly, config composition, and serialization hooks are internal extension points.
+    Public capability runs exercise each concrete engine's backend and event dispatch.
     """
-    events: list[AgentStreamEvent] = []
 
     class FunctionOnlyDurability(PrefectDurability):
         _wrapped_toolset_kinds = frozenset({'function'})
@@ -237,10 +233,7 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
     class MCPRejectingDurability(PrefectDurability):
         _allow_inline_mcp_in_durable_context = False
 
-    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        events.extend([event async for event in stream])
-
-    durability = PrefectDurability(event_stream_handler=handler, name='base-defaults')
+    durability = PrefectDurability(name='base-defaults')
     base = cast(BaseDurabilityCapability[Any], durability)
     function_only = FunctionOnlyDurability()
     assert function_only._wrap_leaf_toolset(FunctionToolset()) is not None  # pyright: ignore[reportPrivateUsage]
@@ -251,18 +244,6 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
         )
         is None
     )
-    assert BaseDurabilityCapability._unit_name(base, 'kind') == 'base-defaults__kind'  # pyright: ignore[reportPrivateUsage]
-    assert BaseDurabilityCapability._unit_name(base, 'kind', suffix='.suffix') == 'base-defaults__kind.suffix'  # pyright: ignore[reportPrivateUsage]
-    assert BaseDurabilityCapability._unit_name(base, 'kind', tool_name='tool') == 'base-defaults__kind.call_tool:tool'  # pyright: ignore[reportPrivateUsage]
-    assert (
-        BaseDurabilityCapability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            base, 'mcp_server', tool_name='tool'
-        )
-        == 'base-defaults__mcp_server.call_tool'
-    )
-    assert BaseDurabilityCapability._unit_name(base, 'kind', prefix='custom', suffix='.suffix') == 'custom.suffix'  # pyright: ignore[reportPrivateUsage]
-    assert BaseDurabilityCapability._model_unit_config(base) is None  # pyright: ignore[reportPrivateUsage]
-    assert BaseDurabilityCapability._event_unit_config(base) is None  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._toolset_base_config(base, 'function') is None  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._serialization_failure(base, ValueError()) is None  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._normalize_unit_config(base, {'x': 1}) == {'x': 1}  # pyright: ignore[reportPrivateUsage]
@@ -305,17 +286,10 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(UserError, match='MCP tools perform I/O'):
         rejecting_resolve(mcp_tool, 'mcp_inline')
 
-    assert BaseDurabilityCapability._model_id_suffix(base, 'model') == '.model'  # pyright: ignore[reportPrivateUsage]
-    base._default_model_id = 'model'  # pyright: ignore[reportPrivateUsage]
-    assert BaseDurabilityCapability._model_id_suffix(base, 'model') == ''  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._stamp_response(base, ModelResponse(parts=[]), []) is None  # pyright: ignore[reportPrivateUsage]
-    assert durability._unit_name('kind', label='Label') == 'Label'  # pyright: ignore[reportPrivateUsage]
 
     async def value() -> str:
         return 'value'
-
-    with pytest.raises(NotImplementedError):
-        await BaseDurabilityCapability.run_durable_unit(base, 'unit', value, inputs=(), config=None)
 
     payload = await wrap_tool_call_result(value())
     with monkeypatch.context() as patch:
@@ -323,14 +297,6 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
         assert durability._unwrap_tool_result(payload) == 'value'  # pyright: ignore[reportPrivateUsage]
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    event = FinalResultEvent(tool_name=None, tool_call_id=None)
-
-    @flow
-    async def dispatch() -> None:
-        await BaseDurabilityCapability._dispatch_event_stream_event(base, ctx, event)  # pyright: ignore[reportPrivateUsage]
-
-    await dispatch()
-    assert events == [event]
 
     agent = Agent(TestModel(), name='sequential-default', capabilities=[PrefectDurability()])
     bound = PrefectDurability.from_agent(agent)
@@ -359,11 +325,6 @@ async def test_durability_base_serialization_failure_hook() -> None:
             super().__init__(name='json-durability')
             self.map_failure = map_failure
 
-        async def run_durable_unit(
-            self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-        ) -> Any:
-            return await fn()
-
         def _serialization_failure(self, exc: Exception) -> BaseException | None:
             if self.map_failure:
                 return NonRetryableError('non-retryable serialization failure')
@@ -374,24 +335,18 @@ async def test_durability_base_serialization_failure_hook() -> None:
 
     mapped = JsonDurability(map_failure=True)
     with pytest.raises(NonRetryableError, match='non-retryable serialization failure') as exc_info:
-        await mapped._durable_operation(  # pyright: ignore[reportPrivateUsage]
-            'mapped', non_serializable, tp=object, inputs=(), config=None
-        )
+        mapped._typed_result_codec(object).dump(await non_serializable())  # pyright: ignore[reportPrivateUsage]
     assert isinstance(exc_info.value.__cause__, PydanticSerializationError)
 
     unmapped = JsonDurability(map_failure=False)
     with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type'):
-        await unmapped._durable_operation(  # pyright: ignore[reportPrivateUsage]
-            'unmapped', non_serializable, tp=object, inputs=(), config=None
-        )
+        unmapped._typed_result_codec(object).dump(await non_serializable())  # pyright: ignore[reportPrivateUsage]
 
     async def serializable() -> str:
         return 'ok'
 
-    assert (
-        await unmapped._durable_operation('success', serializable, tp=str, inputs=(), config=None)  # pyright: ignore[reportPrivateUsage]
-        == 'ok'
-    )
+    codec = unmapped._typed_result_codec(str)  # pyright: ignore[reportPrivateUsage]
+    assert codec.load(codec.dump(await serializable())) == 'ok'
 
 
 def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
@@ -2270,8 +2225,8 @@ def test_cache_policy_excludes_non_serializable_deps():
 def test_cache_policy_projects_nested_run_context_and_tool():
     """The projection reaches a `RunContext`/`ToolsetTool` nested in a container, not just a top-level one.
 
-    `PrefectDurability.run_durable_unit` passes an operation's logical inputs as a single `*args`
-    tuple (so nothing caps how many inputs an operation may have), which means neither ever
+    `PrefectOperationBackend` passes an operation's logical inputs as a single `*args` tuple
+    (so nothing caps how many inputs an operation may have), which means neither ever
     arrives as a top-level bound parameter. Without recursion the raw `RunContext` is hashed and
     `compute_key` raises `Unable to create hash` for any agent whose `deps` hold a live resource.
     """

@@ -141,12 +141,6 @@ Match on every variant when configuration depends on the operation. See
 """
 
 
-@dataclass(frozen=True)
-class OperationInvocation(Generic[P]):
-    params: P
-    config: object
-
-
 class ParameterTransport(Generic[P, W], Protocol):
     @abstractmethod
     def dump(self, params: P) -> W: ...
