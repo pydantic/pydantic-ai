@@ -38,6 +38,7 @@ jobs:
         id: reconcile
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
         run: python .github/scripts/issue_pr_attention_monitor.py reconcile
 
   notify:
@@ -64,6 +65,7 @@ jobs:
         env:
           ATTENTION_NOTICES: '{"items":${{ needs.reconcile.outputs.notice_items }}}'
           GITHUB_TOKEN: ${{ github.token }}
+          PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
         run: python .github/scripts/issue_pr_attention_monitor.py prepare
       - name: Post actionable attention digest to the triage channel
         if: ${{ steps.prepare.outputs.has_notices == 'true' }}

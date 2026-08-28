@@ -1062,6 +1062,70 @@ def test_snapshot_and_decision_batch_limits_are_enforced(tmp_path: Path):
         monitor._parse_decisions(str(output))
 
 
+def test_notice_output_pings_the_owner_directly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / 'github-output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setenv(
+        'PYDANTIC_AI_TRIAGE_SLACK_MENTIONS',
+        json.dumps({'adtyavrdhn': '<@UADITYA>', 'DouweM': '<@UDOUWE>'}),
+    )
+
+    monitor._write_notices(
+        'pydantic/pydantic-ai',
+        [
+            {
+                'number': 7,
+                'kind': 'reminder',
+                'expected_stage': 0,
+                'transition_id': 'event-7',
+                'title': 'Streaming hangs',
+                'recipients': ['DouweM'],
+                'status': 'issue · no replies yet',
+            }
+        ],
+    )
+
+    values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
+    text = json.loads(values['slack_payload'])['text']
+    assert 'owner <@UDOUWE>' in text
+    assert '<!channel>' not in text
+
+
+def test_reconcile_marks_assigned_priority_issues_for_attention():
+    client = FakeClient(
+        {
+            7: item(7, labels=['p:1-highest'], assignees=['alice']),
+            8: item(8, labels=['p:2-high']),
+        }
+    )
+    client.permissions = {'alice': 'write'}
+
+    lines, failures = monitor.reconcile(client, 'r', now=NOW, notices=[])
+
+    assert failures == []
+    assert '#7: queued assigned p:1-highest issue for owner attention' in lines
+    assert monitor._ACTION_LABEL in {label['name'] for label in client.items[7]['labels']}
+    # The unassigned p:2 issue stays on the automation's plate.
+    assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[8]['labels']}
+
+
+def test_priority_reminder_windows_follow_the_label():
+    four_days_ago = (NOW - dt.timedelta(days=4)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    def build(number: int, priority: str) -> FakeClient:
+        client = FakeClient({number: item(number, labels=[priority, monitor._ACTION_LABEL], assignees=['alice'])})
+        client.permissions = {'alice': 'write'}
+        client.timelines[number] = [label_event(monitor._ACTION_LABEL, created_at=four_days_ago)]
+        return client
+
+    # Four quiet days: past the 3-day p:1 window, inside the 5-day p:2 window.
+    lines, _ = monitor.reconcile(build(7, 'p:1-highest'), 'r', now=NOW, notices=[])
+    assert '#7: queued channel reminder' in lines
+
+    lines, _ = monitor.reconcile(build(9, 'p:2-high'), 'r', now=NOW, notices=[])
+    assert all('reminder' not in line for line in lines)
+
+
 def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
@@ -1085,14 +1149,15 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
     assert values['has_notices'] == 'true'
     assert json.loads(values['notice_items']) == [notice_ref(7, 0, transition_id='event-7', recipients=['DouweM'])]
     text = json.loads(values['slack_payload'])['text']
-    assert text.count('<!channel>') == 1
+    # The notice targets its owner; the channel as a whole is never pinged.
+    assert '<!channel>' not in text
     assert '*Maintainer attention requested in pydantic/pydantic-ai*' in text
     assert '#7 Handle &lt;unsafe&gt; fake owner &lt;!channel&gt;' in text
     assert 'owner @DouweM' in text
     # A login is the only untrusted value the status line carries, and it is
     # escaped on the same path as the title.
     assert 'opened by @evil &lt;!channel&gt; · 2 replies · last from @evil 5d ago (author)' in text
-    assert 'why: no maintainer has acted for three days' in text
+    assert 'why: it has been waiting on its owner past the reminder window' in text
     assert '*Expected action:*' in text
     assert 'If no work is needed, say so briefly' in text
     assert 'Do not remove the attention labels' in text

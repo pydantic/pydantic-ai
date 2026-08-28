@@ -139,20 +139,15 @@ _RULES: dict[str, tuple[Rule, ...]] = {
             ),
         ),
     ),
-    'pydantic/pydantic-ai-harness': (
-        Rule(
-            'adtyavrdhn',
-            ('cap:code-mode', 'cap:acp', 'upstream-compat'),
-            (
-                'pydantic_ai_harness/code_mode/',
-                'pydantic_ai_harness/acp/',
-                'pydantic_ai_harness/runtime_authoring/',
-            ),
-        ),
-        Rule('dsfaccini', ('cap:compaction',), ('pydantic_ai_harness/compaction/',)),
-        Rule('DouweM', ('durable-exec', 'cap:step-persistence'), ('pydantic_ai_harness/step_persistence/',)),
-    ),
+    # Temporarily empty: all harness intake goes to the default owner below.
+    'pydantic/pydantic-ai-harness': (),
 }
+# Repos where one maintainer currently owns all intake. Harness has no triage
+# labeler, so its issues skip the priority gate and route straight here.
+_DEFAULT_OWNERS = {'pydantic/pydantic-ai-harness': 'mpfaffenberger'}
+# Repos whose issues are triaged and priority-labeled; only these apply the
+# priority gate before assignment.
+_GATED_REPOS = frozenset({'pydantic/pydantic-ai'})
 
 
 class Decision(TypedDict):
@@ -281,6 +276,8 @@ def _route(repo: str, labels: set[str], filenames: Sequence[str] | None) -> tupl
             if signal := _path_rule(repo, filename):
                 signals.add(signal)
             elif not _neutral_path(filename):
+                if default := _DEFAULT_OWNERS.get(repo):
+                    return default, 'default:repo-intake'
                 return _MANUAL_OWNER, 'manual:unowned-production-path'
     has_ui_signal = any(
         owner == 'dsfaccini'
@@ -293,6 +290,8 @@ def _route(repo: str, labels: set[str], filenames: Sequence[str] | None) -> tupl
         signals -= {('adtyavrdhn', 'label:streaming'), ('adtyavrdhn', 'label:run_stream')}
     owners = {owner for owner, _ in signals}
     if len(owners) != 1:
+        if not owners and (default := _DEFAULT_OWNERS.get(repo)):
+            return default, 'default:repo-intake'
         return _MANUAL_OWNER, 'manual:conflict-or-unknown'
     owner = owners.pop()
     evidence = min(evidence for signal_owner, evidence in signals if signal_owner == owner)
@@ -399,7 +398,7 @@ def _pull_request_precedence(
     return None
 
 
-def _issue_gate(item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
+def _issue_gate(repo: str, item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
     """Decide whether an issue may be routed at all; None means proceed."""
     # A human unassignment means "leave this alone", whatever the labels say:
     # without the back-off, a p:1 issue would be re-assigned to the same owner
@@ -408,7 +407,7 @@ def _issue_gate(item: Mapping[str, Any], normalized: Mapping[str, Any], number: 
         return Selection(number=number, decision=None, status='recently-unassigned')
     # A gate label missing from a truncated first page counts as absent, which
     # fails toward leaving the issue unassigned.
-    if not _labels(normalized) & _PRIORITY_LABELS and not _community_backed(item):
+    if repo in _GATED_REPOS and not _labels(normalized) & _PRIORITY_LABELS and not _community_backed(item):
         return Selection(number=number, decision=None, status='awaiting-triage')
     return None
 
@@ -431,7 +430,7 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
         'assignees': _connection_nodes(assignees),
     }
     is_pull_request = item.get('__typename') == 'PullRequest'
-    if not is_pull_request and (gated := _issue_gate(item, normalized, number)) is not None:
+    if not is_pull_request and (gated := _issue_gate(repo, item, normalized, number)) is not None:
         return gated
     if _maintainer_assignees(client, repo, normalized):
         return Selection(number=number, decision=None, status='maintainer-present')
@@ -513,8 +512,11 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
 def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
     """List candidates, priority-labeled issues before pull requests."""
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
-    priorities = ','.join(f'"{label}"' for label in sorted(_PRIORITY_LABELS))
-    issues = f'repo:{repo} is:open is:issue label:{priorities} {negatives} sort:created-asc'
+    if repo in _GATED_REPOS:
+        priorities = ','.join(f'"{label}"' for label in sorted(_PRIORITY_LABELS))
+        issues = f'repo:{repo} is:open is:issue label:{priorities} {negatives} sort:created-asc'
+    else:
+        issues = f'repo:{repo} is:open is:issue {negatives} sort:created-asc'
     pulls = f'repo:{repo} is:open is:pr -draft:true created:>={_RECOVERY_EPOCH} {negatives} sort:created-asc'
     return list(dict.fromkeys(_search_numbers(client, issues) + _search_numbers(client, pulls)))
 
@@ -608,6 +610,8 @@ def _routing_reason(decision: Decision, mention: str) -> str:
     source, separator, detail = evidence.partition(':')
     if separator and detail and source in {'label', 'path'}:
         return f'Matched ownership {source} `{detail}`.'
+    if evidence == 'default:repo-intake':
+        return 'All intake for this repository is currently routed to one owner.'
     if evidence.startswith('manual:'):
         return 'Automatic routing could not determine an available semantic owner, so this needs manual triage.'
     return 'Matched the semantic ownership policy.'
@@ -621,8 +625,13 @@ def _slack_payload(
 ) -> str:
     """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
-    mentions = attention.slack_mentions(mentions_value, decision['owner'])
-    mention = mentions[decision['owner']]
+    if decision['evidence'] == 'default:repo-intake':
+        # Blanket intake routing would ping the same person on every drained
+        # item; the channel record keeps the plain name and GitHub's own
+        # assignment notification does the alerting.
+        mention = decision['owner']
+    else:
+        mention = attention.slack_mentions(mentions_value, decision['owner'])[decision['owner']]
     if item_type == 'Issue':
         kind, path = 'Issue', 'issues'
     else:

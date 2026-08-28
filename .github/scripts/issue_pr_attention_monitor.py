@@ -25,6 +25,10 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
+# Assigned priority issues are kept in the attention queue by `reconcile`;
+# the owner is pinged once the item sits quiet past its window.
+_PRIORITY_SLAS = {'p:1-highest': dt.timedelta(days=3), 'p:2-high': dt.timedelta(days=5)}
+_SLA_MARK_LIMIT = 10
 _RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
@@ -1060,7 +1064,7 @@ def _reconcile_item(
         return f'#{number}: maintainer acknowledged the request', None
     # Stage 2 is the existing durable "terminal Slack delivery pending" state.
     # Keeping that meaning makes the channel cutover safe for in-flight items.
-    if current_stage != 2 and now - transition_at < _SLA:
+    if current_stage != 2 and now - transition_at < _sla_for(labels):
         return None
     kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
@@ -1116,6 +1120,42 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: 
     return None
 
 
+def _sla_for(labels: set[str]) -> dt.timedelta:
+    """The reminder window for an item: tightest priority label wins."""
+    windows = [window for label, window in _PRIORITY_SLAS.items() if label in labels]
+    return min(windows) if windows else _SLA
+
+
+def _mark_assigned_priorities(client: GitHubClient, repo: str, *, slot: int) -> list[str]:
+    """Keep every assigned priority issue inside the attention queue.
+
+    Applying the label starts the reminder clock; owner activity clears the
+    cycle, and the next pass re-arms it, so an owner is pinged once per quiet
+    stretch and never nagged while the item is already cooling down.
+    """
+    lines: list[str] = []
+    excluded = ' '.join(f'-label:"{label}"' for label in (_ACTION_LABEL, *_LIFECYCLE_LABELS))
+    for priority in _PRIORITY_SLAS:
+        matches = _rotated_search(
+            client,
+            f'repo:{repo} is:open is:issue label:"{priority}" {excluded}',
+            order='asc',
+            limit=_SLA_MARK_LIMIT,
+            slot=slot,
+        )
+        for match in matches:
+            number = int(match['number'])
+            if str(match.get('state') or '').casefold() != 'open' or priority not in _labels(match):
+                continue
+            if _labels(match).intersection((_ACTION_LABEL, *_LIFECYCLE_LABELS)):
+                continue
+            if not _maintainer_assignees(client, repo, match):
+                continue
+            _add_labels(client, repo, number, [_ACTION_LABEL])
+            lines.append(f'#{number}: queued assigned {priority} issue for owner attention')
+    return lines
+
+
 def reconcile(
     client: GitHubClient, repo: str, *, now: dt.datetime, notices: list[Notice] | None = None
 ) -> tuple[list[str], list[str]]:
@@ -1126,6 +1166,14 @@ def reconcile(
     """
     ensure_labels(client, repo)
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
+    lines: list[str] = []
+    failures: list[str] = []
+    try:
+        lines.extend(_mark_assigned_priorities(client, repo, slot=slot))
+    except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
+        failures.append(f'priority marking: {type(exc).__name__}: {exc}')
     closed = _rotated_search(
         client,
         f'repo:{repo} is:closed label:"{_ACTION_LABEL}"',
@@ -1142,8 +1190,6 @@ def reconcile(
     )
     items = [*closed, *active]
     processed = {int(item['number']) for item in items}
-    lines: list[str] = []
-    failures: list[str] = []
     for item in items:
         number = int(item['number'])
         try:
@@ -1194,15 +1240,27 @@ def _slack_escape(value: str) -> str:
     return normalized.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
+def _notice_mentions() -> dict[str, str]:
+    """The per-maintainer Slack mentions, or plain names when unconfigured."""
+    raw = os.environ.get('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS')
+    if not raw:
+        return {}
+    try:
+        return slack_mentions(raw, _FALLBACK_OWNER)
+    except ValueError:
+        return {}
+
+
 def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
     if output_path := os.environ.get('GITHUB_OUTPUT'):
         reasons = {
-            'reminder': 'no maintainer has acted for three days',
-            'escalation': 'the previous reminder has had no maintainer response for three more days',
+            'reminder': 'it has been waiting on its owner past the reminder window',
+            'escalation': 'the earlier reminder got no maintainer response',
         }
+        mentions = _notice_mentions()
         details: list[str] = []
         for notice in notices:
-            owners = ', '.join(f'@{_slack_escape(login)}' for login in notice['recipients'])
+            owners = ', '.join(mentions.get(login) or f'@{_slack_escape(login)}' for login in notice['recipients'])
             title = _slack_escape(notice['title']) or '(untitled)'
             details.append(
                 f'• *{notice["kind"].title()}*: '
@@ -1214,7 +1272,7 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
         payload = {
             'text': '\n'.join(
                 [
-                    f'<!channel> *Maintainer attention requested in {_slack_escape(repo)}*',
+                    f'*Maintainer attention requested in {_slack_escape(repo)}*',
                     *details,
                     '',
                     '*Expected action:* Open each item and make its next maintainer decision there. Reply, review, '

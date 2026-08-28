@@ -182,7 +182,7 @@ def test_pr_author_precedence_requires_current_maintainer_permission(permission:
         (CORE, ['vercel-ai'], ('dsfaccini', 'label:vercel-ai')),
         (CORE, ['web-ui'], ('dsfaccini', 'label:web-ui')),
         (CORE, ['durable exec'], ('DouweM', 'label:durable exec')),
-        (HARNESS, ['cap:compaction'], ('dsfaccini', 'label:cap:compaction')),
+        (HARNESS, ['cap:compaction'], ('mpfaffenberger', 'default:repo-intake')),
     ],
 )
 def test_exact_semantic_labels_route_to_fixed_owners(repo: str, labels: list[str], expected: tuple[str, str]):
@@ -284,8 +284,8 @@ def test_conflicting_label_signals_use_manual_route():
         ),
         (
             'pydantic_ai_harness/compaction/_summarizing.py',
-            'dsfaccini',
-            'path:pydantic_ai_harness/compaction/',
+            'mpfaffenberger',
+            'default:repo-intake',
         ),
         (
             'pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py',
@@ -429,24 +429,69 @@ def test_known_and_unknown_production_paths_use_manual_route():
     assert decision['evidence'] == 'manual:unowned-production-path'
 
 
-@pytest.mark.parametrize(
-    ('repo', 'label', 'filename'),
-    [
-        (CORE, 'tools', 'pydantic_ai_slim/pydantic_ai/toolsets/function.py'),
-        (HARNESS, 'cap:guardrails', 'pydantic_ai_harness/guardrails/_capability.py'),
-    ],
-)
-def test_mike_is_not_selected_without_reviewed_ownership_evidence(repo: str, label: str, filename: str):
-    client = FakeClient({7: item(7, labels=[label], pull_request=True)})
-    client.files[7] = [filename]
+def test_mike_is_not_selected_in_core_without_reviewed_ownership_evidence():
+    client = FakeClient({7: item(7, labels=['tools'], pull_request=True)})
+    client.files[7] = ['pydantic_ai_slim/pydantic_ai/toolsets/function.py']
 
-    decision = router.decision_for(client, repo, 7)['decision']
+    decision = router.decision_for(client, CORE, 7)['decision']
 
     assert decision == {
         'number': 7,
         'owner': 'adtyavrdhn',
         'evidence': 'manual:unowned-production-path',
     }
+
+
+def test_every_harness_issue_routes_to_the_default_owner_without_a_priority_label():
+    client = FakeClient({7: item(7, labels=['bug'])})
+
+    selection = router.decision_for(client, HARNESS, 7)
+
+    # Harness has no triage labeler, so its issues skip the priority gate and
+    # go straight to the current blanket owner.
+    assert selection['decision'] == {'number': 7, 'owner': 'mpfaffenberger', 'evidence': 'default:repo-intake'}
+
+
+def test_every_harness_pull_request_routes_to_the_default_owner():
+    client = FakeClient({7: item(7, pull_request=True)})
+    client.files[7] = ['pydantic_ai_harness/code_mode/_runtime.py']
+
+    decision = router.decision_for(client, HARNESS, 7)['decision']
+
+    assert decision == {'number': 7, 'owner': 'mpfaffenberger', 'evidence': 'default:repo-intake'}
+
+
+def test_harness_maintainer_authored_pull_request_keeps_author_precedence():
+    client = FakeClient({7: item(7, pull_request=True, author='DouweM')})
+    client.files[7] = ['pydantic_ai_harness/code_mode/_runtime.py']
+
+    decision = router.decision_for(client, HARNESS, 7)['decision']
+
+    assert decision == {'number': 7, 'owner': 'DouweM', 'evidence': 'author:DouweM'}
+
+
+def test_harness_candidate_search_has_no_priority_filter():
+    client = FakeClient({})
+    client.search_results = [[], []]
+
+    router.select_batch(client, HARNESS)
+
+    issue_query = _search_queries(client)[0]
+    assert 'label:' not in issue_query
+    assert 'is:issue' in issue_query
+
+
+def test_default_intake_notice_names_the_owner_without_a_slack_ping():
+    payload = router._slack_payload(  # pyright: ignore[reportPrivateUsage]
+        HARNESS,
+        'Issue',
+        router.Decision(number=7, owner='mpfaffenberger', evidence='default:repo-intake'),
+        MENTIONS,
+    )
+
+    # Blanket intake must not ping the same person on every drained item.
+    assert '<@UMIKE>' not in payload
+    assert 'mpfaffenberger' in payload
 
 
 @pytest.mark.parametrize('changed_count', [101, 2000])
