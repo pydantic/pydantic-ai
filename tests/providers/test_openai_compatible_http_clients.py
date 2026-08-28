@@ -193,11 +193,13 @@ IMPORT_GUARD_CASES = [
 ]
 
 
-# One subprocess for all providers: each interpreter spawn cold-imports pydantic_ai under
-# coverage (~7s in CI), so 20 per-provider subprocesses cost minutes while one costs seconds.
-# Each module still gets a fresh import: the guard fires at module import time, and no
-# provider module is imported twice.
-_IMPORT_GUARD_SCRIPT = """
+@pytest.fixture(scope='module')
+def import_guard_errors() -> dict[str, str | None]:
+    # One subprocess for all providers: each interpreter spawn cold-imports pydantic_ai under
+    # coverage (~7s in CI), so 20 per-provider subprocesses cost minutes while one costs seconds.
+    # Each module still gets a fresh import: the guard fires at module import time, and no
+    # provider module is imported twice.
+    code = """
 import builtins
 import importlib
 import json
@@ -222,14 +224,8 @@ for module in sys.argv[1:]:
         errors[module] = None
 print(json.dumps(errors))
 """
-
-
-@pytest.fixture(scope='module')
-def import_guard_errors() -> dict[str, str | None]:
     modules = [module for module, _ in IMPORT_GUARD_CASES]
-    result = subprocess.run(
-        [sys.executable, '-c', _IMPORT_GUARD_SCRIPT, *modules], text=True, capture_output=True, check=True
-    )
+    result = subprocess.run([sys.executable, '-c', code, *modules], text=True, capture_output=True, check=True)
     return json.loads(result.stdout)
 
 
