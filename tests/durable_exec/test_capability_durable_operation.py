@@ -1,30 +1,33 @@
 from __future__ import annotations
 
 import copy
+import gc
 import uuid
+import weakref
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
-from pydantic_ai.capabilities._durable_operation import tier_one_durable_operation
+from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
+    CapabilityOperationResult,
     ModelRequestContextProjection,
-    _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
-    _model_request_schema,  # pyright: ignore[reportPrivateUsage]
-    _usage_delta,  # pyright: ignore[reportPrivateUsage]
+    base_hook_durable_operation,
     call_declaration,
     collect_capability_operations,
     recover_capability,
 )
 from pydantic_ai.durable_exec._codec import JSON_CODEC
-from pydantic_ai.durable_exec._operation import ToolsetKind
-from pydantic_ai.durable_exec._toolset import Lifecycle
+from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, OperationConfigRole
+from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
+from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
+from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -90,48 +93,64 @@ def blockbuster_enabled() -> bool:
     return False
 
 
+class _RecordingConfig:
+    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ToolConfig:
+        return {}
+
+    def for_tool(
+        self, role: OperationConfigRole, operation_id: DurableOperationId, tool: object | None, tool_name: str
+    ) -> ToolConfig:
+        return {}
+
+
+class _RecordingBackend(CallableOperationBackend[ToolConfig]):
+    def __init__(self, durability: RecordingDurability) -> None:
+        super().__init__(namer=JournalOperationNamer(durability.name), config=_RecordingConfig())
+        self._durability = durability
+
+    async def execute(
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
+    ) -> object:
+        durability = self._durability
+        durability.calls.append((name, cache_key))
+        if not durability.replay_capability_operations or '__capability__' not in name:
+            return await body()
+        if name not in durability.recorded_results:
+            durability.recorded_results[name] = await body()
+        return durability.recorded_results[name]
+
+
 class RecordingDurability(BaseDurabilityCapability[Any]):
-    engine_name = 'recording'
-    _durable_unit_noun = 'unit'
-    _durable_container_noun = 'journal'
-    _codec: ClassVar = JSON_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
-    _wrapped_toolset_kinds: ClassVar = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
+    engine_spec = DurabilityEngineSpec(
+        engine_name='recording',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+    )
+
+    replay_capability_operations = False
 
     def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
         super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.recorded_results: dict[str, Any] = {}
 
     @property
     def in_durable_context(self) -> bool:
         return True
 
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        self.calls.append((name, inputs))
-        return await fn()
+    def get_durable_operation_backend(self) -> CallableOperationBackend[ToolConfig]:
+        return _RecordingBackend(self)
 
 
 class ReplayingDurability(RecordingDurability):
-    def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
-        super().__init__(models=models)
-        self.recorded_results: dict[str, Any] = {}
-
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        self.calls.append((name, inputs))
-        if '__capability__' not in name:
-            return await fn()
-        if name not in self.recorded_results:
-            self.recorded_results[name] = await fn()
-        return self.recorded_results[name]
+    replay_capability_operations = True
 
 
 class Operations(AbstractCapability[Any]):
@@ -168,6 +187,20 @@ class DurableBeforeModelRequest(AbstractCapability[Any]):
     ) -> ModelRequestContext:
         request_context.messages = [ModelRequest(parts=[UserPromptPart('replaced')])]
         return request_context
+
+
+class CustomModelRequestOperation(AbstractCapability[Any]):
+    id = 'custom_model_request'
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        return await self.rewrite_request(ctx, request_context)
+
+    @durable_operation
+    async def rewrite_request(self, ctx: RunContext[Any], request: ModelRequestContext) -> ModelRequestContext:
+        request.messages = [ModelRequest(parts=[UserPromptPart('custom replacement')])]
+        return request
 
 
 class ModelReplacingBeforeModelRequest(AbstractCapability[Any]):
@@ -302,8 +335,8 @@ class UsageOperation(AbstractCapability[Any]):
         await Agent(TestModel(custom_output_text='summary')).run('summarize', usage=ctx.usage)
         ctx.usage.tool_calls += 2
         ctx.usage.details['summary_tokens'] = ctx.usage.details.get('summary_tokens', 0) + 3
+        ctx.usage.details['custom_units'] = ctx.usage.details.get('custom_units', 0) + 7
         ctx.usage.cost = (ctx.usage.cost or 0) + Decimal('0.25')
-        ctx.usage.__dict__['custom_units'] = ctx.usage.__dict__.get('custom_units', 0) + 7
 
 
 async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
@@ -414,8 +447,8 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.tool_calls,
             usage.details,
             usage.cost,
-            cast(int, usage.__dict__['custom_units']),
-        ) == (2, 2, {'summary_tokens': 3}, Decimal('0.25'), 7)
+            usage.details['custom_units'],
+        ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
 
 
@@ -450,7 +483,6 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
-        'get_sandbox',
         'wrap_run',
         'wrap_node_run',
         'wrap_model_request',
@@ -483,35 +515,35 @@ def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
         Agent(TestModel(), name='invalid', capabilities=[capability_type(), RecordingDurability()])
 
 
-def test_tier_one_override_is_automatically_registered() -> None:
+def test_base_hook_override_is_automatically_registered() -> None:
     class TierOneBase(AbstractCapability[Any]):
         # Registration, not execution, is the behavior under test.
-        @tier_one_durable_operation
+        @base_hook_durable_operation
         async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
     class TierOne(TierOneBase):
-        id = 'tier_one'
+        id = 'base_hook'
 
         # Automatic registration inspects this override without dispatching it.
         async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
-    agent = Agent(TestModel(), name='tier_one', capabilities=[TierOne(), RecordingDurability()])
+    agent = Agent(TestModel(), name='base_hook', capabilities=[TierOne(), RecordingDurability()])
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
-    assert ('tier_one', 'provision') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+    assert ('base_hook', 'provision') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_inherited_tier_one_hook_is_not_registered_or_dispatched() -> None:
+async def test_inherited_base_hook_hook_is_not_registered_or_dispatched() -> None:
     class TierOneBase(AbstractCapability[Any]):
         def __init__(self) -> None:
             self.provisioned = False
 
-        @tier_one_durable_operation
+        @base_hook_durable_operation
         async def provision(self, ctx: RunContext[Any]) -> None:
             self.provisioned = True
 
     class TierOne(TierOneBase):
-        id = 'tier_one'
+        id = 'base_hook'
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
             await self.provision(ctx)
@@ -519,7 +551,7 @@ async def test_inherited_tier_one_hook_is_not_registered_or_dispatched() -> None
     capability = TierOne()
     assert collect_capability_operations(capability) == {}
 
-    agent = Agent(TestModel(), name='tier_one', capabilities=[capability, RecordingDurability()])
+    agent = Agent(TestModel(), name='base_hook', capabilities=[capability, RecordingDurability()])
     await agent.run('test')
 
     durability = RecordingDurability.from_agent(agent)
@@ -542,7 +574,7 @@ def test_temporal_registration_has_stable_name_and_types() -> None:
     definition = ActivityDefinition.must_from_callable(registration)  # pyright: ignore[reportUnknownMemberType]
     assert definition.arg_types is not None
     assert definition.arg_types[0] is _CapabilityOperationParams
-    assert definition.ret_type == _CapabilityOperationResult[int]
+    assert definition.ret_type == CapabilityOperationResult[int]
 
 
 def test_unannotated_parameter_is_rejected_at_bind() -> None:
@@ -576,6 +608,42 @@ async def test_decorated_model_request_hook_round_trips_mutation() -> None:
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(name == 'before_model__capability__before_model.before_model_request' for name, _ in durability.calls)
+
+
+async def test_custom_model_request_operation_round_trips_projection() -> None:
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='custom_model_request',
+        capabilities=[CustomModelRequestOperation(), RecordingDurability()],
+    )
+
+    result = await agent.run('original')
+
+    requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    assert isinstance(requests[-1].parts[0], UserPromptPart)
+    assert requests[-1].parts[0].content == 'custom replacement'
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert any(
+        name == 'custom_model_request__capability__custom_model_request.rewrite_request' for name, _ in durability.calls
+    )
+
+
+def test_durable_operation_bindings_do_not_retain_agents() -> None:
+    capability = Operations()
+    agents = [
+        Agent(TestModel(), name=f'weak_binding_{index}', capabilities=[capability, RecordingDurability()])
+        for index in range(3)
+    ]
+    bindings = capability._get_durable_operation_bindings()  # pyright: ignore[reportPrivateUsage]
+    references = [weakref.ref(agent) for agent in agents]
+    assert len(bindings) == 3
+
+    agents.clear()
+    gc.collect()
+
+    assert not any(reference() is not None for reference in references)
+    assert len(bindings) == 0
 
 
 async def test_decorated_model_request_hook_round_trips_registered_model_replacement() -> None:
@@ -678,10 +746,10 @@ def test_sync_non_hook_operation_is_rejected_by_decorator() -> None:
         durable_operation(operation)  # pyright: ignore[reportArgumentType]
 
 
-def test_tier_one_base_and_duplicate_override_paths() -> None:
+def test_base_hook_base_and_duplicate_override_paths() -> None:
     class Base(AbstractCapability[Any]):
         # Collection behavior is tested without dispatching any of these declarations.
-        @tier_one_durable_operation
+        @base_hook_durable_operation
         async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
         sentinel = True
@@ -724,6 +792,17 @@ def test_before_model_request_context_parameter_can_have_any_name() -> None:
     declaration = collect_capability_operations(RenamedContextBeforeModelRequest())['before_model_request']
 
     assert declaration.ctx_parameter == 'run_context'
+    assert declaration.model_request_hook
+    assert not collect_capability_operations(Operations())['calculate'].model_request_hook
+
+
+def test_recording_config_has_no_per_tool_override() -> None:
+    assert (
+        _RecordingConfig().for_tool(
+            'tool', CapabilityOperationId('capability', operation='operation'), None, 'operation'
+        )
+        == {}
+    )
 
 
 def test_two_run_context_parameters_are_rejected_at_bind() -> None:
@@ -741,6 +820,31 @@ def test_two_run_context_parameters_are_rejected_at_bind() -> None:
         Agent(TestModel(), name='duplicate_context', capabilities=[DuplicateContext(), RecordingDurability()])
 
 
+async def test_two_model_request_context_parameters_are_rejected_at_bind() -> None:
+    class DuplicateModelRequestContext(AbstractCapability[Any]):
+        id = 'duplicate_model_request_context'
+
+        @durable_operation
+        async def operation(self, first: ModelRequestContext, second: ModelRequestContext) -> ModelRequestContext:
+            return first
+
+    capability = DuplicateModelRequestContext()
+    request_context = ModelRequestContext(
+        model=TestModel(), messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    assert await capability.operation(request_context, request_context) is request_context
+
+    with pytest.raises(
+        UserError,
+        match=r"Durable operation '.*operation' cannot take more than one `ModelRequestContext` parameter\.",
+    ):
+        Agent(
+            TestModel(),
+            name='duplicate_model_request_context',
+            capabilities=[capability, RecordingDurability()],
+        )
+
+
 def test_variadic_run_context_is_rejected_for_durable_operation() -> None:
     class VariadicContext(AbstractCapability[Any]):
         id = 'variadic_context'
@@ -753,20 +857,46 @@ def test_variadic_run_context_is_rejected_for_durable_operation() -> None:
         Agent(TestModel(), name='variadic_context', capabilities=[VariadicContext(), RecordingDurability()])
 
 
+async def test_variadic_model_request_context_is_rejected_for_durable_operation() -> None:
+    class VariadicModelRequestContext(AbstractCapability[Any]):
+        id = 'variadic_model_request_context'
+
+        @durable_operation
+        async def operation(self, *request_context: ModelRequestContext) -> ModelRequestContext:
+            return request_context[0]
+
+    capability = VariadicModelRequestContext()
+    request_context = ModelRequestContext(
+        model=TestModel(), messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    assert await capability.operation(request_context) is request_context
+
+    with pytest.raises(UserError, match=r'ModelRequestContext cannot be used as a variadic positional parameter'):
+        Agent(
+            TestModel(),
+            name='variadic_model_request_context',
+            capabilities=[capability, RecordingDurability()],
+        )
+
+
 async def test_defensive_capability_operation_paths() -> None:
     capability = Operations()
     declaration = collect_capability_operations(capability)['calculate']
     projection_declaration = collect_capability_operations(DurableBeforeModelRequest())['before_model_request']
     ctx = capability.calls[0][0] if capability.calls else RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
-    with pytest.raises(RuntimeError, match='require the durability model scope'):
-        await call_declaration(projection_declaration, capability, CapabilityOperationParams(ctx, {}))
+    with pytest.raises(AssertionError, match='called without its model scope'):
+        await call_declaration(
+            projection_declaration,
+            capability,
+            params=CapabilityOperationParams(ctx, arguments={}),
+        )
     with pytest.raises(RuntimeError, match='requires the worker agent'):
-        await recover_capability(ctx, 'missing')
+        await recover_capability(ctx, capability_id='missing')
     plain_agent = Agent(TestModel())
     ctx.agent = plain_agent
     with pytest.raises(RuntimeError, match='found 0'):
-        await recover_capability(ctx, 'missing')
+        await recover_capability(ctx, capability_id='missing')
 
     assert (
         await capability._calculate(  # pyright: ignore[reportPrivateUsage]
@@ -775,13 +905,6 @@ async def test_defensive_capability_operation_paths() -> None:
         == 2
     )
 
-    assert isinstance(
-        await _model_request_schema(
-            ctx,
-            ModelRequestContextProjection([], None, ModelRequestParameters(), None, False),
-        ),
-        ModelRequestContextProjection,
-    )
     assert declaration.result_type is int
 
 
@@ -793,21 +916,7 @@ async def test_bound_dispatch_defensively_rejects_missing_capability_id() -> Non
     ctx.agent = agent
     with pytest.raises(RuntimeError, match='must have an explicit `id`'):
         await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
-            AbstractCapability(), 'missing', ctx, (), {}
-        )
-
-
-async def test_bound_dispatch_rejects_an_unregistered_capability_operation() -> None:
-    agent = Agent(TestModel(), name='defensive', capabilities=[RecordingDurability()])
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    capability = Operations()
-    capability.id = 'runtime-operation'
-    ctx = RunContext(deps=None, agent=agent, model=TestModel(), usage=RunUsage())
-
-    with pytest.raises(UserError, match="Capability 'runtime-operation' was added per run"):
-        await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
-            capability, 'calculate', ctx, (ctx, 1), {}
+            AbstractCapability(), 'missing', ctx=ctx, args=(), kwargs={}
         )
 
 
@@ -820,7 +929,7 @@ async def test_capability_operation_rejects_realtime_context_model() -> None:
 
     with pytest.raises(UserError, match='require a non-realtime `Model` on `RunContext`'):
         await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
-            capability, 'calculate', ctx, (ctx,), {}
+            capability, 'calculate', ctx=ctx, args=(ctx,), kwargs={}
         )
 
 
@@ -836,32 +945,8 @@ async def test_capability_operation_rejects_unregistered_context_model() -> None
         match=r'was not registered with `RecordingDurability`.*cannot be used inside a journal',
     ):
         await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
-            capability, 'calculate', ctx, (ctx,), {}
+            capability, 'calculate', ctx=ctx, args=(ctx,), kwargs={}
         )
-
-
-def test_usage_delta_ignores_non_numeric_extension_values() -> None:
-    before = RunUsage()
-    after = RunUsage()
-    before.__dict__['opaque'] = 'before'
-    after.__dict__['opaque'] = 'after'
-    after.details['opaque'] = cast(Any, 'after')
-
-    delta = _usage_delta(before, after)
-
-    assert 'opaque' not in delta.__dict__
-    assert 'opaque' not in delta.details
-
-
-def test_usage_delta_preserves_numeric_extension_fields() -> None:
-    before = RunUsage()
-    after = RunUsage()
-    before.__dict__['custom_units'] = 2
-    after.__dict__['custom_units'] = 9
-
-    delta = _usage_delta(before, after)
-
-    assert delta.__dict__['custom_units'] == 7
 
 
 async def test_usage_snapshot_copies_details_before_in_place_handler_mutation() -> None:
@@ -877,7 +962,7 @@ async def test_usage_snapshot_copies_details_before_in_place_handler_mutation() 
 
     assert before.details == {'existing': 2}
     assert before.details is not usage.details
-    assert _usage_delta(before, usage).details == {'existing': 3}
+    assert (usage - before).details == {'existing': 3}
 
 
 @requires_temporal
@@ -890,7 +975,7 @@ async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.Mon
     transport = _CapabilityOperationTransport(durability, declaration)
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     ctx.agent = agent
-    params = CapabilityOperationParams(ctx, {'value': 2, 'extra': [], 'scale': 1})
+    params = CapabilityOperationParams(ctx, arguments={'value': 2, 'extra': [], 'scale': 1})
     wire, deps = transport.dump(params)
     assert isinstance(wire, _CapabilityOperationParams)
     loaded = transport.load((wire, deps), runtime=durability)
@@ -918,7 +1003,7 @@ async def test_temporal_capability_operation_resolves_ctx_model_worker_side() ->
     declaration = durability._capability_declarations[('model_reader', 'read_model')]  # pyright: ignore[reportPrivateUsage]
     transport = _CapabilityOperationTransport(durability, declaration)
     ctx = RunContext(deps=None, agent=agent, model=model, usage=RunUsage())
-    wire, deps = transport.dump(CapabilityOperationParams(ctx, {}, None))
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, arguments={}, model_id=None))
     registration = next(
         activity
         for activity in durability.temporal_activities
@@ -945,7 +1030,7 @@ async def test_temporal_capability_operation_rederives_for_run_instance_worker_s
     ]
     transport = _CapabilityOperationTransport(durability, declaration)
     ctx = RunContext(deps='tenant-a', agent=agent, model=TestModel(), usage=RunUsage())
-    wire, deps = transport.dump(CapabilityOperationParams(ctx, {}))
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, arguments={}))
     registration = next(
         activity
         for activity in durability.temporal_activities
@@ -976,8 +1061,14 @@ async def test_temporal_capability_operation_projects_registered_model_replaceme
     ]
     transport = _CapabilityOperationTransport(durability, declaration)
     ctx = RunContext(deps=None, agent=agent, model=original, usage=RunUsage())
-    projection = ModelRequestContextProjection([], None, ModelRequestParameters(), None, False)
-    wire, deps = transport.dump(CapabilityOperationParams(ctx, {'request_context': projection}))
+    projection = ModelRequestContextProjection(
+        [],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        model_id=None,
+        streaming=False,
+    )
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, arguments={'request_context': projection}))
     registration = next(
         activity
         for activity in durability.temporal_activities
@@ -1060,18 +1151,19 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
     async def workflow() -> tuple[int, int, dict[str, int], Decimal | None, int]:
         result = await agent.run('test')
         usage = result.usage
-        return usage.requests, usage.tool_calls, usage.details, usage.cost, cast(int, usage.__dict__['custom_units'])
+        return usage.requests, usage.tool_calls, usage.details, usage.cost, usage.details['custom_units']
 
     with SetWorkflowID(workflow_id):
         first = await workflow()
     with SetWorkflowID(workflow_id):
         replayed = await workflow()
 
-    assert first == replayed == (2, 2, {'summary_tokens': 3}, Decimal('0.25'), 7)
+    assert first == replayed == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
 
 
 @requires_prefect
+@pytest.mark.xdist_group(name='prefect')
 async def test_prefect_capability_operation_end_to_end() -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='prefect_operations', capabilities=[capability, PrefectDurability()])
@@ -1086,6 +1178,7 @@ async def test_prefect_capability_operation_end_to_end() -> None:
 
 
 @requires_prefect
+@pytest.mark.xdist_group(name='prefect')
 async def test_prefect_capability_operation_cache_identity_includes_context_and_model() -> None:
     class CacheIdentityOperation(AbstractCapability[str]):
         id = 'cache_identity'
@@ -1119,6 +1212,7 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
     await run()
 
     assert capability.calls == [
+        ('tenant-a', 'test'),
         ('tenant-a', 'test'),
         ('tenant-b', 'test'),
         ('tenant-b', 'alternative'),

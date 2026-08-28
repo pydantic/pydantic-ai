@@ -4819,10 +4819,10 @@ def test_return_schema_self_unbound():
 
     from typing_extensions import Self
 
-    from pydantic_ai._function_schema import _extract_return_schema_type
+    from pydantic_ai._function_schema import extract_return_schema_type
 
     # Pass Self directly as the annotation — no need for a real function with Self return
-    result = _extract_return_schema_type(Self, lambda: None)
+    result = extract_return_schema_type(Self, lambda: None)
     assert result is Any
 
 

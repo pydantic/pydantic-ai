@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import time
@@ -49,7 +50,6 @@ from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.durable_exec._sandbox import contributes_sandbox
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -77,10 +77,10 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from .conftest import IsDatetime, IsNow, IsStr
+from ..conftest import IsDatetime, IsNow, IsStr
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -123,15 +123,8 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._inline_snapshot import snapshot
-from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
-from .sandbox_fakes import (
-    ConnectOnlySandboxCapability,
-    FakeSandboxHandle,
-    LifecycleSandboxCapability,
-    RecordingSandboxBackend,
-    SandboxContributingCapability,
-)
+from .._inline_snapshot import snapshot
+from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -191,6 +184,21 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         yield dbos
     finally:
         DBOS.destroy()
+        # `enable_otlp=True` makes DBOS attach an OTel `LoggingHandler` and a `DBOSLogTransformer`
+        # filter to the root logger and every registered logger, and `DBOS.destroy()` does not detach
+        # them. A leaked handler/filter's emit path imports `dbos._context`, which imports
+        # `http.server` - fatal inside the Temporal workflow sandbox when an xdist worker later runs
+        # the temporal suite. Detach them here.
+        # TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
+        # https://github.com/dbos-inc/dbos-transact-py/issues/821
+        from dbos import _logger as dbos_logger_module
+        from opentelemetry.sdk._logs import LoggingHandler
+
+        for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
+            for handler in [h for h in logger.handlers if isinstance(h, LoggingHandler)]:
+                logger.removeHandler(handler)
+            for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
+                logger.removeFilter(log_filter)
 
 
 model = OpenAIChatModel(
@@ -1368,7 +1376,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            'MCPToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            "MCPToolset 'runtime_mcp' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
             'execute their own tools or resolve dynamically must be registered for durable execution when the '
             'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
             '`ExternalToolset` can be passed at runtime.'
@@ -1384,7 +1392,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
     with workflow_raises(
         UserError,
         snapshot(
-            'DynamicToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            "DynamicToolset 'runtime_dynamic' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
             'execute their own tools or resolve dynamically must be registered for durable execution when the '
             'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
             '`ExternalToolset` can be passed at runtime.'
@@ -1394,349 +1402,6 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
             'Hello',
             toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')],
         )
-
-
-class SandboxSupplyingDBOSDurability(DBOSDurability[Any]):
-    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-        return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover
-
-
-_DBOS_LIVE_SANDBOX_MESSAGE = (
-    'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
-    'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
-    '`SandboxRef` instead and attach a capability whose `get_sandbox` can connect to it.'
-)
-_DBOS_WRAPPER_UNAVAILABLE_SANDBOX_MESSAGE = (
-    'RunContext.sandbox is not available inside a DBOS durable workflow. Pass a `SandboxRef` to the agent run '
-    'and attach a capability whose `get_sandbox` can connect to it.'
-)
-_DEFAULT_UNAVAILABLE_SANDBOX_MESSAGE = (
-    'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
-    'local machine (unsafe: commands and file operations run with the full permissions of this process), '
-    'attach a capability that supplies a sandbox through its `acquire_sandbox` hook, or pass a `SandboxRef` '
-    'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
-)
-
-
-@pytest.mark.parametrize('run_method', ['run', 'run_sync'])
-async def test_dbos_agent_run_rejects_sandbox(dbos: DBOS, run_method: Literal['run', 'run_sync']):
-    # Rejected before the wrapped workflow is entered, i.e. before its arguments are pickled.
-    with pytest.raises(UserError, match=re.escape(_DBOS_LIVE_SANDBOX_MESSAGE)):
-        sandbox = FakeSandboxHandle()
-        if run_method == 'run':
-            await simple_dbos_agent.run('Hello', sandbox=sandbox)
-        else:
-            simple_dbos_agent.run_sync('Hello', sandbox=sandbox)
-
-
-@pytest.mark.parametrize('entry_style', ['agent-run', 'agent-run-sync', 'durability'])
-async def test_dbos_tool_sandbox_is_unavailable_inside_durable_run(
-    dbos: DBOS, entry_style: Literal['agent-run', 'agent-run-sync', 'durability']
-):
-    """The deprecated wrapper substitutes its own DBOS-specific unavailable reason; the
-    capability path leaves the framework's default-unavailable sandbox (and its reason) alone.
-    """
-    capability = DBOSDurability() if entry_style == 'durability' else None
-    agent = Agent(
-        TestModel(),
-        name=f'dbos_unavailable_sandbox_{entry_style}',
-        capabilities=[capability] if capability is not None else None,
-    )
-
-    @agent.tool
-    async def use_sandbox(ctx: RunContext[object]) -> str:
-        # One statement: the run raises the unavailable reason, so a second line would be dead.
-        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
-
-    async def run() -> object:
-        if entry_style == 'durability':
-
-            @DBOS.workflow(name='test_dbos_durability_sandbox_is_unavailable')
-            async def run_durable_agent() -> str:
-                return (await agent.run('Use the sandbox tool.')).output
-
-            return await run_durable_agent()
-        else:
-            dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
-            if entry_style == 'agent-run':
-                return await dbos_agent.run('Use the sandbox tool.')
-            else:
-                return await asyncio.to_thread(dbos_agent.run_sync, 'Use the sandbox tool.')
-
-    expected_message = (
-        _DEFAULT_UNAVAILABLE_SANDBOX_MESSAGE
-        if entry_style == 'durability'
-        else _DBOS_WRAPPER_UNAVAILABLE_SANDBOX_MESSAGE
-    )
-    with workflow_raises(UserError, expected_message):
-        await run()
-
-    if entry_style == 'durability':
-        # Outside a workflow the same agent gets the very same framework default: there is no
-        # local fallback anywhere.
-        with pytest.raises(UserError, match=r'^No sandbox is attached to this run'):
-            await agent.run('Use the sandbox tool outside a workflow.')
-
-
-@pytest.mark.parametrize('entry_style', ['agent', 'durability'])
-async def test_dbos_preserves_explicit_unavailable_sandbox_reason(
-    dbos: DBOS, entry_style: Literal['agent', 'durability']
-) -> None:
-    reason = 'disabled by policy'
-    capability = DBOSDurability() if entry_style == 'durability' else None
-    agent = Agent(
-        TestModel(),
-        name=f'dbos_explicit_unavailable_sandbox_{entry_style}',
-        capabilities=[capability] if capability is not None else None,
-    )
-
-    @agent.tool
-    async def use_sandbox(ctx: RunContext[object]) -> str:
-        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
-
-    async def run() -> object:
-        sandbox = UnavailableSandbox(reason=reason)
-        if entry_style == 'durability':
-
-            @DBOS.workflow(name='test_dbos_durability_preserves_explicit_unavailable')
-            async def run_durable_agent() -> str:
-                return (await agent.run('Use the sandbox tool.', sandbox=sandbox)).output
-
-            return await run_durable_agent()
-        else:
-            dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
-            return await dbos_agent.run('Use the sandbox tool.', sandbox=sandbox)
-
-    with workflow_raises(UserError, reason):
-        await run()
-
-
-async def test_dbos_durability_rejects_live_sandbox_inside_durable_run(dbos: DBOS):
-    """The capability-first path rejects a live handle too: `wrap_entire_run` fires inside the workflow."""
-    agent = Agent(TestModel(), name='dbos_durability_live_sandbox', capabilities=[DBOSDurability()])
-
-    @DBOS.workflow(name='test_dbos_durability_rejects_live_sandbox')
-    async def run_durable_agent() -> str:
-        return (await agent.run('Hello', sandbox=FakeSandboxHandle())).output
-
-    with workflow_raises(UserError, _DBOS_LIVE_SANDBOX_MESSAGE):
-        await run_durable_agent()
-
-
-async def test_dbos_agent_capability_resolves_sandbox_ref(dbos: DBOS):
-    """A `SandboxRef` run argument connects through the wrapped agent's capability chain inside the workflow."""
-    connector = ConnectOnlySandboxCapability()
-
-    def call_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('use_wrapper_sandbox', {})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    agent: Agent[None, str] = Agent(
-        FunctionModel(call_then_finish),
-        name='dbos_wrapper_sandbox_ref_agent',
-        deps_type=type(None),
-        capabilities=[connector],
-    )
-
-    @agent.tool
-    async def use_wrapper_sandbox(ctx: RunContext[None]) -> str:
-        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
-
-    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
-    result = await dbos_agent.run('Use the sandbox.', sandbox=SandboxRef(provider='fake', sandbox_id='wrapper-sandbox'))
-    assert result.output == 'done'
-    assert connector.sandbox_ids == ['wrapper-sandbox']
-
-
-async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
-    # A supplier's `acquire_sandbox`/`release_sandbox` would run in workflow code, which is replayed
-    # during recovery. Checked statically over both the bound chain and per-run capabilities.
-    static_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
-        Agent(TestModel(), name='dbos_static_sandbox', capabilities=[SandboxContributingCapability()])
-    )
-    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
-        await static_agent.run('Hello')
-
-    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
-        await simple_dbos_agent.run('Hello', capabilities=[SandboxContributingCapability()])
-
-    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
-        simple_dbos_agent.run_sync('Hello', capabilities=[SandboxContributingCapability()])
-
-
-async def test_dbos_durability_runs_a_sandbox_supplying_capability_in_steps(dbos: DBOS):
-    class StepAwareLifecycleSandboxCapability(LifecycleSandboxCapability):
-        def __init__(self) -> None:
-            super().__init__()
-            self.in_step: list[bool] = []
-
-        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            self.in_step.append(DBOS.step_id is not None)
-            return await super().acquire_sandbox(ctx)
-
-        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            self.in_step.append(DBOS.step_id is not None)
-            await super().release_sandbox(ctx, ref)
-
-    supplier = StepAwareLifecycleSandboxCapability()
-    agent = Agent(
-        TestModel(),
-        name='dbos_supplied_sandbox',
-        capabilities=[DBOSDurability(), supplier],
-    )
-
-    @DBOS.workflow(name='test_dbos_durability_rejects_supplied_sandbox')
-    async def run_agent() -> str:
-        return (await agent.run('Hello')).output
-
-    assert await run_agent() == snapshot('success (no tool calls)')
-    assert supplier.events == snapshot(['acquire:created-1', 'release:created-1'])
-    assert supplier.in_step == [True, True]
-
-    # Outside a workflow the very same agent runs the supplier's lifecycle normally; no tool
-    # touches the sandbox, so the lazily connecting facade never connects.
-    assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
-    assert supplier.events == snapshot(
-        ['acquire:created-1', 'release:created-1', 'acquire:created-2', 'release:created-2']
-    )
-    assert supplier.in_step == [True, True, False, False]
-
-
-async def test_dbos_get_only_sandbox_connects_inside_the_tool_step(dbos: DBOS):
-    class GetOnlySandboxCapability(AbstractCapability[Any]):
-        id = 'dbos-get-only-sandbox'
-
-        def __init__(self) -> None:
-            self.in_step: list[bool] = []
-            self.backends: list[RecordingSandboxBackend] = []
-
-        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
-            assert ref is None
-            self.in_step.append(DBOS.step_id is not None)
-            backend = RecordingSandboxBackend('always-live')
-            self.backends.append(backend)
-            return backend
-
-    @DBOS.step()
-    async def use_get_only_sandbox(ctx: RunContext[Any]) -> str:
-        return (await ctx.sandbox.run(['echo', 'always-live'])).stdout
-
-    provider = GetOnlySandboxCapability()
-    agent = Agent(
-        TestModel(),
-        name='dbos_get_only_sandbox',
-        tools=[use_get_only_sandbox],
-        capabilities=[DBOSDurability(), provider],
-    )
-
-    @DBOS.workflow(name='test_dbos_get_only_sandbox')
-    async def run_agent() -> str:
-        return (await agent.run('Use the sandbox.')).output
-
-    assert await run_agent() == '{"use_get_only_sandbox":"connected"}'
-    assert provider.in_step == [True]
-    assert [backend.commands for backend in provider.backends] == [[['echo', 'always-live']]]
-
-
-async def test_dbos_durability_rejects_a_per_run_sandbox_supplier(dbos: DBOS):
-    """A supplier passed via `capabilities=` on the run raises instead of being silently
-    ignored: the durability capability binds suppliers to the agent's tree at `for_agent`
-    time, so it cannot route this one."""
-    supplier = LifecycleSandboxCapability()
-    agent = Agent(TestModel(), name='dbos_per_run_supplied_sandbox', capabilities=[DBOSDurability()])
-
-    @DBOS.workflow(name='test_dbos_durability_rejects_per_run_supplied_sandbox')
-    async def run_agent() -> str:
-        return (await agent.run('Hello', capabilities=[supplier])).output
-
-    with workflow_raises(
-        UserError,
-        snapshot(
-            'Capabilities added per run cannot contribute DBOS durable operations because their steps were not registered when the agent was bound.'
-        ),
-    ):
-        await run_agent()
-    assert supplier.events == []
-
-
-def test_dbos_durability_base_sandbox_routing_is_not_a_user_supplier(dbos: DBOS):
-    """The base `acquire_sandbox` override only guards durable runs, so it must not read as a
-    supplier itself; a subclass override is a genuine supplier."""
-    assert contributes_sandbox(DBOSDurability()) is False
-    assert contributes_sandbox(SandboxSupplyingDBOSDurability()) is True
-
-
-async def test_dbos_durability_reconnects_sandbox_ref_after_reexecution(dbos: DBOS):
-    connector = ConnectOnlySandboxCapability()
-
-    def call_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('use_reconnected_sandbox', {})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    @DBOS.step()
-    async def use_reconnected_sandbox(ctx: RunContext[None]) -> str:
-        return (await ctx.sandbox.run(['echo', ctx.sandbox.sandbox_id])).stdout
-
-    agent: Agent[None, str] = Agent(
-        FunctionModel(call_then_finish),
-        name='dbos_sandbox_ref_agent',
-        deps_type=type(None),
-        tools=[use_reconnected_sandbox],
-        capabilities=[DBOSDurability(), connector],
-    )
-
-    @DBOS.workflow()
-    async def run_agent(sandbox_id: str) -> str:
-        return (await agent.run('Use the sandbox.', sandbox=SandboxRef(provider='fake', sandbox_id=sandbox_id))).output
-
-    assert await run_agent('durable-sandbox') == 'done'
-    assert await run_agent('durable-sandbox') == 'done'
-    assert connector.sandbox_ids == ['durable-sandbox', 'durable-sandbox']
-    assert [backend.commands for backend in connector.backends] == [
-        [['echo', 'durable-sandbox']],
-        [['echo', 'durable-sandbox']],
-    ]
-
-
-async def test_dbos_durability_sandbox_connection_is_unavailable_in_workflow_code(dbos: DBOS):
-    """Connecting to a `SandboxRef` is I/O, so a sandbox operation in workflow code — here a
-    plain tool that is not wrapped in a step — fails with directions instead of the chain
-    connecting there. The step-wrapped tool in the reexecution test above is the working path.
-    """
-    connector = ConnectOnlySandboxCapability()
-
-    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart('use_workflow_sandbox', {})])
-
-    agent: Agent[None, str] = Agent(
-        FunctionModel(call_tool),
-        name='dbos_workflow_scope_sandbox_agent',
-        deps_type=type(None),
-        capabilities=[DBOSDurability(), connector],
-    )
-
-    @agent.tool
-    async def use_workflow_sandbox(ctx: RunContext[None]) -> str:
-        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
-
-    @DBOS.workflow(name='test_dbos_durability_workflow_scope_sandbox')
-    async def run_agent() -> str:
-        return (
-            await agent.run('Use the sandbox.', sandbox=SandboxRef(provider='fake', sandbox_id='wf-sandbox'))
-        ).output
-
-    with workflow_raises(
-        UserError,
-        snapshot(
-            'Sandbox operations are not available in DBOS workflow code: connecting to the sandbox is I/O, '
-            'which must happen inside a step. Use `ctx.sandbox` from a tool, a `process_tool_call` hook, or '
-            'an `event_stream_handler` instead.'
-        ),
-    ):
-        await run_agent()
-    assert connector.sandbox_ids == []
 
 
 async def test_dbos_agent_override_model_in_workflow(allow_model_requests: None, dbos: DBOS):
@@ -2755,19 +2420,46 @@ async def test_dbos_durability_accepts_legacy_stream_step_shape(dbos: DBOS) -> N
     agent = Agent(TestModel(), name='legacy_stream_shape', capabilities=[DBOSDurability()])
     durability = DBOSDurability.from_agent(agent)
     assert durability is not None
+    result = await durability._load_streamed_activity_result(  # pyright: ignore[reportPrivateUsage]
+        response, ModelRequestParameters()
+    )
+    assert result.response == response
+    assert result.events
 
-    async def legacy_stream_step(*args: Any) -> ModelResponse:
-        return response
 
-    durability._request_stream_step = legacy_stream_step  # pyright: ignore[reportPrivateUsage]
+async def test_dbos_operation_backend_registers_novel_id_generically(dbos: DBOS) -> None:
+    from pydantic_ai.durable_exec._operation import (
+        DurableOperation,
+        IdentityParameterTransport,
+        NoCacheIdentity,
+        TypedResultCodec,
+    )
+    from pydantic_ai.durable_exec.dbos._operation_backend import DBOSOperationBackend, DBOSOperationConfig
 
-    @DBOS.workflow()
-    async def run_agent() -> tuple[str, list[str]]:
-        async with agent.run_stream('stream') as result:
-            chunks = [chunk async for chunk in result.stream_text(debounce_by=None)]
-            return await result.get_output(), chunks
+    @dataclass(frozen=True)
+    class NovelOperationId:
+        name: str
 
-    assert await run_agent() == ('legacy stream', ['legacy stream'])
+    @dataclass(frozen=True)
+    class Params:
+        value: str
+
+    async def handler(params: Params) -> str:
+        return f'handled:{params.value}'
+
+    operation = DurableOperation(
+        operation_id=cast(Any, NovelOperationId('novel')),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[Params](),
+        cache_identity=NoCacheIdentity[Params](),
+        result_codec=TypedResultCodec[str](str, mode='identity'),
+        config_role='capability',
+    )
+    backend = DBOSOperationBackend(agent_name='novel', config=DBOSOperationConfig(model={}, event={}, tool={}))
+    bound, registrations = backend.register(operation, name='novel.generic', config={})
+
+    assert await bound(Params('input')) == 'handled:input'
+    assert registrations == (cast(Any, bound).step,)
 
 
 # Module-level like real wrapper-era handlers: `DBOSAgent.run` recorded the handler as a
@@ -4209,12 +3901,12 @@ async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS, metadata: d
 
     DBOS registers a step once per name and its tool-call step names carry no tool name, so
     per-tool config can't be honored. Metadata that other engines read (`{'dbos': False}` would
-    be an opt-out under Prefect/Temporal's `_tool_config_key`) must leave the step in place --
+    be an opt-out under Prefect/Temporal's `engine_spec.tool_config_key`) must leave the step in place --
     dropping it would both un-checkpoint the call and shift the recorded step sequence, breaking
     recovery of workflows recorded before this capability existed.
 
     The empty-string key is the same contract from the other side: an engine with no
-    `_tool_config_key` must not consult metadata at all, rather than reading key `''`.
+    `engine_spec.tool_config_key` must not consult metadata at all, rather than reading key `''`.
     """
     calls: list[str] = []
 
@@ -4243,6 +3935,35 @@ async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS, metadata: d
     assert calls == ['called']
     step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
     assert 'dbos_metadata_ignored__dynamic_toolset__dyn.call_tool' in step_names
+
+
+async def test_dbos_durability_mcp_tool_metadata_false_is_rejected(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MCP tools perform I/O and cannot opt out of their durable DBOS step."""
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='dbos_mcp_opt_out')
+    tool = ToolsetTool(
+        toolset=mcp_toolset,
+        tool_def=ToolDefinition(name='inline', metadata={'dbos': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    async def get_tools(ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        return {'inline': tool}
+
+    monkeypatch.setattr(mcp_toolset, 'get_tools', get_tools)
+    agent = Agent(
+        TestModel(call_tools='all'),
+        name='dbos_mcp_opt_out',
+        toolsets=[mcp_toolset],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with pytest.raises(UserError, match='MCP tools perform I/O'):
+        await run_agent()
 
 
 def test_dbos_durability_dynamic_capability_requires_id(dbos: DBOS) -> None:
@@ -4322,7 +4043,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
         )
 
     with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError, match=r"MCPToolset 'runtime_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
     ):
         await run_agent()
 
@@ -4336,7 +4057,8 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
         agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
 
     with pytest.raises(
-        UserError, match=r'DynamicToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError,
+        match=r"DynamicToolset 'runtime_dynamic' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS",
     ):
         run_agent()
 
@@ -4359,7 +4081,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             pass  # pragma: no cover
 
     with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError, match=r"MCPToolset 'iter_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
     ):
         await run_agent()
 
@@ -4383,7 +4105,7 @@ async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) ->
     async def run_agent() -> None:
         await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
 
-    with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
+    with pytest.raises(UserError, match="DynamicToolset 'per_run_dynamic' cannot be passed"):
         await run_agent()
 
 
@@ -4681,3 +4403,30 @@ async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
+
+
+async def test_dbos_durability_runs_sandbox_lifecycle_in_steps(dbos: DBOS) -> None:
+    """Inherited sandbox lifecycle operations execute as DBOS steps."""
+
+    class SandboxCapability(AbstractCapability[Any]):
+        id = 'sandbox'
+
+        def __init__(self) -> None:
+            self.in_step: list[bool] = []
+
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            self.in_step.append(DBOS.step_id is not None)
+            return SandboxRef(provider='test', sandbox_id=ctx.run_id or 'run')
+
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            self.in_step.append(DBOS.step_id is not None)
+
+    sandbox = SandboxCapability()
+    agent = Agent(TestModel(), name='dbos_sandbox_lifecycle', capabilities=[DBOSDurability(), sandbox])
+
+    @DBOS.workflow(name='test_dbos_sandbox_lifecycle')
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    assert await run_agent() == 'success (no tool calls)'
+    assert sandbox.in_step == [True, True]

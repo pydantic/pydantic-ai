@@ -1,63 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Literal, cast
 
 from prefect import task
 from prefect.context import FlowRunContext
 
-from pydantic_ai.durable_exec._operation import (
-    CallToolId,
-    CapabilityOperationId,
-    DurableOperationId,
-    EventStreamHandlerId,
-    OperationConfigRole,
-    ToolsetKind,
-    ValidateToolArgumentsId,
-)
-from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
-from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer
+from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, EventStreamHandlerId
+from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, RoleBasedOperationConfig
 
+from ._operation_names import PrefectOperationNamer
 from ._types import TaskConfig
 
-
-class PrefectOperationConfig:
-    def __init__(
-        self,
-        *,
-        model: TaskConfig,
-        event: TaskConfig,
-        capability: TaskConfig,
-        tool: Callable[[ToolsetKind, object | None, str], TaskConfig | Literal[False]],
-    ) -> None:
-        self._model = model
-        self._event = event
-        self._capability = capability
-        self._tool = tool
-
-    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> TaskConfig:
-        if role is OperationConfigRole.MODEL:
-            return self._model
-        if role is OperationConfigRole.EVENT:
-            return self._event
-        if role is OperationConfigRole.CAPABILITY:
-            assert isinstance(operation_id, CapabilityOperationId)
-            return self._capability
-        assert isinstance(operation_id, CallToolId | ValidateToolArgumentsId)
-        config = self._tool(operation_id.toolset_kind, None, '')
-        assert config is not False
-        return config
-
-    def for_tool(
-        self,
-        role: OperationConfigRole,
-        operation_id: DurableOperationId,
-        tool: object | None,
-        tool_name: str,
-    ) -> TaskConfig | Literal[False]:
-        assert role in (OperationConfigRole.TOOL_CALL, OperationConfigRole.TOOL_VALIDATION)
-        assert isinstance(operation_id, CallToolId | ValidateToolArgumentsId)
-        return self._tool(operation_id.toolset_kind, tool, tool_name)
+PrefectOperationConfig = RoleBasedOperationConfig[TaskConfig]
 
 
 class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
@@ -65,36 +19,39 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         super().__init__(namer=PrefectOperationNamer(), config=config)
         self._event_sequence_key = event_sequence_key
 
-    @staticmethod
-    def _next_sequence(flow_context: FlowRunContext, key: str) -> int:
-        sequence = flow_context.task_run_dynamic_keys.get(key, 0)
-        assert isinstance(sequence, int)
-        flow_context.task_run_dynamic_keys[key] = sequence + 1
-        return sequence
-
-    async def _execute(
+    async def execute(
         self,
         *,
+        operation_id: DurableOperationId,
         name: str,
         body: Callable[[], Awaitable[object]],
         cache_key: tuple[object, ...],
-        config: object,
+        config: TaskConfig,
     ) -> object:
-        if name == PrefectOperationNamer().operation_name(EventStreamHandlerId()):
+        sequence_key: str | None = None
+        if isinstance(operation_id, EventStreamHandlerId):
+            sequence_key = self._event_sequence_key
+        elif isinstance(operation_id, CapabilityOperationId):
+            capability_id = operation_id.capability_id
+            sequence_key = (
+                f'{self._event_sequence_key}:capability:{len(capability_id)}:{capability_id}{operation_id.operation}'
+            )
+
+        if sequence_key is not None:
             flow_context = FlowRunContext.get()
             assert flow_context is not None
-            cache_key = (*cache_key, self._next_sequence(flow_context, self._event_sequence_key))
-        elif name.endswith(('.acquire_sandbox', '.release_sandbox')):
-            flow_context = FlowRunContext.get()
-            assert flow_context is not None
-            # The ordinal distinguishes two Agent.run() calls in one flow and is replay-stable
-            # because Prefect re-executes those calls in the same order on a flow retry.
-            sequence_key = f'pydantic_ai_lifecycle_sequence:{name}'
-            cache_key = (*cache_key, self._next_sequence(flow_context, sequence_key))
+            # Prefect rebuilds dynamic task keys in the same order on flow retry. A counter per
+            # semantic operation therefore distinguishes repeated live invocations while producing
+            # the same cache keys during replay. Capability operations use separate counters so an
+            # unrelated operation cannot shift their replay identities.
+            sequence = flow_context.task_run_dynamic_keys.get(sequence_key, 0)
+            assert isinstance(sequence, int)
+            flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
+            cache_key = (*cache_key, sequence)
 
         @task
         async def operation(operation_name: str, *logical_inputs: object) -> object:
             return await body()
 
-        options = cast(TaskConfig, config or {})
+        options = config or {}
         return await operation.with_options(name=name, **options)(name, *cache_key)

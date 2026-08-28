@@ -19,20 +19,20 @@ collection machinery into the integration.
 Choose the backend tier from the engine SDK's execution model:
 
 - Subclass `CallableOperationBackend` when the SDK accepts an async callback at invocation time.
-  Implement `_execute` to run that callback in one named durable unit. The base owns parameter and
+  Implement `execute` to run that callback in one named durable unit. The base owns parameter and
   result transport, cache identity, naming, and config resolution.
 - Subclass `RegisteredOperationBackend` when handlers must be registered before a worker starts.
-  Implement `_register` to return the bound caller and all SDK registration handles. Expose those
+  Implement `register` to return the bound caller and all SDK registration handles. Expose those
   registrations from the engine capability without rebuilding or reordering them. The base binds
   the four model operations during agent assembly, so `registrations()` is complete before worker
   start; pass the collected registrations to the engine SDK when creating the worker.
 
-Set every declarative field deliberately: `_codec`, `_unsupported_runtime_toolset_kinds`,
-`_wrapped_toolset_kinds`, `_toolset_lifecycles`, `_tool_call_result_upgrade_lenient`,
-`_journal_discovery`, `_force_sequential_tools_in_durable_context`, and
-`_allow_inline_mcp_in_durable_context`. Also define the durable unit and container nouns used in
-errors. Use `IDENTITY_CODEC` when the engine SDK serializes Python values itself. Use `JSON_CODEC`
-when the integration must reduce values to JSON-compatible payloads before journaling them.
+Set the public `engine_spec` once using `DurabilityEngineSpec`. Declare the engine name, durable
+unit noun, durable container noun, codec, unsupported runtime toolset kinds, wrapped toolset kinds,
+toolset lifecycles, tool-call result upgrade policy, discovery policy, sequential tool policy, and
+tool config key deliberately. Use `IDENTITY_CODEC` when the engine SDK serializes Python values
+itself. Use `JSON_CODEC` when the integration must reduce values to JSON-compatible payloads before
+journaling them.
 
 Persisted operation names are compatibility data, independent of Python class names. Prefer
 `JournalOperationNamer` when its convention fits. Otherwise implement `DurableOperationNamer` and
@@ -42,7 +42,8 @@ part of an implementation rename unless the migration of in-flight executions is
 reviewed.
 
 Resolve base and per-tool configuration with `OperationConfigRole` and `DurableOperationId`.
-Exhaustively handle every ID variant; the union includes model requests, suspended-response
+Handle known ID variants and retain a default branch because the public union grows in minor
+releases. The union includes model requests, suspended-response
 cancellation, message compaction, event handling, discovery, validation, calls, and
 `CapabilityOperationId`. Capability methods marked with `@durable_operation` arrive through the
 same backend and config resolver as framework operations, so do not maintain a second registration
@@ -51,7 +52,7 @@ path for them.
 Assume a durable unit may execute more than once if the process fails after the side effect but
 before its checkpoint commits. Document the engine's guarantees and require idempotency or expose
 an engine-native at-most-once option where available. Keep workflow-side code deterministic. Enter
-and close toolset resources according to `_toolset_lifecycles`, including failure and cancellation
+and close toolset resources according to `engine_spec.toolset_lifecycles`, including failure and cancellation
 paths, and verify that resources created inside a durable unit do not escape it. Test replay,
 teardown, control-flow exceptions, persisted-output upgrades, and behavior outside the durable
 context in the engine's own suite.

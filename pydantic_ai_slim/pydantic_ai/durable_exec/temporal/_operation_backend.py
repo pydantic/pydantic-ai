@@ -8,39 +8,41 @@ from temporalio import activity
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
-    CallToolId,
-    CancelSuspendedResponseId,
     CapabilityOperationId,
-    CompactMessagesId,
     DurableOperation,
+    DurableOperationConfig,
     DurableOperationId,
     EventStreamHandlerId,
-    GetInstructionsId,
-    GetToolsId,
+    ModelCancelSuspendedResponseId,
+    ModelCompactMessagesId,
     ModelRequestId,
     OperationConfigRole,
-    ValidateToolArgumentsId,
+    ParameterTransport,
+    ToolsetCallToolId,
+    ToolsetGetInstructionsId,
+    ToolsetGetToolsId,
+    ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
-from pydantic_ai.durable_exec._operation_names import TemporalOperationNamer
 
 from ._activity_execution import execute_activity
+from ._operation_names import TemporalOperationNamer
 from ._toolset import heartbeating, model_response_payload_errors
 
-P = TypeVar('P')
-W = TypeVar('W')
-R = TypeVar('R')
+ParamsT = TypeVar('ParamsT')
+WireT = TypeVar('WireT')
+ResultT = TypeVar('ResultT')
 
 
-class TemporalParameterTransport(Protocol[P, W]):
+class TemporalParameterTransport(ParameterTransport[ParamsT, WireT], Protocol[ParamsT, WireT]):
     wire_type: object
     result_type: object
 
     @abstractmethod
-    def dump(self, params: P) -> W: ...
+    def dump(self, params: ParamsT) -> WireT: ...
 
     @abstractmethod
-    def load(self, payload: W, *, runtime: object) -> P: ...
+    def load(self, payload: WireT, *, runtime: object) -> ParamsT: ...
 
 
 class _ModelParams(Protocol):
@@ -51,34 +53,31 @@ class _EventParams(Protocol):
     event: Any
 
 
-class TemporalOperationConfig:
+class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
     def __init__(
         self,
         *,
         model: ActivityConfig,
         event: ActivityConfig,
-        capability: ActivityConfig,
         tool: ActivityConfig,
         resolve_tool: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
     ) -> None:
         self._model = model
         self._event = event
-        self._capability = capability
         self._tool = tool
         self._resolve_tool = resolve_tool
 
-    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ActivityConfig:
-        if role is OperationConfigRole.MODEL:
+    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> ActivityConfig:
+        if role == 'model':
             return self._model
-        if role is OperationConfigRole.EVENT:
+        if role == 'event':
             return self._event
-        if role is OperationConfigRole.CAPABILITY:
-            return self._capability
         return self._tool
 
     def for_tool(
         self,
         role: OperationConfigRole,
+        *,
         operation_id: DurableOperationId,
         tool: object | None,
         tool_name: str,
@@ -86,11 +85,12 @@ class TemporalOperationConfig:
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
-class TemporalBoundOperation(Generic[P, W, R]):
+class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
     def __init__(
         self,
-        operation: DurableOperation[P, W, R],
-        registration: Callable[..., Awaitable[R]],
+        operation: DurableOperation[ParamsT, WireT, ResultT],
+        *,
+        registration: Callable[..., Awaitable[ResultT]],
         config: ActivityConfig,
     ) -> None:
         self._operation = operation
@@ -98,10 +98,10 @@ class TemporalBoundOperation(Generic[P, W, R]):
         self._config = config
 
     @property
-    def operation(self) -> DurableOperation[P, W, R]:
+    def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
         return self._operation
 
-    async def __call__(self, params: P, *, config: object | None = None) -> R:
+    async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
         activity_config = cast(ActivityConfig, config or self._config).copy()
         operation_id = self._operation.operation_id
@@ -110,30 +110,34 @@ class TemporalBoundOperation(Generic[P, W, R]):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
             suffix = ' (stream)' if operation_id.streaming else ''
             activity_config['summary'] = f'request model: {model_name}{suffix}'
-        elif isinstance(operation_id, CancelSuspendedResponseId):
+        elif isinstance(operation_id, ModelCancelSuspendedResponseId):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
             activity_config['summary'] = f'cancel suspended response: {model_name}'
-        elif isinstance(operation_id, CompactMessagesId):
+        elif isinstance(operation_id, ModelCompactMessagesId):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
             activity_config['summary'] = f'compact messages: {model_name}'
-        elif isinstance(operation_id, CallToolId):
+        elif isinstance(operation_id, ToolsetCallToolId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'call tool: {operation_id.toolset_id}:{tool_name}'
-        elif isinstance(operation_id, ValidateToolArgumentsId):
+        elif isinstance(operation_id, ToolsetValidateToolArgumentsId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'validate tool args: {operation_id.toolset_id}:{tool_name}'
-        elif isinstance(operation_id, GetToolsId):
+        elif isinstance(operation_id, ToolsetGetToolsId):
             activity_config['summary'] = f'get tools: {operation_id.toolset_id}'
-        elif isinstance(operation_id, GetInstructionsId):
+        elif isinstance(operation_id, ToolsetGetInstructionsId):
             activity_config['summary'] = f'get instructions: {operation_id.toolset_id}'
         elif isinstance(operation_id, CapabilityOperationId):
             activity_config['summary'] = f'capability: {operation_id.capability_id}.{operation_id.operation}'
-        else:
-            assert isinstance(operation_id, EventStreamHandlerId)
+        elif isinstance(operation_id, EventStreamHandlerId):
             event = cast(_EventParams, params).event
             activity_config['summary'] = f'handle event: {event.event_kind}'
+        else:
+            # New operation ids use their stable activity name as the default summary. Their
+            # parameter transport must implement `TemporalParameterTransport`, including
+            # `wire_type` and `result_type`, so the payload converter can inspect the activity.
+            activity_config['summary'] = self.registration.__name__
 
-        if isinstance(operation_id, ModelRequestId | CompactMessagesId):
+        if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
             with model_response_payload_errors(model_name):
                 return await execute_activity(
                     activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
@@ -151,7 +155,6 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         deps_type: type[Any],
         model_config: ActivityConfig,
         event_config: ActivityConfig,
-        capability_config: ActivityConfig,
         tool_config: ActivityConfig,
         resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
         runtime: object | None = None,
@@ -159,11 +162,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         super().__init__(
             namer=TemporalOperationNamer(agent_name),
             config=TemporalOperationConfig(
-                model=model_config,
-                event=event_config,
-                capability=capability_config,
-                tool=tool_config,
-                resolve_tool=resolve_tool_config,
+                model=model_config, event=event_config, tool=tool_config, resolve_tool=resolve_tool_config
             ),
         )
         self._deps_type = deps_type
@@ -173,20 +172,23 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         self._registrations.remove(registration)
         self._registrations.append(registration)
 
-    def _register(
+    def register(
         self,
-        operation: DurableOperation[P, W, R],
+        operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
         name: str,
         config: ActivityConfig,
-    ) -> tuple[BoundDurableOperation[P, W, R], Sequence[Callable[..., object]]]:
-        transport = cast(TemporalParameterTransport[P, W], operation.parameter_transport)
+    ) -> tuple[BoundDurableOperation[ParamsT, WireT, ResultT], Sequence[Callable[..., object]]]:
+        transport = cast(TemporalParameterTransport[ParamsT, WireT], operation.parameter_transport)
 
-        async def activity_handler(params: Any, deps: Any = None) -> R:
-            semantic_params = transport.load(cast(W, (params, deps)), runtime=self._runtime)
+        async def activity_handler(params: Any, deps: Any = None) -> ResultT:
+            semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
                 return await operation.handler(semantic_params)
 
+        # Existing operation transports retain their shipped wire dataclasses and activity
+        # signatures. New operation ids ride this generic registration path and only need a
+        # `TemporalParameterTransport` with `wire_type` and `result_type`.
         # Temporal's Pydantic payload converter deserializes `deps` by inspecting the
         # registered callable, so patch the exact function that the SDK will inspect.
         activity_handler.__annotations__ = {
@@ -195,5 +197,9 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
             'return': transport.result_type,
         }
         registration = activity.defn(name=name)(activity_handler)
-        bound = TemporalBoundOperation(operation, cast(Callable[..., Awaitable[R]], registration), config)
+        bound = TemporalBoundOperation(
+            operation,
+            registration=cast(Callable[..., Awaitable[ResultT]], registration),
+            config=config,
+        )
         return bound, (registration,)

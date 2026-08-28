@@ -59,6 +59,9 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     def factory_wrapper(**kwargs: Any) -> Any:
         client = mock(**kwargs)
         client.__aenter__.return_value = client
+        # `safe_download` keeps the resolved-IP jar empty, so the mock needs a real
+        # jar like `httpx2.AsyncClient` has.
+        client.cookies = httpx2.Cookies()
 
         # Most tests in this file predate raw streaming and configure `get` directly.
         # Adapt that response setup to the build/send boundary used by `safe_download`.
@@ -1369,6 +1372,132 @@ class TestSafeDownload:
 
         call_args = mock_client.get.call_args
         assert call_args[1]['extensions'] == {}
+
+    async def test_server_cookies_are_isolated_from_hosts_sharing_an_ip(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """Each host receives only its own cookies even though every hop uses one IP."""
+
+        sent_cookies: list[str | None] = []
+        hop = 0
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal hop
+            hop += 1
+            assert request.url.host == '93.184.215.14'
+            host = request.headers.get('host', '')
+            if hop == 1:
+                assert host == 'tenant-a.example.com'
+                return httpx2.Response(
+                    302,
+                    headers={'location': 'https://tenant-b.example.com/file', 'set-cookie': 'sid=a; Path=/'},
+                    request=request,
+                )
+            if hop == 2:
+                assert host == 'tenant-b.example.com'
+                sent_cookies.append(request.headers.get('cookie'))
+                return httpx2.Response(
+                    302,
+                    headers={'location': 'https://tenant-a.example.com/file', 'set-cookie': 'sid=b; Path=/'},
+                    request=request,
+                )
+            assert host == 'tenant-a.example.com'
+            sent_cookies.append(request.headers.get('cookie'))
+            return httpx2.Response(200, content=b'final', request=request)
+
+        serve_requests(handler)
+        await safe_download('https://tenant-a.example.com./file')
+
+        assert sent_cookies == [None, 'sid=a']
+
+    @pytest.mark.parametrize(
+        ('start_url', 'redirect_url', 'set_cookie', 'expected_cookie'),
+        [
+            pytest.param(
+                'https://a.example/start',
+                'https://a.example/download',
+                'sid=secret; Path=/',
+                'sid=secret',
+                id='same-host',
+            ),
+            pytest.param(
+                'https://app.example.com/start',
+                'https://cdn.example.com/download',
+                'sid=secret; Domain=example.com; Path=/',
+                None,
+                id='domain-cookie-not-shared-between-hosts',
+            ),
+            pytest.param(
+                'https://attacker.co.uk/start',
+                'https://bank.co.uk/download',
+                'sid=secret; Domain=co.uk; Path=/',
+                None,
+                id='public-suffix-cookie-not-shared-between-hosts',
+            ),
+            pytest.param(
+                'https://93.184.216.34/start',
+                'https://52.184.216.34/download',
+                'sid=secret; Domain=184.216.34; Path=/',
+                None,
+                id='ip-suffix-cookie-not-shared-between-hosts',
+            ),
+            pytest.param(
+                'https://evil.example.com/start',
+                'https://victim.example.com/download',
+                '__Host-sid=secret; Domain=example.com; Path=/; Secure',
+                None,
+                id='protected-cookie-not-shared-between-hosts',
+            ),
+            pytest.param(
+                'https://a.example/private/start',
+                'https://a.example/public/download',
+                'sid=secret; Path=/private',
+                None,
+                id='path-mismatch',
+            ),
+            pytest.param(
+                'https://a.example/start',
+                'http://a.example/download',
+                'sid=secret; Secure; Path=/',
+                None,
+                id='secure-cookie-downgrade',
+            ),
+            pytest.param(
+                'https://a.example:8443/start',
+                'https://a.example:9443/download',
+                'sid=secret; Path=/',
+                'sid=secret',
+                id='cookies-ignore-port',
+            ),
+        ],
+    )
+    async def test_server_cookie_scope(
+        self,
+        serve_requests: Callable[[RequestHandler], None],
+        start_url: str,
+        redirect_url: str,
+        set_cookie: str,
+        expected_cookie: str | None,
+    ) -> None:
+        sent_cookies: list[str | None] = []
+        first_request = True
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal first_request
+            if first_request:
+                first_request = False
+                return httpx2.Response(
+                    302,
+                    headers={'location': redirect_url, 'set-cookie': set_cookie},
+                    request=request,
+                )
+            sent_cookies.append(request.headers.get('cookie'))
+            return httpx2.Response(200, content=b'final', request=request)
+
+        serve_requests(handler)
+        await safe_download(start_url)
+
+        assert sent_cookies == [expected_cookie]
 
     async def test_protocol_validation(self) -> None:
         with pytest.raises(ValueError, match='URL protocol "file" is not allowed'):

@@ -4,11 +4,10 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
@@ -18,17 +17,18 @@ from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec._base import (
-    BaseDurabilityCapability,
-    ToolsetKind,
-    _CallToolParams,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import CallToolId, DurableOperationId, ValidateToolArgumentsId
-from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._sandbox import live_sandbox_error
-from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle, validation_context_from_agent
+from pydantic_ai.durable_exec._operation import (
+    DurableOperationId,
+    ToolsetCallToolId,
+    ToolsetCallToolParams,
+    ToolsetKind,
+    ToolsetValidateToolArgumentsId,
+)
+from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
+from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
@@ -39,7 +39,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, 
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
-from ._operation_backend import TemporalOperationBackend
+from ._operation_backend import TemporalBoundOperation, TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
@@ -101,7 +101,7 @@ IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
 """Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
 
 
-@dataclass(init=False)
+@dataclass(init=False, kw_only=True)
 class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
 
@@ -123,27 +123,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         ```
     """
 
-    engine_name = 'Temporal'
-    _codec: ClassVar = IDENTITY_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset(
-        {'function', 'mcp', 'dynamic'}
-    )
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-outside-durable',
-        'mcp': 'enter-outside-durable',
-        'dynamic': 'enter-never',
-    }
-    _tool_call_result_upgrade_lenient = False
-    _allow_inline_mcp_in_durable_context = False
-    _journal_discovery = True
-
-    _durable_unit_noun = 'activity'
-    _durable_container_noun = 'workflow'
-    _tool_config_key = 'temporal'
-    _live_sandbox_error = live_sandbox_error(
-        run_location='to an agent run inside a Temporal workflow',
-        sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Temporal',
+        durable_unit_noun='activity',
+        durable_container_noun='workflow',
+        codec=IDENTITY_CODEC,
+        unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        toolset_lifecycles={
+            'function': 'enter-outside-durable',
+            'mcp': 'enter-outside-durable',
+            'dynamic': 'enter-never',
+        },
+        tool_call_result_upgrade_lenient=False,
+        journal_discovery=True,
+        sequential_tools_in_durable_context=False,
+        tool_config_key='temporal',
     )
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
@@ -161,7 +156,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         deps_type: type[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
-        capability_activity_config: ActivityConfig | None = None,
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
@@ -198,8 +192,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 Defaults to a 60-second `start_to_close_timeout`.
             model_activity_config: Activity config merged on top of the base for
                 model request activities.
-            capability_activity_config: Activity config merged on top of the base for durable
-                capability operations. Defaults to a bounded three-attempt retry policy.
             event_stream_handler_activity_config: Activity config merged on top of the base for
                 event stream handler activities.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
@@ -232,10 +224,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             activity_config = validate_activity_config(activity_config, '`activity_config`')
         if model_activity_config is not None:
             model_activity_config = validate_activity_config(model_activity_config, '`model_activity_config`')
-        if capability_activity_config is not None:
-            capability_activity_config = validate_activity_config(
-                capability_activity_config, '`capability_activity_config`'
-            )
         if event_stream_handler_activity_config is not None:
             event_stream_handler_activity_config = validate_activity_config(
                 event_stream_handler_activity_config, '`event_stream_handler_activity_config`'
@@ -266,16 +254,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self._model_activity_config['retry_policy'] = with_non_retryable_errors(
             self._model_activity_config.get('retry_policy')
         )
-        self._capability_activity_config: ActivityConfig = {
-            **activity_config,
-            **(capability_activity_config or {}),
-        }
-        capability_retry_policy = (
-            self._capability_activity_config.get('retry_policy')
-            if capability_activity_config is not None and 'retry_policy' in capability_activity_config
-            else RetryPolicy(maximum_attempts=3)
-        )
-        self._capability_activity_config['retry_policy'] = with_non_retryable_errors(capability_retry_policy)
         self._event_stream_handler_activity_config: ActivityConfig = {
             **activity_config,
             **(event_stream_handler_activity_config or {}),
@@ -315,7 +293,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             deps_type=self._deps_type,
             model_config=self._model_activity_config,
             event_config=self._event_stream_handler_activity_config,
-            capability_config=self._capability_activity_config,
             tool_config=self.activity_config,
             resolve_tool_config=self._resolve_temporal_tool_config,
             runtime=self,
@@ -328,33 +305,31 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         assert backend is not None
 
         default_model = self._models_by_id.get('default')
-        model_name = self._default_model_id or (default_model.model_id if default_model is not None else 'default')
+        model_name = self.default_model_id or (default_model.model_id if default_model is not None else 'default')
         self._bound_model_operations = self._bind_model_operations(backend, model_id=None, model_name=model_name)
-        self.request_activity = self._bound_model_operations[0].registration
-        self.request_stream_activity = self._bound_model_operations[1].registration
-        self.compact_messages_activity = self._bound_model_operations[2].registration
-        self.cancel_suspended_response_activity = self._bound_model_operations[3].registration
+        request = self._bound_model_operations.request
+        request_stream = self._bound_model_operations.request_stream
+        compact_messages = self._bound_model_operations.compact_messages
+        cancel_suspended_response = self._bound_model_operations.cancel_suspended_response
+        assert isinstance(request, TemporalBoundOperation)
+        assert isinstance(request_stream, TemporalBoundOperation)
+        assert isinstance(compact_messages, TemporalBoundOperation)
+        assert isinstance(cancel_suspended_response, TemporalBoundOperation)
+        self.request_activity = request.registration
+        self.request_stream_activity = request_stream.registration
+        self.compact_messages_activity = compact_messages.registration
+        self.cancel_suspended_response_activity = cancel_suspended_response.registration
 
         if self._event_stream_handler is not None:
             self._bound_event_operation = self._bind_event_operation(backend)
+            assert isinstance(self._bound_event_operation, TemporalBoundOperation)
             self.event_stream_handler_activity = self._bound_event_operation.registration
             backend.move_registration_to_end(self.cancel_suspended_response_activity)
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
 
-    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
-        if isinstance(ts, FunctionToolset):
-            return self._build_function_toolset(ts)
-        if isinstance(ts, DynamicToolset):
-            return self._build_dynamic_toolset(ts)
-        try:
-            from pydantic_ai.mcp import MCPToolset
-        except ImportError:  # pragma: no cover
-            pass
-        else:
-            if isinstance(ts, MCPToolset):
-                return self._build_mcp_toolset(ts)
+    def _wrap_other_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         ts_id = ts.id
         toolset_activity_config = self.activity_config.copy()
         if ts_id is not None:
@@ -399,7 +374,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             from pydantic_ai.mcp import MCPToolset
 
             if (
-                isinstance(operation_id, (CallToolId, ValidateToolArgumentsId))
+                isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId))
                 and operation_id.toolset_kind == 'dynamic'
             ):
                 raise UserError(
@@ -447,8 +422,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         return [cast(Any, operation).registration for operation in operations]
 
     async def _prepare_function_call_params(
-        self, toolset: FunctionToolset[AgentDepsT], params: _CallToolParams
-    ) -> _CallToolParams:
+        self, toolset: FunctionToolset[AgentDepsT], params: ToolsetCallToolParams
+    ) -> ToolsetCallToolParams:
         tool = params.tool
         if tool is None:
             try:
@@ -459,7 +434,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from exc
         args = tool.args_validator.validate_python(params.tool_args, context=self._validation_context(params.ctx))
-        return _CallToolParams(params.name, args, params.ctx, tool)
+        return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
     def _tool_call_payload_errors(self, tool_name: str):
         return tool_result_payload_errors(tool_name)

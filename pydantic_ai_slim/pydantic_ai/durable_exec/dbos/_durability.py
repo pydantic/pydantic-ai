@@ -3,18 +3,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dbos import DBOS
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._sandbox import live_sandbox_error
-from pydantic_ai.durable_exec._toolset import Lifecycle
+from pydantic_ai.durable_exec._operation import ToolsetKind
+from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters
@@ -29,7 +28,7 @@ if TYPE_CHECKING:
     pass
 
 
-@dataclass(init=False)
+@dataclass(init=False, kw_only=True)
 class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through DBOS steps.
 
@@ -52,31 +51,23 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         ```
     """
 
-    engine_name = 'DBOS'
-    _codec: ClassVar = IDENTITY_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset({'mcp', 'dynamic'})
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'mcp': 'enter-never',
-        'dynamic': 'enter-never',
-    }
-    _tool_call_result_upgrade_lenient = True
-    _journal_discovery = True
-    _allow_inline_mcp_in_durable_context = True
-
-    _durable_unit_noun = 'step'
-    _durable_container_noun = 'workflow'
-    # No `_tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
+    engine_spec = DurabilityEngineSpec(
+        engine_name='DBOS',
+        durable_unit_noun='step',
+        durable_container_noun='workflow',
+        codec=IDENTITY_CODEC,
+        unsupported_runtime_toolset_kinds=frozenset({'mcp', 'dynamic'}),
+        wrapped_toolset_kinds=frozenset({'mcp', 'dynamic'}),
+        toolset_lifecycles={'mcp': 'enter-never', 'dynamic': 'enter-never'},
+        tool_call_result_upgrade_lenient=True,
+        journal_discovery=True,
+        sequential_tools_in_durable_context=False,
+        tool_config_key=None,
+    )
+    # No `tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
     # before this capability existed). It can't be supported without changing durable history: a step
     # is registered once per name, and DBOS tool-call step names deliberately carry no tool name
     # (every tool in a toolset shares one step), so per-tool config would be first-tool-wins.
-    _live_sandbox_error = live_sandbox_error(
-        run_location='to a DBOS durable agent run',
-        sandbox_constraint=(
-            'run arguments are pickled as workflow inputs for recovery, and a live handle does not survive '
-            'pickling or recovery'
-        ),
-    )
 
     def __init__(
         self,
@@ -123,21 +114,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
-        super().__init__(
-            models=models,
-            event_stream_handler=event_stream_handler,
-            name=name,
-        )
+        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._model_step_config = model_step_config or {}
         self._event_stream_handler_step_config = event_stream_handler_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
         self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
         self._register_legacy_workflows = register_legacy_workflows
         # Populated by for_agent when the capability is attached to an agent.
-        self._request_step: Any = None
-        self._request_stream_step: Any = None
-        self._cancel_suspended_response_step: Any = None
-        self._event_stream_handler_step: Any = None
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
@@ -173,26 +156,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._bound_model_operations = self._bind_model_operations(
             self._operation_backend, model_id=None, model_name='default'
         )
-        request, request_stream, compact_messages, cancel = self._bound_model_operations
-        assert isinstance(request, DBOSBoundOperation)
-        assert isinstance(request_stream, DBOSBoundOperation)
-        assert isinstance(cancel, DBOSBoundOperation)
-        assert isinstance(compact_messages, DBOSBoundOperation)
-        self._request_step = request.step
-        self._request_stream_step = request_stream.step
-        self._compact_messages_step = compact_messages.step
-        self._cancel_suspended_response_step = cancel.step
-        request.use_step_getter(lambda: self._request_step)
-        request_stream.use_step_getter(lambda: self._request_stream_step)
-        compact_messages.use_step_getter(lambda: self._compact_messages_step)
-        cancel.use_step_getter(lambda: self._cancel_suspended_response_step)
-
         if self._event_stream_handler is not None:
             event = self._bind_event_operation(self._operation_backend)
             assert isinstance(event, DBOSBoundOperation)
             self._bound_event_operation = event
-            self._event_stream_handler_step = event.step
-            event.use_step_getter(lambda: self._event_stream_handler_step)
 
         # --- MCP toolset wrapping ---
         self._register_toolsets(agent)

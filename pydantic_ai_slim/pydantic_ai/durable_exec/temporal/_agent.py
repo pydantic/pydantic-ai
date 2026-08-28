@@ -106,7 +106,7 @@ _LIVE_SANDBOX_ERROR = live_sandbox_error(
 )
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
     event: _messages.AgentStreamEvent

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
-from typing import Any, ClassVar, cast
+from collections.abc import AsyncIterable, Awaitable, Callable
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -21,18 +21,30 @@ from pydantic_ai.durable_exec import (
     IDENTITY_CODEC,
     JSON_CODEC,
     BaseDurabilityCapability,
+    CallableOperationBackend,
     CapabilityOperationId,
-    ToolsetKind,
+    DurabilityEngineSpec,
+    DurableOperationId,
+    EventStreamHandlerId,
+    JournalOperationNamer,
+    ModelCancelSuspendedResponseId,
+    ModelCompactMessagesId,
+    ModelRequestId,
+    OperationConfigRole,
+    SandboxOperationId,
+    ToolsetCallToolId,
+    ToolsetGetInstructionsId,
+    ToolsetGetToolsId,
+    ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._capability_operation import (
+    CapabilityOperationResult,
     ModelRequestContextProjection,
-    _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
-    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
+    capability_operation_result_type,
 )
-from pydantic_ai.durable_exec._operation_names import PrefectOperationNamer
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
-    Lifecycle,
+    ToolConfig,
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
@@ -48,6 +60,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
@@ -56,26 +69,30 @@ from pydantic_ai.usage import RunUsage
 def test_public_engine_builder_exports() -> None:
     assert durable_exec.__all__ == [
         'BaseDurabilityCapability',
-        'CallToolId',
+        'ToolsetCallToolId',
         'CallableOperationBackend',
-        'CancelSuspendedResponseId',
+        'ModelCancelSuspendedResponseId',
         'CapabilityOperationId',
-        'CompactMessagesId',
+        'ModelCompactMessagesId',
         'DurabilityCodec',
+        'DurabilityEngineSpec',
         'DurableOperationBackend',
         'DurableOperationId',
         'DurableOperationNamer',
         'EventStreamHandlerId',
-        'GetInstructionsId',
-        'GetToolsId',
+        'ToolsetGetInstructionsId',
+        'ToolsetGetToolsId',
         'IDENTITY_CODEC',
         'JSON_CODEC',
+        'JournalCallableOperationBackend',
         'JournalOperationNamer',
         'ModelRequestId',
         'OperationConfigRole',
         'RegisteredOperationBackend',
+        'RoleBasedOperationConfig',
+        'SandboxOperationId',
         'ToolsetKind',
-        'ValidateToolArgumentsId',
+        'ToolsetValidateToolArgumentsId',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -99,6 +116,8 @@ JOURNAL_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
+    'compat__capability__compat.acquire_sandbox',
+    'compat__capability__compat.release_sandbox',
 }
 
 PREFECT_OPERATION_NAMES = {
@@ -113,6 +132,8 @@ PREFECT_OPERATION_NAMES = {
     'Call Tool: dynamic_tool',
     'Validate Tool Args: dynamic_tool',
     'Capability: compat.operation',
+    'Capability: compat.acquire_sandbox',
+    'Capability: compat.release_sandbox',
 }
 
 TEMPORAL_ACTIVITY_NAMES = {
@@ -132,6 +153,8 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
+    'agent__compat__capability__compat__acquire_sandbox',
+    'agent__compat__capability__compat__release_sandbox',
 }
 
 DBOS_OPERATION_NAMES = {
@@ -147,7 +170,40 @@ DBOS_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
+    'compat__capability__compat.acquire_sandbox',
+    'compat__capability__compat.release_sandbox',
 }
+
+
+def _operation_ids() -> list[DurableOperationId]:
+    return [
+        ModelRequestId(None, streaming=False, model_name='test'),
+        ModelRequestId('registered', streaming=False, model_name='test'),
+        ModelRequestId(None, streaming=True, model_name='test'),
+        ModelRequestId('registered', streaming=True, model_name='test'),
+        ModelCancelSuspendedResponseId(None, model_name='test'),
+        ModelCancelSuspendedResponseId('registered', model_name='test'),
+        ModelCompactMessagesId(None, model_name='test'),
+        ModelCompactMessagesId('registered', model_name='test'),
+        EventStreamHandlerId(),
+        ToolsetCallToolId('function', toolset_id='functions'),
+        ToolsetValidateToolArgumentsId('function', toolset_id='functions'),
+        ToolsetGetToolsId('mcp', toolset_id='mcp'),
+        ToolsetGetInstructionsId('mcp'),
+        ToolsetCallToolId('mcp', toolset_id='mcp'),
+        ToolsetGetToolsId('dynamic', toolset_id='dynamic'),
+        ToolsetCallToolId('dynamic', toolset_id='dynamic'),
+        ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
+        CapabilityOperationId('compat', operation='operation'),
+        SandboxOperationId('compat', operation='acquire_sandbox'),
+        SandboxOperationId('compat', operation='release_sandbox'),
+    ]
+
+
+def _operation_label(operation_id: DurableOperationId) -> str | None:
+    if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
+        return {'function': 'function_tool', 'mcp': 'mcp_tool', 'dynamic': 'dynamic_tool'}[operation_id.toolset_kind]
+    return None
 
 
 class CompatCapability(AbstractCapability[Any]):
@@ -157,19 +213,48 @@ class CompatCapability(AbstractCapability[Any]):
     async def operation(self, ctx: RunContext[Any]) -> None:
         pass
 
+    async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
+        return None
+
+    async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        pass
+
+
+class _JournalConfig:
+    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ToolConfig:
+        return {}
+
+    def for_tool(
+        self, role: OperationConfigRole, operation_id: DurableOperationId, tool: object | None, tool_name: str
+    ) -> ToolConfig:
+        return {}
+
+
+class _JournalBackend(CallableOperationBackend[ToolConfig]):
+    def __init__(self, durability: JournalDurability) -> None:
+        super().__init__(namer=JournalOperationNamer(durability.name), config=_JournalConfig())
+        self._durability = durability
+
+    async def execute(
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
+    ) -> object:
+        self._durability.recorded_names.append(name)
+        return await body()
+
 
 class JournalDurability(BaseDurabilityCapability[Any]):
-    engine_name = 'Journal compatibility stub'
-    _codec: ClassVar = JSON_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
-    _wrapped_toolset_kinds: ClassVar = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
-    _durable_unit_noun = 'unit'
-    _durable_container_noun = 'journal'
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Journal compatibility stub',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+    )
 
     @property
     def in_durable_context(self) -> bool:
@@ -179,11 +264,8 @@ class JournalDurability(BaseDurabilityCapability[Any]):
         super().__init__(**kwargs)
         self.recorded_names: list[str] = []
 
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        self.recorded_names.append(name)
-        return await fn()
+    def get_durable_operation_backend(self) -> durable_exec.DurableOperationBackend[ToolConfig]:
+        return _JournalBackend(self)
 
 
 async def test_journal_operation_name_assembly_sequence() -> None:
@@ -208,6 +290,7 @@ async def test_journal_operation_name_assembly_sequence() -> None:
     durability = JournalDurability.from_agent(agent)
     assert durability is not None
     assert durability.recorded_names == [
+        'compat__capability__compat.acquire_sandbox',
         'compat__dynamic_toolset__dynamic.get_tools',
         'compat__model.request_stream',
         'compat__event_stream_handler',
@@ -223,61 +306,27 @@ async def test_journal_operation_name_assembly_sequence() -> None:
 
 
 def test_default_journal_operation_name_matrix() -> None:
-    durability = JournalDurability(name='compat')
+    namer = JournalOperationNamer('compat')
     names = {
-        durability._unit_name('model.request'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.request', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.request_stream'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.request_stream', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.cancel_suspended_response'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.compact_messages'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('model.compact_messages', suffix='.registered'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.cancel_suspended_response', suffix='.registered'
-        ),
-        durability._unit_name('event_stream_handler'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'function_toolset', prefix='compat__function_toolset__functions', tool_name='function_tool'
-        ),
-        'compat__function_toolset__functions.validate_args',
-        durability._unit_name('mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_instructions'
-        ),
-        durability._unit_name('mcp_server', prefix='compat__mcp_server__mcp', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', suffix='.get_tools'
-        ),
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
-        ),
-        'compat__dynamic_toolset__dynamic.validate_args',
-        durability._legacy_operation_name(CapabilityOperationId('compat', 'operation')),  # pyright: ignore[reportPrivateUsage]
+        namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
+        for operation_id in _operation_ids()
     }
     assert names == JOURNAL_OPERATION_NAMES
 
 
 def test_prefect_operation_name_matrix() -> None:
     pytest.importorskip('prefect')
-    from pydantic_ai.durable_exec.prefect import PrefectDurability
+    from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
 
-    durability = PrefectDurability(name='compat')
+    operation_ids = [
+        operation_id
+        for operation_id in _operation_ids()
+        if not isinstance(operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
+    ]
+    namer = PrefectOperationNamer()
     names = {
-        durability._unit_name('model.request', label='Model Request', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.request_stream', label='Model Request (Streaming)', model_name='test'
-        ),
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.cancel_suspended_response', label='Cancel Suspended Response', model_name='test'
-        ),
-        durability._unit_name('model.compact_messages', label='Compact Messages', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        PrefectOperationNamer().operation_name(CapabilityOperationId('compat', 'operation')),
+        namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
+        for operation_id in operation_ids
     }
     assert names == PREFECT_OPERATION_NAMES
 
@@ -286,6 +335,7 @@ def test_prefect_operation_name_assembly_completeness() -> None:
     pytest.importorskip('prefect')
     from pydantic_ai.durable_exec._toolset import DurableDynamicToolset, DurableFunctionToolset, DurableMCPToolset
     from pydantic_ai.durable_exec.prefect import PrefectDurability
+    from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
 
     agent = Agent(
         TestModel(),
@@ -300,22 +350,15 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         DurableMCPToolset,
         DurableDynamicToolset,
     }
+    operation_ids = [
+        operation_id
+        for operation_id in _operation_ids()
+        if not isinstance(operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
+    ]
+    namer = PrefectOperationNamer()
     assembled_names = {
-        durability._unit_name('model.request', label='Model Request', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.request_stream', label='Model Request (Streaming)', model_name='test'
-        ),
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'model.cancel_suspended_response', label='Cancel Suspended Response', model_name='test'
-        ),
-        durability._unit_name('model.compact_messages', label='Compact Messages', model_name='test'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('event_stream_handler', label='Handle Stream Event'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('function_toolset', label='Call Tool', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('function_toolset', label='Validate Tool Args', tool_name='function_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('mcp_server', label='Call MCP Tool', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('dynamic_toolset', label='Call Tool', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name('dynamic_toolset', label='Validate Tool Args', tool_name='dynamic_tool'),  # pyright: ignore[reportPrivateUsage]
-        PrefectOperationNamer().operation_name(CapabilityOperationId('compat', 'operation')),
+        namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
+        for operation_id in operation_ids
     }
     assert assembled_names == PREFECT_OPERATION_NAMES
 
@@ -393,7 +436,10 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         (_CallDeferred({'ticket': 7}), {'metadata': {'ticket': 7}, 'kind': 'call_deferred'}),
         (_ModelRetry('retry me'), {'message': 'retry me', 'kind': 'model_retry'}),
         (
-            _ValidationError('int', [_ValidationErrorDetail('int_parsing', ['value'], 'bad integer', 'x')]),
+            _ValidationError(
+                'int',
+                errors=[_ValidationErrorDetail('int_parsing', loc=['value'], msg='bad integer', input='x')],
+            ),
             {
                 'title': 'int',
                 'errors': [{'type': 'int_parsing', 'loc': ['value'], 'msg': 'bad integer', 'input': 'x'}],
@@ -490,8 +536,8 @@ def test_json_and_identity_codec_payload_goldens(tp: Any, value: Any, expected: 
 
 def test_capability_operation_result_payload_golden() -> None:
     delta = RunUsage(requests=1, tool_calls=2, input_tokens=3, details={'cached': 4})
-    result = _CapabilityOperationResult(5, delta)
-    result_type = _operation_result_type(int)
+    result = CapabilityOperationResult(5, usage_delta=delta)
+    result_type = capability_operation_result_type(int)
 
     assert JSON_CODEC.dump(result_type, result) == {
         'value': 5,
@@ -513,7 +559,13 @@ def test_capability_operation_result_payload_golden() -> None:
 
 
 def test_model_request_context_projection_payload_golden() -> None:
-    projection = ModelRequestContextProjection([], None, ModelRequestParameters(), 'restricted', False)
+    projection = ModelRequestContextProjection(
+        [],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        model_id='restricted',
+        streaming=False,
+    )
 
     assert JSON_CODEC.dump(ModelRequestContextProjection, projection) == {
         'messages': [],

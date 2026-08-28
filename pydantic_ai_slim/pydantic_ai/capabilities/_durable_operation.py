@@ -2,43 +2,49 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from pydantic_ai.tools import RunContext
 
     from .abstract import AbstractCapability
 
-R = TypeVar('R')
-
-DurableOperationDispatcher: TypeAlias = Callable[
-    ['RunContext[object]', tuple[object, ...], dict[str, object]], Awaitable[object]
-]
-
-
-@dataclass(frozen=True)
-class DurableOperationBinding:
-    dispatcher: DurableOperationDispatcher
-    in_durable_context: Callable[[], bool]
+ResultT = TypeVar('ResultT')
 
 
 @dataclass(frozen=True)
 class DurableOperationMarker:
     name: str
     function: Callable[..., Awaitable[Any]]
-    tier_one: bool = False
+    base_hook: bool = False
+
+
+_MARKER_ATTRIBUTE = '__pydantic_ai_durable_operation__'
+
+
+def get_durable_operation_marker(obj: object) -> DurableOperationMarker | None:
+    """Return the durable-operation marker attached to `obj`, if present."""
+    return cast(DurableOperationMarker | None, getattr(obj, _MARKER_ATTRIBUTE, None))
+
+
+def set_durable_operation_marker(obj: object, marker: DurableOperationMarker) -> None:
+    """Attach a durable-operation `marker` to `obj`."""
+    setattr(obj, _MARKER_ATTRIBUTE, marker)
 
 
 def operation_name(function: Callable[..., Any], name: str | None) -> str:
     return name or function.__name__.removeprefix('_')
 
 
-def tier_one_durable_operation(function: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
-    """Mark a base hook whose overrides are inherently durable."""
-    setattr(
+def base_hook_durable_operation(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
+    """Mark a base hook so every override inherits durable execution automatically."""
+    set_durable_operation_marker(
         function,
-        '__pydantic_ai_durable_operation__',
-        DurableOperationMarker(operation_name(function, None), cast(Callable[..., Awaitable[Any]], function), True),
+        DurableOperationMarker(
+            name=operation_name(function, None),
+            function=cast(Callable[..., Awaitable[Any]], function),
+            base_hook=True,
+        ),
     )
     return function
 
@@ -47,41 +53,37 @@ async def invoke_durable_operation(
     capability: AbstractCapability[Any],
     operation_name: str,
     ctx: RunContext[Any],
-    handler: Callable[..., Awaitable[Any]],
+    handler: Callable[..., Awaitable[ResultT]],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-) -> Any:
+) -> ResultT:
     """Invoke a capability operation through the active durability binding when present."""
     operation = active_durable_operation(capability, operation_name, ctx)
     if operation is not None:
-        return await operation(*args, **kwargs)
+        return cast(ResultT, await operation(*args, **kwargs))
     return await handler(*args, **kwargs)
 
 
 def active_durable_operation(
     capability: AbstractCapability[Any], operation_name: str, ctx: RunContext[Any]
-) -> Callable[..., Awaitable[Any]] | None:
-    """Return the dispatcher when this call crosses an active durable boundary."""
-    operation = None
-    if capability.id is not None:
-        operations = cast(
-            dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None,
-            ctx.__dict__.get('_durable_operations'),
-        )
-        if operations is not None:
-            operation = operations.get((capability.id, operation_name))
+) -> Callable[..., Awaitable[object]] | None:
+    """Return the dispatcher when the operation is bound to the active durable run."""
+    operation = (
+        ctx._durable_operations.get((capability.id, operation_name))  # pyright: ignore[reportPrivateUsage]
+        if ctx._durable_operations is not None and capability.id is not None  # pyright: ignore[reportPrivateUsage]
+        else None
+    )
     if operation is not None:
         return operation
-
-    binding = (
-        capability._get_durable_operation_bindings().get(id(ctx.agent), {}).get(operation_name)  # pyright: ignore[reportPrivateUsage]
+    dispatcher = (
+        capability._get_durable_operation_bindings().get(ctx.agent, {}).get(operation_name)  # pyright: ignore[reportPrivateUsage]
         if ctx.agent is not None
         else None
     )
-    if binding is not None and binding.in_durable_context():
+    if dispatcher is None:
+        return None
 
-        async def dispatch(*args: Any, **kwargs: Any) -> Any:
-            return await binding.dispatcher(ctx, cast(tuple[object, ...], args), cast(dict[str, object], kwargs))
+    async def dispatch(*args: object, **kwargs: object) -> object:
+        return await dispatcher(ctx, args, kwargs)
 
-        return dispatch
-    return None
+    return dispatch

@@ -4,7 +4,8 @@ from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import KW_ONLY, dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from weakref import WeakValueDictionary
 
 from pydantic import ValidationError
 from pydantic.alias_generators import to_snake
@@ -28,7 +29,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
-from ._durable_operation import DurableOperationBinding, invoke_durable_operation, tier_one_durable_operation
+from ._durable_operation import base_hook_durable_operation, invoke_durable_operation
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -88,6 +89,10 @@ WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]
 
 RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
+
+DurableOperationDispatcher: TypeAlias = Callable[
+    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
+]
 
 WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 """Handler type for wrap_output_validate."""
@@ -164,6 +169,37 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
+class _DurableOperationBindings:
+    """Agent-identity bindings that do not retain unhashable agent instances."""
+
+    def __init__(self) -> None:
+        self._agents: WeakValueDictionary[int, AbstractAgent[Any, Any]] = WeakValueDictionary()
+        self._bindings: dict[int, dict[str, DurableOperationDispatcher]] = {}
+
+    def get(
+        self, agent: AbstractAgent[Any, Any], default: dict[str, DurableOperationDispatcher]
+    ) -> dict[str, DurableOperationDispatcher]:
+        self._prune()
+        agent_id = id(agent)
+        return self._bindings.get(agent_id, default) if self._agents.get(agent_id) is agent else default
+
+    def setdefault(self, agent: AbstractAgent[Any, Any]) -> dict[str, DurableOperationDispatcher]:
+        self._prune()
+        agent_id = id(agent)
+        if self._agents.get(agent_id) is not agent:
+            self._agents[agent_id] = agent
+            self._bindings[agent_id] = {}
+        return self._bindings[agent_id]
+
+    def __len__(self) -> int:
+        self._prune()
+        return len(self._bindings)
+
+    def _prune(self) -> None:
+        live_ids = set(self._agents)
+        self._bindings = {agent_id: bindings for agent_id, bindings in self._bindings.items() if agent_id in live_ids}
+
+
 @dataclass(init=False)
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
@@ -190,14 +226,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    def _get_durable_operation_bindings(self) -> dict[int, dict[str, DurableOperationBinding]]:
-        return cast(
-            dict[int, dict[str, DurableOperationBinding]],
-            self.__dict__.get('_pydantic_ai_durable_operation_bindings', {}),
-        )
-
-    def _set_durable_operation_bindings(self, bindings: dict[int, dict[str, DurableOperationBinding]]) -> None:
-        object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
+    def _get_durable_operation_bindings(
+        self,
+    ) -> _DurableOperationBindings:
+        bindings = self.__dict__.get('_pydantic_ai_durable_operation_bindings')
+        if not isinstance(bindings, _DurableOperationBindings):
+            bindings = _DurableOperationBindings()
+            object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
+        return bindings
 
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
@@ -322,7 +358,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return self
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Install private per-run state before lifecycle hooks."""
+        """Install private per-run state before any capability lifecycle hook runs.
+
+        Durable dispatch tables must be available before every capability's `before_run`, because
+        one capability may call another capability's durable operation from its hook. This setup
+        therefore cannot be implemented as a `before_run` hook itself. It stays private pending the
+        capability surface decisions tracked in #5477.
+        """
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -430,7 +472,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    @tier_one_durable_operation
+    @base_hook_durable_operation
     async def acquire_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         """Acquire this run's sandbox and return its serializable identity.
 
@@ -481,7 +523,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Whether this capability can provide a live sandbox without an acquired ref."""
         return type(self).get_sandbox is not AbstractCapability.get_sandbox
 
-    @tier_one_durable_operation
+    @base_hook_durable_operation
     async def release_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
         """Release the run's ownership of the sandbox identified by `ref`.
 

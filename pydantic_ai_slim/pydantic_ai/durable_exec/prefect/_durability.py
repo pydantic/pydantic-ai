@@ -2,16 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, Literal, cast
 
-from prefect.context import FlowRunContext, TaskRunContext
+from prefect.context import FlowRunContext
 
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
+from pydantic_ai.durable_exec._operation import (
+    DurableOperationId,
+    ToolsetCallToolId,
+    ToolsetKind,
+    ToolsetValidateToolArgumentsId,
+)
 from pydantic_ai.durable_exec._operation_backend import DurableOperationBackend
-from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import Lifecycle
+from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
@@ -23,7 +28,7 @@ from ._toolset import with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 
-@dataclass(init=False)
+@dataclass(init=False, kw_only=True)
 class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
 
@@ -31,25 +36,19 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     capability contributes the Prefect operation backend, transparency gate, and task configuration.
     """
 
-    # --- Declarative surface ---
-    engine_name = 'Prefect'
-    _codec: ClassVar = IDENTITY_CODEC  # object-passing: Prefect serializes/caches internally
-    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset(
-        {'function', 'mcp', 'dynamic'}
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Prefect',
+        durable_unit_noun='task',
+        durable_container_noun='flow',
+        codec=IDENTITY_CODEC,  # object-passing: Prefect serializes/caches internally
+        unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-always', 'dynamic': 'enter-never'},
+        tool_call_result_upgrade_lenient=True,  # cached payloads may predate value-wrapping
+        journal_discovery=False,  # resolve MCP/dynamic toolsets in flow code, journal only calls
+        sequential_tools_in_durable_context=False,
+        tool_config_key='prefect',
     )
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
-    _tool_call_result_upgrade_lenient: ClassVar[bool] = True  # cached payloads may predate value-wrapping
-    _journal_discovery: ClassVar[bool] = False  # resolve MCP/dynamic toolsets in flow code, journal only calls
-    _allow_inline_mcp_in_durable_context: ClassVar[bool] = True
-    _durable_unit_noun = 'task'
-    _durable_container_noun = 'flow'
-    _tool_config_key = 'prefect'
-    # Prefect tools run in-process, so flows keep the framework default sandbox.
 
     def __init__(
         self,
@@ -59,7 +58,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         name: str | None = None,
         event_stream_handler_task_config: TaskConfig | None = None,
         model_task_config: TaskConfig | None = None,
-        capability_task_config: TaskConfig | None = None,
         mcp_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
     ):
@@ -88,8 +86,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 `name` when the capability is bound.
             event_stream_handler_task_config: Prefect task config for event stream handler tasks.
             model_task_config: Prefect task config for model request tasks.
-            capability_task_config: Prefect task config for durable capability operations.
-                Defaults to three attempts because sandbox lifecycle operations are idempotent.
             mcp_task_config: Prefect task config for MCP server tasks.
             tool_task_config: Default Prefect task config for tool call tasks. Per-tool
                 overrides are configured via tool metadata, e.g.
@@ -100,9 +96,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         # Model and event-handler tasks compose the same non-retryable condition as tool tasks.
         self._model_task_config = with_non_retryable_errors(default_task_config | (model_task_config or {}))
-        self._capability_task_config = with_non_retryable_errors(
-            default_task_config | {'retries': 2} | (capability_task_config or {})
-        )
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
         self._tool_task_config = default_task_config | (tool_task_config or {})
         self._event_stream_handler_task_config = with_non_retryable_errors(
@@ -113,13 +106,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
     @property
     def in_durable_context(self) -> bool:
-        # Prefect propagates the flow-run context into task runs, so flow context alone would
-        # also be true inside tasks — where sandbox connections are legal and must not be
-        # blocked. Only bare flow code (outside any task) is the durable container.
-        return FlowRunContext.get() is not None and TaskRunContext.get() is None
+        return FlowRunContext.get() is not None
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
-        def tool_config(kind: ToolsetKind, tool: object | None, tool_name: str) -> TaskConfig | Literal[False]:
+        def tool_config(
+            operation_id: DurableOperationId, tool: object | None, tool_name: str
+        ) -> TaskConfig | Literal[False]:
+            assert isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
+            kind = operation_id.toolset_kind
             config = self._build_resolve_tool_config(self._toolset_base_config(kind))(
                 cast(ToolsetTool[Any] | None, tool), tool_name
             )
@@ -129,26 +123,12 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             config=PrefectOperationConfig(
                 model=self._model_task_config,
                 event=self._event_stream_handler_task_config,
-                capability=self._capability_task_config,
-                tool=tool_config,
+                capability=default_task_config,
+                tool=self._tool_task_config,
+                resolve_tool=tool_config,
             ),
             event_sequence_key=f'pydantic_ai_event_sequence:{self.name}',
         )
-
-    # --- Naming (compat surface): Prefect's human-readable task display names ---
-
-    def _unit_name(self, kind: str, **parts: Any) -> str:
-        label = parts.get('label')
-        if (model_name := parts.get('model_name')) is not None:
-            return f'{label}: {model_name}'
-        if (tool_name := parts.get('tool_name')) is not None:
-            return f'{label}: {tool_name}'
-        assert isinstance(label, str)
-        return label
-
-    def _model_id_suffix(self, model_id: str | None) -> str:
-        """Keep Prefect's existing display names unchanged for runtime model selection."""
-        return ''
 
     # --- Config knobs ---
 

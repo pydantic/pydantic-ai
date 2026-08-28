@@ -4364,6 +4364,20 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-logging"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ed/0a/b70a9cddbc7b314a783e62739dbb1184f8538c1f85e8ded6d340142b9b54/opentelemetry_instrumentation_logging-0.65b0.tar.gz", hash = "sha256:c0a50cade5d54db6c6af12e2c69227ecd26f2b3b779e99ff850561d3d8dd77e3", size = 19783, upload-time = "2026-07-16T15:26:09.853Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e2/8e/7577914681d77b180f8d6dcbac435be8e4ca6add6315da2d01ac4289eaa3/opentelemetry_instrumentation_logging-0.65b0-py3-none-any.whl", hash = "sha256:68365b31755c844f1e85f07dcd217839ff92f2d278a214bdf02d4dc806f9d915", size = 15727, upload-time = "2026-07-16T15:25:18.774Z" },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-sqlite3"
 version = "0.65b0"
 source = { registry = "https://pypi.org/simple" }
@@ -5334,6 +5348,7 @@ dev = [
     { name = "inline-snapshot" },
     { name = "markdownify" },
     { name = "mcp-types" },
+    { name = "opentelemetry-instrumentation-logging" },
     { name = "pip" },
     { name = "pydocket", version = "0.22.0", source = { registry = "https://pypi.org/simple" } },
     { name = "pytest" },
@@ -5404,6 +5419,7 @@ dev = [
     { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
     { name = "mcp-types", specifier = ">=2.0.0" },
+    { name = "opentelemetry-instrumentation-logging", specifier = ">=0.63b0" },
     { name = "pip", specifier = ">=26.1" },
     { name = "pydocket", specifier = ">=0.20.2" },
     { name = "pytest", specifier = ">=9.0.3" },
@@ -5412,7 +5428,7 @@ dev = [
     { name = "pytest-pretty", specifier = ">=1.3.0" },
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
-    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
+    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1" },
     { name = "tavily-python", specifier = ">=0.5.0" },
 ]
 lint = [
@@ -7240,9 +7256,9 @@ wheels = [
 [[package]]
 name = "strict-no-cover"
 version = "0.1.1"
-source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d#7fc59da2c4dff919db2095a0f0e47101b657131d" }
+source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1#6c644106e03138abae01d8d60105d4a7ad4916a1" }
 dependencies = [
-    { name = "pydantic" },
+    { name = "coverage" },
 ]
 
 [[package]]

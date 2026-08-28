@@ -1082,7 +1082,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     @property
     def label(self) -> str:
         if self.id:
-            return super().label  # pragma: no cover
+            return super().label
         return repr(self)
 
     @property

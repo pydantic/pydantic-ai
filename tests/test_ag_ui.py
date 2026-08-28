@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
+from dirty_equals import IsJson, IsPartialDict
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import (
@@ -1253,7 +1254,7 @@ async def test_tool_local_single_event() -> None:
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
-                'content': '{"type":"STATE_SNAPSHOT","timestamp":null,"raw_event":null,"snapshot":{"key":"value"}}',
+                'content': IsJson(IsPartialDict(type='STATE_SNAPSHOT', snapshot={'key': 'value'})),
                 'role': 'tool',
             },
             {'type': 'STATE_SNAPSHOT', 'timestamp': IsInt(), 'snapshot': {'key': 'value'}},

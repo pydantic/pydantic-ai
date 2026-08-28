@@ -88,7 +88,7 @@ def _replace_run_context(
                 'deps': _cacheable_value(value.deps),
                 'agent': value.agent.name if value.agent is not None else None,
                 'model': value.model.model_id,
-                '_model_id': value._model_id,  # pyright: ignore[reportPrivateUsage]
+                '_model_id': value.model_id,
                 'retries': value.retries,
                 # Keyed verbatim, unlike the framework-generated tool call IDs inside `messages`:
                 # those are normalized so an identical history hashes the same across runs, but the
@@ -136,10 +136,8 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
             }
-            # Explicit sandbox identity forks the key because tools can produce
-            # environment-specific results. Inspecting deferred state must never connect it.
-            # `UnavailableSandbox` (including the framework default) is policy state, so it
-            # remains equivalent to the previous "no sandbox" input for caching.
+            # Sandbox identity forks the key because tools can produce environment-specific
+            # results. Reading durable identity must not connect a deferred sandbox.
             sandbox_identity = value.sandbox.durable_identity()
             if sandbox_identity is None:
                 projected['sandbox_provider'] = value.sandbox._durable_capability_id()  # pyright: ignore[reportPrivateUsage]

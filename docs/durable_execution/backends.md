@@ -16,11 +16,13 @@ integrations show the same public builder with JSON journals.
 ## Choose a backend tier
 
 Subclass [`CallableOperationBackend`][pydantic_ai.durable_exec.CallableOperationBackend] when the
-engine SDK accepts a callback each time a durable unit is invoked. Implement `_execute` to pass the
-name, callback, cache identity, and resolved config to the SDK.
+engine SDK accepts a callback each time a durable unit is invoked. Implement `execute` to pass the
+typed operation identity, name, callback, cache identity, and resolved config to the SDK. The
+operation identity lets an engine apply behavior to an operation kind without depending on its
+persisted name.
 
 Use [`RegisteredOperationBackend`][pydantic_ai.durable_exec.RegisteredOperationBackend] when the
-engine requires handlers to be registered before the worker starts. Implement `_register` to
+engine requires handlers to be registered before the worker starts. Implement `register` to
 create a bound caller and return its registration handles. Its `registrations()` method returns
 the collected SDK registration handles in binding order. During agent assembly, the base binds the
 four model operations before a worker can start, so these registrations are present without first
@@ -34,76 +36,63 @@ primitive.
 ## Minimal callable backend
 
 This complete in-process example runs each operation immediately. A real integration replaces
-`ImmediateBackend._execute` with its SDK's activity, step, or task call and changes
+`ImmediateBackend.execute` with its SDK's activity, step, or task call and changes
 `in_durable_context` to query the engine runtime.
 
 ```python
-from collections.abc import Awaitable, Callable, Mapping
-from typing import ClassVar, Literal
+from collections.abc import Awaitable, Callable
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec import (
-    IDENTITY_CODEC,
+    JSON_CODEC,
     BaseDurabilityCapability,
-    CallableOperationBackend,
+    DurabilityEngineSpec,
     DurableOperationId,
-    JournalOperationNamer,
-    OperationConfigRole,
-    ToolsetKind,
+    JournalCallableOperationBackend,
+    RoleBasedOperationConfig,
 )
 from pydantic_ai.models.test import TestModel
 
 
-class ImmediateConfig:
-    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> None:
-        return None
-
-    def for_tool(
-        self,
-        role: OperationConfigRole,
-        operation_id: DurableOperationId,
-        tool: object | None,
-        tool_name: str,
-    ) -> None | Literal[False]:
-        return None
+class TerminalError(Exception):
+    pass
 
 
-class ImmediateBackend(CallableOperationBackend[None]):
-    def __init__(self, agent_name: str) -> None:
-        super().__init__(namer=JournalOperationNamer(agent_name), config=ImmediateConfig())
+class ImmediateBackend(JournalCallableOperationBackend[None]):
+    def __init__(self, agent_name: str, default_model_id: str | None) -> None:
+        super().__init__(
+            agent_name=agent_name,
+            default_model_id=default_model_id,
+            config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+        )
 
-    async def _execute(
+    async def execute(
         self,
         *,
+        operation_id: DurableOperationId,
         name: str,
         body: Callable[[], Awaitable[object]],
         cache_key: tuple[object, ...],
-        config: object,
+        config: None,
     ) -> object:
         return await body()
 
 
 class ImmediateDurability(BaseDurabilityCapability[None]):
-    engine_name = 'Immediate'
-    _codec: ClassVar = IDENTITY_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[
-        Mapping[ToolsetKind, Literal['enter-outside-durable', 'enter-always', 'enter-never']]
-    ] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
-    _durable_unit_noun = 'operation'
-    _durable_container_noun = 'run'
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Immediate',
+        durable_unit_noun='operation',
+        durable_container_noun='run',
+        codec=JSON_CODEC,
+        serialization_failure=lambda exc: TerminalError(str(exc)),
+    )
 
     @property
     def in_durable_context(self) -> bool:
         return True
 
     def get_durable_operation_backend(self) -> ImmediateBackend:
-        return ImmediateBackend(self.name)
+        return ImmediateBackend(self.name, self.default_model_id)
 
 
 agent = Agent(TestModel(), name='example', capabilities=[ImmediateDurability()])
@@ -111,9 +100,16 @@ result = agent.run_sync('hello')
 assert result.output == 'success (no tool calls)'
 ```
 
-The declarative fields tell the shared base which toolsets to wrap, where their async context
-managers open, whether discovery is durable, and whether calls must be sequential. Define every
-field deliberately for a production engine. In particular, lifecycle choices must ensure toolset
+The public [`DurabilityEngineSpec`][pydantic_ai.durable_exec.DurabilityEngineSpec] groups the
+declarative engine surface in one immutable object. Its required fields name the engine, durable
+unit, and durable container. Its optional fields select the codec, wrapped toolset kinds, lifecycle
+policy, upgrade compatibility, durable discovery, sequential tool execution, unsupported runtime
+toolsets, and per-tool configuration key. The default lifecycle policy enters function and MCP
+toolsets for every run and never enters dynamic toolsets.
+
+Define every field whose engine behavior differs from the defaults. The spec validates non-empty
+nouns and requires a lifecycle for every wrapped toolset kind when it is constructed, so an invalid
+engine declaration fails while its class is being defined. Lifecycle choices must ensure toolset
 resources close on success, errors, and cancellation.
 
 ## Serialization and configuration
@@ -124,12 +120,41 @@ writes JSON-compatible journal payloads itself. Both implement
 [`DurabilityCodec`][pydantic_ai.durable_exec.DurabilityCodec]. Arguments, results, tool control-flow
 signals, and decorated capability operations all cross the selected codec boundary.
 
-The backend config object receives an
+JSON-journal engines should set `DurabilityEngineSpec.serialization_failure` to convert deterministic
+codec failures into the engine's terminal or non-retryable exception type. Such values cannot become
+serializable on retry.
+
+[`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig] supplies one config
+per operation role and accepts an optional `resolve_tool` callback for per-tool overrides. The
+callback receives the complete typed operation ID, tool object, and tool name.
+
+[`JournalCallableOperationBackend`][pydantic_ai.durable_exec.JournalCallableOperationBackend]
+combines the callable backend with `JournalOperationNamer`. Pass the bound capability's
+`default_model_id` so the agent's default string model keeps the standard unsuffixed persisted name.
+
+The backend config object implements the backend configuration protocol. Its public `base` and
+`for_tool` methods receive an
 [`OperationConfigRole`][pydantic_ai.durable_exec.OperationConfigRole] and a
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId]. Match the concrete ID variants
-when config differs by model, toolset, or operation. The union is closed, so exhaustive matching
-will make a newly added operation visible to your type checker. Per-tool config can return `False`
-to opt that tool out of a durable unit.
+when config differs by model, toolset, or operation. The role is a coarse config bucket: `'model'`,
+`'event'`, `'tool'`, or `'capability'`. The operation ID carries the fine-grained identity. The ID
+union represents the IDs available in the installed Pydantic AI version. Per-tool config can return
+`False` to opt a function or dynamic tool out of a durable unit.
+MCP tools perform I/O and always run in their durable unit, so returning `False` for one raises a
+[`UserError`][pydantic_ai.exceptions.UserError].
+
+The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
+`ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
+`ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
+`CapabilityOperationId`. Their Python class names do not determine persisted operation names.
+
+### API evolution
+
+[`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId] grows in minor releases as
+Pydantic AI adds durable units. Sandbox operations are one planned example. Engine configuration
+must therefore include a default branch when matching IDs. Use that branch to apply a safe base
+configuration or raise an actionable unsupported-operation error. Do not rely on an exhaustive
+match that assumes the current union will never gain another arm.
 
 ## Persisted names and recovery
 
@@ -140,6 +165,11 @@ sequence-based naming scheme; implement
 requirements. Pin every generated name in tests before refactoring agent names, model IDs, toolset
 IDs, capability IDs, or operation names. A rename without a migration prevents in-flight executions
 from finding their recorded work.
+
+The namer receives the typed operation ID and an optional keyword-only `label`. Operations that
+need an invocation-specific suffix provide a typed `invocation_label` callable when they are
+declared. Built-in tool-call and argument-validation operations use the tool name. Namers should
+not inspect an operation's parameter object.
 
 A durable unit can run more than once when a worker fails after its side effect but before the
 checkpoint commits. Tools and decorated capability operations should therefore be idempotent unless the

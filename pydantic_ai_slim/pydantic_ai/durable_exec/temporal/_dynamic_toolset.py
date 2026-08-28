@@ -54,12 +54,7 @@ def temporalize_dynamic_toolset(
 
     async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> DynamicToolsResult:
         async with heartbeating():
-            ctx = deserialize_run_context(
-                run_context_type,
-                params.serialized_run_context,
-                deps=deps,
-                agent=agent,
-            )
+            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
             return await get_dynamic_tools(toolset, ctx)
 
     get_tools_activity.__annotations__['deps'] = deps_type
@@ -69,12 +64,7 @@ def temporalize_dynamic_toolset(
 
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
-            ctx = deserialize_run_context(
-                run_context_type,
-                params.serialized_run_context,
-                deps=deps,
-                agent=agent,
-            )
+            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
             return await wrap_tool_call_result(call_dynamic_tool(toolset, params.name, params.tool_args, ctx))
 
     call_tool_activity.__annotations__['deps'] = deps_type
@@ -108,6 +98,7 @@ def temporalize_dynamic_toolset(
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
@@ -139,6 +130,7 @@ def temporalize_dynamic_toolset(
     async def validate_args_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
