@@ -832,6 +832,41 @@ Multiple capabilities can each handle a subset: dispatch accumulates results acr
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
+## Durable capability operations {#durable-capability-operations}
+
+A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.
+
+Runtime integrations receive these operations through the same typed backend as model and tool
+operations. See [Building a durable execution backend](../durable_execution/backends.md) when
+implementing an engine.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.models.test import TestModel
+
+
+class Summaries(AbstractCapability[None]):
+    id = 'summaries'
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        summary = await self.summarize(ctx, ['one', 'two'])
+        assert summary == '2 messages'
+
+    @durable_operation(name='summarize')
+    async def summarize(self, ctx: RunContext[None], messages: list[str]) -> str:
+        return f'{len(messages)} messages'
+
+
+agent = Agent(TestModel(), capabilities=[Summaries()])
+```
+
+Mark each operation method with `@durable_operation`. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
+
+Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
+
+The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
+
 ## Wrapping capabilities
 
 [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] wraps another capability and delegates all methods to it — similar to [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] for toolsets. Subclass it to override specific methods while delegating the rest:

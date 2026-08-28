@@ -746,6 +746,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'deps',  # passed separately to deserialize_run_context
         'agent',  # reattached after deserialize by deserialize_run_context
         'model',  # live Model instance, not serializable
+        '_model_id',  # carried separately by operations that rebuild ctx.model worker-side
         'tracer',  # live tracer, not serializable
         'tool_manager',  # live ToolManager, not serializable (documented on the field)
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
@@ -762,6 +763,8 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
+        '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
+        '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))

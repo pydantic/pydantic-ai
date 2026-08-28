@@ -302,6 +302,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 await capability.before_run(cap_ctx)
 
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        for capability in self.capabilities:
+            capability._prepare_run_context(ctx)
+
     async def after_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -891,7 +895,7 @@ def bind_capabilities_tier(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return replace(ctx, capability_active=_capability_active(capability, ctx), _capability=capability)
+    return _replace_capability_context(ctx, capability=capability, capability_active=_capability_active(capability, ctx))
 
 
 def _ctx_for_active_cap(
@@ -900,6 +904,12 @@ def _ctx_for_active_cap(
     capability_active = _capability_active(capability, ctx)
     if capability.defer_loading is True and not capability_active:
         return None
+    return _replace_capability_context(ctx, capability=capability, capability_active=capability_active)
+
+
+def _replace_capability_context(
+    ctx: RunContext[AgentDepsT], *, capability: AbstractCapability[AgentDepsT], capability_active: bool
+) -> RunContext[AgentDepsT]:
     return replace(ctx, capability_active=capability_active, _capability=capability)
 
 
