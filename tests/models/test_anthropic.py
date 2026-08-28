@@ -895,8 +895,36 @@ async def test_anthropic_code_execution_files_with_message_cache(allow_model_req
     )
 
 
+async def test_anthropic_code_execution_files_500_without_uploads_is_not_retried(allow_model_requests: None):
+    """A 500 on a request carrying a container id but no uploads raises as-is, with no second attempt.
+
+    Not a VCR test: an expired container with no `container_upload` in play answers 200 with an
+    `unavailable` tool result, so this 500 shape can only be simulated. Pins that the container-drop
+    retry needs *both* halves of the shape that actually 500s, so an unrelated 500 never costs a
+    caller a duplicate request.
+    """
+    error = APIStatusError(
+        'server error',
+        response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'server error'},
+    )
+    mock_client = MockAnthropic.create_mock(error)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(CodeExecutionTool())],
+        model_settings=AnthropicModelSettings(anthropic_container='container_01EG1LKXFPoQJ9tpbsZ1dh74'),
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+
+    assert exc_info.value.status_code == 500
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+
+
 async def test_anthropic_code_execution_files_append_to_every_user_message(allow_model_requests: None):
-    """Pins the internal `_map_message` placement: uploads attach to *every* user message (the last one is the only one the server materializes from, and covering all of them keeps each byte-identical as history grows), and none are added when history has no user message.
+    """Pins the internal `_map_message` placement: uploads attach to *every* user message that can carry one (covering all of them reaches the turn being generated while keeping each byte-identical as history grows), and none are added when history has no user message.
 
     Not a VCR test: the cassette matchers ignore the request body, so a placement regression replays
     green against the recordings in `test_code_execution_files_vcr.py` — asserting the mapped

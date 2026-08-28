@@ -956,8 +956,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container = self._get_container(messages, model_settings)
+        sends_container_uploads = any(
+            is_str_dict(block) and block['type'] == 'container_upload'
+            for message in anthropic_messages
+            for block in (message['content'] if isinstance(message['content'], list) else [])
+        )
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        async def _create(
+            container_param: BetaContainerParams | str | None,
+        ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
@@ -975,12 +982,32 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
-                container=container or OMIT,
+                container=container_param or OMIT,
                 service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=_build_extra_body(model_settings),
             )
+
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            try:
+                return await _create(container)
+            except APIStatusError as e:
+                # Anthropic answers with a 500 — not the 404 it gives for an id that never existed —
+                # when a request asks it to materialize a `container_upload` into a container that has
+                # passed its ~1h TTL (https://github.com/pydantic/pydantic-ai/issues/7833). Resuming a
+                # `CodeExecutionTool(files=...)` conversation the next day hits exactly that, so the id
+                # we resolved from history is worse than no id at all: dropping it lets the server
+                # allocate a fresh container and put the file in it, which is what the caller wanted.
+                #
+                # Retrying an opaque 500 is blunt, so the guard is narrow on purpose. It needs both
+                # halves of the shape that 500s — an id we resolved ourselves, and uploads actually on
+                # the wire — so any other 500 raises untouched and costs nobody a second round trip.
+                # Only a bare id is dropped; a user-configured `{'skills': ...}` container is theirs to
+                # keep. One retry, never a loop: if the retry fails, that error is what surfaces.
+                if e.status_code != 500 or not isinstance(container, str) or not sends_container_uploads:
+                    raise
+                return await _create(None)
 
     @staticmethod
     def _add_compaction_params(
@@ -2198,29 +2225,44 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
                 for file_id in pending_container_uploads
             ]
-            # Append the uploads to *every* user message. Two constraints pin that down, and no
-            # fixed set of positions satisfies both:
+            # Append the uploads to every user message that can carry one. Two constraints pin that
+            # down, and no fixed set of positions satisfies both:
             #
-            # - The server only materializes a `container_upload` into the container from the
-            #   *last* user message. A block sitting on an earlier turn is inert, so a history with
-            #   more than one user turn and no container to reuse comes up without the file, and the
-            #   model reports it missing (https://github.com/pydantic/pydantic-ai/issues/7775).
+            # - The server only materializes a `container_upload` that falls inside the turn it is
+            #   generating — everything after the last *completed* assistant response. A block
+            #   stranded in an earlier, finished turn is inert, so a history with more than one user
+            #   turn and no container to reuse comes up without the file, and the model reports it
+            #   missing (https://github.com/pydantic/pydantic-ai/issues/7775). Mid-turn the block
+            #   may sit further back and still count: a `tool_use`/`tool_result` exchange does not
+            #   end the turn, so a block on the prompt that opened it still materializes.
             # - The blocks are recomputed from the static `CodeExecutionTool.files` config on every
             #   request, so a message that carries them must carry them on every request too.
             #   Tracking the tail would move the insertion point as history grows and silently bust
             #   the cacheable prefix. "First and last" fails the same way: the message that was last
             #   on one step loses its block on the next.
             #
-            # Appending everywhere is the only placement that keeps each message byte-identical
-            # across steps *and* always covers the last one. Cost is ~6 input tokens per block,
-            # growing with user turns rather than staying constant, though every block but the one
-            # on the last message falls inside the prefix a previous step already cached. The file
-            # still materializes exactly once. The synthetic anchor turns `_anchor_system_messages`
-            # inserts are carried along too, which is harmless and keeps them prefix-stable.
+            # Appending to every user message that can carry one satisfies both, and the one
+            # exclusion costs nothing: a message holding only `tool_result` blocks never opens a
+            # turn, so the prompt that did is already carrying the block inside the same turn.
+            #
+            # That exclusion is required, not just free. `_drop_unpaired_native_tool_calls` above
+            # keeps an unpaired native call precisely while every later message is a user turn of
+            # only `tool_result` blocks, because that is the one shape Anthropic accepts it in. This
+            # loop runs after that decision, so adding a block here would retroactively invalidate
+            # it and the next request is rejected with `bash_code_execution` tool use ... was found
+            # without ... — reachable whenever a function tool runs alongside this native tool.
+            #
+            # Cost is ~6 input tokens per block, growing with user turns rather than staying
+            # constant, though every block outside the current turn falls inside a prefix an earlier
+            # step already cached. The file still materializes exactly once. The synthetic anchor
+            # turns `_anchor_system_messages` inserts are carried along too, which is harmless and
+            # keeps them prefix-stable.
             for msg in anthropic_messages:
                 if msg['role'] == 'user':
                     existing = msg['content']
                     assert not isinstance(existing, str)
+                    if existing and all(is_str_dict(b) and b['type'] == 'tool_result' for b in existing):
+                        continue
                     msg['content'] = [*existing, *upload_blocks]
 
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)

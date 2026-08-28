@@ -24,7 +24,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import ModelResponse, UploadedFile
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UploadedFile, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
@@ -174,8 +174,9 @@ async def test_anthropic_code_execution_files_fresh_container_multi_turn(
     Regression test for #7775. `test_anthropic_code_execution_files_multi_turn` can't catch it: its
     turn 2 reuses turn 1's container by id, so the file is already inside regardless of where the
     `container_upload` block lands. Here turn 1 never runs code, so no `container_id` reaches the
-    history and turn 2 allocates a fresh container — and the server only materializes an upload from
-    the *last* user message, which is why appending to the first one alone left the container empty.
+    history and turn 2 allocates a fresh container — and the server only materializes an upload that
+    falls inside the turn it is generating, which is why appending to the first user message alone
+    stranded the block in turn 1 and left the container empty.
 
     The wire assertions read `request_capture`, not the cassette: the default matchers ignore the
     body, so a first-message-only injection replays against this recording and the round-trip half
@@ -223,6 +224,115 @@ async def test_anthropic_code_execution_files_fresh_container_multi_turn(
         [upload_block],
         [upload_block],
     ]
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_with_function_tool(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """A tool-result-only user message must *not* get an upload block, and the file still arrives.
+
+    Attaching one there makes the model open its very next response with a code-execution call
+    alongside the function-tool call, which the API then leaves unexecuted and rejects on the
+    following request with `bash_code_execution` tool use ... was found without ... (reproduced 6/6
+    live). Skipping those messages costs nothing: a tool result never opens a turn, so the prompt
+    that did still carries the block and is still inside the turn being generated.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+
+    try:
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+        )
+
+        @agent.tool_plain
+        def get_units() -> str:
+            """Return the unit the `value` column is measured in."""
+            return 'kg'
+
+        result = await agent.run(
+            'First call `get_units`. Then use the code execution tool to read the uploaded CSV and '
+            'report the sum of the `value` column with that unit.'
+        )
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    assert '100' in result.output
+    assert 'kg' in result.output
+
+    # The request that follows the tool return: its last user message is the tool result and carries
+    # no upload, while the prompt that opened the turn still does.
+    bodies = request_capture.bodies('/v1/messages')
+    user_messages = [m for m in bodies[-1]['messages'] if m['role'] == 'user']
+    assert [[block['type'] for block in m['content']] for m in user_messages] == [
+        ['text', 'container_upload'],
+        ['tool_result'],
+    ]
+
+
+# A real container from an earlier recording, dead for days. Anthropic 500s on a `container_upload`
+# aimed at an expired container instead of 404ing the way it does for an id that never existed.
+_EXPIRED_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_expired_container_is_dropped_and_retried(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """An expired container id in history is dropped and the request resent once, so the file lands.
+
+    Resuming a `CodeExecutionTool(files=...)` conversation past the container's ~1h TTL sends an id
+    that is worse than no id: the upload cannot be materialized into a container that no longer
+    exists, and the API answers 500 rather than 404 (#7833). Two requests go out — the first carrying
+    the dead id, the second carrying no container at all — and the fresh container gets the file.
+
+    `max_retries=0` keeps the SDK's own retry out of the way, so the two captured requests are ours.
+    It also makes playback match live: the real 500 carries `x-should-retry: false` and the SDK stops
+    at one attempt, but the cassette serializer drops that header, so a replayed 500 would otherwise
+    be retried by the SDK and silently consume the second recorded interaction.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client, max_retries=0)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+
+    try:
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+        )
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='Earlier turn, long enough ago that the container is gone.')]),
+            ModelResponse(
+                parts=[TextPart(content='Earlier answer.')],
+                provider_name='anthropic',
+                provider_details={'container_id': _EXPIRED_CONTAINER_ID},
+            ),
+        ]
+        result = await agent.run(_PROMPT, message_history=history)
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    assert '100' in result.output
+
+    # Both attempts are on the wire, and only the first carries the dead id.
+    bodies = request_capture.bodies('/v1/messages')
+    assert [body.get('container') for body in bodies] == [_EXPIRED_CONTAINER_ID, None]
 
 
 # Large instructions so the cacheable prefix (system + tools + user text) clears Anthropic's
