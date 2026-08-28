@@ -82,10 +82,12 @@ def test_public_engine_builder_exports() -> None:
         'ToolsetGetToolsId',
         'IDENTITY_CODEC',
         'JSON_CODEC',
+        'JournalCallableOperationBackend',
         'JournalOperationNamer',
         'ModelRequestId',
         'OperationConfigRole',
         'RegisteredOperationBackend',
+        'RoleBasedOperationConfig',
         'ToolsetKind',
         'ToolsetValidateToolArgumentsId',
     ]

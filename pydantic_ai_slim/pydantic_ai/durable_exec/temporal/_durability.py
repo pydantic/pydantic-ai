@@ -305,7 +305,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         assert backend is not None
 
         default_model = self._models_by_id.get('default')
-        model_name = self._default_model_id or (default_model.model_id if default_model is not None else 'default')
+        model_name = self.default_model_id or (default_model.model_id if default_model is not None else 'default')
         self._bound_model_operations = self._bind_model_operations(backend, model_id=None, model_name=model_name)
         request = self._bound_model_operations.request
         request_stream = self._bound_model_operations.request_stream

@@ -4,8 +4,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
-from ._operation import DurableOperation, DurableOperationConfig, DurableOperationId, resolve_tool_operation_config
-from ._operation_names import DurableOperationNamer
+from ._operation import (
+    DurableOperation,
+    DurableOperationConfig,
+    DurableOperationId,
+    OperationConfigRole,
+    resolve_tool_operation_config,
+)
+from ._operation_names import DurableOperationNamer, JournalOperationNamer
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
@@ -145,6 +151,57 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
             config: Engine-specific durable unit configuration.
         """
         ...
+
+
+class JournalCallableOperationBackend(CallableOperationBackend[ConfigT]):
+    """Callable backend using the standard journal operation naming convention."""
+
+    def __init__(
+        self,
+        *,
+        agent_name: str,
+        default_model_id: str | None = None,
+        config: DurableOperationConfig[ConfigT],
+    ) -> None:
+        super().__init__(
+            namer=JournalOperationNamer(agent_name, default_model_id=default_model_id or 'default'), config=config
+        )
+
+
+class RoleBasedOperationConfig(Generic[ConfigT]):
+    """Resolve operation configuration from role defaults and an optional per-tool resolver."""
+
+    def __init__(
+        self,
+        *,
+        model: ConfigT,
+        event: ConfigT,
+        capability: ConfigT,
+        tool: ConfigT,
+        resolve_tool: Callable[[DurableOperationId, object | None, str], ConfigT | Literal[False]] | None = None,
+    ) -> None:
+        self._configs = {'model': model, 'event': event, 'capability': capability, 'tool': tool}
+        self._resolve_tool = resolve_tool
+
+    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> ConfigT:
+        if role == 'tool' and self._resolve_tool is not None:
+            config = self._resolve_tool(operation_id, None, '')
+            assert config is not False
+            return config
+        return self._configs[role]
+
+    def for_tool(
+        self,
+        role: OperationConfigRole,
+        *,
+        operation_id: DurableOperationId,
+        tool: object | None,
+        tool_name: str,
+    ) -> ConfigT | Literal[False]:
+        assert role == 'tool'
+        if self._resolve_tool is not None:
+            return self._resolve_tool(operation_id, tool, tool_name)
+        return self._configs['tool']
 
 
 class RegisteredOperationBackend(DurableOperationBackend[ConfigT]):

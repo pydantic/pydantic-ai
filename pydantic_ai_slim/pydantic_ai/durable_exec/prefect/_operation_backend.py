@@ -1,65 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Literal
 
 from prefect import task
 from prefect.context import FlowRunContext
 
-from pydantic_ai.durable_exec._operation import (
-    CapabilityOperationId,
-    DurableOperationConfig,
-    DurableOperationId,
-    EventStreamHandlerId,
-    OperationConfigRole,
-    ToolsetCallToolId,
-    ToolsetKind,
-    ToolsetValidateToolArgumentsId,
-)
-from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
+from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, EventStreamHandlerId
+from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, RoleBasedOperationConfig
 
 from ._operation_names import PrefectOperationNamer
 from ._types import TaskConfig
 
-
-class PrefectOperationConfig(DurableOperationConfig[TaskConfig]):
-    def __init__(
-        self,
-        *,
-        model: TaskConfig,
-        event: TaskConfig,
-        capability: TaskConfig,
-        tool: Callable[[ToolsetKind, object | None, str], TaskConfig | Literal[False]],
-    ) -> None:
-        self._model = model
-        self._event = event
-        self._capability = capability
-        self._tool = tool
-
-    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> TaskConfig:
-        if role == 'model':
-            return self._model
-        if role == 'event':
-            return self._event
-        if role == 'capability':
-            assert isinstance(operation_id, CapabilityOperationId)
-            return self._capability
-        assert isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
-        config = self._tool(operation_id.toolset_kind, None, '')
-        assert config is not False
-        return config
-
-    def for_tool(
-        self,
-        role: OperationConfigRole,
-        *,
-        operation_id: DurableOperationId,
-        tool: object | None,
-        tool_name: str,
-    ) -> TaskConfig | Literal[False]:
-        assert role == 'tool'
-        assert isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
-        return self._tool(operation_id.toolset_kind, tool, tool_name)
+PrefectOperationConfig = RoleBasedOperationConfig[TaskConfig]
 
 
 class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):

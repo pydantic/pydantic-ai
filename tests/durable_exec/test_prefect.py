@@ -67,12 +67,12 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
-    ToolsetKind,
     _DynamicCallToolCacheIdentity,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
+    DurableOperationId,
     DynamicToolsetCallToolParams,
     ModelRequestId,
     ToolsetCallToolId,
@@ -195,6 +195,18 @@ def test_durability_engine_spec_rejects_empty_nouns() -> None:
         DurabilityEngineSpec(engine_name='Test', durable_unit_noun='', durable_container_noun='')
 
 
+def test_durability_bound_agent_and_default_model_id_accessors() -> None:
+    capability = PrefectDurability(name='accessors')
+    assert capability.agent is None
+    assert capability.default_model_id is None
+
+    agent = Agent('test', name='accessors', capabilities=[capability])
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    assert bound.agent is agent
+    assert bound.default_model_id == 'test'
+
+
 async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin base defaults that concrete engines override and that public runs cannot isolate.
 
@@ -217,7 +229,6 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
         is None
     )
     assert BaseDurabilityCapability._toolset_base_config(base, 'function') is None  # pyright: ignore[reportPrivateUsage]
-    assert BaseDurabilityCapability._serialization_failure(base, ValueError()) is None  # pyright: ignore[reportPrivateUsage]
     assert BaseDurabilityCapability._normalize_unit_config(base, {'x': 1}) == {'x': 1}  # pyright: ignore[reportPrivateUsage]
     resolve_tool_config = BaseDurabilityCapability._build_resolve_tool_config(base, {'base': 1})  # pyright: ignore[reportPrivateUsage]
     tool = ToolsetTool(
@@ -280,31 +291,32 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
     await force_sequential()
 
 
-async def test_durability_base_serialization_failure_hook() -> None:
+async def test_durability_engine_spec_serialization_failure_mapping() -> None:
     class NonRetryableError(Exception):
         pass
 
+    def serialization_failure(exc: Exception) -> BaseException:
+        return NonRetryableError(f'non-retryable serialization failure: {exc}')
+
     class JsonDurability(PrefectDurability[Any]):
+        engine_spec = replace(
+            PrefectDurability.engine_spec,
+            codec=JSON_CODEC,
+            serialization_failure=serialization_failure,
+        )
+
+    class UnmappedJsonDurability(PrefectDurability[Any]):
         engine_spec = replace(PrefectDurability.engine_spec, codec=JSON_CODEC)
-
-        def __init__(self, *, map_failure: bool) -> None:
-            super().__init__(name='json-durability')
-            self.map_failure = map_failure
-
-        def _serialization_failure(self, exc: Exception) -> BaseException | None:
-            if self.map_failure:
-                return NonRetryableError('non-retryable serialization failure')
-            return None
 
     async def non_serializable() -> object:
         return object()
 
-    mapped = JsonDurability(map_failure=True)
+    mapped = JsonDurability(name='json-durability')
     with pytest.raises(NonRetryableError, match='non-retryable serialization failure') as exc_info:
         mapped._typed_result_codec(object).dump(await non_serializable())  # pyright: ignore[reportPrivateUsage]
     assert isinstance(exc_info.value.__cause__, PydanticSerializationError)
 
-    unmapped = JsonDurability(map_failure=False)
+    unmapped = UnmappedJsonDurability(name='json-durability')
     with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type'):
         unmapped._typed_result_codec(object).dump(await non_serializable())  # pyright: ignore[reportPrivateUsage]
 
@@ -318,15 +330,17 @@ async def test_durability_base_serialization_failure_hook() -> None:
 def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
     calls: list[tuple[str, object | None, str]] = []
 
-    def tool_config(kind: ToolsetKind, tool: object | None, tool_name: str) -> TaskConfig:
-        calls.append((kind, tool, tool_name))
+    def tool_config(operation_id: DurableOperationId, tool: object | None, tool_name: str) -> TaskConfig:
+        assert isinstance(operation_id, ToolsetCallToolId)
+        calls.append((operation_id.toolset_kind, tool, tool_name))
         return TaskConfig(timeout_seconds=3)
 
     config = PrefectOperationConfig(
         model=TaskConfig(timeout_seconds=1),
         event=TaskConfig(timeout_seconds=2),
         capability=TaskConfig(timeout_seconds=4),
-        tool=tool_config,
+        tool=TaskConfig(timeout_seconds=5),
+        resolve_tool=tool_config,
     )
     model_id = ModelRequestId(None, streaming=False, model_name='test')
     call_id = ToolsetCallToolId('function', toolset_id='tools')

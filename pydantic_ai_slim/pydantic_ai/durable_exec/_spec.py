@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from pydantic_ai.exceptions import UserError
@@ -28,6 +28,13 @@ class DurabilityEngineSpec:
     """How the base serializes at every durable boundary. Identity for object-passing engines
     (Temporal/DBOS/Prefect), JSON for journal engines (Restate/Lambda/Absurd)."""
 
+    serialization_failure: Callable[[Exception], BaseException] | None = None
+    """Convert deterministic codec failures into an engine's terminal error type.
+
+    JSON-journal engines set this to map `PydanticSerializationError` and `TypeError` failures so
+    the engine does not retry values that can never be encoded.
+    """
+
     wrapped_toolset_kinds: frozenset[ToolsetKind] = frozenset({'function', 'mcp', 'dynamic'})
     """Which leaf-toolset kinds this engine wraps in a durable unit. DBOS omits `'function'`
     (function tools run inline via `@DBOS.step`)."""
@@ -44,9 +51,14 @@ class DurabilityEngineSpec:
     Restate opts function tools out of entry (`enter-never`)."""
 
     tool_call_result_upgrade_lenient: bool = False
-    """When `True`, recorded tool payloads are decoded leniently for library-upgrade compatibility
-    (`unwrap_recorded_tool_call_result`). Engines that replay stored outputs (Prefect cache,
-    DBOS/Lambda recovery) enable this. Journal engines that never cross an upgrade leave it disabled."""
+    """Decode tool results recorded before control-flow exceptions were wrapped as values.
+
+    Enable this only for stores containing recordings from released DBOS or Prefect integrations,
+    or from a sibling integration package that used the earlier payload format. New engines must
+    leave this `False`: lenient decoding cannot distinguish a raw earlier recording from a corrupt
+    or mis-decoded payload, so strict decoding keeps corruption visible instead of passing garbage
+    to the model.
+    """
 
     journal_discovery: bool = True
     """Whether toolset discovery (`get_tools`/`get_instructions`) runs in its own durable unit.

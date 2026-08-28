@@ -30,7 +30,13 @@ if TYPE_CHECKING:
         ToolsetKind,
         ToolsetValidateToolArgumentsId,
     )
-    from ._operation_backend import CallableOperationBackend, DurableOperationBackend, RegisteredOperationBackend
+    from ._operation_backend import (
+        CallableOperationBackend,
+        DurableOperationBackend,
+        JournalCallableOperationBackend,
+        RegisteredOperationBackend,
+        RoleBasedOperationConfig,
+    )
     from ._operation_names import DurableOperationNamer, JournalOperationNamer
     from ._spec import DurabilityEngineSpec
 
@@ -51,10 +57,12 @@ __all__ = [
     'ToolsetGetToolsId',
     'IDENTITY_CODEC',
     'JSON_CODEC',
+    'JournalCallableOperationBackend',
     'JournalOperationNamer',
     'ModelRequestId',
     'OperationConfigRole',
     'RegisteredOperationBackend',
+    'RoleBasedOperationConfig',
     'ToolsetKind',
     'ToolsetValidateToolArgumentsId',
 ]
@@ -79,7 +87,9 @@ _exports = {
     'ToolsetValidateToolArgumentsId': ('._operation', 'ToolsetValidateToolArgumentsId'),
     'CallableOperationBackend': ('._operation_backend', 'CallableOperationBackend'),
     'DurableOperationBackend': ('._operation_backend', 'DurableOperationBackend'),
+    'JournalCallableOperationBackend': ('._operation_backend', 'JournalCallableOperationBackend'),
     'RegisteredOperationBackend': ('._operation_backend', 'RegisteredOperationBackend'),
+    'RoleBasedOperationConfig': ('._operation_backend', 'RoleBasedOperationConfig'),
     'DurableOperationNamer': ('._operation_names', 'DurableOperationNamer'),
     'JournalOperationNamer': ('._operation_names', 'JournalOperationNamer'),
 }

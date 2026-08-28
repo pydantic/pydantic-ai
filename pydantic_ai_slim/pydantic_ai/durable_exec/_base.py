@@ -221,6 +221,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Name for the durable container."""
         return self.engine_spec.durable_container_noun
 
+    @property
+    def agent(self) -> AbstractAgent[AgentDepsT, Any] | None:
+        """The agent bound to this capability, or `None` before binding."""
+        return self._agent
+
+    @property
+    def default_model_id(self) -> str | None:
+        """Persisted-name ID for the agent's default model, or `None` when it is not a string ID."""
+        return self._default_model_id
+
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
 
@@ -624,17 +634,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         try:
             return self.engine_spec.codec.dump(tp, value)
         except (PydanticSerializationError, TypeError) as exc:
-            mapped = self._serialization_failure(exc)
-            if mapped is not None:
-                raise mapped from exc
+            if mapper := self.engine_spec.serialization_failure:
+                raise mapper(exc) from exc
             raise
-
-    def _serialization_failure(self, exc: Exception) -> BaseException | None:
-        """Map serialization failure to an engine's non-retryable error, or return `None`.
-
-        JSON-journal engines override this to return their terminal/non-retryable error type.
-        """
-        return None
 
     def _toolset_base_config(self, kind: ToolsetKind) -> Any:
         """Engine base config for a toolset kind's durable units (merged with per-tool config)."""

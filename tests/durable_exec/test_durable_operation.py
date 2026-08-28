@@ -21,7 +21,11 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
-from pydantic_ai.durable_exec import DurabilityEngineSpec
+from pydantic_ai.durable_exec import (
+    DurabilityEngineSpec,
+    JournalCallableOperationBackend,
+    RoleBasedOperationConfig,
+)
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
@@ -1036,6 +1040,63 @@ async def test_callable_operation_backend_resolves_and_round_trips() -> None:
     assert config.for_tool('tool', ToolsetCallToolId('function', toolset_id='tools'), object(), 'tool') == {
         'tool': 'tool'
     }
+
+
+async def test_journal_callable_backend_and_role_based_config() -> None:
+    config = RoleBasedOperationConfig(model='model', event='event', capability='capability', tool='tool')
+    event_id = EventStreamHandlerId()
+    assert config.base('event', operation_id=event_id) == 'event'
+    assert (
+        config.for_tool(
+            'tool', operation_id=ToolsetCallToolId('function', toolset_id='tools'), tool=object(), tool_name='tool'
+        )
+        == 'tool'
+    )
+
+    disabled_config = RoleBasedOperationConfig(
+        model='model',
+        event='event',
+        capability='capability',
+        tool='tool',
+        resolve_tool=lambda operation_id, tool, tool_name: False,
+    )
+    with pytest.raises(AssertionError):
+        disabled_config.base('tool', operation_id=ToolsetCallToolId('function', toolset_id='tools'))
+
+    class Backend(JournalCallableOperationBackend[str]):
+        def __init__(self, default_model_id: str | None) -> None:
+            super().__init__(agent_name='agent', default_model_id=default_model_id, config=config)
+            self.names: list[str] = []
+
+        async def execute(
+            self,
+            *,
+            operation_id: DurableOperationId,
+            name: str,
+            body: Callable[[], Awaitable[object]],
+            cache_key: tuple[object, ...],
+            config: str,
+        ) -> object:
+            self.names.append(name)
+            return await body()
+
+    async def handler(params: int) -> int:
+        return params
+
+    operation = DurableOperation(
+        operation_id=ModelRequestId('custom', streaming=False, model_name='model'),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[int](),
+        cache_identity=NoCacheIdentity[int](),
+        result_codec=TypedResultCodec[int](int),
+        config_role='model',
+    )
+    default_backend = Backend(None)
+    custom_backend = Backend('custom')
+    assert await default_backend.bind(operation)(1) == 1
+    assert await custom_backend.bind(operation)(2) == 2
+    assert default_backend.names == ['agent__model.request.custom']
+    assert custom_backend.names == ['agent__model.request']
 
 
 async def test_registered_backend_binds_model_operations_during_agent_assembly() -> None:

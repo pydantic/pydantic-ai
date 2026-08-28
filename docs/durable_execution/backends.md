@@ -41,39 +41,30 @@ This complete in-process example runs each operation immediately. A real integra
 
 ```python
 from collections.abc import Awaitable, Callable
-from typing import Literal
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec import (
-    IDENTITY_CODEC,
+    JSON_CODEC,
     BaseDurabilityCapability,
-    CallableOperationBackend,
     DurabilityEngineSpec,
     DurableOperationId,
-    JournalOperationNamer,
-    OperationConfigRole,
+    JournalCallableOperationBackend,
+    RoleBasedOperationConfig,
 )
 from pydantic_ai.models.test import TestModel
 
 
-class ImmediateConfig:
-    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> None:
-        return None
-
-    def for_tool(
-        self,
-        role: OperationConfigRole,
-        *,
-        operation_id: DurableOperationId,
-        tool: object | None,
-        tool_name: str,
-    ) -> None | Literal[False]:
-        return None
+class TerminalError(Exception):
+    pass
 
 
-class ImmediateBackend(CallableOperationBackend[None]):
-    def __init__(self, agent_name: str) -> None:
-        super().__init__(namer=JournalOperationNamer(agent_name), config=ImmediateConfig())
+class ImmediateBackend(JournalCallableOperationBackend[None]):
+    def __init__(self, agent_name: str, default_model_id: str | None) -> None:
+        super().__init__(
+            agent_name=agent_name,
+            default_model_id=default_model_id,
+            config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+        )
 
     async def execute(
         self,
@@ -92,7 +83,8 @@ class ImmediateDurability(BaseDurabilityCapability[None]):
         engine_name='Immediate',
         durable_unit_noun='operation',
         durable_container_noun='run',
-        codec=IDENTITY_CODEC,
+        codec=JSON_CODEC,
+        serialization_failure=lambda exc: TerminalError(str(exc)),
     )
 
     @property
@@ -100,7 +92,7 @@ class ImmediateDurability(BaseDurabilityCapability[None]):
         return True
 
     def get_durable_operation_backend(self) -> ImmediateBackend:
-        return ImmediateBackend(self.name)
+        return ImmediateBackend(self.name, self.default_model_id)
 
 
 agent = Agent(TestModel(), name='example', capabilities=[ImmediateDurability()])
@@ -127,6 +119,18 @@ object serialization. Use [`JSON_CODEC`][pydantic_ai.durable_exec.JSON_CODEC] wh
 writes JSON-compatible journal payloads itself. Both implement
 [`DurabilityCodec`][pydantic_ai.durable_exec.DurabilityCodec]. Arguments, results, tool control-flow
 signals, and decorated capability operations all cross the selected codec boundary.
+
+JSON-journal engines should set `DurabilityEngineSpec.serialization_failure` to convert deterministic
+codec failures into the engine's terminal or non-retryable exception type. Such values cannot become
+serializable on retry.
+
+[`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig] supplies one config
+per operation role and accepts an optional `resolve_tool` callback for per-tool overrides. The
+callback receives the complete typed operation ID, tool object, and tool name.
+
+[`JournalCallableOperationBackend`][pydantic_ai.durable_exec.JournalCallableOperationBackend]
+combines the callable backend with `JournalOperationNamer`. Pass the bound capability's
+`default_model_id` so the agent's default string model keeps the standard unsuffixed persisted name.
 
 The backend config object implements the backend configuration protocol. Its public `base` and
 `for_tool` methods receive an
