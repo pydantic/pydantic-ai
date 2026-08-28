@@ -68,15 +68,12 @@ async def conversation(session: RealtimeSession) -> None:
         # `write()` returns once the device has consumed a chunk, so playback advances at
         # speaker pace while the model runs ahead; `stream_audio()`'s own buffer bounds
         # the backlog, dropping its oldest chunks if playback falls too far behind, so a
-        # machine that stutters glitches instead of ending the call. The one thing the
-        # session can't see is how much audio the device actually consumed, so count it.
-        played = 0
-
+        # machine that stutters glitches instead of ending the call. Pulling the next
+        # chunk only after the device consumed the previous one is also what lets the
+        # session track the playback position itself, as `session.played_audio_bytes`.
         async def play_audio() -> None:
-            nonlocal played
             async for chunk in session.stream_audio():
                 await speaker.write(chunk)
-                played += len(chunk)
 
         tg.start_soon(play_audio)
 
@@ -84,13 +81,12 @@ async def conversation(session: RealtimeSession) -> None:
         async for event in session:
             match event:
                 case RealtimeInputSpeechStartEvent():
-                    # The provider stops the model on its own when the user speaks; what
-                    # it can't know is how much of its audio actually reached the
-                    # speaker. Given the device position, the session drops the audio the
-                    # user will never hear and truncates the turn's transcript to what
-                    # was really heard — or does nothing when the turn was heard in full,
-                    # since the event also fires when nothing is playing.
-                    await session.interrupt(played_bytes=played)
+                    # The provider stops the model on its own when the user speaks. Given
+                    # the playback position, the session drops the audio the user will
+                    # never hear and truncates the turn's transcript to what was really
+                    # heard — or does nothing when the turn was heard in full, since the
+                    # event also fires when nothing is playing.
+                    await session.interrupt(played_bytes=session.played_audio_bytes)
                 case PartEndEvent(part=SpeechPart() as part) if part.transcript:
                     print(f'{part.speaker}: {part.transcript}')
                 case FunctionToolCallEvent(part=call):

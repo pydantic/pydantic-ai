@@ -41,8 +41,11 @@ waiting on an event a provider never sends.
 
 [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the rest. When playback
 drains the session's single [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
-iterator, pass `played_bytes` — the total raw PCM bytes the device actually consumed — and the
-session owns the accounting: it attributes the position to the current turn, discards the buffered
+iterator — writing each chunk to the device before pulling the next — the session tracks the
+playback position itself, as
+[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]: a chunk counts as
+played once the consumer comes back for the next one. Pass it to `played_bytes` and the session
+owns the whole barge-in: it attributes the position to the current turn, discards the buffered
 audio the user will never hear, truncates the provider's transcript to what was really heard, and
 does nothing when the turn was heard in full (the speech-start event also fires on ordinary user
 turns when nothing is playing):
@@ -54,23 +57,20 @@ from pydantic_ai.realtime import RealtimeInputSpeechStartEvent, RealtimeSession
 
 
 async def conversation(session: RealtimeSession) -> None:
-    played = 0
-
     async def play_audio() -> None:
-        nonlocal played
         async for chunk in session.stream_audio():
             ...  # write the chunk to your speaker, waiting until the device consumed it
-            played += len(chunk)
 
     playback = asyncio.create_task(play_audio())
     async for event in session:
         if isinstance(event, RealtimeInputSpeechStartEvent):
-            await session.interrupt(played_bytes=played)
+            await session.interrupt(played_bytes=session.played_audio_bytes)
     playback.cancel()
 ```
 
 The device's own in-flight block is the one thing the session cannot reach; flush it too when your
-audio layer can.
+audio layer can. A playback loop that instead buffers ahead of the device makes
+`played_audio_bytes` read too far — count actual device consumption yourself and pass that.
 
 As an alternative, when playback doesn't drain a single session-long `stream_audio()` iterator —
 several consumers, a model without output truncation, or a transport where the session never

@@ -251,6 +251,8 @@ class _AudioTap:
     queue: asyncio.Queue[bytes | object]
     subscribed_at_bytes: int
     dropped_bytes: int = 0
+    played_bytes: int = 0
+    """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -957,7 +959,9 @@ class RealtimeSession:
 
         Each iterator has a 32-chunk buffer. If its consumer falls behind, the oldest chunk is
         dropped so audio playback cannot stall tool execution, turn tracking, or the main event
-        stream. On barge-in, [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt]
+        stream. A device-paced consumer also feeds
+        [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes], and on
+        barge-in [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt]
         discards buffered chunks the user will never hear, so a playback loop can iterate one
         stream for the whole session. Closing the session discards buffered chunks and ends the
         iterator cleanly.
@@ -977,8 +981,34 @@ class RealtimeSession:
             while (item := await queue.get()) is not self._tap_finished:
                 assert isinstance(item, bytes)
                 yield item
+                # Resuming here means the consumer came back for the next chunk. Under the
+                # documented playback pattern — write each chunk to the device before pulling the
+                # next — that is the moment the previous chunk finished playing, which is what
+                # makes `played_audio_bytes` an accurate playback position with no caller counting.
+                tap.played_bytes += len(item)
         finally:
             self._audio_taps.discard(tap)
+
+    @property
+    def played_audio_bytes(self) -> int:
+        """The playback position of the session's single [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] consumer, in raw PCM bytes.
+
+        A chunk counts as played once the consumer comes back for the next one, so the value is
+        exact when playback follows the documented pattern — write each chunk to the device and
+        wait until it is consumed before pulling the next. The chunk currently being written is not
+        yet counted, matching what a hand-rolled counter incremented after each write would report.
+        A consumer that instead buffers ahead reads too far; count actual device consumption
+        yourself in that case. Made to be passed to
+        [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] on
+        barge-in. Requires exactly one active `stream_audio()` iterator, like that call.
+        """
+        if len(self._audio_taps) != 1:
+            raise UserError(
+                '`played_audio_bytes` needs exactly one active `stream_audio()` iterator to report '
+                f'the playback position of, not {len(self._audio_taps)}; keep your own accounting instead.'
+            )
+        (tap,) = self._audio_taps
+        return tap.played_bytes
 
     @overload
     def stream_transcripts(self, *, delta: Literal[False] = False) -> AsyncIterator[SpeechPart]: ...

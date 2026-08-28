@@ -1416,6 +1416,36 @@ async def test_interrupt_rejects_both_playback_positions() -> None:
         await session.interrupt(played_ms=100, played_bytes=4800)  # pyright: ignore[reportCallIssue]
 
 
+async def test_played_audio_bytes_counts_a_chunk_when_the_consumer_returns_for_the_next() -> None:
+    """`played_audio_bytes` is the iteration-confirmed playback position.
+
+    Under the documented playback pattern the consumer only comes back for the next chunk once the
+    device consumed the previous one, so resuming the iterator is the exact moment a chunk finished
+    playing; the chunk just handed out is still in flight and must not be counted yet.
+    """
+    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK
+        assert session.played_audio_bytes == 0  # `a` is still in flight
+        assert await anext(stream) == b'b' * _CHUNK
+        assert session.played_audio_bytes == _CHUNK  # coming back for `b` confirmed `a`
+
+        # The one-line barge-in the docs show: the confirmed position feeds `interrupt()` directly,
+        # here 100 ms into the turn with `b` in flight and nothing else emitted yet.
+        assert await session.interrupt(played_bytes=session.played_audio_bytes) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=100), CancelResponse()]
+
+
+async def test_played_audio_bytes_requires_exactly_one_audio_stream() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    with pytest.raises(UserError, match=r'`played_audio_bytes` needs exactly one active.*not 0'):
+        _ = session.played_audio_bytes
+
+
 async def test_speech_parts_do_not_persist_provider_item_ids() -> None:
     openai = RealtimeSession(
         FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True, item_id='item-a'), ResponseDone()]),
