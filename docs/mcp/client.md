@@ -401,7 +401,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 ## Resources
 
-MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concepts/resources) — files, data, or content that can be accessed by the client. Resources in MCP are application-driven, with host applications determining how to incorporate context manually based on their needs. They are _not_ exposed to the LLM automatically (unless a tool returns a `ResourceLink` or `EmbeddedResource`).
+MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concepts/resources) — files, data, or content that can be accessed by the client. Resources in MCP are application-driven, with host applications determining how to incorporate context manually based on their needs. They are not exposed to the model _by default_ (unless a tool returns a `ResourceLink` or `EmbeddedResource`), but you can opt in to [exposing them as model-callable tools](#exposing-resources-to-the-model).
 
 `MCPToolset` exposes methods to discover and read resources:
 
@@ -459,6 +459,38 @@ if __name__ == '__main__':
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Exposing resources to the model
+
+In addition to reading resources yourself, you can let the model discover and read them mid-run by passing [`expose_resources=True`][pydantic_ai.mcp.MCPToolset.expose_resources]. This adds two synthesized tools to the toolset, alongside the server's own tools:
+
+- `list_mcp_resources` — lists the concrete resources the server advertises, with each resource's `uri`, `name`, `description`, `mime_type`, and any [`annotations`](https://modelcontextprotocol.io/specification/2026-07-28/server/resources#annotations).
+- `read_mcp_resource` — reads a single one of those resources by `uri`.
+
+This is useful when a server exposes context as resources (for example, "skills" served as resources) and you want the model to pull them on demand rather than injecting their content out-of-band.
+
+Reusing the `mcp_resource_server.py` server from above, the model can now list and read resources during a run:
+
+```python {title="mcp_expose_resources.py" requires="mcp_resource_server.py" test="skip"}
+from fastmcp.client.transports import StdioTransport
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+
+toolset = MCPToolset(
+    StdioTransport(command='python', args=['-m', 'mcp_resource_server']),
+    expose_resources=True,
+)
+agent = Agent('openai:gpt-5', toolsets=[toolset])
+# The model can now call `list_mcp_resources` and `read_mcp_resource` mid-run, e.g. to
+# fetch `resource://user_name.txt` before answering a question that depends on it.
+result = agent.run_sync('Greet the user by name.')
+```
+
+The flag is off by default, so existing toolsets are unaffected. Only concrete resources are exposed — resource _templates_ are not, and `read_mcp_resource` is restricted to the URIs the server advertises, so the model cannot reach a template-backed resource by guessing a URI that `list_mcp_resources` never disclosed. Annotations are surfaced in the `list_mcp_resources` output so the model can prioritize, but are not used to filter what's exposed. If the server does not advertise the `resources` capability, no tools are added even when `expose_resources=True`.
+
+!!! note
+    Although these tools are client-side projections over [`list_resources()`][pydantic_ai.mcp.MCPToolset.list_resources] and [`read_resource()`][pydantic_ai.mcp.MCPToolset.read_resource] rather than server tools, they are still passed to [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] if you've set one, so a callback that gates or logs tool calls sees them too. The `metadata` argument of its `call_tool` delegate is ignored, as a resource read has no server-side metadata channel. A URI that isn't advertised by the server, or a malformed one, honors [`tool_error_behavior`][pydantic_ai.mcp.MCPToolset.tool_error_behavior] like any other tool.
 
 ## HTTP authentication
 
