@@ -1146,6 +1146,7 @@ class CensusClient(FakeClient):
         self.counts = counts
         self.stale_page = stale_page or []
         self.gate_first: int | None = None
+        self.correction_matches: list[dict[str, Any]] = []
 
     def get(self, path: str) -> Any:
         if '/collaborators/' in path:
@@ -1153,8 +1154,10 @@ class CensusClient(FakeClient):
         raise AssertionError(path)
 
     def last_page(self, path: str) -> list[dict[str, Any]]:
+        if int(path.split('/issues/')[1].split('/')[0]) in self.timelines:
+            return super().last_page(path)
         self.calls.append(('LAST', path, None))
-        return self.timelines.get(int(path.split('/issues/')[1].split('/')[0]), [])
+        return []
 
     def post(self, path: str, payload: dict[str, object]) -> Any:
         self.calls.append(('POST', path, payload))
@@ -1162,6 +1165,8 @@ class CensusClient(FakeClient):
         variables = payload['variables']
         assert isinstance(variables, dict)
         terms = str(variables['query'])
+        if terms.endswith(' sort:updated-desc'):
+            return {'data': {'search': {'issueCount': len(self.correction_matches), 'nodes': self.correction_matches}}}
         oldest = terms.endswith(' sort:created-asc')
         if oldest:
             terms = terms.removesuffix(' sort:created-asc')
@@ -1432,6 +1437,95 @@ def test_census_rejects_an_untrusted_urgent_mention():
 
     with pytest.raises(ValueError, match='valid Aditya Slack mention'):
         monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<!channel>')
+
+
+def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytest.MonkeyPatch):
+    events: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(monitor, '_emit_event', lambda name, **attrs: events.append((name, attrs)))
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
+    client.correction_matches = [{'number': 5}]
+    client.timelines[5] = [
+        {
+            # Outside the daily window: never a correction record, but it still
+            # proves the removed assignment was made by automation. GitHub's
+            # real event shape: `actor` mirrors the assignee, `assigner` acted.
+            'event': 'assigned',
+            'created_at': '2026-08-20T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'github-actions[bot]'},
+        },
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T12:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'DouweM'},
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-08-24T13:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'p:3-mid'},
+        },
+        # A human assigned dsfaccini, a human removed them: recorded for the
+        # event stream, excluded from the correction count.
+        {
+            'event': 'assigned',
+            'created_at': '2026-08-20T01:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+            'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'DouweM'},
+        },
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T14:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+            'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'adtyavrdhn'},
+        },
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    assert 'Maintainer corrections in the last day: 2 on #5.' in report
+    corrections = [attrs for name, attrs in events if name == 'triage.correction']
+    assert [attrs['kind'] for attrs in corrections] == ['unassigned', 'labeled', 'unassigned']
+    assert corrections[0]['bot_origin'] is True
+    assert corrections[0]['detail'] == 'DouweM'
+    assert corrections[1]['detail'] == 'p:3-mid'
+    assert corrections[2]['bot_origin'] is False
+    # The record names the performer (`assigner`), not the removed assignee.
+    assert corrections[2]['actor'] == 'adtyavrdhn'
+    assert all(attrs['number'] == 5 and attrs['event_id'] is not None for attrs in corrections)
+    assert [attrs for name, attrs in events if name == 'census.run'] == [
+        {
+            'repo': 'pydantic/pydantic-ai',
+            'active': 14,
+            'cooling': 9,
+            'gate_unassigned': 2,
+            'gate_oldest_age_days': 5,
+            'untriaged': 240,
+            'pull_intake': 3,
+            'breach': True,
+            'corrections': 2,
+            'correction_records': 3,
+            'correction_scan_scanned': 1,
+            'correction_scan_total': 1,
+        }
+    ]
+
+
+def test_bot_assignment_origin_walks_back_to_the_matching_assignment():
+    prior = [
+        {'event': 'assigned', 'assignee': {'login': 'dsfaccini'}, 'assigner': {'login': 'DouweM'}},
+        {'event': 'assigned', 'assignee': {'login': 'DouweM'}, 'assigner': {'login': 'github-actions[bot]'}},
+    ]
+
+    assert monitor._bot_assignment_origin(prior, 'DouweM') is True
+    assert monitor._bot_assignment_origin(prior, 'dsfaccini') is False
+    # An assignment made before the fetched history stays unknown, not bot-made.
+    assert monitor._bot_assignment_origin(prior, 'mpfaffenberger') is None
 
 
 def test_unowned_lane_excludes_only_currently_qualified_routing_owners():
@@ -2490,6 +2584,7 @@ def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
     assert jobs['coverage']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
     census_step = next(step for step in jobs['coverage']['steps'] if step.get('id') == 'census')
     assert census_step['env']['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'] == '${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}'
+    assert census_step['env']['LOGFIRE_URL'] == '${{ vars.LOGFIRE_URL }}'
     assert 'coverage' in jobs['alert']['needs']
 
 
