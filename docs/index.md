@@ -136,7 +136,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ```
 
     ```python {test="skip" lint="skip"}
-    import asyncio
+    import anyio
 
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import MCP
@@ -151,9 +151,12 @@ From simple typed data extraction to complex, long-running multi-agent collabora
         """Look up the status of an order."""
         return f'Order {order_id}: shipped, arriving Thursday.'
 
-    async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
-        microphone = asyncio.create_task(session.send_audio(microphone_chunks()))  # your microphone → the model
-        speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
+    async with (
+        agent.realtime('openai:gpt-realtime-2.1').session() as session,
+        anyio.create_task_group() as tg,
+    ):
+        tg.start_soon(session.send_audio, microphone_chunks())  # your microphone → the model
+        tg.start_soon(play_audio, session.stream_audio())  # model audio → your speaker
         async for part in session.stream_transcripts():
             print(f'{part.speaker}: {part.transcript}')
     ```
