@@ -1496,7 +1496,7 @@ class TestMCPToolsetIntegration:
 
         A unit rather than an agent-run test because `ToolsetTool.max_retries` is only observable
         end-to-end as a retry *count*; the durable end-to-end proof lives in
-        `tests/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
+        `tests/durable_exec/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
         """
         toolset = MCPToolset('https://example.com/mcp', max_retries=toolset_max_retries)
         tool = toolset.tool_for_tool_def(

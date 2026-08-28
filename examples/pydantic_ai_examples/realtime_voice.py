@@ -16,12 +16,13 @@ Run with:
 
 from __future__ import annotations
 
-import asyncio
 import threading
 from collections import deque
-from contextlib import suppress
 from functools import partial
+from typing import Any
 
+import anyio
+import anyio.to_thread
 import logfire
 
 from pydantic_ai import (
@@ -58,7 +59,6 @@ logfire.instrument_pydantic_ai()
 SAMPLE_RATE = 24000
 CHANNELS = 1
 BLOCK_SIZE = 2400  # 100 ms per audio block
-MIC_QUEUE_BLOCKS = 10
 PLAYBACK_BUFFER_SECONDS = 5
 
 agent = Agent(
@@ -70,26 +70,6 @@ agent = Agent(
 def get_weather(city: str) -> str:
     """Look up the current weather in a city."""
     return f'It is currently 21 degrees and sunny in {city}.'
-
-
-def capture_mic(
-    loop: asyncio.AbstractEventLoop,
-    mic_queue: asyncio.Queue[bytes],
-    indata: object,
-    *_: object,
-) -> None:
-    """Microphone callback (PortAudio thread): hand captured audio to the event loop safely."""
-    loop.call_soon_threadsafe(enqueue_latest, mic_queue, bytes(indata))
-
-
-def enqueue_latest(audio_queue: asyncio.Queue[bytes], chunk: bytes) -> None:
-    """Keep microphone latency bounded by dropping the oldest block on overflow."""
-    if audio_queue.full():
-        try:
-            audio_queue.get_nowait()
-        except asyncio.QueueEmpty:
-            pass
-    audio_queue.put_nowait(chunk)
 
 
 class PlaybackBuffer:
@@ -193,9 +173,11 @@ async def handle_event(
             print(f'[{result.tool_name} returned: {result.content}]')
 
 
-async def stream_mic(session: RealtimeSession, mic_queue: asyncio.Queue[bytes]) -> None:
+async def stream_mic(session: RealtimeSession, mic: Any) -> None:
+    """Read microphone blocks in a worker thread and forward them to the session."""
     while True:
-        await session.send_audio(await mic_queue.get())
+        data, _overflowed = await anyio.to_thread.run_sync(mic.read, BLOCK_SIZE)
+        await session.send_audio(bytes(data))
 
 
 async def main():
@@ -206,8 +188,6 @@ async def main():
             'On Linux you also need the PortAudio system library (`apt install libportaudio2`).'
         ) from _sounddevice_error
 
-    loop = asyncio.get_running_loop()
-    mic_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MIC_QUEUE_BLOCKS)
     playback = PlaybackBuffer(
         max_bytes=SAMPLE_RATE * CHANNELS * 2 * PLAYBACK_BUFFER_SECONDS
     )
@@ -215,9 +195,7 @@ async def main():
     stream_kwargs = dict(
         samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16', blocksize=BLOCK_SIZE
     )
-    mic = sounddevice.RawInputStream(
-        callback=partial(capture_mic, loop, mic_queue), **stream_kwargs
-    )
+    mic = sounddevice.RawInputStream(**stream_kwargs)
     speaker = sounddevice.RawOutputStream(
         callback=partial(fill_speaker, playback), **stream_kwargs
     )
@@ -226,19 +204,16 @@ async def main():
     # conversation began is queued up and sent to the model as stale input.
     async with agent.realtime('openai:gpt-realtime').session() as session:
         with mic, speaker:
-            pump = asyncio.create_task(stream_mic(session, mic_queue))
-            print('Listening — start talking (Ctrl-C to quit).')
-            try:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(stream_mic, session, mic)
+                print('Listening — start talking (Ctrl-C to quit).')
                 async for event in session:
                     await handle_event(session, event, playback)
-            finally:
-                pump.cancel()
-                with suppress(asyncio.CancelledError):
-                    await pump
+                tg.cancel_scope.cancel()
 
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        anyio.run(main)
     except KeyboardInterrupt:
         pass

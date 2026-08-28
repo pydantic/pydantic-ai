@@ -244,7 +244,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return ApprovalRequiredToolset(self, approval_required_func)
 
     def defer_loading(self, tool_names: Sequence[str] | None = None) -> DeferredLoadingToolset[AgentDepsT]:
-        """Returns a new toolset that marks tools for deferred loading, hiding them until discovered via tool search.
+        """Returns a new toolset that marks tools for deferred loading, hiding them until revealed.
+
+        Tool search, `load_capability` and another tool's `ToolReturn.tools` all reveal.
 
         See [toolset docs](../toolsets.md#deferred-loading) for more information.
 

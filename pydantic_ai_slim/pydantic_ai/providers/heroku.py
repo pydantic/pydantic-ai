@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -16,6 +17,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -29,6 +31,15 @@ else:
         AsyncHTTPClient as _OpenAIHTTPClient,
         OpenAICompatibleProvider as _OpenAICompatibleProvider,
     )
+
+
+_HEROKU_GLM_MINOR_VERSION_RE = re.compile(r'^glm-(\d+)-(\d+)')
+
+
+def _heroku_glm_model_profile(model_name: str) -> ModelProfile | None:
+    # GLM is a Z.AI model family, but Heroku spells minor versions with a hyphen
+    # (`glm-4-7`) where the Z.AI profile expects a dot (`glm-4.7`).
+    return zai_model_profile(_HEROKU_GLM_MINOR_VERSION_RE.sub(r'glm-\1.\2', model_name))
 
 
 def _heroku_kimi_model_profile(model_name: str) -> ModelProfile | None:
@@ -67,7 +78,7 @@ class HerokuProvider(_OpenAICompatibleProvider):
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'kimi': _heroku_kimi_model_profile,
-            'glm': moonshotai_model_profile,
+            'glm': _heroku_glm_model_profile,
             'mistral': mistral_model_profile,
             'nova': amazon_model_profile,
             'llama': meta_model_profile,
