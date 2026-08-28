@@ -103,7 +103,7 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         *,
         registration: Callable[..., Awaitable[ResultT]],
         child_workflow_registration: type | None = None,
-        config: ActivityConfig,
+        config: TemporalOperationConfigValue,
     ) -> None:
         self._operation = operation
         self.registration = registration
@@ -246,6 +246,6 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
             operation,
             registration=cast(Callable[..., Awaitable[ResultT]], registration),
             child_workflow_registration=child_workflow_registration,
-            config=cast(ActivityConfig, config),
+            config=config,
         )
         return bound, tuple(registrations)

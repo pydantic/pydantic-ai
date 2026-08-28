@@ -17,6 +17,7 @@ from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     WrapRunHandler,
 )
+from pydantic_ai.capabilities.set_tool_metadata import SetToolMetadata
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
@@ -273,6 +274,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
+        self._has_child_workflow_tools = False
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -296,6 +298,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
 
         assert self._deps_type is not None
+        agent.root_capability.apply(self._detect_child_workflow_metadata)
         self._operation_backend = TemporalOperationBackend(
             agent_name=self.name,
             deps_type=self._deps_type,
@@ -306,6 +309,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             runtime=self,
         )
         self._register_activities(agent)
+
+    def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
+        if isinstance(capability, SetToolMetadata):
+            config = capability.metadata.get('temporal')
+            self._has_child_workflow_tools |= isinstance(config, dict) and 'child_workflow' in config
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""
@@ -354,6 +362,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._agent,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
+
+    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        if isinstance(ts, FunctionToolset):
+            self._has_child_workflow_tools |= any(
+                isinstance(config := (tool.metadata or {}).get('temporal'), dict) and 'child_workflow' in config
+                for tool in ts.tools.values()
+            )
+        return super()._wrap_leaf_toolset(ts)
 
     def get_durable_operation_backend(self) -> TemporalOperationBackend:
         backend = self._operation_backend
@@ -473,13 +489,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         """All Temporal activities registered by this capability.
 
-        Register these with the Temporal worker, either directly or via
-        `AgentPlugin`.
+        These can be registered directly with a Temporal worker only when no tool is configured
+        to run as a child workflow. Use `AgentPlugin` or `PydanticAIPlugin` when child workflows
+        are present so both activity and workflow definitions are registered.
         """
         backend = self._operation_backend
         if backend is None:
             return []
-        return [registration for registration in backend.registrations() if not isinstance(registration, type)]
+        registrations = backend.registrations()
+        if self._has_child_workflow_tools:
+            raise UserError(
+                '`TemporalDurability.temporal_activities` cannot be used when a tool is configured to run as a '
+                'child workflow because direct activity registration would omit required workflow definitions. '
+                'Configure the worker with `AgentPlugin(agent)`, or use `PydanticAIPlugin` and list the agent on '
+                'the workflow via `__pydantic_ai_agents__`.'
+            )
+        return [registration for registration in registrations if not isinstance(registration, type)]
 
     @property
     def temporal_registrations(self) -> list[Callable[..., Any]]:
