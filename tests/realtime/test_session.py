@@ -4347,7 +4347,9 @@ async def test_agent_realtime_session_additional_instructions() -> None:
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, instructions='Custom').session() as session:
         _ = [e async for e in session]
-    assert model.last_instructions == 'Default\nCustom'
+    # Per-run instructions are their own block, so they're separated from the agent's by a blank
+    # line, exactly as in a graph run.
+    assert model.last_instructions == 'Default\n\nCustom'
 
 
 async def test_agent_realtime_session_default_instructions_empty() -> None:

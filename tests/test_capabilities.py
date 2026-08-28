@@ -423,13 +423,13 @@ def test_agent_from_spec_description_override():
 
 def test_agent_from_spec_instructions():
     agent = Agent.from_spec({'model': 'test', 'instructions': 'Be helpful.'})
-    assert 'Be helpful.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'Be helpful.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_instructions_list():
     agent = Agent.from_spec({'model': 'test', 'instructions': ['First.', 'Second.']})
-    assert 'First.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
-    assert 'Second.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'First.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
+    assert 'Second.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_instructions_merged():
@@ -437,8 +437,8 @@ def test_agent_from_spec_instructions_merged():
         {'model': 'test', 'instructions': 'From spec.'},
         instructions='From arg.',
     )
-    assert 'From spec.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
-    assert 'From arg.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'From spec.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
+    assert 'From arg.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_model_settings():
@@ -2455,7 +2455,7 @@ def test_agent_from_file_yaml(tmp_path: str):
     spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
     agent = Agent.from_file(spec_path)
     assert agent.name == 'my-agent'
-    assert 'Be helpful' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'Be helpful' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_file_json(tmp_path: str):
@@ -6096,6 +6096,43 @@ class TestModelRequestHooks:
 
         assert [(context.model_id, context.streaming) for context in contexts] == [('test', streaming)]
 
+    @pytest.mark.parametrize(
+        ('mode', 'streaming'),
+        [('run', False), ('run_stream', True)],
+    )
+    async def test_before_model_request_copying_its_context_keeps_the_selection_context(
+        self, mode: str, streaming: bool
+    ):
+        """A hook returning `replace(request_context, ...)` must not lose `model_id` or `streaming`.
+
+        Returning a modified context is the documented way to change a request, and `dataclasses.replace`
+        is how you do it — but it re-initializes `init=False` fields to their defaults, so declaring these
+        two that way silently zeroed both for every hook that copied its context. A lost `streaming` flag
+        misreports the request mode; a lost `model_id` costs a durable-execution worker the selection
+        token it re-resolves an aliased model from.
+        """
+        contexts: list[ModelRequestContext] = []
+
+        @dataclass
+        class CopyContext(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                copied = replace(request_context, messages=request_context.messages)
+                contexts.append(copied)
+                return copied
+
+        agent = Agent('test', deps_type=type(None), capabilities=[CopyContext()], defer_model_check=True)
+        if mode == 'run_stream':
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('hello')
+
+        assert [(context.model_id, context.streaming) for context in contexts] == [('test', streaming)]
+
     async def test_withdrawn_bootstrap_model_id_does_not_leak_to_default(self):
         """A bootstrap model contribution withdrawn by `for_run` must not leak its selection string as provenance."""
         model_ids: list[str | None] = []
@@ -9295,6 +9332,7 @@ class TestRunWithSpec:
                     timestamp=IsDatetime(),
                     instructions="""\
 original
+
 also from spec\
 """,
                     run_id=IsStr(),
@@ -9305,6 +9343,7 @@ also from spec\
                         TextPart(
                             content="""\
 instructions: original
+
 also from spec\
 """
                         )
@@ -9458,6 +9497,7 @@ also from spec\
                     timestamp=IsDatetime(),
                     instructions="""\
 agent-level
+
 from-spec\
 """,
                     run_id=IsStr(),
@@ -9468,6 +9508,7 @@ from-spec\
                         TextPart(
                             content="""\
 instructions: agent-level
+
 from-spec\
 """
                         )
