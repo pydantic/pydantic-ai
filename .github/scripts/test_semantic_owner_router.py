@@ -144,307 +144,47 @@ def test_graphql_projection_never_requests_title_or_body():
     assert 'body' not in compact
 
 
-def test_maintainer_authored_pull_request_is_never_assigned():
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True, author='adtyavrdhn')})
-    client.permissions['adtyavrdhn'] = 'write'
-    client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
+@pytest.mark.parametrize('labels', [[], ['p:1-highest'], ['p:2-high', 'streaming'], ['community-backed']])
+def test_core_pull_requests_are_never_routed(labels: list[str]):
+    # Pull requests are outside triage entirely: a human assigns one when an
+    # issue warrants it. Even a gate label does not open routing for a PR.
+    client = FakeClient({7: item(7, labels=labels, pull_request=True, author='adtyavrdhn')})
 
-    selected = router.decision_for(client, CORE, 7)
-
-    # The author already owns their pull request; assigning and pinging them
-    # about it is pure ceremony.
-    assert selected == {'number': 7, 'decision': None, 'status': 'maintainer-author'}
-
-
-def test_author_without_current_maintainer_permission_routes_by_path():
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True, author='adtyavrdhn')})
-    client.permissions['adtyavrdhn'] = 'read'
-    client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision is not None
-    assert (decision['owner'], decision['evidence']) == ('dsfaccini', 'path:pydantic_ai_slim/pydantic_ai/models/')
-
-
-def test_pull_request_without_a_gate_label_is_untouched_and_unpinged():
-    # The regression that pinged three PRs the moment the workflow was enabled:
-    # pull requests must wait for a `p:1`/`p:2`/`community-backed` label
-    # exactly like issues do.
-    client = FakeClient({7: item(7, pull_request=True, author='contributor')})
-    client.files[7] = ['pydantic_ai_slim/pydantic_ai/models/openai.py']
-
-    assert router.decision_for(client, CORE, 7) == {'number': 7, 'decision': None, 'status': 'awaiting-triage'}
+    assert router.decision_for(client, CORE, 7) == {'number': 7, 'decision': None, 'status': 'pull-request'}
     assert not any(path.endswith('/assignees') for _, path, _ in client.calls)
 
 
-@pytest.mark.parametrize(
-    ('repo', 'labels', 'expected'),
-    [
-        (CORE, ['streaming'], ('adtyavrdhn', 'label:streaming')),
-        (CORE, ['MODEL ISSUE'], ('dsfaccini', 'label:model issue')),
-        (CORE, ['AG-UI'], ('dsfaccini', 'label:AG-UI')),
-        (CORE, ['vercel-ai'], ('dsfaccini', 'label:vercel-ai')),
-        (CORE, ['web-ui'], ('dsfaccini', 'label:web-ui')),
-        (CORE, ['durable exec'], ('DouweM', 'label:durable exec')),
-        (HARNESS, ['cap:compaction'], ('mpfaffenberger', 'default:repo-intake')),
-    ],
-)
-def test_exact_semantic_labels_route_to_fixed_owners(repo: str, labels: list[str], expected: tuple[str, str]):
-    client = FakeClient({7: item(7, labels=[*labels, 'p:2-high'])})
+def test_gated_sweep_never_searches_pull_requests():
+    # The regression that pinged three PRs the moment the workflow was
+    # enabled: the sweep must not even search pull requests on gated repos.
+    client = FakeClient({})
+    client.search_results = [[]]
 
-    decision = router.decision_for(client, repo, 7)['decision']
+    router.select_batch(client, CORE)
 
-    assert decision is not None
-    assert (decision['owner'], decision['evidence']) == expected
+    queries = _search_queries(client)
+    assert len(queries) == 1
+    assert 'is:pr' not in queries[0]
 
 
-@pytest.mark.parametrize('labels', [[], ['MCP'], ['p:3-mid'], ['p:4-low', 'streaming'], ['P:2-HIGH!']])
-def test_issue_without_priority_label_stays_on_the_triage_plate(labels: list[str]):
-    client = FakeClient({7: item(7, labels=labels, assignees=['DouweM'])})
-
-    selected = router.decision_for(client, CORE, 7)
-
-    assert selected == {'number': 7, 'decision': None, 'status': 'awaiting-triage'}
-    assert not any('/collaborators/' in path for _, path, _ in client.calls)
-
-
-def test_highest_priority_label_opens_the_gate():
-    client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'])})
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision == {'number': 7, 'owner': 'dsfaccini', 'evidence': 'label:MCP'}
-
-
-def test_unavailable_semantic_owner_routes_to_manual_review():
-    client = FakeClient({7: item(7, labels=['MCP', 'p:2-high'])})
-    client.permissions['dsfaccini'] = 'read'
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision == {
-        'number': 7,
-        'owner': 'adtyavrdhn',
-        'evidence': 'manual:unavailable-owner:dsfaccini',
-    }
-
-
-def test_unavailable_manual_owner_fails_loudly():
-    client = FakeClient({7: item(7, labels=['unknown', 'p:2-high'])})
-    client.permissions['adtyavrdhn'] = 'read'
-
-    with pytest.raises(RuntimeError, match='manual routing owner lacks maintainer permission'):
-        router.decision_for(client, CORE, 7)
-
-
-def test_full_non_maintainer_assignee_list_fails_before_notification():
-    client = FakeClient({7: item(7, labels=['MCP', 'p:2-high'], assignees=[f'user-{index}' for index in range(10)])})
-
-    assert router.decision_for(client, CORE, 7) == {
-        'number': 7,
-        'decision': None,
-        'status': 'assignee-capacity',
-    }
-
-
-def test_unknown_and_owner_lookalike_labels_use_manual_route():
-    client = FakeClient(
-        {
-            7: item(
-                7,
-                labels=['owner:attacker', 'streaming\n<!channel>', 'streaminɡ', 'STREAMING!', 'p:2-high'],
-            )
-        }
-    )
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision == {
-        'number': 7,
-        'owner': 'adtyavrdhn',
-        'evidence': 'manual:conflict-or-unknown',
-    }
-
-
-def test_conflicting_label_signals_use_manual_route():
-    client = FakeClient({7: item(7, labels=['streaming', 'MCP', 'p:2-high'])})
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision == {
-        'number': 7,
-        'owner': 'adtyavrdhn',
-        'evidence': 'manual:conflict-or-unknown',
-    }
-
-
-@pytest.mark.parametrize(
-    ('filename', 'owner', 'evidence'),
-    [
-        (
-            'pydantic_ai_slim/pydantic_ai/providers/openai.py',
-            'dsfaccini',
-            'path:pydantic_ai_slim/pydantic_ai/providers/',
-        ),
-        (
-            'pydantic_ai_harness/compaction/_summarizing.py',
-            'mpfaffenberger',
-            'default:repo-intake',
-        ),
-        (
-            'pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py',
-            'dsfaccini',
-            'path:pydantic_ai_slim/pydantic_ai/ui/',
-        ),
-        ('docs/examples/ag-ui.md', 'dsfaccini', 'path:docs/examples/ag-ui.md'),
-        (
-            'examples/pydantic_ai_examples/ag_ui/app.py',
-            'dsfaccini',
-            'path:examples/pydantic_ai_examples/ag_ui/',
-        ),
-    ],
-)
-def test_pull_request_paths_use_longest_fixed_prefix(filename: str, owner: str, evidence: str):
-    repo = HARNESS if filename.startswith('pydantic_ai_harness') else CORE
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
-    client.files[7] = [filename]
-
-    decision = router.decision_for(client, repo, 7)['decision']
-
-    assert decision == {'number': 7, 'owner': owner, 'evidence': evidence}
-
-
-@pytest.mark.parametrize(
-    'filename',
-    [
-        '../pydantic_ai_slim/pydantic_ai/providers/openai.py',
-        '/pydantic_ai_slim/pydantic_ai/providers/openai.py',
-        'pydantic_ai_slim\\pydantic_ai\\providers\\openai.py',
-        'pydantic_ai_slim/pydantic_ai/providers/\x00openai.py',
-        'pydantic_ai_slim/pydantic_ai/providers_evil/openai.py',
-    ],
-)
-def test_malformed_or_prefix_lookalike_paths_never_select_specialist(filename: str):
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
-    client.files[7] = [filename]
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision is not None
-    assert decision['owner'] == 'adtyavrdhn'
-    assert decision['evidence'].startswith('manual:')
-
-
-@pytest.mark.parametrize(
-    'filename',
-    [
-        'pydantic_ai_slim/pydantic_ai/messages.py.attacker',
-        'pydantic_ai_slim/pydantic_ai/_cancel.py.backdoor',
-        'pydantic_ai_slim/pydantic_ai/mcp.py/evil',
-    ],
-)
-def test_exact_file_rules_never_match_suffixes_or_children(filename: str):
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
-    client.files[7] = [filename]
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision is not None
-    assert decision['evidence'] == 'manual:unowned-production-path'
-
-
-def test_provider_and_ui_files_share_davids_semantic_route():
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
-    client.files[7] = [
-        'pydantic_ai_slim/pydantic_ai/providers/openai.py',
-        'pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py',
-    ]
+def test_specific_ui_signal_routes_to_david_over_cross_cutting_streaming():
+    client = FakeClient({7: item(7, labels=['streaming', 'AG-UI', 'p:2-high'])})
 
     decision = router.decision_for(client, CORE, 7)['decision']
 
     assert decision is not None
     assert decision['owner'] == 'dsfaccini'
-    assert decision['evidence'] == 'path:pydantic_ai_slim/pydantic_ai/providers/'
+    assert decision['evidence'] == 'label:AG-UI'
 
 
-@pytest.mark.parametrize(
-    'ui_path',
-    [
-        None,
-        'pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py',
-        'docs/ui/ag-ui.md',
-        'docs/api/ui/ag_ui.md',
-        'docs/examples/ag-ui.md',
-        'examples/pydantic_ai_examples/ag_ui/__main__.py',
-    ],
-)
-def test_specific_ui_signal_routes_to_david_over_cross_cutting_streaming(ui_path: str | None):
-    labels = ['streaming', 'AG-UI', 'p:2-high'] if ui_path is None else ['streaming', 'p:2-high']
-    client = FakeClient({7: item(7, labels=labels, pull_request=ui_path is not None)})
-    if ui_path is not None:
-        client.files[7] = [ui_path]
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision is not None
-    assert decision['owner'] == 'dsfaccini'
-    if ui_path is None:
-        assert decision['evidence'] == 'label:AG-UI'
-    else:
-        assert decision['evidence'].startswith('path:')
-
-
-@pytest.mark.parametrize(
-    ('labels', 'files'),
-    [
-        (['AG-UI', 'durable exec', 'p:2-high'], None),
-        (
-            ['p:2-high'],
-            [
-                'pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py',
-                'pydantic_ai_slim/pydantic_ai/durable_exec/temporal.py',
-            ],
-        ),
-    ],
-)
-def test_ui_and_durable_execution_remain_a_manual_conflict(labels: list[str], files: list[str] | None):
-    client = FakeClient({7: item(7, labels=labels, pull_request=files is not None)})
-    if files is not None:
-        client.files[7] = files
+def test_ui_and_durable_execution_remain_a_manual_conflict():
+    client = FakeClient({7: item(7, labels=['AG-UI', 'durable exec', 'p:2-high'])})
 
     decision = router.decision_for(client, CORE, 7)['decision']
 
     assert decision is not None
     assert decision['owner'] == 'adtyavrdhn'
     assert decision['evidence'] == 'manual:conflict-or-unknown'
-
-
-def test_known_and_unknown_production_paths_use_manual_route():
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
-    client.files[7] = [
-        'pydantic_ai_slim/pydantic_ai/providers/openai.py',
-        'pydantic_ai_slim/pydantic_ai/unowned.py',
-        'tests/models/test_openai.py',
-    ]
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision is not None
-    assert decision['evidence'] == 'manual:unowned-production-path'
-
-
-def test_mike_is_not_selected_in_core_without_reviewed_ownership_evidence():
-    client = FakeClient({7: item(7, labels=['tools', 'p:2-high'], pull_request=True)})
-    client.files[7] = ['pydantic_ai_slim/pydantic_ai/toolsets/function.py']
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision == {
-        'number': 7,
-        'owner': 'adtyavrdhn',
-        'evidence': 'manual:unowned-production-path',
-    }
 
 
 def test_every_harness_issue_routes_to_the_default_owner_without_a_priority_label():
@@ -501,33 +241,11 @@ def test_default_intake_notice_names_the_owner_without_a_slack_ping():
     assert 'mpfaffenberger' in payload
 
 
-@pytest.mark.parametrize('changed_count', [101, 2000])
-def test_oversized_file_list_routes_to_manual_review(changed_count: int):
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
-    client.changed_counts[7] = changed_count
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision is not None
-    assert decision['evidence'] == 'manual:incomplete-file-list'
-
-
-def test_incomplete_file_page_routes_to_manual_review():
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
-    client.files[7] = ['pydantic_ai_slim/pydantic_ai/providers/openai.py']
-    client.changed_counts[7] = 2
-
-    decision = router.decision_for(client, CORE, 7)['decision']
-
-    assert decision is not None
-    assert decision['evidence'] == 'manual:incomplete-file-list'
-
-
 def test_draft_pull_request_waits_until_ready():
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
+    client = FakeClient({7: item(7, pull_request=True)})
     client.drafts.add(7)
 
-    assert router.decision_for(client, CORE, 7) == {
+    assert router.decision_for(client, HARNESS, 7) == {
         'number': 7,
         'decision': None,
         'status': 'draft',
@@ -536,7 +254,7 @@ def test_draft_pull_request_waits_until_ready():
 
 @pytest.mark.parametrize('is_draft', [None, 'false', 0, 1])
 def test_malformed_draft_state_fails_closed(is_draft: object):
-    client = FakeClient({7: item(7, labels=['p:2-high'], pull_request=True)})
+    client = FakeClient({7: item(7, pull_request=True)})
     original_post = client.post
 
     def post(path: str, payload: Mapping[str, object]) -> Any:
@@ -548,7 +266,7 @@ def test_malformed_draft_state_fails_closed(is_draft: object):
 
     client.post = post  # type: ignore[method-assign]
 
-    selected = router.decision_for(client, CORE, 7)
+    selected = router.decision_for(client, HARNESS, 7)
 
     assert selected['decision'] is None
     assert selected['status'] == 'invalid-draft-state'
@@ -670,8 +388,6 @@ def test_gated_selection_queries_exclude_every_fixed_owner():
     negatives = '-assignee:adtyavrdhn -assignee:DouweM -assignee:dsfaccini -assignee:mpfaffenberger'
     assert _search_queries(client) == [
         f'repo:pydantic/pydantic-ai is:open is:issue label:"p:1-highest","p:2-high" {negatives} sort:created-asc',
-        f'repo:pydantic/pydantic-ai is:open is:pr -draft:true label:"p:1-highest","p:2-high" '
-        f'created:>=2026-08-18 {negatives} sort:created-asc',
     ]
 
 
@@ -758,13 +474,13 @@ def test_community_recovery_is_opt_in_second_choice_and_bounded():
     stale = {number: item(number, labels=['MCP', 'community-backed']) for number in range(1, 9)}
     client = FakeClient(stale)
 
-    client.search_results = [[], []]
+    client.search_results = [[]]
     assert router.select_batch(client, CORE) == []
 
-    client.search_results = [[], [], [8]]
+    client.search_results = [[], [8]]
     assert [selection['number'] for selection in router.select_batch(client, CORE, community_recovery=True)] == [8]
 
-    client.search_results = [[], [], list(range(1, 8))]
+    client.search_results = [[], list(range(1, 8))]
     selected = router.select_batch(client, CORE, community_recovery=True)
     assert [selection['number'] for selection in selected] == [1, 2, 3]
 
@@ -772,7 +488,7 @@ def test_community_recovery_is_opt_in_second_choice_and_bounded():
     assert len(community_queries) == 2
     for query in community_queries:
         assert query == (
-            'repo:pydantic/pydantic-ai is:open -draft:true no:assignee label:"community-backed" sort:updated-desc'
+            'repo:pydantic/pydantic-ai is:open is:issue no:assignee label:"community-backed" sort:updated-desc'
         )
 
 
@@ -851,7 +567,7 @@ def test_community_recovery_backs_off_after_a_recent_unassignment():
         9: item(9, labels=['MCP', 'community-backed'], unassigned_at=[old]),
     }
     client = FakeClient(stale)
-    client.search_results = [[], [], [8, 9]]
+    client.search_results = [[], [8, 9]]
 
     selected = router.select_batch(client, CORE, community_recovery=True)
 
