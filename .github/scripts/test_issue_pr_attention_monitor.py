@@ -1432,7 +1432,13 @@ def test_census_escalates_when_the_assignment_gate_backs_up():
 def test_census_oldest_page_skips_a_deliberately_unassigned_issue():
     client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-10T00:00:00Z'}])
     client.timelines[7740] = [
-        {'event': 'unassigned', 'created_at': '2026-08-24T00:00:00Z', 'actor': {'login': 'DouweM'}}
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'adtyavrdhn'},
+        }
     ]
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
@@ -1441,6 +1447,32 @@ def test_census_oldest_page_skips_a_deliberately_unassigned_issue():
     # its age every morning would train everyone to ignore the heartbeat.
     assert report.startswith(':telescope:')
     assert 'oldest' not in report
+
+
+def test_census_oldest_ignores_bot_and_cleanup_unassignments():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
+    client.timelines[7740] = [
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'github-actions[bot]'},
+        },
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T01:00:00Z',
+            'actor': {'login': 'drive-by'},
+            'assignee': {'login': 'drive-by'},
+            'assigner': {'login': 'DouweM'},
+        },
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    # An automated sweep or stale-contributor cleanup is not a decision to
+    # leave the issue unassigned; the age alarm must keep firing.
+    assert 'oldest #7740' in report
 
 
 def test_census_oldest_looks_past_vetoed_issues_across_the_whole_breach_window():
@@ -1452,7 +1484,13 @@ def test_census_oldest_looks_past_vetoed_issues_across_the_whole_breach_window()
         ],
     )
     client.timelines[7740] = [
-        {'event': 'unassigned', 'created_at': '2026-08-24T00:00:00Z', 'actor': {'login': 'DouweM'}}
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'adtyavrdhn'},
+        }
     ]
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
