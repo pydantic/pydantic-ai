@@ -1114,8 +1114,10 @@ class CensusClient(FakeClient):
         raise AssertionError(path)
 
     def last_page(self, path: str) -> list[dict[str, Any]]:
+        if int(path.split('/issues/')[1].split('/')[0]) in self.timelines:
+            return super().last_page(path)
         self.calls.append(('LAST', path, None))
-        return self.timelines.get(int(path.split('/issues/')[1].split('/')[0]), [])
+        return []
 
     def post(self, path: str, payload: dict[str, object]) -> Any:
         self.calls.append(('POST', path, payload))
