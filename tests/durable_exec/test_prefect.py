@@ -2314,7 +2314,6 @@ def test_cache_policy_projects_nested_run_context_and_tool():
     assert key_for('acme', 'tool') != key_for('acme', 'other')
 
 
-
 def test_cache_policy_projects_a_bare_tool_definition_in_the_inputs():
     """A dynamic tool call's cache identity carries a bare `ToolDefinition`, which also needs projecting.
 
