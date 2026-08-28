@@ -685,12 +685,6 @@ async def test_account_id_falls_back_to_previous_on_rotation(monkeypatch: pytest
     assert provider.credentials.account_id == 'acc-1'  # carried over when id_token lacks the claim
 
 
-def test_sync_auth_flow_is_rejected():
-    auth = OpenAICodexAuth(make_provider())
-    with pytest.raises(RuntimeError, match='async'):
-        auth.sync_auth_flow(httpx2.Request('GET', 'https://example.com'))
-
-
 async def test_auth_never_sent_to_foreign_or_plaintext_destinations():
     """A caller-supplied client may be reused for other destinations; credentials stay home."""
     provider = make_provider()

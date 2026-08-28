@@ -115,8 +115,9 @@ from pydantic_ai.providers.openai_codex import OpenAICodexOAuthFlow, OpenAICodex
 
 
 async def main():
-    flow = OpenAICodexOAuthFlow()  # defaults to the pinned http://localhost:1455/auth/callback
+    flow = OpenAICodexOAuthFlow()
     webbrowser.open(flow.authorization_url())
+    # Spins up a one-shot server on localhost:1455 for the callback, then exchanges the code.
     credentials = await flow.exchange_code_from_callback()
     # persist wherever your app keeps secrets - not ~/.codex, which belongs to the Codex CLI
 
@@ -129,9 +130,6 @@ asyncio.run(main())
 ```
 
 Embedding login elsewhere (an existing web server, a tunnel) works the same way without the built-in server: serve the redirect yourself and pass the received code to [`exchange_code()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code].
-
-!!! note
-    The public Codex client pins its redirect URI to exactly `http://localhost:1455/auth/callback`, so login always completes on the user's machine: a hosted web app can never receive the callback directly. Web apps run this same flow from a component on the user's machine (or a tunnel to it) and send the resulting credentials to the backend.
 
 ## Session affinity and prompt caching
 

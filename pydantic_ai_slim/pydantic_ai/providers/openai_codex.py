@@ -16,7 +16,7 @@ from __future__ import annotations as _annotations
 import base64
 import json
 import os
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import KW_ONLY, dataclass
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
@@ -450,9 +450,6 @@ class OpenAICodexAuth(httpx2.Auth):
         request.headers['Authorization'] = f'Bearer {credentials.access_token.get_secret_value()}'
         request.headers['chatgpt-account-id'] = credentials.account_id
         request.headers['originator'] = _ORIGINATOR
-
-    def sync_auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
-        raise RuntimeError('`OpenAICodexAuth` only supports async HTTP clients.')
 
     async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
         if request.url.scheme != 'https' or request.url.host != _CODEX_HOST:
