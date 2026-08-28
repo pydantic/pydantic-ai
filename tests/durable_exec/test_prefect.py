@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import threading
 import uuid
 import warnings
@@ -2942,36 +2941,53 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
         await run_agent()
 
 
-async def test_prefect_durability_rejects_per_run_capabilities() -> None:
-    """Capabilities added per-run inside a flow are rejected; `Instrumentation` is exempt.
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_allows_hook_only_per_run_capabilities(blockbuster_enabled: bool) -> None:
+    """Prefect creates a task per call, so a per-run capability needs no pre-registration.
 
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so its tools would run un-tasked inside the flow.
+    Unlike Temporal and DBOS, whose backends register their durable units while binding, Prefect's
+    `CallableOperationBackend` builds the task inside `execute()`. There is no registration boundary
+    for a per-run capability to fall outside of, so hook-only capabilities are accepted here. One
+    that contributes an *executing* toolset is still rejected, by the toolset guard below.
     """
-    agent = Agent(TestModel(), name='durability_reject_per_run_cap', capabilities=[PrefectDurability()])
+    assert blockbuster_enabled is False
+    events: list[str] = []
+
+    class RecordingCapability(AbstractCapability[None]):
+        # `AbstractCapability`, not `Capability`: the latter always contributes a `FunctionToolset`
+        # (empty or not), which the runtime-toolset guard rejects on its own.
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            events.append('before_run')
+
+    agent = Agent(TestModel(), name='durability_per_run_hook_cap', capabilities=[PrefectDurability()])
 
     @flow
-    async def run_with_toolset_capability() -> None:
-        await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            'Capabilities added per-run inside a Prefect flow are not supported: Toolset. A capability is '
-            'registered for durable execution when it is bound to the agent, so one added per-run would run '
-            'its hooks in flow code instead of durable tasks, re-executing whenever the flow does. Attach all '
-            'capabilities at agent construction time so `PrefectDurability.for_agent()` can register their '
-            'durable tasks.'
-        ),
-    ):
-        await run_with_toolset_capability()
+    async def run_with_hook_capability() -> str:
+        return (await agent.run('Hello', capabilities=[RecordingCapability()])).output
 
     @flow
     async def run_with_instrumentation() -> str:
         return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
 
+    assert await run_with_hook_capability() == snapshot('success (no tool calls)')
+    assert events == ['before_run']
     assert await run_with_instrumentation() == snapshot('success (no tool calls)')
+
+
+async def test_prefect_durability_rejects_executing_toolset_from_per_run_capability() -> None:
+    """A per-run capability contributing an executing toolset is still rejected on Prefect.
+
+    The capability itself is fine (see above), but the toolset it contributes arrives after
+    `for_agent` wrapped the agent's toolsets, so `_reject_runtime_toolsets` catches the leaf.
+    """
+    agent = Agent(TestModel(), name='durability_per_run_cap_toolset', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_with_toolset_capability() -> None:
+        await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed'):
+        await run_with_toolset_capability()
 
 
 async def test_prefect_durability_allows_per_run_capabilities_outside_flow() -> None:

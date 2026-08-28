@@ -88,7 +88,7 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
-Attach all capabilities at agent construction time. Passing `run(capabilities=[...])` inside a workflow or flow raises a `UserError` on all three engines (only observer-only `Instrumentation` is allowed); broader support for observer-only capabilities is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477), where users can share their use cases.
+Temporal and DBOS register durable units before their workers start, so attach capabilities at agent construction time. Passing `run(capabilities=[...])` inside one of their workflows raises a `UserError` unless the capability is the observer-only `Instrumentation`; broader support for observer-only capabilities is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477), where users can share their use cases. Prefect creates tasks per call, so it has no such registration boundary and accepts a per-run capability that contributes no executing toolset; one that does is still rejected by the runtime-toolset guard.
 
 A run-time `model=` inside a workflow must be a model-name string or an instance registered in the durability capability's `models=`. An unregistered `Model` instance raises a `UserError`: it can't be serialized into the activity/step/task, and rebuilding it from its `model_id` would build a different model. To build a specific instance inside the durable unit (e.g. per-user credentials from `deps`), pass a string and use a `ResolveModelId` capability.
 

@@ -152,9 +152,7 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 ### Capabilities at Runtime
 
-Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `PrefectDurability.for_agent()` can register the tasks they need. Passing `agent.run(capabilities=[...])` inside a flow raises a `UserError`: the capability's hooks — and any toolset it contributes — would run in flow code rather than in a task, and re-run on every flow retry.
-
-Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or I/O that must be checkpointed. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction. Capabilities that contribute a toolset or register tools are different because their durable tasks must be registered when the capability is bound to the agent. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a flow, please share your use case there. Outside a flow the durability capability is transparent, so per-run capabilities are fine there.
+Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
 
 ### Model Selection at Runtime
 

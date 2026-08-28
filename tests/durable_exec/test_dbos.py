@@ -4107,11 +4107,11 @@ async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
     with workflow_raises(
         UserError,
         snapshot(
-            'Capabilities added per-run inside a DBOS workflow are not supported: Toolset. A capability is '
-            'registered for durable execution when it is bound to the agent, so one added per-run would run '
-            'its hooks in workflow code instead of durable steps, re-executing whenever the workflow does. '
-            'Attach all capabilities at agent construction time so `DBOSDurability.for_agent()` can register '
-            'their durable steps.'
+            'Capabilities added per-run inside a DBOS workflow are not supported: Toolset. DBOS registers '
+            'durable steps when a capability is bound to the agent, before the workflow starts. A capability '
+            'added per-run therefore has no registered durable steps for the toolsets it contributes or its own '
+            '`@durable_operation` methods. Attach all capabilities at agent construction time so '
+            '`DBOSDurability.for_agent()` can register their durable steps.'
         ),
     ):
         await run_with_toolset_capability()

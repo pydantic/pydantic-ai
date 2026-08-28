@@ -538,7 +538,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
         """Reject capabilities added per-run inside a durable workflow or flow."""
-        if not self.in_durable_context:
+        if not self.in_durable_context or not isinstance(
+            self.get_durable_operation_backend(), RegisteredOperationBackend
+        ):
             return
         unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
         if not unsafe_capabilities:
@@ -546,11 +548,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))
         raise UserError(
             f'Capabilities added per-run inside a {self.engine_name} {self.durable_container_noun} are not '
-            f'supported: {names}. A capability is registered for durable execution when it is bound to the '
-            f'agent, so one added per-run would run its hooks in {self.durable_container_noun} code instead '
-            f'of durable {self.durable_unit_plural}, re-executing whenever the {self.durable_container_noun} '
-            f'does. Attach all capabilities at agent construction time so `{type(self).__name__}.for_agent()` '
-            f'can register their durable {self.durable_unit_plural}.'
+            f'supported: {names}. {self.engine_name} registers durable {self.durable_unit_plural} when a '
+            f'capability is bound to the agent, before the {self.durable_container_noun} starts. A capability '
+            f'added per-run therefore has no registered durable {self.durable_unit_plural} for the toolsets it '
+            f'contributes or its own `@durable_operation` methods. Attach all capabilities at agent construction '
+            f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
         )
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
