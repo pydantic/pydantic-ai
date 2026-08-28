@@ -39,10 +39,43 @@ Gemini emits [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeR
 interrupts model output instead. These are the signals to flush playback; read the flag rather than
 waiting on an event a provider never sends.
 
-[`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the server-side half of the
-problem. When supported, pass how many milliseconds actually played so the provider does not record
-unheard words as part of the conversation. `Speaker` here stands in for your playback layer —
-anything that can report and flush buffered audio:
+[`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the rest. When playback
+drains the session's single [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+iterator, pass `played_bytes` — the total raw PCM bytes the device actually consumed — and the
+session owns the accounting: it attributes the position to the current turn, discards the buffered
+audio the user will never hear, truncates the provider's transcript to what was really heard, and
+does nothing when the turn was heard in full (the speech-start event also fires on ordinary user
+turns when nothing is playing):
+
+```python
+import asyncio
+
+from pydantic_ai.realtime import RealtimeInputSpeechStartEvent, RealtimeSession
+
+
+async def conversation(session: RealtimeSession) -> None:
+    played = 0
+
+    async def play_audio() -> None:
+        nonlocal played
+        async for chunk in session.stream_audio():
+            ...  # write the chunk to your speaker, waiting until the device consumed it
+            played += len(chunk)
+
+    playback = asyncio.create_task(play_audio())
+    async for event in session:
+        if isinstance(event, RealtimeInputSpeechStartEvent):
+            await session.interrupt(played_bytes=played)
+    playback.cancel()
+```
+
+The device's own in-flight block is the one thing the session cannot reach; flush it too when your
+audio layer can.
+
+As an alternative, when playback doesn't drain a single session-long `stream_audio()` iterator —
+several consumers, a model without output truncation, or a transport where the session never
+touches the audio — keep your own accounting and pass `played_ms` (or nothing). `Speaker` here
+stands in for your playback layer — anything that can report and flush buffered audio:
 
 ```python
 from typing import Protocol
@@ -66,8 +99,9 @@ async def handle_events(session: RealtimeSession, speaker: Speaker):
                 await session.interrupt()
 ```
 
-The speech-start event also occurs on ordinary user turns when nothing is playing. Track unplayed
-audio before interrupting. `interrupt()` never flushes the local speaker buffer.
+With `played_ms`, all of the session-side conveniences above are yours to reimplement: track
+unplayed audio before interrupting, and flush buffered playback yourself — `interrupt()` with
+`played_ms` never flushes.
 
 On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) there is a third buffer between those two: the
 provider generates audio well ahead of playback and keeps streaming what it already produced, so

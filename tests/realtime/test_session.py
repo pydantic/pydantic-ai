@@ -1251,6 +1251,171 @@ async def test_interrupted_turn_without_trailing_speech_records_no_offset() -> N
     assert not any(isinstance(part, SpeechPart) for part in response.parts)
 
 
+class _GatedRealtimeConnection(FakeRealtimeConnection):
+    """Replay one batch of events, wait for `release`, then replay a second batch.
+
+    Lets a test act (consume audio, interrupt) between two known points in the wire stream — a plain
+    replay publishes everything before the test can get a word in.
+    """
+
+    def __init__(self, first: list[RealtimeCodecEvent], second: list[RealtimeCodecEvent]) -> None:
+        super().__init__(first)
+        self._second = second
+        self.release = asyncio.Event()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        for event in self._events:
+            yield event
+        await self.release.wait()
+        for event in self._second:
+            yield event
+
+
+# 100 ms per chunk at the default 24 kHz mono PCM16 output rate, so byte positions map to round
+# millisecond counts (4800 bytes == 100 ms).
+_CHUNK = 4800
+
+
+async def test_interrupt_played_bytes_flushes_and_attributes_to_the_current_turn() -> None:
+    """`interrupt(played_bytes=...)` owns the whole barge-in: attribution, flush, and stragglers.
+
+    Unit test: the claim is about the session's local bookkeeping (what the audio tap delivers and
+    how a device position maps onto turns), which no wire recording can show.
+    """
+    conn = _GatedRealtimeConnection(
+        [
+            AudioDelta(b'a' * _CHUNK),
+            ResponseDone(),  # turn 1, played in full
+            AudioDelta(b'b' * _CHUNK),
+            AudioDelta(b'c' * _CHUNK),  # turn 2: `b` gets played, `c` stays buffered
+        ],
+        [
+            AudioDelta(b'd' * _CHUNK),  # straggler of the interrupted turn, in flight past the cancel
+            ResponseDone(interrupted=True),
+            AudioDelta(b'e' * _CHUNK),
+            ResponseDone(),  # the reply to the barge-in
+        ],
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        played = [await anext(stream), await anext(stream)]
+        assert played == [b'a' * _CHUNK, b'b' * _CHUNK]
+
+        # One full turn plus 100 ms of the current one were played; `c` is buffered and unheard.
+        assert await session.interrupt(played_bytes=2 * _CHUNK) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=100), CancelResponse()]
+
+        conn.release.set()
+        # `c` was flushed and the straggler `d` erased; the next thing heard is the new reply.
+        assert await anext(stream) == b'e' * _CHUNK
+
+        # The flushed and erased audio also left the accounting: with `e` played, everything
+        # emitted was heard, so a speech start with nothing left to cut off does not interrupt.
+        assert await session.interrupt(played_bytes=3 * _CHUNK) is False
+        assert conn.sent == [TruncateOutput(audio_end_ms=100), CancelResponse()]
+
+        # Nothing further arrives; the stream ends when the connection does.
+        assert [chunk async for chunk in stream] == []
+
+
+async def test_interrupt_played_bytes_clamps_to_zero_inside_a_previous_turn() -> None:
+    """A playhead still inside the previous turn's audio reports 0 ms of the current turn."""
+    conn = BlockingRealtimeConnection([AudioDelta(b'a' * _CHUNK), ResponseDone(), AudioDelta(b'b' * _CHUNK)])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK
+        assert await anext(stream) == b'b' * _CHUNK
+
+        # Both turns reached the device, but it is only 50 ms into *turn 1* when the user speaks:
+        # none of turn 2 was heard, so its played duration clamps to zero.
+        assert await session.interrupt(played_bytes=_CHUNK // 2) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=0), CancelResponse()]
+
+
+async def test_interrupt_played_bytes_counts_overflow_drops_as_played_ground() -> None:
+    """Chunks the tap overflow-dropped sit behind the playhead when a position is attributed.
+
+    The consumer never saw the dropped chunks, so the device position undercounts the session's
+    byte offsets by exactly their size; the mapping adds them back.
+    """
+    # One chunk more than the 32-chunk buffer, published in one burst before the consumer runs (the
+    # replay has no suspension points), so exactly the oldest chunk is overflow-dropped.
+    conn = _GatedRealtimeConnection([AudioDelta(bytes([i]) * _CHUNK) for i in range(33)], [])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == bytes([1]) * _CHUNK  # the first chunk was overflow-dropped
+
+        # 100 ms reached the device, 100 ms were dropped: the playhead sits 200 ms in.
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=200), CancelResponse()]
+
+
+async def test_interrupt_played_bytes_anchors_at_the_subscription_point() -> None:
+    """A stream subscribed mid-session reports positions relative to its own start.
+
+    The first subscriber heard turn 1 in full and unsubscribed; the second only ever saw turn 2, so
+    its device position starts at zero — without the subscription anchor the session would think a
+    turn's worth of audio was never played and interrupt a fully-heard reply.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), ResponseDone()],
+        [AudioDelta(b'b' * _CHUNK), ResponseDone()],
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK
+        assert isinstance(stream, AsyncGenerator)
+        await stream.aclose()  # unsubscribe, so the second stream is the session's only one
+
+        conn.release.set()
+        stream2 = session.stream_audio()
+        assert await anext(stream2) == b'b' * _CHUNK
+
+        assert await session.interrupt(played_bytes=_CHUNK) is False
+        assert conn.sent == []
+
+
+async def test_interrupt_played_bytes_requires_exactly_one_audio_stream() -> None:
+    # The audio is gated so both subscriptions register before the chunk flows to them.
+    conn = _GatedRealtimeConnection([], [AudioDelta(b'a' * _CHUNK)])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        with pytest.raises(UserError, match=r'needs exactly one active `stream_audio\(\)` iterator.*not 0'):
+            await session.interrupt(played_bytes=0)
+
+        stream1 = session.stream_audio()
+        stream2 = session.stream_audio()
+        pulls = [asyncio.ensure_future(anext(stream1)), asyncio.ensure_future(anext(stream2))]
+        conn.release.set()
+        assert await asyncio.gather(*pulls) == [b'a' * _CHUNK, b'a' * _CHUNK]
+        with pytest.raises(UserError, match=r'needs exactly one active `stream_audio\(\)` iterator.*not 2'):
+            await session.interrupt(played_bytes=0)
+
+
+async def test_interrupt_played_bytes_requires_output_truncation() -> None:
+    # The flag-on side runs in the attribution tests above; this pins the flag-off side.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+    with pytest.raises(UserError, match=r'does not support output truncation.*played_bytes'):
+        await session.interrupt(played_bytes=0)
+
+
+async def test_interrupt_rejects_both_playback_positions() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    with pytest.raises(UserError, match='either `played_ms` or `played_bytes`, not both'):
+        await session.interrupt(played_ms=100, played_bytes=4800)  # pyright: ignore[reportCallIssue]
+
+
 async def test_speech_parts_do_not_persist_provider_item_ids() -> None:
     openai = RealtimeSession(
         FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True, item_id='item-a'), ResponseDone()]),

@@ -226,18 +226,31 @@ _TRANSCRIPT_TAP_SIZE = 512
 _TapItem = TypeVar('_TapItem')
 
 
-def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> int:
+def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:
     """Put without blocking the pump, retaining the newest bounded window.
 
-    The queue is sized one over its data window so the completion sentinel always fits. Returns `1`
-    when an older item was dropped, otherwise `0`.
+    The queue is sized one over its data window so the completion sentinel always fits. Returns the
+    older item that was dropped to make room, or `None` when nothing was dropped.
     """
-    dropped = 0
+    dropped: _TapItem | None = None
     if queue.qsize() >= queue.maxsize - 1:
-        queue.get_nowait()
-        dropped = 1
+        dropped = queue.get_nowait()
     queue.put_nowait(item)
     return dropped
+
+
+@dataclass(eq=False)
+class _AudioTap:
+    """One `stream_audio()` subscription, with the accounting `interrupt(played_bytes=...)` needs.
+
+    `subscribed_at_bytes` anchors the tap in the session's emitted-audio coordinates, and
+    `dropped_bytes` counts audio removed before the consumer saw it (overflow and barge-in flushes),
+    so a device-side playback position can be mapped back into those coordinates.
+    """
+
+    queue: asyncio.Queue[bytes | object]
+    subscribed_at_bytes: int
+    dropped_bytes: int = 0
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -697,11 +710,18 @@ class RealtimeSession:
         self._queue: asyncio.Queue[RealtimeEvent | object] = asyncio.Queue()
         self._queue_changed = object()
         self._tap_finished = object()
-        self._audio_taps: set[asyncio.Queue[bytes | object]] = set()
+        self._audio_taps: set[_AudioTap] = set()
         self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
         self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()
         self._audio_tap_drops = 0
         self._transcript_tap_drops = 0
+        # Emitted-audio coordinates for `interrupt(played_bytes=...)`: cumulative output audio bytes,
+        # the offset and part index where the current audio part began, and the index of a part whose
+        # remaining audio a barge-in erased (its stragglers are dropped as they arrive).
+        self._emitted_audio_bytes = 0
+        self._turn_audio_start_bytes = 0
+        self._audio_part_index: int | None = None
+        self._interrupted_audio_part_index: int | None = None
         # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
@@ -937,14 +957,18 @@ class RealtimeSession:
 
         Each iterator has a 32-chunk buffer. If its consumer falls behind, the oldest chunk is
         dropped so audio playback cannot stall tool execution, turn tracking, or the main event
-        stream. Closing the session discards buffered chunks and ends the iterator cleanly.
+        stream. On barge-in, [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt]
+        discards buffered chunks the user will never hear, so a playback loop can iterate one
+        stream for the whole session. Closing the session discards buffered chunks and ends the
+        iterator cleanly.
         """
         self._require_media_ownership('stream_audio')
         self._ensure_streamable()
         # The extra slot is reserved for the completion sentinel, so ending a full tap does not
         # discard one of its 32 data items or block the pump during teardown.
         queue: asyncio.Queue[bytes | object] = asyncio.Queue(maxsize=_AUDIO_TAP_SIZE + 1)
-        self._audio_taps.add(queue)
+        tap = _AudioTap(queue=queue, subscribed_at_bytes=self._emitted_audio_bytes)
+        self._audio_taps.add(tap)
         if self._pump_finished:
             queue.put_nowait(self._tap_finished)
         else:
@@ -954,7 +978,7 @@ class RealtimeSession:
                 assert isinstance(item, bytes)
                 yield item
         finally:
-            self._audio_taps.discard(queue)
+            self._audio_taps.discard(tap)
 
     @overload
     def stream_transcripts(self, *, delta: Literal[False] = False) -> AsyncIterator[SpeechPart]: ...
@@ -1197,20 +1221,46 @@ class RealtimeSession:
             self._pending_response_requests -= 1
             raise
 
-    async def interrupt(self, *, played_ms: int | None = None) -> None:
+    @overload
+    async def interrupt(self, *, played_ms: int | None = None) -> None: ...
+
+    @overload
+    async def interrupt(self, *, played_bytes: int) -> bool: ...
+
+    async def interrupt(self, *, played_ms: int | None = None, played_bytes: int | None = None) -> bool | None:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
 
-        This is server-side only — it stops generation and (when `played_ms` is given) syncs the
-        provider's transcript to what was actually heard. Flushing locally buffered playback is the
-        caller's responsibility.
+        This is server-side only — it stops generation and (when a playback position is given) syncs
+        the provider's transcript to what was actually heard.
+
+        With `played_ms`, the caller owns all playback accounting: flushing locally buffered
+        playback is the caller's responsibility, and deciding whether to interrupt at all is too.
+
+        With `played_bytes`, the session owns the rest: it attributes the position to the current
+        turn (adjusting for audio the stream dropped or that predates the subscription), discards
+        buffered audio the user will never hear — chunks already queued, and the cancelled
+        response's stragglers as they arrive — then truncates and cancels, returning `True`. When
+        everything emitted was already played there is nothing to cut off, so nothing is sent and
+        `False` is returned: reporting an interruption anyway would make the provider discard part
+        of a completed reply. This form needs exactly one
+        [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator, kept for the
+        session's lifetime; with several (or none) the position is ambiguous and a
+        [`UserError`][pydantic_ai.exceptions.UserError] is raised — keep your own accounting and
+        pass `played_ms` instead.
 
         Args:
             played_ms: Playback position in milliseconds from the start of the model's current audio
                 output. When given, the model's output audio and its transcript are truncated to this
                 point before the response is cancelled.
+            played_bytes: Playback position as the total raw PCM bytes actually played from the
+                session's single `stream_audio()` iterator. Mutually exclusive with `played_ms`.
         """
         self._ensure_not_closed()
         self._require_capability('supports_interruption', method='interrupt', feature='interruption')
+        if played_bytes is not None:
+            if played_ms is not None:
+                raise UserError('`interrupt()` accepts either `played_ms` or `played_bytes`, not both.')
+            return await self._interrupt_at_playback(played_bytes)
         if played_ms is not None and not self._profile.get('supports_output_truncation', False):
             raise UserError(
                 'This realtime model does not support output truncation, so `interrupt(played_ms=...)` '
@@ -1229,6 +1279,48 @@ class RealtimeSession:
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
+
+    async def _interrupt_at_playback(self, played_bytes: int) -> bool:
+        """Map a device playback position onto the current turn, flush unheard audio, and interrupt."""
+        if not self._profile.get('supports_output_truncation', False):
+            raise UserError(
+                'This realtime model does not support output truncation, so `interrupt(played_bytes=...)` '
+                'is unavailable. Call `interrupt()` without arguments to cancel without truncating.'
+            )
+        if len(self._audio_taps) != 1:
+            raise UserError(
+                '`interrupt(played_bytes=...)` needs exactly one active `stream_audio()` iterator to '
+                f'attribute the playback position to, not {len(self._audio_taps)}; keep your own '
+                'accounting and pass `played_ms` instead.'
+            )
+        (tap,) = self._audio_taps
+        # The device consumed `played_bytes` of what this tap delivered; adding what the tap dropped
+        # before delivery (overflow, earlier flushes) and what predates the subscription places that
+        # position in the session's emitted-audio coordinates. Drops land at the consumer's frontier,
+        # so treating them all as behind the playhead is approximate by at most the buffer window —
+        # the same tolerance a hand-rolled playback buffer accepts after an overflow.
+        playhead = tap.subscribed_at_bytes + played_bytes + tap.dropped_bytes
+        if playhead >= self._emitted_audio_bytes:
+            return False
+        # Unheard audio exists: flush what's buffered, and erase the cancelled part's stragglers as
+        # they arrive, so the stream carries nothing the barge-in already cut off.
+        while not tap.queue.empty():
+            item = tap.queue.get_nowait()
+            if item is self._tap_finished:  # pragma: no cover - defensive: the sentinel means the
+                # pump ended, and a finished pump has published everything, making `playhead >=
+                # emitted` unreachable only when audio was dropped in the same window.
+                tap.queue.put_nowait(item)
+                break
+            assert isinstance(item, bytes)
+            tap.dropped_bytes += len(item)
+        self._interrupted_audio_part_index = self._audio_part_index
+        # A playhead still inside a previous turn's audio means none of the current turn was heard.
+        played_ms = max(0, playhead - self._turn_audio_start_bytes) * 1000 // (self.audio_output_sample_rate * 2)
+        # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
+        await self._send_frame(TruncateOutput(audio_end_ms=played_ms), CancelResponse())
+        self._pending_interrupted_at_ms = played_ms
+        self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
+        return True
 
     async def _send_frame(self, *contents: RealtimeInput) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
@@ -2536,8 +2628,25 @@ class RealtimeSession:
     def _publish_taps(self, event: RealtimeEvent) -> None:
         if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):
             if delta.audio_chunk:
-                for queue in self._audio_taps:
-                    self._audio_tap_drops += _put_tap(queue, delta.audio_chunk)
+                if event.index == self._interrupted_audio_part_index:
+                    # A straggler from a barge-in-flushed part, generated before the provider
+                    # processed the cancel: erased from the taps and their accounting alike, so it
+                    # neither plays as stale audio nor skews the next playback-position mapping.
+                    pass
+                else:
+                    if event.index != self._audio_part_index:
+                        # First audio of a new part: when a playback position is attributed,
+                        # everything before this offset belongs to earlier turns.
+                        self._audio_part_index = event.index
+                        self._turn_audio_start_bytes = self._emitted_audio_bytes
+                    self._emitted_audio_bytes += len(delta.audio_chunk)
+                    for tap in self._audio_taps:
+                        if (dropped := _put_tap(tap.queue, delta.audio_chunk)) is not None:
+                            # The sentinel can't be dropped: it is only enqueued once the pump has
+                            # finished, after which nothing publishes.
+                            assert isinstance(dropped, bytes)
+                            self._audio_tap_drops += 1
+                            tap.dropped_bytes += len(dropped)
             if delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs.
@@ -2549,15 +2658,18 @@ class RealtimeSession:
                         index=event.index, speaker=delta.speaker, delta=text, transcript=transcript
                     )
                     for queue in self._transcript_delta_taps:
-                        self._transcript_tap_drops += _put_tap(queue, update)
+                        if _put_tap(queue, update) is not None:
+                            self._transcript_tap_drops += 1
         elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
             self._transcript_so_far.pop(event.index, None)
             if part.transcript:
                 for queue in self._transcript_taps:
-                    self._transcript_tap_drops += _put_tap(queue, part)
+                    if _put_tap(queue, part) is not None:
+                        self._transcript_tap_drops += 1
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
-        for queue in (*self._audio_taps, *self._transcript_taps, *self._transcript_delta_taps):
+        audio_queues = (tap.queue for tap in self._audio_taps)
+        for queue in (*audio_queues, *self._transcript_taps, *self._transcript_delta_taps):
             if discard_pending:
                 while not queue.empty():
                     queue.get_nowait()

@@ -21,12 +21,12 @@ each drop their oldest blocks if their consumer falls behind, so a machine that 
 instead of ending the call.
 
 Barge-in itself is handled by the provider — the model stops as soon as the user speaks. What the
-example adds is the half the provider can't see: it drops the model audio that hadn't reached the
-speaker yet, then reports the duration actually played to
-[`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt], so the provider truncates its
-transcript to what the user really heard rather than the whole turn. It only does so when unheard
-audio was actually dropped, since the speech-start event also fires on an ordinary turn where the
-user heard the previous reply in full.
+example adds is the one fact the session can't see: how much audio the device actually consumed.
+It counts the bytes each completed `write()` played and hands the running total to
+[`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt], which does the
+rest — dropping the buffered audio the user will never hear, truncating the provider's transcript
+to what was really heard, and doing nothing at all when the previous reply was heard in full (the
+speech-start event also fires on ordinary turns where nothing is playing).
 
 ## Running the Example
 

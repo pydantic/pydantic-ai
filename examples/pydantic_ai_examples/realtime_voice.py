@@ -26,11 +26,8 @@ from pydantic_ai import (
     Agent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    PartDeltaEvent,
     PartEndEvent,
-    PartStartEvent,
     SpeechPart,
-    SpeechPartDelta,
 )
 from pydantic_ai.realtime import RealtimeInputSpeechStartEvent, RealtimeSession
 
@@ -61,7 +58,6 @@ async def conversation(session: RealtimeSession) -> None:
     speaker = listentome.OutputStream(
         samplerate=session.audio_output_sample_rate, channels=1, dtype='int16'
     )
-    byte_rate = session.audio_output_sample_rate * 2  # bytes per second of mono PCM16
 
     async with mic, speaker, anyio.create_task_group() as tg:
         # The microphone is an async iterator of PCM blocks; `send_audio` forwards them
@@ -72,48 +68,29 @@ async def conversation(session: RealtimeSession) -> None:
         # `write()` returns once the device has consumed a chunk, so playback advances at
         # speaker pace while the model runs ahead; `stream_audio()`'s own buffer bounds
         # the backlog, dropping its oldest chunks if playback falls too far behind, so a
-        # machine that stutters glitches instead of ending the call. Received and played
-        # byte counts run for the whole session — a new turn can start while the previous
-        # turn's tail is still playing (after a quick tool call, say), so per-turn resets
-        # would misattribute that tail. `turn_start` marks where the current turn begins
-        # in the received count, letting barge-in report how much of it was really heard.
-        received = played = turn_start = 0
+        # machine that stutters glitches instead of ending the call. The one thing the
+        # session can't see is how much audio the device actually consumed, so count it.
+        played = 0
 
-        async def play_audio(scope: anyio.CancelScope) -> None:
+        async def play_audio() -> None:
             nonlocal played
-            with scope:
-                async for chunk in session.stream_audio():
-                    await speaker.write(chunk)
-                    played += len(chunk)
+            async for chunk in session.stream_audio():
+                await speaker.write(chunk)
+                played += len(chunk)
 
-        playback = anyio.CancelScope()
-        tg.start_soon(play_audio, playback)
+        tg.start_soon(play_audio)
 
         print('Listening — start talking (Ctrl-C to quit).')
         async for event in session:
             match event:
-                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=bytes(chunk))):
-                    received += len(chunk)
                 case RealtimeInputSpeechStartEvent():
                     # The provider stops the model on its own when the user speaks; what
                     # it can't know is how much of its audio actually reached the
-                    # speaker. Drop what didn't — by replacing the playback task with one
-                    # subscribed to a fresh `stream_audio()`, which only carries live
-                    # audio — and report the rest, so the provider doesn't record a turn
-                    # the user never heard. The event fires whenever the user starts
-                    # speaking — including when nothing is playing — so only interrupt
-                    # when unheard audio was actually dropped.
-                    if received > played:
-                        playback.cancel()
-                        playback = anyio.CancelScope()
-                        tg.start_soon(play_audio, playback)
-                        # If the previous turn's tail was still playing, none of this
-                        # turn was heard yet, so its played duration clamps to zero.
-                        played_ms = max(0, played - turn_start) * 1000 // byte_rate
-                        await session.interrupt(played_ms=played_ms)
-                        played = received  # the dropped audio is settled; stay in sync
-                case PartStartEvent(part=SpeechPart(speaker='assistant')):
-                    turn_start = received  # older audio belongs to earlier turns
+                    # speaker. Given the device position, the session drops the audio the
+                    # user will never hear and truncates the turn's transcript to what
+                    # was really heard — or does nothing when the turn was heard in full,
+                    # since the event also fires when nothing is playing.
+                    await session.interrupt(played_bytes=played)
                 case PartEndEvent(part=SpeechPart() as part) if part.transcript:
                     print(f'{part.speaker}: {part.transcript}')
                 case FunctionToolCallEvent(part=call):
