@@ -206,27 +206,33 @@ def _graphql_time(value: object) -> dt.datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def _community_backed(item: Mapping[str, Any]) -> bool:
-    """True when the item sat ignored for two weeks while people kept engaging.
+def _recently_unassigned(item: Mapping[str, Any]) -> bool:
+    """Whether a human took an assignee off this issue inside the back-off window.
 
-    An unassignment inside the window resets the clock: a maintainer who just
-    removed an assignee has looked at the item, and this lane must not fight
-    that decision by re-assigning it on the next quiet run.
+    An unassignment means "leave this alone": whoever removed the assignee has
+    looked at the item, and routing must not redo what they undid. Malformed
+    timeline data counts as recent, failing toward not assigning.
     """
     now = dt.datetime.now(dt.timezone.utc)
-    window = dt.timedelta(days=_COMMUNITY_IGNORED_DAYS)
-    created_at = _graphql_time(item.get('createdAt'))
-    if created_at is None or now - created_at < window:
-        return False
+    window = dt.timedelta(days=attention.ROUTING_UNASSIGN_BACKOFF_DAYS)
     timeline = item.get('timelineItems')
     if not isinstance(timeline, Mapping):
-        return False
+        return True
     for node in _connection_nodes(cast(Mapping[str, object], timeline)):
         removed_at = (
             _graphql_time(cast(Mapping[str, object], node).get('createdAt')) if isinstance(node, Mapping) else None
         )
         if removed_at is None or now - removed_at < window:
-            return False
+            return True
+    return False
+
+
+def _community_backed(item: Mapping[str, Any]) -> bool:
+    """True when the item sat ignored for two weeks while people kept engaging."""
+    now = dt.datetime.now(dt.timezone.utc)
+    created_at = _graphql_time(item.get('createdAt'))
+    if created_at is None or now - created_at < dt.timedelta(days=_COMMUNITY_IGNORED_DAYS):
+        return False
     interactions = 0
     for field in ('comments', 'reactions'):
         value = item.get(field)
@@ -393,6 +399,20 @@ def _pull_request_precedence(
     return None
 
 
+def _issue_gate(item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
+    """Decide whether an issue may be routed at all; None means proceed."""
+    # A human unassignment means "leave this alone", whatever the labels say:
+    # without the back-off, a p:1 issue would be re-assigned to the same owner
+    # six hours after a maintainer removed them.
+    if _recently_unassigned(item):
+        return Selection(number=number, decision=None, status='recently-unassigned')
+    # A gate label missing from a truncated first page counts as absent, which
+    # fails toward leaving the issue unassigned.
+    if not _labels(normalized) & _PRIORITY_LABELS and not _community_backed(item):
+        return Selection(number=number, decision=None, status='awaiting-triage')
+    return None
+
+
 def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Selection:
     """Refetch one item and make a deterministic, fail-closed decision."""
     repo = _repository(repo)
@@ -411,10 +431,8 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
         'assignees': _connection_nodes(assignees),
     }
     is_pull_request = item.get('__typename') == 'PullRequest'
-    # A gate label missing from a truncated first page counts as absent, which
-    # fails toward leaving the issue unassigned.
-    if not is_pull_request and not _labels(normalized) & _PRIORITY_LABELS and not _community_backed(item):
-        return Selection(number=number, decision=None, status='awaiting-triage')
+    if not is_pull_request and (gated := _issue_gate(item, normalized, number)) is not None:
+        return gated
     if _maintainer_assignees(client, repo, normalized):
         return Selection(number=number, decision=None, status='maintainer-present')
     if len(normalized['assignees']) >= _ASSIGNEE_LIMIT:

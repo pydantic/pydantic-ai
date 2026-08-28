@@ -57,6 +57,9 @@ ROUTING_RECOVERY_EPOCH = '2026-08-18'
 PRIORITY_GATE_LABELS = ('p:1-highest', 'p:2-high')
 _PRIORITY_LABELS_ALL = (*PRIORITY_GATE_LABELS, 'p:3-mid', 'p:4-low')
 _GATE_BATCH_BREACH = 15
+# A human unassignment means "leave this alone": routing backs off for this
+# many days, and the census oldest-item page skips such issues meanwhile.
+ROUTING_UNASSIGN_BACKOFF_DAYS = 14
 _OVERRIDE_SCAN_LIMIT = 30
 _OVERRIDE_WINDOW_DAYS = 7
 _OVERRIDE_LINE_LIMIT = 30
@@ -1319,13 +1322,33 @@ def _pull_intake_query(repo: str, owners: Sequence[str]) -> str:
     return f'repo:{repo} is:pr is:open created:>={ROUTING_RECOVERY_EPOCH} -draft:true {exclusions}'
 
 
+def _recent_unassignment(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> bool:
+    """Whether anyone removed an assignee from this item inside the back-off window."""
+    for event in client.last_pages(f'/repos/{repo}/issues/{number}/events?per_page=100'):
+        if str(event.get('event') or '') != 'unassigned':
+            continue
+        created = event.get('created_at')
+        if isinstance(created, str) and now - _parse_time(created) < dt.timedelta(days=ROUTING_UNASSIGN_BACKOFF_DAYS):
+            return True
+    return False
+
+
 def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention: str | None = None) -> str:
     """Build one daily heartbeat for the queues that need prompt maintainer action."""
     active = _search_count(client, f'repo:{repo} is:open label:"{_ACTION_LABEL}"')
     cooling = _search_count(client, f'repo:{repo} is:open label:"{_ESCALATED_LABEL}"')
     owners = _qualified_routing_owners(client, repo)
-    gate_total, gate_items = _search_summary(client, f'{_gate_query(repo, owners)} sort:created-asc', first=1)
-    oldest = (int(gate_items[0]['number']), _parse_time(str(gate_items[0]['created_at']))) if gate_items else None
+    gate_total, gate_items = _search_summary(client, f'{_gate_query(repo, owners)} sort:created-asc', first=5)
+    # A recently unassigned issue is unassigned on purpose, so it stays in the
+    # count but must not trigger the oldest-item page day after day.
+    oldest = next(
+        (
+            (int(candidate['number']), _parse_time(str(candidate['created_at'])))
+            for candidate in gate_items
+            if not _recent_unassignment(client, repo, int(candidate['number']), now=now)
+        ),
+        None,
+    )
     untriaged = _search_count(client, _untriaged_query(repo))
     pull_intake = _search_count(client, _pull_intake_query(repo, owners))
     # Counts and item numbers only: the heartbeat must stay free of issue and PR
