@@ -446,6 +446,38 @@ def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
     ) in client.calls
 
 
+def test_apply_never_assigns_a_pull_request(tmp_path: Path):
+    # Pull requests are never auto-assigned: a human assigns one when an
+    # issue warrants it. The item stays tracked, silently.
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 8, 'updated_at': OLD}])
+    write_output(output, ['8'])
+    pull = {**item(8), 'pull_request': {'url': 'https://api.github.test/pulls/8'}}
+    client = FakeClient({8: pull})
+
+    lines = monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW)
+
+    assert lines == ['#8: deferred until its owner can be identified']
+    assert monitor._ACTION_LABEL in {label['name'] for label in client.items[8]['labels']}
+    assert not any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
+
+
+def test_apply_notifies_the_human_assigned_owner_of_a_pull_request(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 8, 'updated_at': OLD}])
+    write_output(output, ['8'])
+    pull = {**item(8, assignees=['DouweM']), 'pull_request': {'url': 'https://api.github.test/pulls/8'}}
+    client = FakeClient({8: pull})
+    client.permissions = {'DouweM': 'write'}
+
+    lines = monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW)
+
+    assert lines == ['#8: requested maintainer attention from @DouweM']
+    assert not any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
+
+
 def test_owner_selection_reads_the_live_item_not_the_classified_copy():
     stale = item(7, labels=[monitor._ACTION_LABEL])
     current = item(
@@ -477,14 +509,14 @@ def test_owner_selection_finds_a_maintainer_hidden_from_the_collaborator_list():
     assert not any('/collaborators?' in path for _, path, _ in client.calls)
 
 
-def test_owner_selection_keeps_a_maintainer_authored_pull_request():
+def test_owner_selection_never_assigns_a_pull_request_even_to_its_maintainer_author():
     pull = {**item(7, labels=[monitor._ACTION_LABEL]), 'pull_request': {'url': 'https://api.github.com/pulls/7'}}
     pull['user'] = {'login': 'DouweM'}
     client = FakeClient({7: pull})
     client.permissions = {'DouweM': 'admin'}
 
-    assert monitor._ensure_recipients(client, 'r', pull, now=NOW) == ['DouweM']
-    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
+    assert monitor._ensure_recipients(client, 'r', pull, now=NOW) is None
+    assert not any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
 
 
 def test_owner_selection_reads_every_pull_request_discussion_surface():

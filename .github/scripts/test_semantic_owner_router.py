@@ -174,6 +174,107 @@ def test_ui_and_durable_execution_remain_a_manual_conflict():
     assert decision['evidence'] == 'manual:conflict-or-unknown'
 
 
+def test_conflicting_label_signals_use_manual_route():
+    client = FakeClient({7: item(7, labels=['streaming', 'MCP', 'p:2-high'])})
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision == {
+        'number': 7,
+        'owner': 'adtyavrdhn',
+        'evidence': 'manual:conflict-or-unknown',
+    }
+
+
+@pytest.mark.parametrize(
+    ('repo', 'labels', 'expected'),
+    [
+        (CORE, ['streaming'], ('adtyavrdhn', 'label:streaming')),
+        (CORE, ['MODEL ISSUE'], ('dsfaccini', 'label:model issue')),
+        (CORE, ['AG-UI'], ('dsfaccini', 'label:AG-UI')),
+        (CORE, ['vercel-ai'], ('dsfaccini', 'label:vercel-ai')),
+        (CORE, ['web-ui'], ('dsfaccini', 'label:web-ui')),
+        (CORE, ['durable exec'], ('DouweM', 'label:durable exec')),
+        (HARNESS, ['cap:compaction'], ('mpfaffenberger', 'default:repo-intake')),
+    ],
+)
+def test_exact_semantic_labels_route_to_fixed_owners(repo: str, labels: list[str], expected: tuple[str, str]):
+    client = FakeClient({7: item(7, labels=[*labels, 'p:2-high'])})
+
+    decision = router.decision_for(client, repo, 7)['decision']
+
+    assert decision is not None
+    assert (decision['owner'], decision['evidence']) == expected
+
+
+def test_full_non_maintainer_assignee_list_fails_before_notification():
+    client = FakeClient({7: item(7, labels=['MCP', 'p:2-high'], assignees=[f'user-{index}' for index in range(10)])})
+
+    assert router.decision_for(client, CORE, 7) == {
+        'number': 7,
+        'decision': None,
+        'status': 'assignee-capacity',
+    }
+
+
+def test_highest_priority_label_opens_the_gate():
+    client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'])})
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision == {'number': 7, 'owner': 'dsfaccini', 'evidence': 'label:MCP'}
+
+
+@pytest.mark.parametrize('labels', [[], ['MCP'], ['p:3-mid'], ['p:4-low', 'streaming'], ['P:2-HIGH!']])
+def test_issue_without_priority_label_stays_on_the_triage_plate(labels: list[str]):
+    client = FakeClient({7: item(7, labels=labels, assignees=['DouweM'])})
+
+    selected = router.decision_for(client, CORE, 7)
+
+    assert selected == {'number': 7, 'decision': None, 'status': 'awaiting-triage'}
+    assert not any('/collaborators/' in path for _, path, _ in client.calls)
+
+
+def test_unavailable_manual_owner_fails_loudly():
+    client = FakeClient({7: item(7, labels=['unknown', 'p:2-high'])})
+    client.permissions['adtyavrdhn'] = 'read'
+
+    with pytest.raises(RuntimeError, match='manual routing owner lacks maintainer permission'):
+        router.decision_for(client, CORE, 7)
+
+
+def test_unavailable_semantic_owner_routes_to_manual_review():
+    client = FakeClient({7: item(7, labels=['MCP', 'p:2-high'])})
+    client.permissions['dsfaccini'] = 'read'
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision == {
+        'number': 7,
+        'owner': 'adtyavrdhn',
+        'evidence': 'manual:unavailable-owner:dsfaccini',
+    }
+
+
+def test_unknown_and_owner_lookalike_labels_use_manual_route():
+    client = FakeClient(
+        {
+            7: item(
+                7,
+                labels=['owner:attacker', 'streaming\n<!channel>', 'streaminɡ', 'STREAMING!', 'p:2-high'],
+            )
+        }
+    )
+
+    decision = router.decision_for(client, CORE, 7)['decision']
+
+    assert decision == {
+        'number': 7,
+        'owner': 'adtyavrdhn',
+        'evidence': 'manual:conflict-or-unknown',
+    }
+
+
 def test_every_harness_issue_routes_to_the_default_owner_without_a_priority_label():
     client = FakeClient({7: item(7, labels=['bug'])})
 
@@ -202,15 +303,19 @@ def test_harness_maintainer_authored_pull_request_is_not_assigned_to_the_default
     assert selected == {'number': 7, 'decision': None, 'status': 'maintainer-author'}
 
 
-def test_harness_candidate_search_has_no_priority_filter():
+def test_harness_candidate_search_is_unlabeled_new_intake_only():
     client = FakeClient({})
     client.search_results = [[], []]
 
     router.select_batch(client, HARNESS)
 
-    issue_query = _search_queries(client)[0]
+    issue_query, pull_query = _search_queries(client)
     assert 'label:' not in issue_query
     assert 'is:issue' in issue_query
+    # Blanket intake covers new items going forward, never the backlog.
+    assert f'created:>={router._RECOVERY_EPOCH}' in issue_query
+    assert 'is:pr' in pull_query
+    assert f'created:>={router._RECOVERY_EPOCH}' in pull_query
 
 
 def test_default_intake_notice_names_the_owner_without_a_slack_ping():
@@ -488,14 +593,6 @@ def test_gated_routing_backs_off_after_a_recent_unassignment():
     assert selection == {'number': 7, 'decision': None, 'status': 'recently-unassigned'}
     assert router.select_batch(client, CORE) == []
 
-    # The back-off protects pull requests the same way.
-    pr_client = FakeClient({7: item(7, pull_request=True, author='adtyavrdhn', unassigned_at=[recent])})
-    assert router.decision_for(pr_client, CORE, 7) == {
-        'number': 7,
-        'decision': None,
-        'status': 'recently-unassigned',
-    }
-
 
 def test_bot_unassignments_do_not_suppress_gated_routing():
     recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
@@ -597,18 +694,6 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
 @pytest.mark.parametrize(
     ('item_type', 'decision', 'expected'),
     [
-        (
-            'PullRequest',
-            router.Decision(number=7, owner='adtyavrdhn', evidence='author:adtyavrdhn'),
-            'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
-            '→ <@UADITYA>\nWhy: <@UADITYA> authored this pull request.',
-        ),
-        (
-            'PullRequest',
-            router.Decision(number=7, owner='dsfaccini', evidence='path:pydantic_ai_slim/pydantic_ai/models/'),
-            'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
-            '→ <@UDAVID>\nWhy: Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
-        ),
         (
             'Issue',
             router.Decision(number=7, owner='dsfaccini', evidence='future-policy:evidence'),

@@ -346,6 +346,12 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
         return Selection(number=number, decision=None, status='closed')
     if item.get('number') != number or item.get('__typename') not in {'Issue', 'PullRequest'}:
         raise RuntimeError('GitHub returned mismatched routing metadata')
+    is_pull_request = item.get('__typename') == 'PullRequest'
+    # Pull requests are never triaged on gated repositories: a human assigns
+    # one when an issue warrants it. Only ungated blanket-intake repositories
+    # route pull requests, to their default owner.
+    if is_pull_request and repo in _GATED_REPOS:
+        return Selection(number=number, decision=None, status='pull-request')
     labels = item.get('labels')
     assignees = item.get('assignees')
     if not _connection_complete(assignees):
@@ -359,12 +365,6 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
     # hours after a maintainer removed them.
     if _recently_unassigned(item):
         return Selection(number=number, decision=None, status='recently-unassigned')
-    is_pull_request = item.get('__typename') == 'PullRequest'
-    # Pull requests are never triaged on gated repositories: a human assigns
-    # one when an issue warrants it. Only ungated blanket-intake repositories
-    # route pull requests, to their default owner.
-    if is_pull_request and repo in _GATED_REPOS:
-        return Selection(number=number, decision=None, status='pull-request')
     if (gated := _issue_gate(repo, normalized, number)) is not None:
         return gated
     if _maintainer_assignees(client, repo, normalized):
@@ -418,7 +418,9 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
 
 
 def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
-    """List candidates, priority-labeled issues before pull requests."""
+    """List routing candidates: gated repos search priority-labeled issues
+    only; ungated repos search all new intake, issues before pull requests.
+    """
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
     if repo in _GATED_REPOS:
         # Pull requests are never triaged on gated repositories, so the sweep
@@ -478,7 +480,10 @@ def select_batch(
     gated_numbers = _gated_numbers(client, repo, qualified)
     gated = _select_numbers(client, repo, gated_numbers, limit=_RECENT_BATCH_LIMIT, lane='gate')
     _emit_event('router.sweep', repo=repo, lane='gate', candidates=len(gated_numbers), selected=len(gated))
-    if gated or not community_recovery:
+    # The community-demand judge runs only on gated repos, so the community
+    # lane must not run elsewhere: on an ungated repo it would sweep backlog
+    # items past the new-intake epoch on a hand-applied label.
+    if gated or not community_recovery or repo not in _GATED_REPOS:
         return gated
     community_numbers = _community_numbers(client, repo)
     community = _select_numbers(client, repo, community_numbers, limit=_COMMUNITY_BATCH_LIMIT, lane='community')
@@ -525,11 +530,8 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
 
 def _routing_reason(decision: Decision, mention: str) -> str:
     evidence = decision['evidence']
-    owner = decision['owner']
-    if evidence == f'author:{owner}':
-        return f'{mention} authored this pull request.'
     source, separator, detail = evidence.partition(':')
-    if separator and detail and source in {'label', 'path'}:
+    if separator and detail and source == 'label':
         return f'Matched ownership {source} `{detail}`.'
     if evidence == 'default:repo-intake':
         return 'All intake for this repository is currently routed to one owner.'

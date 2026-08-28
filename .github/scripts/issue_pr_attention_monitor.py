@@ -675,6 +675,12 @@ def _ensure_recipients(
     if current_maintainers and logins != [_FALLBACK_OWNER.casefold()]:
         return current_maintainers
 
+    # Pull requests are never auto-assigned: a human assigns one when an issue
+    # warrants it. Any maintainer already on the PR was a human's choice and
+    # owns it; without one the item stays tracked silently.
+    if 'pull_request' in current:
+        return current_maintainers or None
+
     # A recent unassignment is a decision too: the placeholder heuristic must
     # not hand the item straight back to whoever a human just took off it.
     # Mirrors the router's back-off window.
