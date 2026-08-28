@@ -2,14 +2,17 @@
 
 Instruction blocks carry a stable key so a consumer that receives
 `ModelRequestParameters.instruction_parts` can address them — e.g. to override their text from a
-remote configuration — without depending on their position or wording. One rule, in two halves: a
-source key (`agent`, `toolset:x`, `capability:x`) addresses everything that source contributes, and
-appending a segment (`agent:x`, `capability:x:y`) addresses one block declared within it.
+remote configuration — without depending on their position or wording. A resolved key is an
+`InstructionId`: its source (`AgentInstructionSource`, `ToolsetInstructionSource`,
+`CapabilityInstructionSource`) addresses everything that source contributes, and its optional `name`
+addresses one block declared within it. A name declared on a source with no identity of its own
+stays the plain string the author wrote, which is what marks it unresolved. Keys render and
+serialize as `agent`, `toolset:x`, `capability:x:y` — the form persisted configuration keys on.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -1107,6 +1110,11 @@ def test_unresolved_and_missing_id_serialization_round_trip():
         {'content': 'Weather.', 'dynamic': True, 'part_kind': 'instruction'}
     ) == InstructionPart(content='Weather.', dynamic=True)
 
+    # A namespace this version doesn't know survives as the string it arrived as. Instruction parts
+    # cross durable execution and UI boundaries, so a key a newer version writes has to load here
+    # rather than raise or be mangled into a source this version happens to recognise.
+    assert instruction_part_ta.validate_python({**payload, 'id': 'plugin:search:limits'}).id == 'plugin:search:limits'
+
 
 def test_repr_omits_unset_id():
     assert repr(InstructionPart(content='Weather.')) == "InstructionPart(content='Weather.')"
@@ -1407,15 +1415,65 @@ async def test_a_declared_id_already_carrying_its_source_key_is_left_alone():
     ]
 
 
-async def test_declared_ids_reject_colons():
-    """A declared segment is one segment, so it can't smuggle in the delimiter."""
-    agent = Agent(toolsets=[InstructionsToolset([InstructionPart(content='X.', id='a:b')], id='weather')])
+async def declare_on_agent_constructor(name: str) -> None:
+    Agent(instructions=InstructionPart(content='X.', id=name))
 
-    with pytest.raises(
-        UserError,
-        match=r"Declared instruction id 'a:b' cannot contain a colon because `:` is reserved as an instruction ID delimiter\.",
-    ):
-        await run_and_capture(agent)
+
+async def declare_on_agent_decorator(name: str) -> None:
+    Agent().instructions(id=name)
+
+
+async def declare_on_a_single_run(name: str) -> None:
+    await run_and_capture(Agent(), instructions=InstructionPart(content='X.', id=name))
+
+
+async def declare_on_capability_constructor(name: str) -> None:
+    Capability[Any](id='budget', instructions=InstructionPart(content='X.', id=name))
+
+
+async def declare_on_capability_decorator(name: str) -> None:
+    Capability[Any](id='budget').instructions(id=name)
+
+
+async def declare_on_a_toolset_block(name: str) -> None:
+    await run_and_capture(Agent(toolsets=[InstructionsToolset(InstructionPart(content='X.', id=name), id='weather')]))
+
+
+DECLARING_AUTHORS = [
+    pytest.param(declare_on_agent_constructor, id='agent constructor'),
+    pytest.param(declare_on_agent_decorator, id='@agent.instructions'),
+    pytest.param(declare_on_a_single_run, id='run instructions'),
+    pytest.param(declare_on_capability_constructor, id='capability constructor'),
+    pytest.param(declare_on_capability_decorator, id='@capability.instructions'),
+    pytest.param(declare_on_a_toolset_block, id='toolset block'),
+]
+
+
+@pytest.mark.parametrize('declare', DECLARING_AUTHORS)
+@pytest.mark.parametrize(
+    ('name', 'message'),
+    [
+        (
+            'a:b',
+            r"Declared instruction id 'a:b' cannot contain a colon because `:` is reserved as an instruction ID delimiter\.",
+        ),
+        (
+            'agent',
+            r"Declared instruction id 'agent' is reserved for the agent's own instructions; choose a different name\.",
+        ),
+    ],
+)
+async def test_no_author_can_declare_a_name_that_would_read_as_a_framework_key(
+    declare: Callable[[str], Awaitable[None]], name: str, message: str
+):
+    """A name is rejected where it is written, so the rule doesn't depend on what it resolves against.
+
+    A name that resolves against no source is written to the wire exactly as the author wrote it, so
+    every name has to be one that could never be read back as a key the framework issued -- whatever
+    the source it happens to be declared on today.
+    """
+    with pytest.raises(UserError, match=message):
+        await declare(name)
 
 
 async def test_an_instruction_part_keeps_its_own_dynamic_flag_and_block():
