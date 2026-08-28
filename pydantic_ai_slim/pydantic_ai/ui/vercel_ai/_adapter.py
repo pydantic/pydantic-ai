@@ -1154,7 +1154,9 @@ def _coerce_js_binary_data(value: Any) -> Any:
     # Gate on `media_type` (the type-specific field a real `BinaryContent` carries) so this matches
     # the core `ToolReturnContent` discriminator: a plain user mapping that merely reuses
     # `kind: 'binary'` stays untouched instead of having its `data` rewritten to bytes.
-    if coerced.get('kind') == 'binary' and 'media_type' in coerced:
+    # Also require `data` so a mapping with `kind` + `media_type` but no payload is not given
+    # a `data: None` key it never had.
+    if coerced.get('kind') == 'binary' and 'media_type' in coerced and 'data' in coerced:
         coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
     return coerced
 

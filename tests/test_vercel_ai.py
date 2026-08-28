@@ -5039,6 +5039,40 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
     assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
 
 
+async def test_adapter_load_tool_return_binary_kind_with_media_type_but_no_data_key_preserved():
+    """A user mapping with `kind: 'binary'` and `media_type` but no `data` key stays identical.
+
+    `_coerce_js_binary_data` previously gated only on `kind` + `media_type` and then assigned
+    `coerced['data'] = _js_binary_to_bytes(coerced.get('data'))`, which injected `data: None`
+    into mappings that never had a `data` key. Those mappings still fail the `MultiModalContent`
+    arm and stay plain dicts, so the adapter was mutating user output without turning it into a
+    file. Regression for https://github.com/pydantic/pydantic-ai/issues/7824.
+    """
+    output = {'kind': 'binary', 'media_type': 'application/json', 'rows': [1, 2]}
+    ui_messages: list[UIMessage] = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output=output,
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == output
+    assert 'data' not in tool_returns[0].content
+
+
 async def test_adapter_tool_return_text_only_unchanged():
     """Text-only tool returns serialize as the literal string and round-trip unchanged."""
     messages = [
