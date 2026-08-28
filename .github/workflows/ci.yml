@@ -71,6 +71,7 @@ jobs:
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_semantic_owner_router.py
           .github/scripts/test_triage_telemetry.py
+          .github/scripts/test_feature_digest.py
           .github/scripts/test_agentic_workflow_guard.py
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
