@@ -26,8 +26,17 @@ def parse_time(value: str) -> dt.datetime:
 
 
 def item_labels(item: Mapping[str, Any]) -> set[str]:
-    """The item's exact label names; the router's search-query guard is separate."""
-    return {str(label['name']) for label in item.get('labels', [])}
+    """The item's exact label names, skipping malformed entries.
+
+    The router's casefolding search-query guard is deliberately separate.
+    """
+    values: set[str] = set()
+    for entry in item.get('labels', []):
+        if isinstance(entry, Mapping):
+            name = cast('Mapping[str, object]', entry).get('name')
+            if isinstance(name, str):
+                values.add(name)
+    return values
 
 
 def _decimal_string(value: object) -> int:
