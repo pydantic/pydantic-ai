@@ -85,7 +85,6 @@ jobs:
         id: prepare
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
           ROUTE_NUMBER: ${{ matrix.route.number }}
           ROUTE_OWNER: ${{ matrix.route.owner }}
           ROUTE_EVIDENCE: ${{ matrix.route.evidence }}

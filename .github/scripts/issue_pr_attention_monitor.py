@@ -1066,6 +1066,11 @@ def _reconcile_item(
     # Keeping that meaning makes the channel cutover safe for in-flight items.
     if current_stage != 2 and now - transition_at < _sla_for(labels):
         return None
+    # Only assigned priority issues earn a channel interrupt: anything else
+    # the triage agent marks stays tracked, visible in the Monday digest, and
+    # silent. Attention is spent where the team agreed to spend it.
+    if current_stage != 2 and not labels.intersection(PRIORITY_GATE_LABELS):
+        return None
     kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
         client,

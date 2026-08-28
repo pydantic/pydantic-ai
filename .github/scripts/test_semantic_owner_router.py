@@ -486,7 +486,6 @@ def test_default_intake_notice_names_the_owner_without_a_slack_ping():
         HARNESS,
         'Issue',
         router.Decision(number=7, owner='mpfaffenberger', evidence='default:repo-intake'),
-        MENTIONS,
     )
 
     # Blanket intake must not ping the same person on every drained item.
@@ -821,12 +820,7 @@ def test_community_backing_bypasses_the_label_gate_only_for_ignored_busy_issues(
 )
 def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_mentions(value: str):
     with pytest.raises(ValueError, match='selected owner'):
-        router._slack_payload(  # pyright: ignore[reportPrivateUsage]
-            CORE,
-            'Issue',
-            router.Decision(number=7, owner='DouweM', evidence='label:durable exec'),
-            value,
-        )
+        router.attention.slack_mentions(value, 'DouweM')
 
 
 @pytest.mark.parametrize(
@@ -836,19 +830,19 @@ def test_slack_map_rejects_missing_selected_owner_unknown_keys_and_invalid_menti
             'PullRequest',
             router.Decision(number=7, owner='adtyavrdhn', evidence='author:adtyavrdhn'),
             'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
-            '→ <@UADITYA>\nWhy: <@UADITYA> authored this pull request.',
+            '→ adtyavrdhn\nWhy: adtyavrdhn authored this pull request.',
         ),
         (
             'PullRequest',
             router.Decision(number=7, owner='dsfaccini', evidence='path:pydantic_ai_slim/pydantic_ai/models/'),
             'Routing intent: Pull request <https://github.com/pydantic/pydantic-ai/pull/7|pydantic/pydantic-ai#7> '
-            '→ <@UDAVID>\nWhy: Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
+            '→ dsfaccini\nWhy: Matched ownership path `pydantic_ai_slim/pydantic_ai/models/`.',
         ),
         (
             'Issue',
             router.Decision(number=7, owner='dsfaccini', evidence='future-policy:evidence'),
             'Routing intent: Issue <https://github.com/pydantic/pydantic-ai/issues/7|pydantic/pydantic-ai#7> '
-            '→ <@UDAVID>\nWhy: Matched the semantic ownership policy.',
+            '→ dsfaccini\nWhy: Matched the semantic ownership policy.',
         ),
     ],
 )
@@ -859,7 +853,6 @@ def test_notification_is_linked_typed_and_explained(
         CORE,
         item_type,
         decision,
-        MENTIONS,
     )
 
     assert json.loads(payload)['text'] == expected
@@ -874,7 +867,7 @@ def test_no_attacker_text_is_used_in_output_or_notification():
     assert decision is not None
     serialized = json.dumps(decision)
     assert attacker not in serialized
-    assert attacker not in router._slack_payload(CORE, 'Issue', decision, MENTIONS)  # pyright: ignore[reportPrivateUsage]
+    assert attacker not in router._slack_payload(CORE, 'Issue', decision)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_stale_route_is_not_prepared():
@@ -883,7 +876,6 @@ def test_stale_route_is_not_prepared():
         client,
         CORE,
         router.Decision(number=7, owner='adtyavrdhn', evidence='label:streaming'),
-        MENTIONS,
     )
 
     assert payload is None
@@ -897,7 +889,6 @@ def test_prepare_rejects_non_allowlisted_repository_before_fetching():
             client,
             'attacker/repository',
             router.Decision(number=7, owner='adtyavrdhn', evidence='label:streaming'),
-            MENTIONS,
         )
 
     assert client.calls == []
@@ -909,7 +900,7 @@ def test_serialized_rerun_prepares_and_assigns_once():
     payloads: list[str] = []
 
     for _ in range(2):
-        if payload := router.prepare_current(client, CORE, expected, MENTIONS):
+        if payload := router.prepare_current(client, CORE, expected):
             payloads.append(payload)
             router.assign(client, CORE, expected)
 
@@ -923,7 +914,6 @@ def test_human_assignment_after_selection_suppresses_notice():
         client,
         CORE,
         router.Decision(number=7, owner='adtyavrdhn', evidence='label:streaming'),
-        MENTIONS,
     )
 
     assert payload is None
