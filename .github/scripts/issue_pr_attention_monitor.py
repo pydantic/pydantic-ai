@@ -25,9 +25,17 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
-# Assigned priority issues are kept in the attention queue by `reconcile`;
-# the owner is pinged once the item sits quiet past its window.
-_PRIORITY_SLAS = {'p:1-highest': dt.timedelta(days=3), 'p:2-high': dt.timedelta(days=5)}
+# The triage agent applies `community-backed` after reading an issue's thread
+# and judging that real people are asking for it; AI-generated pile-ons never
+# earn the label. Scripts trust the label and stay deterministic.
+COMMUNITY_LABEL = 'community-backed'
+# Assigned priority or community-backed issues are kept in the attention queue
+# by `reconcile`; the owner is pinged once the item sits quiet past its window.
+_REMINDER_SLAS = {
+    'p:1-highest': dt.timedelta(days=3),
+    'p:2-high': dt.timedelta(days=5),
+    COMMUNITY_LABEL: dt.timedelta(days=7),
+}
 _SLA_MARK_LIMIT = 10
 _RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
@@ -85,6 +93,7 @@ _LABELS = {
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
     _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
+    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this; it routes and reminds like a priority issue'),
 }
 _SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _SEARCH_SUMMARY_QUERY = """
@@ -1066,10 +1075,10 @@ def _reconcile_item(
     # Keeping that meaning makes the channel cutover safe for in-flight items.
     if current_stage != 2 and now - transition_at < _sla_for(labels):
         return None
-    # Only assigned priority issues earn a channel interrupt: anything else
-    # the triage agent marks stays tracked, visible in the Monday digest, and
-    # silent. Attention is spent where the team agreed to spend it.
-    if current_stage != 2 and not labels.intersection(PRIORITY_GATE_LABELS):
+    # Only assigned priority or community-backed issues earn a channel
+    # interrupt: anything else the triage agent marks stays tracked, visible
+    # in the Monday digest, and silent.
+    if current_stage != 2 and not labels.intersection(_REMINDER_SLAS):
         return None
     kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
@@ -1126,13 +1135,13 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: 
 
 
 def _sla_for(labels: set[str]) -> dt.timedelta:
-    """The reminder window for an item: tightest priority label wins."""
-    windows = [window for label, window in _PRIORITY_SLAS.items() if label in labels]
+    """The reminder window for an item: tightest matching label wins."""
+    windows = [window for label, window in _REMINDER_SLAS.items() if label in labels]
     return min(windows) if windows else _SLA
 
 
-def _mark_assigned_priorities(client: GitHubClient, repo: str, *, slot: int) -> list[str]:
-    """Keep every assigned priority issue inside the attention queue.
+def _mark_assigned_reminders(client: GitHubClient, repo: str, *, slot: int) -> list[str]:
+    """Keep every assigned priority or community-backed issue inside the attention queue.
 
     Applying the label starts the reminder clock; owner activity clears the
     cycle, and the next pass re-arms it, so an owner is pinged once per quiet
@@ -1140,24 +1149,24 @@ def _mark_assigned_priorities(client: GitHubClient, repo: str, *, slot: int) -> 
     """
     lines: list[str] = []
     excluded = ' '.join(f'-label:"{label}"' for label in (_ACTION_LABEL, *_LIFECYCLE_LABELS))
-    for priority in _PRIORITY_SLAS:
+    for reminder_label in _REMINDER_SLAS:
         matches = _rotated_search(
             client,
-            f'repo:{repo} is:open is:issue label:"{priority}" {excluded}',
+            f'repo:{repo} is:open is:issue label:"{reminder_label}" {excluded}',
             order='asc',
             limit=_SLA_MARK_LIMIT,
             slot=slot,
         )
         for match in matches:
             number = int(match['number'])
-            if str(match.get('state') or '').casefold() != 'open' or priority not in _labels(match):
+            if str(match.get('state') or '').casefold() != 'open' or reminder_label not in _labels(match):
                 continue
             if _labels(match).intersection((_ACTION_LABEL, *_LIFECYCLE_LABELS)):
                 continue
             if not _maintainer_assignees(client, repo, match):
                 continue
             _add_labels(client, repo, number, [_ACTION_LABEL])
-            lines.append(f'#{number}: queued assigned {priority} issue for owner attention')
+            lines.append(f'#{number}: queued assigned {reminder_label} issue for owner attention')
     return lines
 
 
@@ -1174,11 +1183,11 @@ def reconcile(
     lines: list[str] = []
     failures: list[str] = []
     try:
-        lines.extend(_mark_assigned_priorities(client, repo, slot=slot))
+        lines.extend(_mark_assigned_reminders(client, repo, slot=slot))
     except (urllib.error.URLError, RuntimeError, ValueError) as exc:
         if isinstance(exc, urllib.error.HTTPError):
             exc.close()
-        failures.append(f'priority marking: {type(exc).__name__}: {exc}')
+        failures.append(f'reminder marking: {type(exc).__name__}: {exc}')
     closed = _rotated_search(
         client,
         f'repo:{repo} is:closed label:"{_ACTION_LABEL}"',

@@ -31,8 +31,7 @@ _RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
 _PRIORITY_LABELS = frozenset(attention.PRIORITY_GATE_LABELS)
 _RECENT_BATCH_LIMIT = 3
 _COMMUNITY_BATCH_LIMIT = 3
-_COMMUNITY_IGNORED_DAYS = 14
-_COMMUNITY_MIN_INTERACTIONS = 3
+_COMMUNITY_LABEL = attention.COMMUNITY_LABEL
 _FILE_LIMIT = 100
 _ASSIGNEE_LIMIT = 10
 _MAX_ITEM_NUMBER = 2_147_483_647
@@ -42,9 +41,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
     issueOrPullRequest(number: $number) {
       __typename
       ... on Issue {
-        number state createdAt
-        comments { totalCount }
-        reactions { totalCount }
+        number state
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
           nodes { ... on UnassignedEvent { createdAt } }
         }
@@ -222,22 +219,6 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     return False
 
 
-def _community_backed(item: Mapping[str, Any]) -> bool:
-    """True when the item sat ignored for two weeks while people kept engaging."""
-    now = dt.datetime.now(dt.timezone.utc)
-    created_at = _graphql_time(item.get('createdAt'))
-    if created_at is None or now - created_at < dt.timedelta(days=_COMMUNITY_IGNORED_DAYS):
-        return False
-    interactions = 0
-    for field in ('comments', 'reactions'):
-        value = item.get(field)
-        count = cast(Mapping[str, object], value).get('totalCount') if isinstance(value, Mapping) else None
-        if type(count) is not int or count < 0:
-            return False
-        interactions += count
-    return interactions > _COMMUNITY_MIN_INTERACTIONS
-
-
 def _valid_path(value: str) -> bool:
     if not value or len(value) > 300 or not value.isascii() or '\\' in value or value.startswith('/'):
         return False
@@ -406,8 +387,11 @@ def _issue_gate(repo: str, item: Mapping[str, Any], normalized: Mapping[str, Any
     if _recently_unassigned(item):
         return Selection(number=number, decision=None, status='recently-unassigned')
     # A gate label missing from a truncated first page counts as absent, which
-    # fails toward leaving the issue unassigned.
-    if repo in _GATED_REPOS and not _labels(normalized) & _PRIORITY_LABELS and not _community_backed(item):
+    # fails toward leaving the issue unassigned. `community-backed` opens the
+    # gate too: the triage agent applies it after reading the thread and
+    # judging that real people are asking, so AI-generated pile-ons never
+    # reach a maintainer through this lane.
+    if repo in _GATED_REPOS and not _labels(normalized) & (_PRIORITY_LABELS | {_COMMUNITY_LABEL}):
         return Selection(number=number, decision=None, status='awaiting-triage')
     return None
 
@@ -522,14 +506,8 @@ def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequenc
 
 
 def _community_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
-    """List unassigned items ignored for two weeks despite community interactions."""
-    # `created:` has date granularity, so search one day wide of the threshold and
-    # let `_community_backed` apply the precise two-week check per item.
-    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=_COMMUNITY_IGNORED_DAYS - 1)).date().isoformat()
-    query = (
-        f'repo:{repo} is:open -draft:true created:<{cutoff} no:assignee '
-        f'interactions:>{_COMMUNITY_MIN_INTERACTIONS} sort:updated-desc'
-    )
+    """List unassigned items the triage agent judged to have genuine community demand."""
+    query = f'repo:{repo} is:open -draft:true no:assignee label:"{_COMMUNITY_LABEL}" sort:updated-desc'
     return _search_numbers(client, query)
 
 

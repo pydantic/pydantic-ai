@@ -1110,7 +1110,7 @@ def test_reconcile_marks_assigned_priority_issues_for_attention():
 
 
 def test_non_priority_attention_items_never_ping():
-    """Only assigned p:1/p:2 issues may interrupt a maintainer in Slack."""
+    """Only assigned p:1/p:2/community-backed issues may interrupt a maintainer in Slack."""
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])})
     client.permissions = {'alice': 'write'}
     notices: list[monitor.Notice] = []
@@ -1123,20 +1123,26 @@ def test_non_priority_attention_items_never_ping():
 
 
 def test_priority_reminder_windows_follow_the_label():
-    four_days_ago = (NOW - dt.timedelta(days=4)).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    def build(number: int, priority: str) -> FakeClient:
-        client = FakeClient({number: item(number, labels=[priority, monitor._ACTION_LABEL], assignees=['alice'])})
+    def build(number: int, reminder_label: str, quiet_days: int) -> FakeClient:
+        marked_at = (NOW - dt.timedelta(days=quiet_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        client = FakeClient({number: item(number, labels=[reminder_label, monitor._ACTION_LABEL], assignees=['alice'])})
         client.permissions = {'alice': 'write'}
-        client.timelines[number] = [label_event(monitor._ACTION_LABEL, created_at=four_days_ago)]
+        client.timelines[number] = [label_event(monitor._ACTION_LABEL, created_at=marked_at)]
         return client
 
-    # Four quiet days: past the 3-day p:1 window, inside the 5-day p:2 window.
-    lines, _ = monitor.reconcile(build(7, 'p:1-highest'), 'r', now=NOW, notices=[])
+    # Four quiet days: past the 3-day p:1 window, inside the 5-day p:2 window
+    # and the 7-day community window.
+    lines, _ = monitor.reconcile(build(7, 'p:1-highest', 4), 'r', now=NOW, notices=[])
     assert '#7: queued channel reminder' in lines
 
-    lines, _ = monitor.reconcile(build(9, 'p:2-high'), 'r', now=NOW, notices=[])
+    lines, _ = monitor.reconcile(build(9, 'p:2-high', 4), 'r', now=NOW, notices=[])
     assert all('reminder' not in line for line in lines)
+
+    lines, _ = monitor.reconcile(build(11, monitor.COMMUNITY_LABEL, 4), 'r', now=NOW, notices=[])
+    assert all('reminder' not in line for line in lines)
+
+    lines, _ = monitor.reconcile(build(11, monitor.COMMUNITY_LABEL, 8), 'r', now=NOW, notices=[])
+    assert '#11: queued channel reminder' in lines
 
 
 def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
