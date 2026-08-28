@@ -78,6 +78,7 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexProvider,
 )
 
+
 async def agent_for_user(user_id: str) -> Agent:
     provider = OpenAICodexProvider(credentials=await credentials_for(user_id))
     return Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
