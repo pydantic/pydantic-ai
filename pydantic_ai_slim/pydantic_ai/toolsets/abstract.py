@@ -11,7 +11,7 @@ from typing_extensions import Self
 from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
-from ..messages import InstructionId, InstructionPart, ToolsetInstructionSource
+from ..messages import InstructionPart, ToolsetInstructionSource
 from ..tools import ToolDefinition, ToolsPrepareFunc
 from ._instruction_collection import InstructionContribution, make_contribution
 
@@ -199,7 +199,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             # wrote itself, and is resolved against its own key like any other author's.
             owner = (
                 sources_by_key.get(part.id.source)
-                if isinstance(part.id, InstructionId) and isinstance(part.id.source, ToolsetInstructionSource)
+                if part.id is not None and isinstance(part.id.source, ToolsetInstructionSource)
                 else None
             )
             contributions.append(make_contribution(owner if owner is not None else self, part))
