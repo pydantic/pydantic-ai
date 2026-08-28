@@ -399,7 +399,7 @@ class RunUsage(UsageBase):
         details = {
             name: self.details.get(name, 0) - other.details.get(name, 0) for name in self.details | other.details
         }
-        return RunUsage(
+        delta = RunUsage(
             requests=self.requests - other.requests,
             tool_calls=self.tool_calls - other.tool_calls,
             input_tokens=self.input_tokens - other.input_tokens,
@@ -412,6 +412,13 @@ class RunUsage(UsageBase):
             details=details,
             cost=self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None,
         )
+        field_names = {field.name for field in dataclasses.fields(RunUsage)}
+        for name in (self.__dict__.keys() | other.__dict__.keys()) - field_names:
+            self_value = self.__dict__.get(name, 0)
+            other_value = other.__dict__.get(name, 0)
+            if isinstance(self_value, (int, float)) and isinstance(other_value, (int, float)):
+                delta.__dict__[name] = self_value - other_value
+        return delta
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:

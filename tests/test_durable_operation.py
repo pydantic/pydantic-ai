@@ -69,9 +69,6 @@ from pydantic_ai.durable_exec._toolset import (
     wrap_tool_call_result,
 )
 from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
-from pydantic_ai.durable_exec.dbos._operation_names import DBOSOperationNamer
-from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
-from pydantic_ai.durable_exec.temporal._operation_names import TemporalOperationNamer
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -276,6 +273,9 @@ def test_journal_operation_names() -> None:
 
 
 def test_prefect_operation_names() -> None:
+    pytest.importorskip('prefect')
+    from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
+
     ids = [
         *_ids()[:1],
         _ids()[2],
@@ -296,6 +296,7 @@ def test_prefect_operation_names() -> None:
 def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
     pytest.importorskip('dbos')
     from pydantic_ai.durable_exec.dbos import DBOSDurability
+    from pydantic_ai.durable_exec.dbos._operation_names import DBOSOperationNamer
 
     agent = Agent(
         TestModel(),
@@ -333,6 +334,7 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
     from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._operation_names import TemporalOperationNamer
 
     agent = Agent(
         TestModel(),
@@ -651,30 +653,56 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
     ]
 
 
+def _engine_namer(engine: Literal['prefect', 'dbos', 'temporal']) -> DurableOperationNamer:
+    if engine == 'prefect':
+        pytest.importorskip('prefect')
+        from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
+
+        return PrefectOperationNamer()
+    elif engine == 'dbos':
+        pytest.importorskip('dbos')
+        from pydantic_ai.durable_exec.dbos._operation_names import DBOSOperationNamer
+
+        return DBOSOperationNamer('agent')
+    else:
+        pytest.importorskip('temporalio')
+        from pydantic_ai.durable_exec.temporal._operation_names import TemporalOperationNamer
+
+        return TemporalOperationNamer('agent')
+
+
 @pytest.mark.parametrize(
-    ('namer', 'expected'),
+    ('engine', 'expected'),
     [
-        (JournalOperationNamer('agent'), 'agent__function_toolset__tools.validate_args'),
-        (PrefectOperationNamer(), 'Validate Tool Args'),
-        (DBOSOperationNamer('agent'), 'agent__function_toolset__tools.validate_args'),
-        (TemporalOperationNamer('agent'), 'agent__agent__toolset__tools__validate_args'),
+        ('prefect', 'Validate Tool Args'),
+        ('dbos', 'agent__function_toolset__tools.validate_args'),
+        ('temporal', 'agent__agent__toolset__tools__validate_args'),
     ],
 )
-def test_validation_operation_names(namer: DurableOperationNamer, expected: str) -> None:
+def test_validation_operation_names(engine: Literal['prefect', 'dbos', 'temporal'], expected: str) -> None:
+    namer = _engine_namer(engine)
     assert namer.operation_name(ToolsetValidateToolArgumentsId('function', toolset_id='tools')) == expected
 
 
+def test_journal_validation_operation_name() -> None:
+    namer = JournalOperationNamer('agent')
+    assert namer.operation_name(ToolsetValidateToolArgumentsId('function', toolset_id='tools')) == (
+        'agent__function_toolset__tools.validate_args'
+    )
+
+
 @pytest.mark.parametrize(
-    ('namer', 'expected_name'),
+    ('engine', 'expected_name'),
     [
-        (PrefectOperationNamer(), 'Compact Messages: test'),
-        (DBOSOperationNamer('agent'), 'agent__model.compact_messages'),
-        (TemporalOperationNamer('agent'), 'agent__agent__model_compact_messages'),
+        ('prefect', 'Compact Messages: test'),
+        ('dbos', 'agent__model.compact_messages'),
+        ('temporal', 'agent__agent__model_compact_messages'),
     ],
 )
 async def test_durable_model_compact_messages_dispatches_operation(
-    namer: DurableOperationNamer, expected_name: str
+    engine: Literal['prefect', 'dbos', 'temporal'], expected_name: str
 ) -> None:
+    namer = _engine_namer(engine)
     config = _Config()
     backend = _RecordingBackend(config, namer=namer)
     response = ModelResponse(parts=[TextPart('compacted')])
@@ -803,7 +831,7 @@ async def test_dbos_compact_messages_operation_dispatches_step() -> None:
 def test_namer_error_paths_and_unrepresented_formats() -> None:
     with pytest.raises(AssertionError):
         JournalOperationNamer('agent').invocation_name(ToolsetCallToolId('function', toolset_id='tools'), label=None)
-    prefect = PrefectOperationNamer()
+    prefect = _engine_namer('prefect')
     with pytest.raises(RuntimeError, match='bug in the durability integration; please report it'):
         prefect.operation_name(ToolsetGetToolsId('dynamic', toolset_id='tools'))
     with pytest.raises(RuntimeError, match='bug in the durability integration; please report it'):

@@ -447,24 +447,12 @@ def bind_arguments(
     arguments = dict(bound.arguments)
     if declaration.ctx_parameter is not None:
         arguments.pop(declaration.ctx_parameter)
-    for name, parameter in _signature_arguments(declaration.signature, arguments):
+    for name, parameter in declaration.signature.parameters.items():
         if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             arguments.update(arguments.pop(name))
         elif parameter.kind is inspect.Parameter.VAR_POSITIONAL:
             arguments[name] = list(arguments[name])
     return cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
-
-
-def _signature_arguments(
-    signature: inspect.Signature,
-    arguments: dict[str, Any],
-    *,
-    include: str | None = None,
-) -> list[tuple[str, inspect.Parameter]]:
-    """Return signature-ordered parameters used to normalize and rebuild argument calls."""
-    return [
-        (name, parameter) for name, parameter in signature.parameters.items() if name in arguments or name == include
-    ]
 
 
 async def call_declaration(
@@ -478,7 +466,7 @@ async def call_declaration(
     arguments = dict(params.arguments)
     args: list[Any] = []
     kwargs: dict[str, Any] = {}
-    for name, parameter in _signature_arguments(declaration.signature, arguments, include=declaration.ctx_parameter):
+    for name, parameter in declaration.signature.parameters.items():
         if name == declaration.ctx_parameter:
             if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
                 kwargs[name] = params.run_context

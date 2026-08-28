@@ -57,7 +57,6 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_call_result,
 )
-from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -288,6 +287,9 @@ def test_default_journal_operation_name_matrix() -> None:
 
 
 def test_prefect_operation_name_matrix() -> None:
+    pytest.importorskip('prefect')
+    from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
+
     operation_ids = [
         operation_id
         for operation_id in _operation_ids()
@@ -305,6 +307,7 @@ def test_prefect_operation_name_assembly_completeness() -> None:
     pytest.importorskip('prefect')
     from pydantic_ai.durable_exec._toolset import DurableDynamicToolset, DurableFunctionToolset, DurableMCPToolset
     from pydantic_ai.durable_exec.prefect import PrefectDurability
+    from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
 
     agent = Agent(
         TestModel(),

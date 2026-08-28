@@ -196,8 +196,9 @@ def test_run_usage_cost_arithmetic():
 
 
 def test_run_usage_subtraction():
-    """`RunUsage` subtraction returns only the statically known accumulated fields."""
+    """`RunUsage` subtraction includes details and numeric extension fields from either side."""
     before = RunUsage(requests=1, input_tokens=2, details={'cached': 3}, cost=Decimal('1.5'))
+    before.__dict__['custom_units'] = 2
     after = RunUsage(
         requests=3,
         tool_calls=1,
@@ -206,8 +207,10 @@ def test_run_usage_subtraction():
         details={'cached': 5, 'reasoning': 2},
         cost=Decimal('4'),
     )
+    after.__dict__['custom_units'] = 7
 
-    assert after - before == RunUsage(
+    delta = after - before
+    expected = RunUsage(
         requests=2,
         tool_calls=1,
         input_tokens=5,
@@ -215,7 +218,13 @@ def test_run_usage_subtraction():
         details={'cached': 2, 'reasoning': 2},
         cost=Decimal('2.5'),
     )
-    assert before - before == RunUsage(details={'cached': 0})
+    expected.__dict__['custom_units'] = 5
+    assert delta == expected
+    assert delta.__dict__['custom_units'] == 5
+    unchanged = before - before
+    assert unchanged.details == {'cached': 0}
+    assert unchanged.__dict__['custom_units'] == 0
+    assert (RunUsage() - before).__dict__['custom_units'] == -2
 
 
 def test_model_response_cost_requires_model_name():
