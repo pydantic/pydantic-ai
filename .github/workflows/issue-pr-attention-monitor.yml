@@ -122,17 +122,17 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          python-version: "3.12"
+      - name: Install the telemetry dependency (best effort)
+        # Telemetry rides along; a registry outage must not stop the GitHub
+        # write path, and the scripts no-op emission when logfire is absent.
+        run: python3 -m pip install --quiet logfire || echo "logfire unavailable; telemetry disabled"
       - name: Count repository-wide attention coverage
         id: census
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
           LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
-          LOGFIRE_URL: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
-        run: uv run --no-project --with certifi --with logfire python .github/scripts/issue_pr_attention_monitor.py census
+        run: python .github/scripts/issue_pr_attention_monitor.py census
       - name: Post the daily coverage heartbeat to the triage channel
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:

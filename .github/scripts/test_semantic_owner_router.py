@@ -624,7 +624,7 @@ def test_gated_selection_excludes_every_fixed_owner_and_prefers_issues():
 
 def test_selection_emits_one_decision_event_per_examined_item(monkeypatch: pytest.MonkeyPatch):
     events: list[tuple[str, dict[str, Any]]] = []
-    monkeypatch.setattr(router.telemetry, 'emit', lambda name, **attrs: events.append((name, attrs)))
+    monkeypatch.setattr(router, '_emit_event', lambda name, **attrs: events.append((name, attrs)))
     client = FakeClient({7: item(7, labels=['MCP', 'p:2-high'])})
 
     router.select_batch(client, CORE)
@@ -1007,7 +1007,6 @@ def test_workflow_is_notification_first_and_least_privilege():
         'GITHUB_TOKEN',
         'ROUTING_COMMUNITY_RECOVERY',
         'LOGFIRE_TRIAGE_WRITE_TOKEN',
-        'LOGFIRE_URL',
     }
     assert select_step['env']['ROUTING_COMMUNITY_RECOVERY'] == (
         "${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}"

@@ -14,7 +14,6 @@ def reset_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(triage_telemetry, '_instance', None)
     monkeypatch.setattr(triage_telemetry, '_disabled', False)
     monkeypatch.delenv('LOGFIRE_TRIAGE_WRITE_TOKEN', raising=False)
-    monkeypatch.delenv('LOGFIRE_URL', raising=False)
     monkeypatch.delenv('GITHUB_RUN_ID', raising=False)
 
 
@@ -24,9 +23,6 @@ class FakeLogfire:
         self.events: list[tuple[str, dict[str, Any]]] = []
         self.configure_error: Exception | None = None
         self.info_error: Exception | None = None
-
-    def AdvancedOptions(self, *, base_url: str) -> dict[str, str]:
-        return {'base_url': base_url}
 
     def configure(self, **kwargs: Any) -> None:
         if self.configure_error is not None:

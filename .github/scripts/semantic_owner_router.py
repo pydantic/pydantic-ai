@@ -23,7 +23,15 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 import issue_pr_attention_monitor as attention
-import triage_telemetry as telemetry
+
+try:
+    from triage_telemetry import emit as _emit_event
+except ImportError:  # sparse checkouts that omit the telemetry module stay silent
+    # Emission is optional everywhere; every workflow that only reads or writes
+    # GitHub state must keep working without the telemetry file on disk.
+    def _emit_event(name: str, **attributes: object) -> None:
+        return
+
 
 _REPOSITORIES = attention.REPOSITORIES
 _OWNERS = frozenset(attention.MAINTAINER_OWNERS)
@@ -544,7 +552,7 @@ def _select_numbers(
     for number in numbers:
         selection = decision_for(client, repo, number)
         decision = selection['decision']
-        telemetry.emit(
+        _emit_event(
             'router.decision',
             repo=repo,
             lane=lane,
@@ -571,14 +579,12 @@ def select_batch(
     qualified = _qualified_owners(client, repo)
     gated_numbers = _gated_numbers(client, repo, qualified)
     gated = _select_numbers(client, repo, gated_numbers, limit=_RECENT_BATCH_LIMIT, lane='gate')
-    telemetry.emit('router.sweep', repo=repo, lane='gate', candidates=len(gated_numbers), selected=len(gated))
+    _emit_event('router.sweep', repo=repo, lane='gate', candidates=len(gated_numbers), selected=len(gated))
     if gated or not community_recovery:
         return gated
     community_numbers = _community_numbers(client, repo)
     community = _select_numbers(client, repo, community_numbers, limit=_COMMUNITY_BATCH_LIMIT, lane='community')
-    telemetry.emit(
-        'router.sweep', repo=repo, lane='community', candidates=len(community_numbers), selected=len(community)
-    )
+    _emit_event('router.sweep', repo=repo, lane='community', candidates=len(community_numbers), selected=len(community))
     return community
 
 
@@ -736,7 +742,7 @@ def main() -> int:
             parser.error('assign requires --number, --owner, and --evidence')
         expected = Decision(number=_item_number(args.number), owner=args.owner, evidence=args.evidence)
         did_assign = assign(client, repo, expected)
-        telemetry.emit(
+        _emit_event(
             'router.assigned',
             repo=repo,
             number=expected['number'],

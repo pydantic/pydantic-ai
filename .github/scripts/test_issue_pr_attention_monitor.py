@@ -1294,7 +1294,7 @@ def test_census_rejects_an_untrusted_urgent_mention():
 
 def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytest.MonkeyPatch):
     events: list[tuple[str, dict[str, Any]]] = []
-    monkeypatch.setattr(monitor.telemetry, 'emit', lambda name, **attrs: events.append((name, attrs)))
+    monkeypatch.setattr(monitor, '_emit_event', lambda name, **attrs: events.append((name, attrs)))
     client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-20T00:00:00Z'})
     client.correction_matches = [{'number': 5}]
     client.timelines[5] = [
@@ -1318,16 +1318,31 @@ def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytes
             'actor': {'login': 'DouweM'},
             'label': {'name': 'p:3-mid'},
         },
+        # A human assigned dsfaccini, a human removed them: recorded for the
+        # event stream, excluded from the correction count.
+        {
+            'event': 'assigned',
+            'created_at': '2026-08-20T01:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'dsfaccini'},
+        },
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T14:00:00Z',
+            'actor': {'login': 'adtyavrdhn'},
+            'assignee': {'login': 'dsfaccini'},
+        },
     ]
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
 
     assert 'Maintainer corrections in the last day: 2 on #5.' in report
     corrections = [attrs for name, attrs in events if name == 'triage.correction']
-    assert [attrs['kind'] for attrs in corrections] == ['unassigned', 'labeled']
+    assert [attrs['kind'] for attrs in corrections] == ['unassigned', 'labeled', 'unassigned']
     assert corrections[0]['bot_origin'] is True
     assert corrections[0]['detail'] == 'DouweM'
     assert corrections[1]['detail'] == 'p:3-mid'
+    assert corrections[2]['bot_origin'] is False
     assert all(attrs['number'] == 5 and attrs['event_id'] is not None for attrs in corrections)
     assert [attrs for name, attrs in events if name == 'census.run'] == [
         {
@@ -1340,6 +1355,9 @@ def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytes
             'pull_intake': 3,
             'breach': True,
             'corrections': 2,
+            'correction_records': 3,
+            'correction_scan_scanned': 1,
+            'correction_scan_total': 1,
         }
     ]
 

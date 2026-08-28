@@ -23,7 +23,14 @@ from pathlib import Path
 # this script uses no pydantic.
 from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
-import triage_telemetry as telemetry
+try:
+    from triage_telemetry import emit as _emit_event
+except ImportError:  # sparse checkouts that omit the telemetry module stay silent
+    # Emission is optional everywhere; every workflow that only reads or writes
+    # GitHub state must keep working without the telemetry file on disk.
+    def _emit_event(name: str, **attributes: object) -> None:
+        return
+
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
@@ -1364,11 +1371,15 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         or (oldest is not None and now - oldest[1] > dt.timedelta(days=1))
         or pull_intake > 100
     )
-    if breach and (urgent_mention is None or _SLACK_MENTION.fullmatch(urgent_mention) is None):
-        raise ValueError('A valid Aditya Slack mention is required for an intake breach')
-    corrections, _, _ = _override_scan(client, repo, now=now, window=_CORRECTION_WINDOW)
-    for record in corrections:
-        telemetry.emit(
+    # The correction scan runs before the breach-mention validation below: a
+    # misconfigured mention must not cost a day of correction events.
+    records, scanned, scan_total = _override_scan(client, repo, now=now, window=_CORRECTION_WINDOW)
+    # An unassignment only corrects the automation when the automation made
+    # the assignment; human-undoes-human and unknowable cases are emitted for
+    # the record but kept out of the correction count.
+    corrections = [record for record in records if record['kind'] != 'unassigned' or record['bot_origin'] is True]
+    for record in records:
+        _emit_event(
             'triage.correction',
             repo=repo,
             number=record['number'],
@@ -1378,7 +1389,7 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
             event_id=record['event_id'],
             bot_origin=record['bot_origin'],
         )
-    telemetry.emit(
+    _emit_event(
         'census.run',
         repo=repo,
         active=active,
@@ -1389,7 +1400,12 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         pull_intake=pull_intake,
         breach=breach,
         corrections=len(corrections),
+        correction_records=len(records),
+        correction_scan_scanned=scanned,
+        correction_scan_total=scan_total,
     )
+    if breach and (urgent_mention is None or _SLACK_MENTION.fullmatch(urgent_mention) is None):
+        raise ValueError('A valid Aditya Slack mention is required for an intake breach')
     prefix = f'{urgent_mention} :rotating_light:' if breach else ':telescope:'
     gate = (
         f'{gate_total} priority issues unassigned; oldest #{oldest[0]} opened {oldest_age}d ago'
@@ -1397,11 +1413,13 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         else f'{gate_total} priority issues unassigned'
     )
     saturation = ' — intake search saturated' if pull_intake > 100 else ''
-    # Numbers only, like the rest of the heartbeat: the Monday digest carries
-    # the who-changed-what detail for the same corrections.
+    # The Monday digest carries the who-changed-what detail for the same corrections.
     numbers = sorted({record['number'] for record in corrections})
     listed = ', '.join(f'#{number}' for number in numbers[:5]) + ('…' if len(numbers) > 5 else '')
-    correction_note = f' Maintainer corrections in the last day: {len(corrections)} on {listed}.' if corrections else ''
+    partial = f' (scanned {scanned} of {scan_total} updated items)' if scan_total > scanned else ''
+    correction_note = (
+        f' Maintainer corrections in the last day: {len(corrections)} on {listed}{partial}.' if corrections else ''
+    )
     return (
         f'{prefix} Attention coverage for {_slack_escape(repo)} — '
         f'queue: {active} active, {cooling} cooling; assignment gate: {gate}; '
@@ -1538,7 +1556,9 @@ def _bot_assignment_origin(prior: Sequence[dict[str, Any]], login: str) -> bool 
             continue
         if _nested_field(event, 'assignee', 'login').casefold() != key:
             continue
-        return _actor(event).endswith('[bot]')
+        # The router assigns through the workflow token, so its events carry
+        # exactly this actor; other bots' assignments are not ours to correct.
+        return _actor(event) == 'github-actions[bot]'
     return None
 
 
@@ -1572,7 +1592,7 @@ def _override_scan(
             if actor.casefold() not in owner_keys:
                 continue
             event_id = event.get('id')
-            if not isinstance(event_id, (int, str)) or isinstance(event_id, bool):
+            if not isinstance(event_id, (int, str)):
                 event_id = None
             if kind == 'unassigned':
                 detail = _nested_field(event, 'assignee', 'login')

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Fail-soft Logfire event emission for the triage automation scripts.
 
-Every routing decision -- including a decision to do nothing -- is recorded as
-one Logfire event so skipped work stays auditable and maintainer corrections
-can be joined back to the run that made the original call. Emission is
-best-effort: without `LOGFIRE_TRIAGE_WRITE_TOKEN` or the `logfire` package
-every helper is a no-op, and an emission failure never breaks the GitHub write
-path it rides along with.
+Emission is best-effort by contract: without `LOGFIRE_TRIAGE_WRITE_TOKEN` or
+the `logfire` package every helper is a no-op, and no emission failure may
+ever break the GitHub write path it rides along with. The token embeds its
+Logfire region, so the SDK routes itself; there is deliberately no base-URL
+plumbing here.
 """
 
 from __future__ import annotations
@@ -32,19 +31,16 @@ def _logfire() -> Any:
         return None
     try:
         import logfire
-    except ImportError:
+    except Exception as exc:  # a broken transitive release must not break the write path
         _disabled = True
-        print('logfire is not installed; skipping triage telemetry', file=sys.stderr)
+        print(f'logfire is unavailable ({type(exc).__name__}); skipping triage telemetry', file=sys.stderr)
         return None
     try:
-        base_url = os.environ.get('LOGFIRE_URL')
-        advanced = logfire.AdvancedOptions(base_url=base_url) if base_url else None
         logfire.configure(
             token=token,
             service_name=SERVICE_NAME,
             environment='github-actions',
             console=False,
-            advanced=advanced,
         )
     except Exception as exc:  # telemetry must never break the GitHub write path
         _disabled = True
