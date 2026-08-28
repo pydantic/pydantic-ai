@@ -12,6 +12,10 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
+  # Never fall back to the runner's system interpreter: Ubuntu's python builds are older
+  # (e.g. 3.12.3 on ubuntu-24.04) and slower than uv's PGO/LTO-optimized managed builds,
+  # which showed up as the 3.12 test cells consistently trailing 3.10/3.13 by ~30%.
+  UV_PYTHON_PREFERENCE: only-managed
 
 permissions:
   contents: read
