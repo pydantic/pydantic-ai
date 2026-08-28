@@ -28,7 +28,7 @@ from pydantic_ai.messages import ModelResponse, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
-from .conftest import try_import
+from .conftest import RequestCapture, try_import
 
 with try_import() as anthropic_imports_successful:
     import anthropic
@@ -94,18 +94,20 @@ async def test_anthropic_code_execution_files(allow_model_requests: None, anthro
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-async def test_anthropic_code_execution_files_multi_turn(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+async def test_anthropic_code_execution_files_multi_turn(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
     """Across two turns, the container is reused by id *and* the `container_upload` block is re-sent.
 
     `pending_container_uploads` is recomputed from the static `CodeExecutionTool.files` config on
-    every request and injected into the first user message, so turn 2 re-sends the `container_upload`
-    block for a file the reused container already holds. This pins, against the live API, that
-    Anthropic tolerates that redundant re-send: turn 2 carries both `container=<id from turn 1>` and
-    the same `container_upload`, and still succeeds. (The re-send is also what keeps the first user
-    message byte-identical across turns, so it must not be gated to the first turn — see
-    `test_anthropic_code_execution_files_cache_prefix_stable`.)
+    every request and appended to every user message, so turn 2 re-sends the `container_upload` block
+    — once per user message — for a file the reused container already holds. This pins, against the
+    live API, that Anthropic tolerates that redundant re-send: turn 2 carries both
+    `container=<id from turn 1>` and two copies of the same `container_upload`, and still succeeds.
+    (The re-send is also what keeps each user message byte-identical across turns, so it must not be
+    gated to a single turn — see `test_anthropic_code_execution_files_cache_prefix_stable`.)
     """
-    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
     uploaded = await client.beta.files.upload(
         file=('data.csv', _CSV_BYTES, 'text/csv'),
         betas=['files-api-2025-04-14'],
@@ -138,9 +140,7 @@ async def test_anthropic_code_execution_files_multi_turn(allow_model_requests: N
     container_id = (first_response.provider_details or {}).get('container_id')
     assert container_id
 
-    messages_requests = [r for r in vcr.requests if '/v1/messages' in r.uri]
-    assert len(messages_requests) == 2
-    first_body, second_body = (json.loads(r.body) for r in messages_requests)
+    first_body, second_body = request_capture.bodies('/v1/messages')
 
     first_uploads = [
         block
@@ -156,12 +156,73 @@ async def test_anthropic_code_execution_files_multi_turn(allow_model_requests: N
     ]
 
     upload_block = {'type': 'container_upload', 'file_id': uploaded.id}
-    # Turn 1: fresh container (no `container` param), file uploaded.
+    # Turn 1: fresh container (no `container` param), one user message, so one upload block.
     assert 'container' not in first_body
     assert first_uploads == [upload_block]
-    # Turn 2: container reused by id, *and* the same upload block re-sent — accepted by the API.
+    # Turn 2: container reused by id, *and* the upload block re-sent on each of the two user
+    # messages — the redundant re-send is accepted by the API.
     assert second_body['container'] == container_id
-    assert second_uploads == [upload_block]
+    assert second_uploads == [upload_block, upload_block]
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_fresh_container_multi_turn(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """A multi-turn history with no container to reuse still gets the file into the fresh container.
+
+    Regression test for #7775. `test_anthropic_code_execution_files_multi_turn` can't catch it: its
+    turn 2 reuses turn 1's container by id, so the file is already inside regardless of where the
+    `container_upload` block lands. Here turn 1 never runs code, so no `container_id` reaches the
+    history and turn 2 allocates a fresh container — and the server only materializes an upload from
+    the *last* user message, which is why appending to the first one alone left the container empty.
+
+    The wire assertions read `request_capture`, not the cassette: the default matchers ignore the
+    body, so a first-message-only injection replays against this recording and the round-trip half
+    of this test passes on the unfixed code. The capture hook sees what the code actually built.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+
+    try:
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+        )
+
+        first = await agent.run('Reply with just the word `ready`. Do not use any tools.')
+        second = await agent.run(_PROMPT, message_history=first.all_messages())
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    # Turn 1 ran no code, so it left no container behind for turn 2 to reuse.
+    first_response = first.all_messages()[-1]
+    assert isinstance(first_response, ModelResponse)
+    assert not (first_response.provider_details or {}).get('container_id')
+
+    # Turn 2 read the uploaded file out of the container it allocated for itself.
+    assert '100' in second.output
+
+    second_body = request_capture.body('/v1/messages', index=1)
+    assert 'container' not in second_body
+
+    upload_block = {'type': 'container_upload', 'file_id': uploaded.id}
+    user_messages = [m for m in second_body['messages'] if m['role'] == 'user']
+    assert len(user_messages) == 2
+    # The block is on every user message, so it is on the last one — the only position the server
+    # acts on. Asserting the last one alone would pass for a tail-only injection, which busts the
+    # cacheable prefix instead (`test_anthropic_code_execution_files_cache_prefix_stable`).
+    assert [[b for b in m['content'] if b['type'] == 'container_upload'] for m in user_messages] == [
+        [upload_block],
+        [upload_block],
+    ]
 
 
 # Large instructions so the cacheable prefix (system + tools + user text) clears Anthropic's
@@ -193,16 +254,16 @@ _CACHE_CASES = [
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _CACHE_CASES])
 async def test_anthropic_code_execution_files_cache_prefix_stable(
-    case: _CacheCase, allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    case: _CacheCase, allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
     """The `container_upload` injection keeps the cacheable prefix stable across steps.
 
     The upload blocks are recomputed from the static `CodeExecutionTool.files` config every request
-    and injected into the *first* user message, so that message stays byte-identical as history
-    grows. This pins both halves of the guarantee against the live API:
+    and appended to *every* user message, so each of them stays byte-identical as history grows.
+    This pins both halves of the guarantee against the live API:
 
-    (a) Structural — the `container_upload` appears only on the first user message, and that message
-        is identical across every request, so the upload never moves and never perturbs the prefix.
+    (a) Structural — every user message carries the `container_upload`, and the first one is
+        identical across every request, so the upload never moves and never perturbs the prefix.
     (b) Real reuse — turn 2 reads back at least everything turn 1 wrote
         (`cache_read >= turn-1 cache_write`). This is the property `cache_read > 0` could not prove:
         a moving injection point would shrink the reused prefix below what turn 1 cached.
@@ -210,7 +271,7 @@ async def test_anthropic_code_execution_files_cache_prefix_stable(
     Parametrized over the per-block (`anthropic_cache_messages`) and automatic (`anthropic_cache`)
     cache-control paths and across models, whose breakpoint placement differs.
     """
-    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
     uploaded = await client.beta.files.upload(
         file=('data.csv', _CSV_BYTES, 'text/csv'),
         betas=['files-api-2025-04-14'],
@@ -241,25 +302,22 @@ async def test_anthropic_code_execution_files_cache_prefix_stable(
         await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
         await client.close()
 
-    messages_requests = [r for r in vcr.requests if '/v1/messages' in r.uri]
-    assert len(messages_requests) == 2
-    bodies = [json.loads(r.body) for r in messages_requests]
+    bodies = request_capture.bodies('/v1/messages')
+    assert len(bodies) == 2
 
-    # (a) Prefix stability: the upload lives only on the first user message, and that message's
-    #     content is identical across both requests, so it never moves as history grows. The
-    #     `cache_control` breakpoint marker is stripped before comparing — in `messages` mode it
+    # (a) Prefix stability: every user message carries the upload, so no message gains or loses one
+    #     as history grows, and the first user message's content is identical across both requests.
+    #     The `cache_control` breakpoint marker is stripped before comparing — in `messages` mode it
     #     lands on the first user message in turn 1 (when it is also the last) but not in turn 2,
     #     which is orthogonal to stability: the cached *content* (text + upload) is what must not move.
     first_user_contents: list[Any] = []
     for body in bodies:
-        first_user_index = next(i for i, m in enumerate(body['messages']) if m['role'] == 'user')
+        user_indices = [i for i, m in enumerate(body['messages']) if m['role'] == 'user']
         upload_message_indices = [
-            i
-            for i, m in enumerate(body['messages'])
-            if m['role'] == 'user' and any(b['type'] == 'container_upload' for b in m['content'])
+            i for i in user_indices if any(b['type'] == 'container_upload' for b in body['messages'][i]['content'])
         ]
-        assert upload_message_indices == [first_user_index]
-        content = body['messages'][first_user_index]['content']
+        assert upload_message_indices == user_indices
+        content = body['messages'][user_indices[0]]['content']
         first_user_contents.append([{k: v for k, v in block.items() if k != 'cache_control'} for block in content])
     assert first_user_contents[0] == first_user_contents[1]
 

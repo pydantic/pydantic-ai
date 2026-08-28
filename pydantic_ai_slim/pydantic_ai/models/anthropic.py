@@ -2198,17 +2198,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
                 for file_id in pending_container_uploads
             ]
-            # Inject the uploads into the *first* user message, not the last. The blocks are
-            # recomputed from the static `CodeExecutionTool.files` config on every request, so
-            # pinning them to the first message keeps that message byte-identical as history grows,
-            # which keeps the cacheable prefix stable across steps. Injecting at the tail instead
-            # would move the insertion point every turn and silently bust the prompt cache.
+            # Append the uploads to *every* user message. Two constraints pin that down, and no
+            # fixed set of positions satisfies both:
+            #
+            # - The server only materializes a `container_upload` into the container from the
+            #   *last* user message. A block sitting on an earlier turn is inert, so a history with
+            #   more than one user turn and no container to reuse comes up without the file, and the
+            #   model reports it missing (https://github.com/pydantic/pydantic-ai/issues/7775).
+            # - The blocks are recomputed from the static `CodeExecutionTool.files` config on every
+            #   request, so a message that carries them must carry them on every request too.
+            #   Tracking the tail would move the insertion point as history grows and silently bust
+            #   the cacheable prefix. "First and last" fails the same way: the message that was last
+            #   on one step loses its block on the next.
+            #
+            # Appending everywhere is the only placement that keeps each message byte-identical
+            # across steps *and* always covers the last one. Cost is ~6 input tokens per block,
+            # growing with user turns rather than staying constant, though every block but the one
+            # on the last message falls inside the prefix a previous step already cached. The file
+            # still materializes exactly once. The synthetic anchor turns `_anchor_system_messages`
+            # inserts are carried along too, which is harmless and keeps them prefix-stable.
             for msg in anthropic_messages:
                 if msg['role'] == 'user':
                     existing = msg['content']
                     assert not isinstance(existing, str)
                     msg['content'] = [*existing, *upload_blocks]
-                    break
 
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)

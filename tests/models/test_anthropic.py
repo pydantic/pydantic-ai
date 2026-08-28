@@ -895,10 +895,13 @@ async def test_anthropic_code_execution_files_with_message_cache(allow_model_req
     )
 
 
-async def test_anthropic_code_execution_files_append_to_first_user_message(allow_model_requests: None):
-    """Pins the internal `_map_message` placement: uploads attach to the *first* user message (keeping the cacheable prefix byte-identical as history grows), not a later one, and none are added when history has no user message.
+async def test_anthropic_code_execution_files_append_to_every_user_message(allow_model_requests: None):
+    """Pins the internal `_map_message` placement: uploads attach to *every* user message (the last one is the only one the server materializes from, and covering all of them keeps each byte-identical as history grows), and none are added when history has no user message.
 
-    Not a VCR test: the first-vs-later placement and the no-user-message branch can't be reached through a single agent run, so it taps `_map_message` directly.
+    Not a VCR test: the cassette matchers ignore the request body, so a placement regression replays
+    green against the recordings in `test_code_execution_files_vcr.py` — asserting the mapped
+    messages directly is what catches it. The no-user-message branch is also unreachable through an
+    agent run, which needs a prompt.
     """
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
@@ -929,7 +932,13 @@ async def test_anthropic_code_execution_files_append_to_first_user_message(allow
                 ],
             },
             {'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]},
-            {'role': 'user', 'content': [{'text': 'And now summarize it.', 'type': 'text'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'And now summarize it.', 'type': 'text'},
+                    {'file_id': 'file_anthropic', 'type': 'container_upload'},
+                ],
+            },
         ]
     )
 

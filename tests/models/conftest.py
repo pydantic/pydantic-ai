@@ -1,74 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-import httpx2
 import pytest
-from pydantic import TypeAdapter
+
+from ..conftest import RequestCapture
 
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from tests.cassette_utils import CassetteContext
-
-# `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
-_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
-
-
-@dataclass
-class RequestCapture:
-    """Outbound request bodies, as the live code built them.
-
-    A cassette records what was sent when it was recorded, and the default matchers ignore the body,
-    so a request whose payload has since drifted still replays against its recording. httpx event
-    hooks run inside `AsyncClient.send`, above the transport VCR patches, so they fire on replay too
-    and see what is actually going out. Pass `capture.client` as a provider's `http_client` and
-    snapshot a projection of `capture.body(...)` to pin the fields a test's claim rests on.
-    """
-
-    paths: list[str] = field(default_factory=list[str])
-    raw_bodies: list[bytes] = field(default_factory=list[bytes])
-    headers: list[httpx2.Headers] = field(default_factory=list[httpx2.Headers])
-    client: httpx2.AsyncClient = field(init=False)
-
-    def __post_init__(self) -> None:
-        self.client = httpx2.AsyncClient(event_hooks={'request': [self._record]})
-
-    async def _record(self, request: httpx2.Request) -> None:
-        # Only the raw bytes are kept here: the hook runs on every request of every test that asks
-        # for a capture, while a test typically inspects one of them. Parsing happens in `body`.
-        self.paths.append(request.url.path)
-        self.raw_bodies.append(request.read())
-        # The cassette serializer strips `anthropic-*` headers, so the wire is the only place a test
-        # can see beta gating.
-        self.headers.append(request.headers)
-
-    def bodies(self, path_suffix: str = '') -> list[dict[str, Any]]:
-        """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
-        return [
-            _REQUEST_BODY_ADAPTER.validate_json(raw)
-            for path, raw in zip(self.paths, self.raw_bodies)
-            if path.endswith(path_suffix)
-        ]
-
-    def body(self, path_suffix: str = '', index: int = 0) -> dict[str, Any]:
-        """The `index`th captured body whose URL path ends with `path_suffix`, parsed on demand."""
-        matches = self.bodies(path_suffix)
-        assert matches, f'no captured request matching {path_suffix!r}; saw {self.paths}'
-        return matches[index]
-
-
-@pytest.fixture
-async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
-    capture = RequestCapture()
-    yield capture
-    # Built directly rather than through `create_async_httpx2_client`, so the autouse
-    # `close_httpx_clients` tracker never sees it and its pool would otherwise leak per test.
-    await capture.client.aclose()
 
 
 class AnthropicModelFactory(Protocol):
