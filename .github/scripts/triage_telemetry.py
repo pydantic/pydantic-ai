@@ -4,7 +4,7 @@
 Every routing decision -- including a decision to do nothing -- is recorded as
 one Logfire event so skipped work stays auditable and maintainer corrections
 can be joined back to the run that made the original call. Emission is
-best-effort: without ``LOGFIRE_TRIAGE_WRITE_TOKEN`` or the ``logfire`` package
+best-effort: without `LOGFIRE_TRIAGE_WRITE_TOKEN` or the `logfire` package
 every helper is a no-op, and an emission failure never breaks the GitHub write
 path it rides along with.
 """

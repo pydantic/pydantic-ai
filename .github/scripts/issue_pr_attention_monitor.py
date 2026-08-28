@@ -1505,7 +1505,7 @@ class OverrideRecord(TypedDict):
 def _bot_assignment_origin(prior: Sequence[dict[str, Any]], login: str) -> bool | None:
     """Whether the removed assignment was made by automation.
 
-    ``None`` when the matching `assigned` event predates the fetched history, so
+    `None` when the matching `assigned` event predates the fetched history, so
     a human undoing another human's assignment is never counted as a correction.
     """
     key = login.casefold()
