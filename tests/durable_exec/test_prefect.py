@@ -3629,7 +3629,7 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
             await self.record(ctx, 'same')
             await self.record(ctx, 'same')
 
-        @durable_operation
+        @durable_operation('record')
         async def record(self, ctx: RunContext[object], value: str) -> None:
             nonlocal calls
             calls += 1

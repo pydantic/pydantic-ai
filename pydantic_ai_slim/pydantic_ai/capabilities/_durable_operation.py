@@ -32,21 +32,25 @@ def set_durable_operation_marker(obj: object, marker: DurableOperationMarker) ->
     setattr(obj, _MARKER_ATTRIBUTE, marker)
 
 
-def operation_name(function: Callable[..., Any], name: str | None) -> str:
-    return name or function.__name__.removeprefix('_')
-
-
-def base_hook_durable_operation(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
+def base_hook_durable_operation(
+    name: str,
+) -> Callable[[Callable[..., Awaitable[ResultT]]], Callable[..., Awaitable[ResultT]]]:
     """Mark a base hook so every override inherits durable execution automatically."""
-    set_durable_operation_marker(
-        function,
-        DurableOperationMarker(
-            name=operation_name(function, None),
-            function=cast(Callable[..., Awaitable[Any]], function),
-            base_hook=True,
-        ),
-    )
-    return function
+    if not name:
+        raise ValueError('`base_hook_durable_operation` name must not be empty')
+
+    def decorate(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
+        set_durable_operation_marker(
+            function,
+            DurableOperationMarker(
+                name=name,
+                function=cast(Callable[..., Awaitable[Any]], function),
+                base_hook=True,
+            ),
+        )
+        return function
+
+    return decorate
 
 
 async def invoke_durable_operation(

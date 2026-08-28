@@ -1130,15 +1130,23 @@ class RealtimeSession:
                     messages.pop(index)
                     return
 
-    async def send_audio(self, data: bytes) -> None:
-        """Stream a chunk of mono PCM16 audio to the model.
+    async def send_audio(self, data: bytes | AsyncIterable[bytes]) -> None:
+        """Stream mono PCM16 audio to the model: a single chunk, or an async iterable of chunks.
 
-        Resample it to
+        Given an async iterable — a microphone stream, a WebSocket receive loop — each chunk is
+        forwarded as it arrives and the call returns when the iterable is exhausted, so a whole
+        capture loop can be one task: `asyncio.create_task(session.send_audio(microphone))`.
+
+        Resample the audio to
         [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
         first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
         """
         self._require_media_ownership('send_audio')
+        if isinstance(data, AsyncIterable):
+            async for chunk in data:
+                await self.send_audio(chunk)
+            return
         user_turn_was_active = self._user_turn_active
         if not user_turn_was_active:
             # Audio starting is the earliest sign of a user turn, and the only one on a provider that
