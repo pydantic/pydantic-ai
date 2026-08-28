@@ -8,7 +8,9 @@ playback and captions. Use the high-level session views for media and transcript
 
 You send and receive raw audio samples; there is no container or codec in the live path.
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] accepts raw, signed 16-bit
-little-endian mono PCM. [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+little-endian mono PCM — a single chunk, or an async iterable of chunks (a microphone stream, a
+WebSocket receive loop) that it forwards until the iterable ends, so a whole capture loop can be
+one task. [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
 returns the same format. Capture at
 [`session.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 and play at
