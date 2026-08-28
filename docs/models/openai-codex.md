@@ -28,8 +28,6 @@ The `'openai-codex:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mo
 Applications (including multi-tenant ones) own login and storage themselves: obtain credentials once per user (see [below](#build-your-own-login)), persist them your way, and inject them per user:
 
 ```python
-from pydantic import SecretStr
-
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import (
@@ -38,20 +36,20 @@ from pydantic_ai.providers.openai_codex import (
 )
 
 
+async def load_credentials(user_id: str) -> OpenAICodexCredentials:
+    ...  # read from your per-user store (obtained once via the login flow below)
+
+
 async def save_credentials(credentials: OpenAICodexCredentials) -> None:
     ...  # persist to your per-user store
 
 
-provider = OpenAICodexProvider(
-    credentials=OpenAICodexCredentials(
-        access_token=SecretStr('...'),
-        refresh_token=SecretStr('...'),
-        account_id='...',
-    ),
-    on_credentials_refresh=save_credentials,
-)
-agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
-...
+async def agent_for_user(user_id: str) -> Agent:
+    provider = OpenAICodexProvider(
+        credentials=await load_credentials(user_id),
+        on_credentials_refresh=save_credentials,
+    )
+    return Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
 ```
 
 Tokens are refreshed automatically; rotated credentials are passed to `on_credentials_refresh` so your store stays current (if the callback raises, the in-memory credentials are still updated and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] surfaces). Both it and [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError] subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] treats an unusable grant like any other provider failure and moves on to the next model. One provider instance carries one user's credentials; construct one per user rather than sharing globally. This is a single-process convenience: for stateless multi-replica services, use a [credential source](#multi-replica-credential-coordination) instead.
