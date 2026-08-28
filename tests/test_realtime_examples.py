@@ -33,6 +33,40 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
+    class ScriptedConnection(RealtimeConnection):
+        """Replays an assistant turn and a user barge-in, recording what the session sends back.
+
+        Defined inside the `try_import` block because its base class is one of the guarded imports:
+        at module level it would raise `NameError` in environments without the realtime extras.
+        """
+
+        def __init__(self, *, chunk: bytes, wait_for_playback: asyncio.Event | None = None) -> None:
+            self._chunk = chunk
+            self._wait_for_playback = wait_for_playback
+            self.sent: list[RealtimeInput] = []
+            self._response_cancelled = asyncio.Event()
+
+        async def send(self, content: RealtimeInput) -> None:
+            self.sent.append(content)
+            if isinstance(content, CancelResponse):
+                self._response_cancelled.set()
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield AudioDelta(data=self._chunk)
+            if self._wait_for_playback is not None:
+                # Only report the user speaking once the speaker finished the chunk, so the turn was
+                # heard in full by the time the example handles the speech-start event.
+                await self._wait_for_playback.wait()
+                yield RealtimeInputSpeechStartEvent()
+            else:
+                yield RealtimeInputSpeechStartEvent()
+                # A real provider only speaks again after the barge-in cancelled the response; the
+                # reply must reach the freshly subscribed playback task, not the cancelled one.
+                await self._response_cancelled.wait()
+                yield AudioDelta(data=FAST_CHUNK)
+            yield ResponseDone()
+
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
 ]
@@ -90,36 +124,6 @@ class FakeSpeaker:
             await asyncio.Event().wait()  # cancelled when barge-in replaces the playback task
         self.written.append(data)
         self.played.set()
-
-
-class ScriptedConnection(RealtimeConnection):
-    """Replays an assistant turn and a user barge-in, recording what the session sends back."""
-
-    def __init__(self, *, chunk: bytes, wait_for_playback: asyncio.Event | None = None) -> None:
-        self._chunk = chunk
-        self._wait_for_playback = wait_for_playback
-        self.sent: list[RealtimeInput] = []
-        self._response_cancelled = asyncio.Event()
-
-    async def send(self, content: RealtimeInput) -> None:
-        self.sent.append(content)
-        if isinstance(content, CancelResponse):
-            self._response_cancelled.set()
-
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        yield AudioDelta(data=self._chunk)
-        if self._wait_for_playback is not None:
-            # Only report the user speaking once the speaker finished the chunk, so the turn was
-            # heard in full by the time the example handles the speech-start event.
-            await self._wait_for_playback.wait()
-            yield RealtimeInputSpeechStartEvent()
-        else:
-            yield RealtimeInputSpeechStartEvent()
-            # A real provider only speaks again after the barge-in cancelled the response; the
-            # reply must reach the freshly subscribed playback task, not the cancelled one.
-            await self._response_cancelled.wait()
-            yield AudioDelta(data=FAST_CHUNK)
-        yield ResponseDone()
 
 
 def _fake_audio_io(monkeypatch: pytest.MonkeyPatch) -> FakeSpeaker:
