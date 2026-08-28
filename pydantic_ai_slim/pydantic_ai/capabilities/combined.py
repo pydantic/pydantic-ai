@@ -895,7 +895,9 @@ def bind_capabilities_tier(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return _replace_capability_context(ctx, capability=capability, capability_active=_capability_active(capability, ctx))
+    return _replace_capability_context(
+        ctx, capability=capability, capability_active=_capability_active(capability, ctx)
+    )
 
 
 def _ctx_for_active_cap(
