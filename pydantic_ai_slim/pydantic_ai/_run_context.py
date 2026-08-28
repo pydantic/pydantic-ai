@@ -642,6 +642,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # decision event mutate the dispatched object, and the emitter must be able to read those
         # decisions off its own reference as well as off the returned one.
         self._emit_event(event)
+        # `dispatch_event_inline` installs its stream-deduplication marker before its first
+        # `await`, so no event-loop yield separates the buffer append above from the marker.
+        # An `await` inserted between the two would open a window for a concurrent stream
+        # consumer to drain the buffered event and dispatch it a second time.
         await dispatch_event_inline(self, event)
         return event
 

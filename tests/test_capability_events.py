@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pydantic
@@ -12,9 +12,20 @@ import pytest
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext, UnknownCapabilityEvent
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessEventStream, WrapperCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart, ToolReturnPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._inline_snapshot import snapshot
 
@@ -305,6 +316,75 @@ async def test_multiple_instances_get_distinct_run_ids(
     """
     events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=capabilities))
     assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == expected_ids
+
+
+async def _sandbox_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+    if not _has_tool_return(messages):
+        yield {0: DeltaToolCall(name='run_code', json_args='{}', tool_call_id='call_1')}
+    else:
+        yield 'done'
+
+
+@dataclass
+class _SandboxToolset(WrapperToolset[Any]):
+    """Minimal model of a sandbox wrapper (the code-mode pattern): the wrapped tools are hidden
+    behind a single proxy tool and executed through the wrapper's own nested `ToolManager`."""
+
+    hidden: dict[str, ToolsetTool[Any]] = field(default_factory=dict[str, ToolsetTool[Any]])
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        self.hidden = await super().get_tools(ctx)
+        template = self.hidden['read_file']
+        return {'run_code': replace(template, tool_def=replace(template.tool_def, name='run_code'))}
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        parent_tm = ctx.tool_manager
+        assert parent_tm is not None
+        nested_tm = ToolManager(
+            toolset=self.wrapped, root_capability=parent_tm.root_capability, ctx=ctx, tools=self.hidden
+        )
+        return await nested_tm.handle_call(
+            ToolCallPart(tool_name='read_file', args={}, tool_call_id=f'{ctx.tool_call_id}__1'),
+            wrap_validation_errors=False,
+        )
+
+
+@dataclass
+class _SandboxCapability(AbstractCapability[Any]):
+    def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any]:
+        return _SandboxToolset(toolset)
+
+
+async def test_capability_tool_emission_through_nested_tool_manager():
+    """A capability tool hidden behind a sandbox proxy and dispatched through a nested
+    `ToolManager` (the code-mode pattern) keeps capability attribution and live delivery.
+
+    Pins that a tool's execution context points at the manager executing the call: resolving
+    the owning capability through the model-facing manager would fail, since the sandboxed
+    tool isn't among the model-visible tools.
+    """
+    capability = Capability[Any](id='files')
+
+    @capability.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit(FileReadEvent(path='tool.txt'))
+        return 'ok'
+
+    agent = Agent(
+        FunctionModel(stream_function=_sandbox_then_text),
+        capabilities=[capability, _SandboxCapability()],
+    )
+    events = await _collect(agent)
+
+    emitted = [event for event in events if isinstance(event, FileReadEvent)]
+    assert emitted == [
+        FileReadEvent(path='tool.txt', capability_id='files', tool_call_id='call_1__1', tool_name='read_file')
+    ]
+    # Live delivery: the event surfaces before the sandbox proxy's own result event.
+    result_index = next(i for i, event in enumerate(events) if isinstance(event, FunctionToolResultEvent))
+    assert events.index(emitted[0]) < result_index
 
 
 async def test_app_tool_cannot_emit_capability_event():
