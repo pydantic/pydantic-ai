@@ -44,6 +44,8 @@ _COMMUNITY_MIN_INTERACTIONS = 3
 _FILE_LIMIT = 100
 _ASSIGNEE_LIMIT = 10
 _MAX_ITEM_NUMBER = 2_147_483_647
+# Must match the `last:` on both `timelineItems` connections below.
+_UNASSIGNED_EVENT_PAGE = 10
 _ITEM_QUERY = """
 query RoutingItem($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -238,7 +240,8 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     timeline = item.get('timelineItems')
     if not isinstance(timeline, Mapping) or not isinstance(cast(Mapping[str, object], timeline).get('nodes'), list):
         return True
-    for node in _connection_nodes(cast(Mapping[str, object], timeline)):
+    nodes = _connection_nodes(cast(Mapping[str, object], timeline))
+    for node in nodes:
         # A bot removing an assignee (sweeps, placeholder swaps) is cleanup,
         # not a decision. GraphQL's `__typename` marks app accounts as `Bot`;
         # a missing actor (deleted account) counts as human.
@@ -247,6 +250,13 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
         removed_at = _graphql_time(_nested_str(node, 'createdAt'))
         if removed_at is None or now - removed_at < window:
             return True
+    # A full page whose oldest event is still inside the window may hide an
+    # older human removal behind bot cleanup: truncation fails toward backing
+    # off, like everywhere else in this stack. `nodes[0]` is the oldest
+    # fetched (`last:` pages are chronological) and must match `_ITEM_QUERY`.
+    if len(nodes) == _UNASSIGNED_EVENT_PAGE:
+        oldest = _graphql_time(_nested_str(nodes[0], 'createdAt'))
+        return oldest is None or now - oldest < window
     return False
 
 
