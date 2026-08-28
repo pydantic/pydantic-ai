@@ -19,7 +19,6 @@ import json
 import os
 import sys
 import urllib.error
-import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -63,16 +62,17 @@ def _candidate_numbers(client: attention.GitHubClient, repo: str, *, now: dt.dat
     cutoff = (now - dt.timedelta(days=_IGNORED_DAYS)).date().isoformat()
     negatives = ' '.join(f'-label:"{label}"' for label in _EXCLUDED_LABELS)
     query = f'repo:{repo} is:open is:issue no:assignee created:<{cutoff} interactions:>{_MIN_INTERACTIONS} {negatives}'
-    encoded = urllib.parse.urlencode({'q': query, 'sort': 'interactions', 'order': 'desc', 'per_page': 30})
-    result = cast(dict[str, Any], client.get(f'/search/issues?{encoded}'))
-    items = result.get('items')
-    if not isinstance(items, list):
-        raise RuntimeError('GitHub search returned no items list')
-    return [int(cast(Mapping[str, Any], item)['number']) for item in cast(list[Any], items)]
+    # Rotate through the eligible pool week by week: a non-genuine verdict
+    # leaves no marker on the issue, so a fixed page would resubmit the same
+    # judged candidates every run and starve everything behind them.
+    slot = int(now.timestamp()) // int(dt.timedelta(days=7).total_seconds())
+    matches = attention.rotated_search(client, query, order='desc', limit=30, slot=slot)
+    return [int(match['number']) for match in matches]
 
 
 def _thread(client: attention.GitHubClient, repo: str, number: int) -> list[dict[str, object]]:
-    comments = client.last_pages(f'/repos/{repo}/issues/{number}/comments')
+    # Two pages: the final API page alone can hold a single comment.
+    comments = client.last_pages(f'/repos/{repo}/issues/{number}/comments', count=2)
     thread: list[dict[str, object]] = []
     for comment in comments[-_COMMENT_LIMIT:]:
         author = cast(Mapping[str, Any], comment.get('user') or {})
@@ -122,8 +122,8 @@ def build_snapshot(client: attention.GitHubClient, repo: str, *, now: dt.datetim
         if len(candidates) == _CANDIDATE_LIMIT:
             break
     snapshot: dict[str, object] = {'generated_at': now.isoformat(), 'candidates': candidates}
-    # Longest threads sort first, so shedding from the end keeps the sweep
-    # alive on a fat backlog instead of failing every week on the same limit.
+    # Shedding from the end keeps the sweep alive on a fat backlog instead of
+    # failing every week on the same limit; the dropped tail rotates back in.
     while candidates and len(json.dumps(snapshot, indent=2, ensure_ascii=False).encode()) > _SNAPSHOT_LIMIT:
         candidates.pop()
     return snapshot

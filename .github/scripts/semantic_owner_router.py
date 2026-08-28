@@ -3,9 +3,9 @@
 
 Issues enter routing only once triage has applied a priority label
 (`p:1-highest` or `p:2-high`); everything else stays unassigned, on the
-triage automation's plate. The one exception is community pressure: an item
-ignored for two weeks while people kept commenting or reacting may also be
-assigned.
+triage automation's plate. The one exception is community pressure: the
+weekly community-demand sweep judges old-but-active unassigned issues and
+applies `community-backed`, which also opens the gate.
 """
 
 from __future__ import annotations

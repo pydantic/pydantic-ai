@@ -45,7 +45,14 @@ class FakeClient(community_demand.attention.GitHubClient):
     def get(self, path: str) -> Any:
         if path.startswith('/search/issues'):
             self.queries.append(path)
-            return {'items': [{'number': number} for number in self.search]}
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+            per_page = int(query.get('per_page', ['30'])[0])
+            page = int(query.get('page', ['1'])[0])
+            start = (page - 1) * per_page
+            return {
+                'total_count': len(self.search),
+                'items': [{'number': number} for number in self.search[start : start + per_page]],
+            }
         if '/labels/' in path:
             return {}
         number = int(path.rsplit('/', 1)[1])
@@ -79,8 +86,7 @@ def test_snapshot_search_excludes_already_decided_issues(tmp_path: Path):
     now = community_demand.dt.datetime.now(community_demand.dt.timezone.utc)
     community_demand.write_snapshot(client, REPO, str(tmp_path / 's.json'), now=now)
 
-    (raw,) = client.queries
-    query = urllib.parse.parse_qs(urllib.parse.urlparse(raw).query)['q'][0]
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(client.queries[-1]).query)['q'][0]
     assert 'no:assignee' in query
     for excluded in ('community-backed', 'p:1-highest', 'p:2-high', 'unplanned', 'duplicate'):
         assert f'-label:"{excluded}"' in query
