@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -44,6 +45,9 @@ class SpanQuery(TypedDict, total=False):
 
     ## Attribute conditions
     has_attributes: dict[str, Any]
+    """Attribute values are compared with equality; a dict or list value also matches an attribute stored as its
+    JSON serialization, since OTel attributes cannot hold nested objects and instrumentation libraries like Logfire
+    store them as JSON strings. A list value also matches an attribute stored as a tuple."""
     has_attribute_keys: list[str]
 
     ## Status conditions
@@ -100,7 +104,7 @@ class SpanNode:
 
     @property
     def duration(self) -> timedelta:
-        """Return the span's duration as a timedelta, or None if start/end not set."""
+        """Return the span's duration as a timedelta."""
         return self.end_timestamp - self.start_timestamp
 
     @property
@@ -252,6 +256,23 @@ class SpanNode:
 
         return self._matches_query(query)
 
+    def _attribute_matches(self, key: str, expected: Any) -> bool:
+        """Check if a span attribute matches an expected value, handling JSON-serialized dicts and lists."""
+        stored = self.attributes.get(key)
+        if stored == expected:
+            return True
+        # OTel attribute values can only be primitives or sequences thereof, so instrumentation
+        # libraries like Logfire store dict and list values as JSON strings.
+        if isinstance(expected, dict | list) and isinstance(stored, str):
+            try:
+                return json.loads(stored) == expected
+            except (json.JSONDecodeError, RecursionError):
+                return False
+        # The OTel SDK stores sequence attribute values as tuples
+        if isinstance(expected, list) and isinstance(stored, tuple):
+            return list(stored) == expected
+        return False
+
     def _matches_query(self, query: SpanQuery) -> bool:  # noqa: C901
         """Check if the span matches the query conditions."""
         # Logical combinations
@@ -278,7 +299,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            self._attribute_matches(key, value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(
@@ -305,7 +326,7 @@ class SpanNode:
         # Children conditions
         if (min_child_count := query.get('min_child_count')) and len(self.children) < min_child_count:
             return False
-        if (max_child_count := query.get('max_child_count')) and len(self.children) > max_child_count:
+        if (max_child_count := query.get('max_child_count')) is not None and len(self.children) > max_child_count:
             return False
         if (some_child_has := query.get('some_child_has')) and not any(
             child._matches_query(some_child_has) for child in self.children
@@ -335,7 +356,9 @@ class SpanNode:
 
         if (min_descendant_count := query.get('min_descendant_count')) and len(descendants()) < min_descendant_count:
             return False
-        if (max_descendant_count := query.get('max_descendant_count')) and len(descendants()) > max_descendant_count:
+        if (max_descendant_count := query.get('max_descendant_count')) is not None and len(
+            descendants()
+        ) > max_descendant_count:
             return False
         if (some_descendant_has := query.get('some_descendant_has')) and not any(
             descendant._matches_query(some_descendant_has) for descendant in pruned_descendants()
@@ -363,7 +386,7 @@ class SpanNode:
 
         if (min_depth := query.get('min_depth')) and len(ancestors()) < min_depth:
             return False
-        if (max_depth := query.get('max_depth')) and len(ancestors()) > max_depth:
+        if (max_depth := query.get('max_depth')) is not None and len(ancestors()) > max_depth:
             return False
         if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
             ancestor._matches_query(some_ancestor_has) for ancestor in pruned_ancestors()

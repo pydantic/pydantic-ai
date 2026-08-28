@@ -44,7 +44,7 @@ agent = Agent(model)
 
 ## Thinking mode
 
-Z.AI's `glm-5.2`, `glm-5.1`, `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. This includes the `glm-4.6v` and `glm-4.5v` vision models. Configure this through the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
+Z.AI's `glm-5.3`, `glm-5.2`, `glm-5.1`, `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. This includes the `glm-4.6v` and `glm-4.5v` vision models. Configure this through the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
 
 ```python
 from pydantic_ai import Agent
@@ -57,7 +57,7 @@ agent = Agent(
 ...
 ```
 
-`thinking=True` enables thinking and `thinking=False` disables it. On GLM-5.2, an explicit effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`) is forwarded to Z.AI as `reasoning_effort`; on other GLM models, which don't expose effort granularity, the effort levels all collapse to enabled. Omit the field to use each model's default behavior.
+`thinking=True` enables thinking and `thinking=False` disables it (except on GLM-5.3, which always reasons and ignores `thinking=False`). On GLM-5.2 and GLM-5.3, an explicit effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`) is forwarded to Z.AI as `reasoning_effort`; GLM-5.3 only accepts `low`/`high`/`max`, so the other levels map to the nearest one (`minimal` to `low`, `medium` to `high`, and `xhigh` to `max`). On other GLM models, which don't expose effort granularity, the effort levels all collapse to enabled. Omit the field to use each model's default behavior.
 
 ### Preserved thinking
 
@@ -81,10 +81,10 @@ See the [Z.AI thinking mode documentation](https://docs.z.ai/guides/capabilities
 
 ## `provider` argument
 
-You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the `provider` argument. In the simplest case, pass [`ZaiProvider`][pydantic_ai.providers.zai.ZaiProvider] with just an API key. If you also want to customize the underlying `httpx.AsyncClient`, pass it when constructing the provider:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the `provider` argument. In the simplest case, pass [`ZaiProvider`][pydantic_ai.providers.zai.ZaiProvider] with just an API key. If you also want to customize the underlying `httpx2.AsyncClient`, pass it when constructing the provider:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModel

@@ -7,6 +7,8 @@ the Thinking capability, and end-to-end integration via FunctionModel.
 # pyright: reportPrivateUsage=false, reportArgumentType=false
 from __future__ import annotations
 
+import re
+from dataclasses import replace
 from typing import Any, Literal
 
 import pytest
@@ -14,6 +16,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import CAPABILITY_TYPES, Thinking
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -25,7 +28,7 @@ from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
@@ -34,8 +37,10 @@ from .conftest import try_import
 
 with try_import() as anthropic_imports:
     from anthropic import omit as anthropic_omit
+    from anthropic.types.beta import BetaThinkingConfigParam
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as openai_imports:
     from openai import omit as openai_omit
@@ -348,6 +353,36 @@ class TestOpenAIChatThinkingTranslation:
         result = OpenAIChatModel._translate_thinking(model, settings, params)
         assert result == 'none'
 
+    def test_thinking_minimal_maps_to_low_for_gpt_5_6(self):
+        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 does not support."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'low'
+
+    def test_thinking_minimal_passes_through_when_supported(self):
+        """Not a VCR test: pins the capability-on side using a model that supports minimal effort."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5'))
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'minimal'
+
+    def test_thinking_minimal_passes_through_with_sparse_profile(self):
+        """Not a VCR test: pins the default for sparse OpenAI-compatible profiles."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=OpenAIModelProfile())
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'minimal'
+
     def test_thinking_none_returns_omit(self):
         params = ModelRequestParameters(thinking=None)
         settings: ModelSettings = {}
@@ -363,6 +398,18 @@ class TestOpenAIChatThinkingTranslation:
         model = FunctionModel(_echo)
         result = OpenAIChatModel._translate_thinking(model, settings, params)
         assert result == 'low'
+
+    def test_provider_specific_minimal_is_not_clamped(self):
+        params = ModelRequestParameters(thinking=True)
+        settings = {'openai_reasoning_effort': 'minimal'}
+        model = FunctionModel(
+            _echo,
+            profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=False),
+        )
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'minimal'
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -396,6 +443,36 @@ class TestOpenAIResponsesThinkingTranslation:
         # which gets set as reasoning_effort. Then `if reasoning_effort:` is truthy for 'none'.
         assert result == snapshot({'effort': 'none'})
 
+    def test_thinking_minimal_maps_to_low_for_gpt_5_6(self):
+        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 does not support."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+    def test_thinking_minimal_passes_through_when_supported(self):
+        """Not a VCR test: pins the capability-on side using a model that supports minimal effort."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5'))
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'minimal'})
+
+    def test_thinking_minimal_passes_through_with_sparse_profile(self):
+        """Not a VCR test: pins the default for sparse OpenAI-compatible profiles."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=OpenAIModelProfile())
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'minimal'})
+
     def test_provider_specific_takes_precedence(self):
         params = ModelRequestParameters(thinking=True)
         settings = {'openai_reasoning_effort': 'high'}
@@ -403,6 +480,18 @@ class TestOpenAIResponsesThinkingTranslation:
         model = FunctionModel(_echo)
         result = OpenAIResponsesModel._translate_thinking(model, settings, params)
         assert result == snapshot({'effort': 'high'})
+
+    def test_provider_specific_minimal_is_not_clamped(self):
+        params = ModelRequestParameters(thinking=True)
+        settings = {'openai_reasoning_effort': 'minimal'}
+        model = FunctionModel(
+            _echo,
+            profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=False),
+        )
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'minimal'})
 
 
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
@@ -431,6 +520,18 @@ class TestGoogleThinkingTranslation:
             ),
         )
 
+    @pytest.fixture
+    def gemini_3_no_minimal_model(self):
+        """A Gemini 3+ model without `minimal` thinking-level support (e.g. `gemini-3.7-flash`)."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_supports_minimal_thinking_level=False,
+            ),
+        )
+
     def test_thinking_true_gemini_3(self, gemini_3_model: FunctionModel):
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
@@ -448,6 +549,19 @@ class TestGoogleThinkingTranslation:
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(gemini_3_model, settings, params)
         assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
+
+    def test_thinking_minimal_gemini_3(self, gemini_3_model: FunctionModel):
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(gemini_3_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'MINIMAL'})
+
+    def test_thinking_minimal_maps_to_low_when_unsupported(self, gemini_3_no_minimal_model: FunctionModel):
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(gemini_3_no_minimal_model, settings, params)
+        assert result is not None
+        assert result.get('thinking_level') == 'LOW'
 
     def test_thinking_true_gemini_25(self, gemini_25_model: FunctionModel):
         params = ModelRequestParameters(thinking=True)
@@ -472,6 +586,12 @@ class TestGoogleThinkingTranslation:
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(gemini_3_model, settings, params)
         assert result == snapshot({'thinking_level': 'MINIMAL'})
+
+    def test_thinking_false_maps_to_low_when_minimal_unsupported(self, gemini_3_no_minimal_model: FunctionModel):
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(gemini_3_no_minimal_model, settings, params)
+        assert result == snapshot({'thinking_level': 'LOW'})
 
     def test_thinking_false_gemini_25(self, gemini_25_model: FunctionModel):
         """thinking=False on Gemini 2.5 uses thinking_budget=0."""
@@ -540,33 +660,123 @@ class TestGroqThinkingTranslation:
         assert result == 'raw'
 
 
+def _thinking_settings(anthropic_thinking: BetaThinkingConfigParam | None) -> ModelSettings:
+    """Provider-specific thinking when a config is given, unified `thinking='high'` otherwise.
+
+    The settings are built here rather than in the `parametrize` decorators because
+    `AnthropicModelSettings` is imported behind `try_import`, and a decorator argument is evaluated
+    at collection time — before the class's skip mark can spare a shard that lacks the SDK.
+    """
+    if anthropic_thinking:
+        return AnthropicModelSettings(anthropic_thinking=anthropic_thinking)
+    return ModelSettings(thinking='high')
+
+
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-class TestAnthropicUnifiedThinkingConflict:
-    """Test that unified thinking triggers the output tools conflict path in prepare_request."""
+class TestAnthropicThinkingOutputToolsConflict:
+    """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
+    thinking but accepts alongside adaptive thinking, so only the former switches the output mode.
 
-    def test_unified_thinking_with_output_tools_auto_mode(self):
-        """thinking='high' (unified) + output tools + auto mode -> switches to native."""
-        model = AnthropicModel.__new__(AnthropicModel)
-        model._profile = AnthropicModelProfile(
-            supports_thinking=True,
-            supports_json_schema_output=True,
-            anthropic_supports_adaptive_thinking=True,
-        )
-        model._settings = None
+    The exception is a model that rejects forcing outright (`claude-fable-5`, `claude-mythos-5`):
+    there, Tool Output could only fall back to a soft `tool_choice='auto'` the model may ignore, so
+    adaptive thinking keeps switching away from it too.
 
-        output_tool = ToolDefinition(name='output', description='', parameters_json_schema={}, kind='output')
-        output_object = OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}})
-        params = ModelRequestParameters(
-            output_tools=[output_tool],
-            output_object=output_object,
+    These are pre-request guards, so no request is ever made and there is nothing to record. Real
+    model names are used so the shipped profile flags — not hand-built ones — decide each case.
+    """
+
+    @pytest.fixture
+    def output_tool_params(self) -> ModelRequestParameters:
+        return ModelRequestParameters(
+            output_tools=[ToolDefinition(name='output', description='', parameters_json_schema={}, kind='output')],
+            output_object=OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}}),
             output_mode='auto',
         )
-        settings = ModelSettings(thinking='high')
 
-        _, resolved_params = model.prepare_request(settings, params)
-        # Should have switched from auto to native (since supports_json_schema_output=True)
-        assert resolved_params.output_mode == 'native'
-        assert resolved_params.thinking == 'high'
+    @pytest.mark.parametrize(
+        'model_name,anthropic_thinking,expected_output_mode',
+        [
+            pytest.param(
+                'claude-opus-4-6',
+                None,
+                'tool',
+                id='unified_thinking_on_adaptive_profile_keeps_tool_output',
+            ),
+            pytest.param(
+                'claude-sonnet-4-5',
+                None,
+                'native',
+                id='unified_thinking_on_non_adaptive_profile_switches_to_native',
+            ),
+            pytest.param(
+                'claude-fable-5',
+                None,
+                'native',
+                id='adaptive_profile_that_cannot_force_switches_to_native',
+            ),
+            pytest.param(
+                'claude-opus-4-6',
+                {'type': 'adaptive'},
+                'tool',
+                id='explicit_adaptive_keeps_tool_output',
+            ),
+            pytest.param(
+                'claude-opus-4-6',
+                {'type': 'enabled', 'budget_tokens': 1024},
+                'native',
+                id='explicit_extended_thinking_switches_to_native',
+            ),
+        ],
+    )
+    def test_auto_output_mode(
+        self,
+        anthropic_api_key: str,
+        output_tool_params: ModelRequestParameters,
+        model_name: str,
+        anthropic_thinking: BetaThinkingConfigParam | None,
+        expected_output_mode: str,
+    ):
+        model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+
+        _, resolved_params = model.prepare_request(_thinking_settings(anthropic_thinking), output_tool_params)
+
+        assert resolved_params.output_mode == expected_output_mode
+
+    @pytest.mark.parametrize(
+        'model_name,anthropic_thinking,expected_message',
+        [
+            pytest.param(
+                'claude-fable-5',
+                None,
+                "'claude-fable-5' does not support output tools when a thinking setting is configured, "
+                'because it rejects the forced tool choice they require. '
+                'Use `output_type=NativeOutput(...)` instead.',
+                id='adaptive_profile_that_cannot_force_names_the_model',
+            ),
+            pytest.param(
+                'claude-opus-4-6',
+                {'type': 'enabled', 'budget_tokens': 1024},
+                'Anthropic does not support extended thinking and output tools at the same time. '
+                'Use `output_type=NativeOutput(...)` instead. Alternatively, '
+                "`anthropic_thinking={'type': 'adaptive'}` supports output tools.",
+                id='extended_thinking_on_adaptive_profile_suggests_adaptive',
+            ),
+        ],
+    )
+    def test_explicit_tool_output_raises(
+        self,
+        anthropic_api_key: str,
+        output_tool_params: ModelRequestParameters,
+        model_name: str,
+        anthropic_thinking: BetaThinkingConfigParam | None,
+        expected_message: str,
+    ):
+        settings = _thinking_settings(anthropic_thinking)
+        model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+        params = replace(output_tool_params, output_mode='tool', allow_text_output=False)
+
+        with pytest.raises(UserError, match=re.escape(expected_message)):
+            model.prepare_request(settings, params)
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')

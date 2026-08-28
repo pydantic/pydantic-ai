@@ -1,0 +1,77 @@
+name: Weekly maintainer digest
+
+on:
+  schedule:
+    - cron: '23 14 * * 1'
+  workflow_dispatch: {}
+  workflow_call:
+    secrets:
+      PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: weekly-maintainer-digest
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      ${{ (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') &&
+      (github.event.schedule == '23 14 * * 1' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      slack_payload: ${{ steps.digest.outputs.slack_payload }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/issue_pr_attention_monitor.py
+            .github/scripts/triage_models.py
+          sparse-checkout-cone-mode: false
+      - name: Install the typed-boundary dependency
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Build the bounded maintainer digest
+        id: digest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/scripts/issue_pr_attention_monitor.py weekly
+
+  notify:
+    needs: [build]
+    if: ${{ needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Post the weekly maintainer digest to the triage channel
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: ${{ needs.build.outputs.slack_payload }}
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+
+  alert:
+    needs: [build, notify]
+    if: ${{ !cancelled() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Report weekly digest failure privately
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          payload: '{"text":":rotating_light: Weekly maintainer digest failed: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|inspect the run>"}'
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook

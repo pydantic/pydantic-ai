@@ -17,11 +17,13 @@ with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
     from pydantic_ai.models.cohere import CohereModelName
+    from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
+    from pydantic_ai.models.snowflake import SnowflakeModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
@@ -33,7 +35,8 @@ if not imports_successful():  # pragma: lax no cover
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
-    DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = None
+    CrusoeModelName = None
+    DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -66,6 +69,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'bedrock': BedrockModelName,
     'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
+    'crusoe': CrusoeModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
     'google-cloud': GoogleModelName,
@@ -76,6 +80,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
+    'snowflake': SnowflakeModelName,
     'zai': ZaiModelName,
 }
 
@@ -170,12 +175,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/google:gemini-3.1-flash-image-preview',
         'gateway/google:gemini-flash-latest',
         'gateway/google:gemini-flash-lite-latest',
-        # TODO: Re-add these stable aliases when Gateway pricing supports them:
-        # https://github.com/pydantic/pydantic-ai/issues/6807
-        'gateway/google-cloud:gemini-3-pro-image',
-        'gateway/google-cloud:gemini-3.1-flash-image',
-        'gateway/google:gemini-3-pro-image',
-        'gateway/google:gemini-3.1-flash-image',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
         'gateway/groq:meta-llama/llama-guard-4-12b',
@@ -256,16 +255,19 @@ def test_known_model_names():  # pragma: lax no cover
 
     extra_names = ['test']
 
-    generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
+    # Sets, not sorted lists: an id an SDK-lag `Literal` bridges is generated twice once the SDK catches
+    # up and lists it too, and `KnownModelName` is a single flat `Literal`, which cannot repeat a member.
+    # Comparing lists would fail on that duplicate with both difference reports empty.
+    generated_names = set(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
-    known_names = sorted(known_model_names())
+    known_names = set(known_model_names())
 
     if generated_names != known_names:
         errors: list[str] = []
-        missing_names = set(generated_names) - set(known_names)
+        missing_names = generated_names - known_names
         if missing_names:
             errors.append(f'Missing names: {missing_names}')
-        extra_names = set(known_names) - set(generated_names)
+        extra_names = known_names - generated_names
         if extra_names:
             errors.append(f'Extra names: {extra_names}')
         raise AssertionError('\n'.join(errors))

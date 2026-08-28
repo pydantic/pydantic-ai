@@ -6,15 +6,20 @@ to enable FallbackModel and consistent error handling. See #4729.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 import httpx
+import httpx2
 import pytest
+from typing_extensions import assert_never
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.providers.gateway import gateway_provider
 
 from .conftest import try_import
 
@@ -48,8 +53,14 @@ with try_import() as groq_imports:
 
     from .models.test_groq import MockGroq
 
+with try_import() as google_imports:
+    from google.genai import errors as google_errors
+
+    from pydantic_ai.models.google import GoogleModel
+
 with try_import() as bedrock_imports:
     from botocore.exceptions import ClientError
+    from botocore.hooks import HierarchicalEmitter
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -58,7 +69,7 @@ with try_import() as bedrock_imports:
     class _StubBedrockClient:
         def __init__(self, error: ClientError):
             self._error = error
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def converse(self, **_: Any) -> None:  # pragma: lax no cover
             raise self._error
@@ -97,7 +108,7 @@ with try_import() as bedrock_imports:
 
         def __init__(self, error: ClientError):
             self._error = error
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def converse_stream(self, **_: Any) -> dict[str, Any]:
             def _stream():
@@ -172,6 +183,10 @@ def _httpx_response(status_code: int, url: str = 'https://test.example.com') -> 
     return httpx.Response(status_code, request=httpx.Request('POST', url))
 
 
+def _httpx2_response(status_code: int, url: str = 'https://test.example.com') -> httpx2.Response:
+    return httpx2.Response(status_code, request=httpx2.Request('POST', url))
+
+
 def _anthropic_start_event() -> BetaRawMessageStartEvent:
     return BetaRawMessageStartEvent(
         type='message_start',
@@ -218,7 +233,7 @@ async def test_anthropic_midstream_status_error(allow_model_requests: None):
     """APIStatusError during stream iteration is wrapped as ModelHTTPError."""
     error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx_response(529),
+        response=_httpx2_response(529),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     stream = [_anthropic_start_event(), error]
@@ -238,7 +253,7 @@ async def test_anthropic_midstream_status_error(allow_model_requests: None):
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 async def test_anthropic_midstream_connection_error(allow_model_requests: None):
     """APIConnectionError during stream iteration is wrapped as ModelAPIError."""
-    error = AnthropicConnectionError(request=httpx.Request('POST', 'https://api.anthropic.com'))
+    error = AnthropicConnectionError(request=httpx2.Request('POST', 'https://api.anthropic.com'))
     stream = [_anthropic_start_event(), error]
     mock_client = MockAnthropic.create_stream_mock(stream)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -257,7 +272,7 @@ async def test_anthropic_peek_error(allow_model_requests: None):
     """APIStatusError during peek is wrapped as ModelHTTPError."""
     error = AnthropicStatusError(
         message='Rate limited',
-        response=_httpx_response(429),
+        response=_httpx2_response(429),
         body={'type': 'error', 'error': {'type': 'rate_limit_error'}},
     )
     stream = [error]
@@ -277,12 +292,12 @@ async def test_anthropic_peek_error(allow_model_requests: None):
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: AnthropicStatusError(message='SSE error', response=_httpx_response(200), body={'type': 'error'}),
+            lambda: AnthropicStatusError(message='SSE error', response=_httpx2_response(200), body={'type': 'error'}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: AnthropicConnectionError(request=httpx.Request('POST', 'https://api.anthropic.com')),
+            lambda: AnthropicConnectionError(request=httpx2.Request('POST', 'https://api.anthropic.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -310,7 +325,7 @@ async def test_anthropic_midstream_sse_error_status_200(allow_model_requests: No
     """
     error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx_response(200),
+        response=_httpx2_response(200),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     stream = [_anthropic_start_event(), error]
@@ -337,7 +352,7 @@ async def test_openai_midstream_status_error(allow_model_requests: None):
     """APIStatusError during stream iteration is wrapped as ModelHTTPError."""
     error = OpenAIStatusError(
         message='Server error',
-        response=_httpx_response(500),
+        response=_httpx2_response(500),
         body={'error': {'message': 'Internal server error'}},
     )
     stream = [_openai_chunk(), error]
@@ -357,7 +372,7 @@ async def test_openai_midstream_status_error(allow_model_requests: None):
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 async def test_openai_midstream_connection_error(allow_model_requests: None):
     """APIConnectionError during stream iteration is wrapped as ModelAPIError."""
-    error = OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com'))
+    error = OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com'))
     stream = [_openai_chunk(), error]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -376,7 +391,7 @@ async def test_openai_peek_error(allow_model_requests: None):
     """APIStatusError during peek is wrapped as ModelHTTPError."""
     error = OpenAIStatusError(
         message='Rate limited',
-        response=_httpx_response(429),
+        response=_httpx2_response(429),
         body={'error': {'message': 'Rate limit exceeded'}},
     )
     stream = [error]
@@ -396,12 +411,12 @@ async def test_openai_peek_error(allow_model_requests: None):
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
+            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -424,7 +439,7 @@ async def test_openai_peek_non_http_error(
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 async def test_openai_midstream_non_http_error(allow_model_requests: None):
     """APIStatusError with status<400 during stream iteration is wrapped as ModelAPIError."""
-    error = OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={})
+    error = OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={})
     stream = [_openai_chunk(), error]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -451,19 +466,19 @@ def _openai_responses_created_event() -> responses.ResponseCreatedEvent:
     'error_factory,expected_exc,expected_status',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='Server error', response=_httpx_response(500), body={}),
+            lambda: OpenAIStatusError(message='Server error', response=_httpx2_response(500), body={}),
             ModelHTTPError,
             500,
             id='http',
         ),
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),
             ModelAPIError,
             None,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
+            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             None,
             id='connection',
@@ -493,17 +508,17 @@ async def test_openai_responses_peek_error(
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='Server error', response=_httpx_response(500), body={}),
+            lambda: OpenAIStatusError(message='Server error', response=_httpx2_response(500), body={}),
             ModelHTTPError,
             id='http',
         ),
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
+            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -716,6 +731,200 @@ async def test_bedrock_midstream_error(
     if check_status is not None:
         assert isinstance(exc_info.value, ModelHTTPError)
         assert exc_info.value.status_code == check_status
+
+
+GatewayStreamProvider = Literal['openai-chat', 'openai-responses', 'anthropic', 'google', 'groq', 'bedrock']
+
+
+@pytest.mark.parametrize(
+    ('provider_name', 'model_name', 'expected_suggestion'),
+    [
+        pytest.param(
+            'openai-chat',
+            'gpt-5.2-proo',
+            'gateway/openai:gpt-5.2-pro',
+            id='openai-chat',
+            marks=pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
+        ),
+        pytest.param(
+            'openai-responses',
+            'gpt-5.2-proo',
+            'gateway/openai:gpt-5.2-pro',
+            id='openai-responses',
+            marks=pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
+        ),
+        pytest.param(
+            'anthropic',
+            'claude-sonet-4-5',
+            'gateway/anthropic:claude-sonnet-4-5',
+            id='anthropic',
+            marks=pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),
+        ),
+        pytest.param(
+            'google',
+            'gemini-3.6-flahs',
+            'gateway/google-cloud:gemini-3.6-flash',
+            id='google',
+            marks=pytest.mark.skipif(not google_imports(), reason='google not installed'),
+        ),
+        pytest.param(
+            'groq',
+            'llama-3.3-70b-versatlie',
+            'gateway/groq:llama-3.3-70b-versatile',
+            id='groq',
+            marks=pytest.mark.skipif(not groq_imports(), reason='groq not installed'),
+        ),
+        pytest.param(
+            'bedrock',
+            'us.amazon.nova-micro-v1:O',
+            'gateway/bedrock:us.amazon.nova-premier-v1:0',
+            id='bedrock',
+            marks=pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),
+        ),
+    ],
+)
+async def test_gateway_model_name_suggestion_midstream(
+    provider_name: GatewayStreamProvider,
+    model_name: str,
+    expected_suggestion: str,
+    allow_model_requests: None,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async with httpx.AsyncClient() as http_client, httpx2.AsyncClient() as httpx2_client:
+        match provider_name:
+            case 'openai-chat':
+                provider = gateway_provider(
+                    'openai',
+                    api_key='test-key',
+                    base_url='https://gateway.example.com/proxy',
+                    http_client=httpx2_client,
+                )
+                error = OpenAIStatusError(
+                    message='Model not found',
+                    response=_httpx2_response(404),
+                    body={'code': 'model_not_found'},
+                )
+                chunk = _openai_chunk()
+                chunk.model = model_name
+                monkeypatch.setattr(provider, '_client', MockOpenAI.create_mock_stream([chunk, error]))
+                model: Model = OpenAIChatModel(model_name, provider=provider)
+            case 'openai-responses':
+                provider = gateway_provider(
+                    'openai',
+                    api_key='test-key',
+                    base_url='https://gateway.example.com/proxy',
+                    http_client=httpx2_client,
+                )
+                error = OpenAIStatusError(
+                    message='Model not found',
+                    response=_httpx2_response(404),
+                    body={'code': 'model_not_found'},
+                )
+                created_event = _openai_responses_created_event()
+                created_event.response.model = model_name
+                monkeypatch.setattr(
+                    provider,
+                    '_client',
+                    MockOpenAIResponses.create_mock_stream([created_event, error]),
+                )
+                model = OpenAIResponsesModel(model_name, provider=provider)
+            case 'anthropic':
+                provider = gateway_provider(
+                    'anthropic',
+                    api_key='test-key',
+                    base_url='https://gateway.example.com/proxy',
+                    http_client=httpx2_client,
+                )
+                error = AnthropicStatusError(
+                    message='Model not found',
+                    response=_httpx2_response(404),
+                    body={'error': {'type': 'not_found_error', 'message': f'model: {model_name}'}},
+                )
+                start_event = _anthropic_start_event()
+                start_event.message.model = model_name
+                monkeypatch.setattr(provider, '_client', MockAnthropic.create_stream_mock([start_event, error]))
+                model = AnthropicModel(model_name, provider=provider)
+            case 'google':
+                provider = gateway_provider(
+                    'google-cloud',
+                    api_key='test-key',
+                    base_url='https://gateway.example.com/proxy',
+                    http_client=httpx2_client,
+                )
+
+                async def google_stream() -> AsyncIterator[SimpleNamespace]:
+                    yield SimpleNamespace(
+                        candidates=[],
+                        sdk_http_response=None,
+                        usage_metadata=None,
+                        prompt_feedback=None,
+                        response_id=None,
+                        model_version=model_name,
+                        create_time=None,
+                    )
+                    raise google_errors.ClientError(
+                        404,
+                        {
+                            'error': {
+                                'code': 404,
+                                'message': f'models/{model_name} is not found for API version v1beta.',
+                                'status': 'NOT_FOUND',
+                            }
+                        },
+                    )
+
+                async def generate_content_stream(**_: object) -> AsyncIterator[SimpleNamespace]:
+                    return google_stream()
+
+                monkeypatch.setattr(provider.client.aio.models, 'generate_content_stream', generate_content_stream)
+                model = GoogleModel(model_name, provider=provider)
+            case 'groq':
+                provider = gateway_provider(
+                    'groq', api_key='test-key', base_url='https://gateway.example.com/proxy', http_client=http_client
+                )
+                error = GroqStatusError(
+                    message='Model not found',
+                    response=_httpx_response(404),
+                    body={'error': {'code': 'model_not_found'}},
+                )
+                chunk = _groq_chunk()
+                chunk.model = model_name
+                monkeypatch.setattr(provider, '_client', MockGroq.create_mock_stream([chunk, error]))
+                model = GroqModel(model_name, provider=provider)
+            case 'bedrock':
+                provider = gateway_provider('bedrock', api_key='test-key', base_url='https://gateway.example.com/proxy')
+                error = ClientError(
+                    {
+                        'Error': {
+                            'Code': 'ValidationException',
+                            'Message': 'The provided model identifier is invalid.',
+                        },
+                        'ResponseMetadata': {
+                            'RequestId': '',
+                            'HostId': '',
+                            'HTTPStatusCode': 400,
+                            'HTTPHeaders': {},
+                            'RetryAttempts': 0,
+                        },
+                    },
+                    'converse_stream',
+                )
+                monkeypatch.setattr(provider, '_client', _StubBedrockStreamClient(error))
+                model = BedrockConverseModel(model_name, provider=provider)
+            case _:
+                assert_never(provider_name)
+
+        expected_namespace = expected_suggestion.split(':', maxsplit=1)[0]
+        expected_system = expected_namespace.removeprefix('gateway/')
+        assert provider.name == expected_system
+        assert model.system == expected_system
+        assert model.model_id == f'{expected_system}:{model_name}'
+        with pytest.raises(ModelHTTPError) as exc_info:
+            async with Agent(model).run_stream('hello') as result:
+                async for _ in result.stream_text():
+                    pass
+
+    assert exc_info.value.suggested_model_id == expected_suggestion
 
 
 # ---------------------------------------------------------------------------
@@ -939,7 +1148,7 @@ async def test_fallback_model_streaming_error_triggers_fallback(allow_model_requ
     # First model: Anthropic that errors on peek (first event is the error)
     anthropic_error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx_response(529),
+        response=_httpx2_response(529),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     anthropic_stream = [anthropic_error]
