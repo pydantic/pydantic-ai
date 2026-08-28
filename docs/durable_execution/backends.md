@@ -46,8 +46,8 @@ from pydantic_ai.durable_exec import (
     IDENTITY_CODEC,
     BaseDurabilityCapability,
     CallableOperationBackend,
-    DurableOperationId,
     DurabilityEngineSpec,
+    DurableOperationId,
     JournalOperationNamer,
     OperationConfigRole,
 )
