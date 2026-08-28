@@ -55,12 +55,14 @@ from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
+    AbstractCapability,
     Capability,
     DynamicCapability,
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
     Toolset,
+    durable_operation,
 )
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import (
@@ -3519,6 +3521,42 @@ async def test_prefect_durability_identical_events_are_dispatched_twice() -> Non
         await agent.run('same')
         if attempts == 1:
             raise RuntimeError('retry after both identical events were cached')
+
+    await run_twice()
+    assert attempts == 2
+    assert calls == 2
+
+
+async def test_prefect_durability_identical_capability_operations_execute_twice_and_replay() -> None:
+    calls = 0
+
+    class SideEffectCapability(AbstractCapability[object]):
+        id = 'side_effect'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            await self.record(ctx, 'same')
+            await self.record(ctx, 'same')
+
+        @durable_operation
+        async def record(self, ctx: RunContext[object], value: str) -> None:
+            nonlocal calls
+            calls += 1
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='duplicate_capability_operation',
+        capabilities=[SideEffectCapability(), PrefectDurability()],
+    )
+    attempts = 0
+
+    @flow(retries=1)
+    async def run_twice() -> None:
+        nonlocal attempts
+        attempts += 1
+        await agent.run('same')
+        if attempts == 1:
+            raise RuntimeError('retry after both identical capability operations were cached')
 
     await run_twice()
     assert attempts == 2

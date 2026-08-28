@@ -161,7 +161,13 @@ class _JournalBackend(CallableOperationBackend[ToolConfig]):
         self._durability = durability
 
     async def execute(
-        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
     ) -> object:
         self._durability.calls.append((name, cache_key, config))
         return await body()
@@ -952,7 +958,13 @@ class _RecordingBackend(CallableOperationBackend[dict[str, str]]):
         self.calls: list[tuple[str, object, object]] = []
 
     async def execute(
-        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
     ) -> object:
         self.calls.append((name, cache_key, config))
         return await body()

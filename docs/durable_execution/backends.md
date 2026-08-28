@@ -17,7 +17,9 @@ integrations show the same public builder with JSON journals.
 
 Subclass [`CallableOperationBackend`][pydantic_ai.durable_exec.CallableOperationBackend] when the
 engine SDK accepts a callback each time a durable unit is invoked. Implement `execute` to pass the
-name, callback, cache identity, and resolved config to the SDK.
+typed operation identity, name, callback, cache identity, and resolved config to the SDK. The
+operation identity lets an engine apply behavior to an operation kind without depending on its
+persisted name.
 
 Use [`RegisteredOperationBackend`][pydantic_ai.durable_exec.RegisteredOperationBackend] when the
 engine requires handlers to be registered before the worker starts. Implement `register` to
@@ -76,6 +78,7 @@ class ImmediateBackend(CallableOperationBackend[None]):
     async def execute(
         self,
         *,
+        operation_id: DurableOperationId,
         name: str,
         body: Callable[[], Awaitable[object]],
         cache_key: tuple[object, ...],

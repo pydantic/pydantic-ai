@@ -70,17 +70,31 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
     async def execute(
         self,
         *,
+        operation_id: DurableOperationId,
         name: str,
         body: Callable[[], Awaitable[object]],
         cache_key: tuple[object, ...],
         config: TaskConfig,
     ) -> object:
-        if name == PrefectOperationNamer().operation_name(EventStreamHandlerId()):
+        sequence_key: str | None = None
+        if isinstance(operation_id, EventStreamHandlerId):
+            sequence_key = self._event_sequence_key
+        elif isinstance(operation_id, CapabilityOperationId):
+            capability_id = operation_id.capability_id
+            sequence_key = (
+                f'{self._event_sequence_key}:capability:{len(capability_id)}:{capability_id}{operation_id.operation}'
+            )
+
+        if sequence_key is not None:
             flow_context = FlowRunContext.get()
             assert flow_context is not None
-            sequence = flow_context.task_run_dynamic_keys.get(self._event_sequence_key, 0)
+            # Prefect rebuilds dynamic task keys in the same order on flow retry. A counter per
+            # semantic operation therefore distinguishes repeated live invocations while producing
+            # the same cache keys during replay. Capability operations use separate counters so an
+            # unrelated operation cannot shift their replay identities.
+            sequence = flow_context.task_run_dynamic_keys.get(sequence_key, 0)
             assert isinstance(sequence, int)
-            flow_context.task_run_dynamic_keys[self._event_sequence_key] = sequence + 1
+            flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
             cache_key = (*cache_key, sequence)
 
         @task

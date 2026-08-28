@@ -215,7 +215,13 @@ class _JournalBackend(CallableOperationBackend[ToolConfig]):
         self._durability = durability
 
     async def execute(
-        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
     ) -> object:
         self._durability.recorded_names.append(name)
         return await body()

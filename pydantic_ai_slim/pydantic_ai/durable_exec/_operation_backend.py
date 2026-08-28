@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
-from ._operation import DurableOperation, DurableOperationConfig, resolve_tool_operation_config
+from ._operation import DurableOperation, DurableOperationConfig, DurableOperationId, resolve_tool_operation_config
 from ._operation_names import DurableOperationNamer
 
 ParamsT = TypeVar('ParamsT')
@@ -103,6 +103,7 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
                 return operation.result_codec.dump(await operation.handler(params))
 
             payload = await self.execute(
+                operation_id=operation.operation_id,
                 name=invocation_name.operation_name,
                 body=body,
                 cache_key=cache_key,
@@ -128,6 +129,7 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
     async def execute(
         self,
         *,
+        operation_id: DurableOperationId,
         name: str,
         body: Callable[[], Awaitable[object]],
         cache_key: tuple[object, ...],
@@ -136,6 +138,7 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
         """Execute `body` as one named durable unit.
 
         Args:
+            operation_id: Typed identity of the semantic operation.
             name: Persisted durable unit name.
             body: Encoded semantic operation body.
             cache_key: Opaque hash inputs for engines that identify cached work by hash.

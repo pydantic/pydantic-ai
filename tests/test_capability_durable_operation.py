@@ -109,7 +109,13 @@ class _RecordingBackend(CallableOperationBackend[ToolConfig]):
         self._durability = durability
 
     async def execute(
-        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
     ) -> object:
         durability = self._durability
         durability.calls.append((name, cache_key))
@@ -1204,6 +1210,7 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
     await run()
 
     assert capability.calls == [
+        ('tenant-a', 'test'),
         ('tenant-a', 'test'),
         ('tenant-b', 'test'),
         ('tenant-b', 'alternative'),
