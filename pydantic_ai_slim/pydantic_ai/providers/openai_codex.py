@@ -385,9 +385,9 @@ class OpenAICodexOAuthFlow(OAuthFlow[OpenAICodexCredentials]):
 
     This is the only login flow the public client supports (no device flow; redirect URI pinned to
     `localhost:1455`, probed exact-match). Construction does no I/O: build the context anywhere,
-    send the user to `authorization_url()`, then call `exchange_code()` from your redirect handler -
-    served from port 1455 on the user's machine, or tunneled there. Core owns none of the
-    interactive parts.
+    send the user to `authorization_url()`, then either let `exchange_code_from_callback()` serve
+    the redirect for you, or serve it yourself (on port 1455 on the user's machine, or tunneled
+    there) and call `exchange_code()`. The browser and credential storage stay caller-owned.
     """
 
     def __init__(self, *, redirect_uri: str = _REDIRECT_URI, state: str | None = None) -> None:

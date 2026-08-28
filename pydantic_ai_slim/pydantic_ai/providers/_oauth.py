@@ -10,9 +10,14 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import secrets
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import Generic, TypeVar
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any, Generic, TypeVar
+from urllib.parse import parse_qs, urlparse
+
+import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
 
@@ -59,3 +64,50 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
     async def exchange_code(self, code: str) -> CredentialsT:
         """Exchange an authorization code for provider credentials (call this in your redirect handler)."""
         ...
+
+    async def exchange_code_from_callback(self) -> CredentialsT:
+        """Serve `redirect_uri` for one authorization callback, then exchange the received code.
+
+        Binds the host and port from `redirect_uri` with a one-shot local HTTP server, ignores
+        requests that don't carry this flow's `state`, and raises
+        [`UserError`][pydantic_ai.exceptions.UserError] when the provider reports an authorization
+        error instead of a code (e.g. the user clicked Deny). Callers wanting a time limit can wrap
+        the call in [`anyio.fail_after`](https://anyio.readthedocs.io/en/stable/cancellation.html).
+        """
+        parsed = urlparse(self.redirect_uri)
+        address = (parsed.hostname or 'localhost', parsed.port or 80)
+        callback_path = parsed.path
+        expected_state = self.state
+        result: dict[str, str] = {}
+
+        class CallbackHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                url = urlparse(self.path)
+                params = {name: values[0] for name, values in parse_qs(url.query).items()}
+                if url.path == callback_path and params.get('state') == expected_state:
+                    if code := params.get('code'):
+                        result['code'] = code
+                    else:
+                        result['error'] = params.get('error', 'unknown')
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'You can close this tab.')
+
+            def log_message(self, format: str, *args: Any) -> None:
+                pass  # keep the caller's console clean
+
+        cancelled = threading.Event()
+
+        def serve_one_callback() -> None:
+            with HTTPServer(address, CallbackHandler) as server:
+                server.timeout = 0.5  # recheck for a result or cancellation between requests
+                while not result and not cancelled.is_set():
+                    server.handle_request()
+
+        try:
+            await anyio.to_thread.run_sync(serve_one_callback, abandon_on_cancel=True)
+        finally:
+            cancelled.set()
+        if error := result.get('error'):
+            raise UserError(f'Authorization failed: {error}')
+        return await self.exchange_code(result['code'])
