@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import time
@@ -77,7 +78,7 @@ from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from .conftest import IsDatetime, IsNow, IsStr
+from ..conftest import IsDatetime, IsNow, IsStr
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -121,8 +122,8 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._inline_snapshot import snapshot
-from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from .._inline_snapshot import snapshot
+from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -182,6 +183,21 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         yield dbos
     finally:
         DBOS.destroy()
+        # `enable_otlp=True` makes DBOS attach an OTel `LoggingHandler` and a `DBOSLogTransformer`
+        # filter to the root logger and every registered logger, and `DBOS.destroy()` does not detach
+        # them. A leaked handler/filter's emit path imports `dbos._context`, which imports
+        # `http.server` - fatal inside the Temporal workflow sandbox when an xdist worker later runs
+        # the temporal suite. Detach them here.
+        # TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
+        # https://github.com/dbos-inc/dbos-transact-py/issues/821
+        from dbos import _logger as dbos_logger_module
+        from opentelemetry.sdk._logs import LoggingHandler
+
+        for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
+            for handler in [h for h in logger.handlers if isinstance(h, LoggingHandler)]:
+                logger.removeHandler(handler)
+            for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
+                logger.removeFilter(log_filter)
 
 
 model = OpenAIChatModel(

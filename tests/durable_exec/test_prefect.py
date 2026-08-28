@@ -126,9 +126,9 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
-from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsSameStr, IsStr
-from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsSameStr, IsStr
+from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warnings here
