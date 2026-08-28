@@ -10,7 +10,11 @@ To use the Codex provider, you need to either install `pydantic-ai`, or install 
 pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
-## Local development
+## Acquiring credentials
+
+Codex credentials come from a browser login against your ChatGPT account. There are two ways to get them.
+
+### Use the Codex CLI
 
 Run `codex login` once with the official [Codex CLI](https://developers.openai.com/codex/cli/), then it just works:
 
@@ -23,9 +27,48 @@ agent = Agent('openai-codex:gpt-5.6-luna')
 
 The `'openai-codex:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] backed by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider], which loads the CLI's credentials **read-only**: it honors `CODEX_HOME`, never writes the file, and never falls back to `OPENAI_API_KEY`. Constructing [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider] without `credentials` performs the same load.
 
-## Application-owned credentials
+### Run your own login flow
 
-Applications (including multi-tenant ones) own login and storage themselves: obtain credentials once per user (see [below](#build-your-own-login)), persist them your way, and inject them per user:
+Applications that log users in themselves (including multi-tenant ones) use [`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] for the authorization-code + PKCE handshake.
+
+The public Codex client pins its redirect URI to exactly `http://localhost:1455/auth/callback`, so every login completes on the user's own machine. [`exchange_code_from_callback()`][pydantic_ai.providers._oauth.OAuthFlow.exchange_code_from_callback] occupies that port for a moment to catch the redirect, then exchanges the code. A hosted web app cannot receive the callback directly; it runs this same flow from a component on the user's machine (or a tunnel to it) and sends the resulting credentials to the backend.
+
+Credentials outlive the login, so acquire them only when you have none stored:
+
+```python {title="codex_login.py" test="skip - opens a browser and requires user login"}
+import webbrowser
+
+from pydantic_ai.providers.openai_codex import (
+    OpenAICodexCredentials,
+    OpenAICodexOAuthFlow,
+)
+
+
+async def credentials_for(user_id: str) -> OpenAICodexCredentials:
+    if (stored := await load_from_your_store(user_id)) is not None:
+        return stored
+
+    flow = OpenAICodexOAuthFlow()
+    webbrowser.open(flow.authorization_url())
+    # Serves localhost:1455 until the browser redirect arrives, then exchanges the code.
+    credentials = await flow.exchange_code_from_callback()
+    await save_to_your_store(user_id, credentials)
+    return credentials
+
+
+async def load_from_your_store(user_id: str) -> OpenAICodexCredentials | None: ...
+
+
+async def save_to_your_store(user_id: str, credentials: OpenAICodexCredentials) -> None: ...
+```
+
+Store them wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI. To embed login in an existing web server or a tunnel, serve the redirect yourself and pass the code to [`exchange_code()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code] instead.
+
+## Storing credentials
+
+Access tokens expire and refresh tokens rotate, so the provider refreshes automatically. Where the rotated set goes depends on how you construct the provider.
+
+Passing `credentials` directly keeps everything in memory: fine for a script or a CLI, but the next process starts from the original set again.
 
 ```python
 from pydantic_ai import Agent
@@ -35,40 +78,24 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexProvider,
 )
 
-
-async def load_credentials(user_id: str) -> OpenAICodexCredentials:
-    ...  # read from your per-user store (obtained once via the login flow below)
-
-
-async def save_credentials(credentials: OpenAICodexCredentials) -> None:
-    ...  # persist to your per-user store
-
-
 async def agent_for_user(user_id: str) -> Agent:
-    provider = OpenAICodexProvider(
-        credentials=await load_credentials(user_id),
-        on_credentials_refresh=save_credentials,
-    )
+    provider = OpenAICodexProvider(credentials=await credentials_for(user_id))
     return Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
+
+
+async def credentials_for(user_id: str) -> OpenAICodexCredentials:
+    ...  # the credentials you acquired above
 ```
 
-Tokens are refreshed automatically; rotated credentials are passed to `on_credentials_refresh` so your store stays current (if the callback raises, the in-memory credentials are still updated and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] surfaces). Both it and [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError] subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] treats an unusable grant like any other provider failure and moves on to the next model. One provider instance carries one user's credentials; construct one per user rather than sharing globally. This is a single-process convenience: for stateless multi-replica services, use a [credential source](#multi-replica-credential-coordination) instead.
-
-## Multi-replica credential coordination
-
-Codex refresh tokens rotate: when two replicas load the same stored credential set and both refresh around the same time, the second refresh consumes an already-rotated grant, and no persistence callback can prevent that because it runs after the token endpoint was called. For that deployment shape, hand the provider a [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource] (mutually exclusive with `credentials` and `on_credentials_refresh`), which owns the whole refresh transaction: reload inside your critical section, decide whether the refresh is still needed, perform it via [`refresh_credentials`][pydantic_ai.providers.openai_codex.refresh_credentials], and durably save with a compare-and-swap.
-
-The provider resolves credentials through the source per request. When a token looks stale or the backend rejects it with a 401, the provider calls `get_credentials(force_refresh=True, rejected_revision=...)` with the store revision it used, so your implementation can tell "this grant was rejected" apart from "another replica already rotated it":
+For anything longer-lived, give the provider an [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource]: your storage, two methods, no lifecycle logic.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import (
     OpenAICodexCredentials,
-    OpenAICodexCredentialSnapshot,
     OpenAICodexCredentialSource,
     OpenAICodexProvider,
-    refresh_credentials,
 )
 
 
@@ -78,20 +105,9 @@ class DatabaseCredentialSource(OpenAICodexCredentialSource):
     def __init__(self, user_id: str):
         self.user_id = user_id
 
-    async def get_credentials(
-        self, *, force_refresh: bool = False, rejected_revision: str | None = None
-    ) -> OpenAICodexCredentialSnapshot:
-        snapshot = await self.load_snapshot()  # reload inside your per-user lock
-        if not force_refresh or snapshot.revision != rejected_revision:
-            return snapshot  # current, or another replica already rotated the grant
-        rotated = await refresh_credentials(snapshot.credentials)
-        return await self.save_snapshot(rotated, expected_revision=snapshot.revision)
+    async def load(self) -> OpenAICodexCredentials: ...
 
-    async def load_snapshot(self) -> OpenAICodexCredentialSnapshot: ...
-
-    async def save_snapshot(
-        self, credentials: OpenAICodexCredentials, *, expected_revision: str
-    ) -> OpenAICodexCredentialSnapshot: ...
+    async def save(self, credentials: OpenAICodexCredentials) -> None: ...
 
 
 provider = OpenAICodexProvider(credential_source=DatabaseCredentialSource('user-123'))
@@ -99,37 +115,9 @@ agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
 ...
 ```
 
-A real implementation wraps `get_credentials` in a per-user distributed lease, advisory lock, or row-level lock, and makes `save_snapshot` fail (or re-read) when `expected_revision` no longer matches the stored row. The Pydantic AI side needs nothing else: the same source serves both proactive pre-expiry refresh and 401 recovery.
+The provider calls `load()` on first use and `save()` after every rotation. That also makes stateless multi-replica deployments safe: because refresh tokens rotate, two replicas refreshing the same stored grant would invalidate each other, so before refreshing, the provider re-reads storage and adopts a peer's newer credentials instead of spending its own. Implementations wanting stricter mutual exclusion can hold a per-user lock inside `save()`.
 
-## Build your own login
-
-[`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] provides the authorization-code + PKCE primitives, including a one-shot server for the localhost callback, so a complete login is a few lines. The browser and credential storage stay yours:
-
-```python {title="codex_login.py" test="skip - opens a browser and requires user login"}
-import asyncio
-import webbrowser
-
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai_codex import OpenAICodexOAuthFlow, OpenAICodexProvider
-
-
-async def main():
-    flow = OpenAICodexOAuthFlow()
-    webbrowser.open(flow.authorization_url())
-    # Spins up a one-shot server on localhost:1455 for the callback, then exchanges the code.
-    credentials = await flow.exchange_code_from_callback()
-    # persist wherever your app keeps secrets - not ~/.codex, which belongs to the Codex CLI
-
-    provider = OpenAICodexProvider(credentials=credentials)
-    agent = Agent(OpenAIResponsesModel('gpt-5.6-luna', provider=provider))
-    print((await agent.run('hello from my own login flow')).output)
-
-
-asyncio.run(main())
-```
-
-Embedding login elsewhere (an existing web server, a tunnel) works the same way without the built-in server: serve the redirect yourself and pass the received code to [`exchange_code()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code].
+If `save()` raises, the refreshed credentials stay live in memory and a [`CredentialsPersistenceError`][pydantic_ai.providers.openai_codex.CredentialsPersistenceError] surfaces rather than pretending durability succeeded. Both it and [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError] subclass [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] treats an unusable grant like any other provider failure and moves on to the next model. One provider instance carries one user's credentials; construct one per user rather than sharing globally.
 
 ## Session affinity and prompt caching
 

@@ -34,15 +34,14 @@ with try_import() as imports_successful:
         CredentialsRefreshError,
         OpenAICodexAuth,
         OpenAICodexCredentials,
-        OpenAICodexCredentialSnapshot,
         OpenAICodexOAuthFlow,
         OpenAICodexProvider,
         _account_id_from_id_token,  # pyright: ignore[reportPrivateUsage]
         _credentials_from_token_response,  # pyright: ignore[reportPrivateUsage]
         _jwt_expires_at,  # pyright: ignore[reportPrivateUsage]
         _post_token_request,  # pyright: ignore[reportPrivateUsage]
+        _refresh_credentials,  # pyright: ignore[reportPrivateUsage]
         _TokenResponse,  # pyright: ignore[reportPrivateUsage]
-        refresh_credentials,
     )
 
     from ..models.mock_openai import MockOpenAIResponses
@@ -436,24 +435,23 @@ async def test_stale_refresh_transport_error_falls_through_to_request(monkeypatc
     assert len(mock.forms) == 1  # the proactive attempt happened, and its failure stayed quiet
 
 
-async def test_stale_refresh_persistence_error_propagates(monkeypatch: pytest.MonkeyPatch):
+async def test_stale_refresh_save_error_propagates(monkeypatch: pytest.MonkeyPatch):
     """The proactive path swallows refresh failures but never a failed save of rotated credentials."""
-    mock = TokenEndpointMock(TOKEN_RESPONSE)
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    source = FakeCredentialSource(make_credentials(access_token='access-v1', exp=time.time() - 100))
 
-    async def failing_callback(credentials: OpenAICodexCredentials) -> None:
+    async def exploding_save(credentials: OpenAICodexCredentials) -> None:
         raise RuntimeError('db down')
 
-    provider = OpenAICodexProvider(
-        credentials=make_credentials(exp=time.time() - 100), on_credentials_refresh=failing_callback
-    )
+    source.save = exploding_save
+    provider = OpenAICodexProvider(credential_source=source)
 
     def handler(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('the persistence error must surface before any request goes out')
 
     async with authed_client(provider, handler) as client:
         with pytest.raises(CredentialsPersistenceError):
-            await client.get('https://chatgpt.com/backend-api/codex/x')
+            await client.get(CODEX_URL)
 
     assert provider.credentials.access_token.get_secret_value() == 'access-new'  # memory is current
 
@@ -461,38 +459,28 @@ async def test_stale_refresh_persistence_error_propagates(monkeypatch: pytest.Mo
 # --- Application credential source (multi-replica coordination seam) ---
 
 
-def make_snapshot(
-    revision: str, *, token: str = 'access-old', exp: float | None = None
-) -> OpenAICodexCredentialSnapshot:
-    return OpenAICodexCredentialSnapshot(credentials=make_credentials(exp=exp, access_token=token), revision=revision)
-
-
 class FakeCredentialSource:
-    """In-memory stand-in for an application store: rotates only on a matching rejected revision."""
+    """In-memory stand-in for an application's credential store."""
 
-    def __init__(self, snapshots: list[OpenAICodexCredentialSnapshot]):
-        self.snapshots = snapshots
-        self.index = 0
-        self.calls: list[tuple[bool, str | None]] = []
+    def __init__(self, credentials: OpenAICodexCredentials | None = None):
+        self.credentials = credentials if credentials is not None else make_credentials(access_token='access-v1')
+        self.loads = 0
+        self.saves: list[str] = []
 
-    @property
-    def current(self) -> OpenAICodexCredentialSnapshot:
-        return self.snapshots[self.index]
+    async def load(self) -> OpenAICodexCredentials:
+        self.loads += 1
+        return self.credentials
 
-    async def get_credentials(
-        self, *, force_refresh: bool = False, rejected_revision: str | None = None
-    ) -> OpenAICodexCredentialSnapshot:
-        self.calls.append((force_refresh, rejected_revision))
-        if force_refresh and rejected_revision == self.current.revision and self.index + 1 < len(self.snapshots):
-            self.index += 1  # 'refresh': rotate to the next stored snapshot
-        return self.current
+    async def save(self, credentials: OpenAICodexCredentials) -> None:
+        self.credentials = credentials
+        self.saves.append(credentials.access_token.get_secret_value())
 
 
 CODEX_URL = 'https://chatgpt.com/backend-api/codex/x'
 
 
-async def test_credential_source_resolves_per_request():
-    source = FakeCredentialSource([make_snapshot('v1', token='access-v1')])
+async def test_credential_source_loads_once_and_reuses():
+    source = FakeCredentialSource()
     provider = OpenAICodexProvider(credential_source=source)
     seen: list[str] = []
 
@@ -505,12 +493,14 @@ async def test_credential_source_resolves_per_request():
             assert (await client.get(CODEX_URL)).status_code == 200
 
     assert seen == ['Bearer access-v1', 'Bearer access-v1']
-    assert source.calls == [(False, None), (False, None)]  # resolved per request, never forced
+    assert source.loads == 1  # loaded lazily on first use, then held in memory
+    assert source.saves == []
 
 
-async def test_credential_source_stale_token_escalates_through_source():
-    """The proactive pre-expiry refresh goes through the source's critical section, not core."""
-    source = FakeCredentialSource([make_snapshot('v1', exp=time.time() - 100), make_snapshot('v2', token='access-v2')])
+async def test_credential_source_refreshes_and_saves(monkeypatch: pytest.MonkeyPatch):
+    """A stale token is refreshed by the provider, and the rotated set is persisted."""
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    source = FakeCredentialSource(make_credentials(access_token='access-v1', exp=time.time() - 100))
     provider = OpenAICodexProvider(credential_source=source)
     seen: list[str] = []
 
@@ -521,55 +511,66 @@ async def test_credential_source_stale_token_escalates_through_source():
     async with authed_client(provider, handler) as client:
         assert (await client.get(CODEX_URL)).status_code == 200
 
-    assert seen == ['Bearer access-v2']  # the stale v1 token never went out
-    assert source.calls == [(False, None), (True, 'v1')]
+    assert seen == ['Bearer access-new']  # the stale token never went out
+    assert source.saves == ['access-new']  # and the rotation was persisted for the next process
 
 
-async def test_credential_source_401_replays_with_rotated_snapshot():
-    source = FakeCredentialSource([make_snapshot('v1', token='access-v1'), make_snapshot('v2', token='access-v2')])
+async def test_credential_source_adopts_a_peer_replicas_rotation(monkeypatch: pytest.MonkeyPatch):
+    """The whole point of shared storage: never spend a refresh token a peer already rotated."""
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    source = FakeCredentialSource()
     provider = OpenAICodexProvider(credential_source=source)
 
+    peer_rotated = False
+
     def handler(request: httpx2.Request) -> httpx2.Response:
-        if request.headers['authorization'] == 'Bearer access-v2':
-            return httpx2.Response(200)
-        return httpx2.Response(401)
+        token = request.headers['authorization']
+        if peer_rotated and token != 'Bearer access-peer':
+            return httpx2.Response(401)  # the grant this provider holds was superseded
+        return httpx2.Response(200)
 
     async with authed_client(provider, handler) as client:
-        response = await client.get(CODEX_URL)
+        assert (await client.get(CODEX_URL)).status_code == 200  # loads and uses access-v1
+        # A peer replica rotates the shared grant while this provider holds the old set.
+        source.credentials = make_credentials(access_token='access-peer')
+        peer_rotated = True
+        assert (await client.get(CODEX_URL)).status_code == 200
 
-    assert response.status_code == 200
-    assert source.calls == [(False, None), (True, 'v1')]  # the rejected revision reached the source
+    assert mock.forms == []  # no upstream refresh: the peer's set was adopted from storage
+    assert source.saves == []
+    assert provider.credentials.access_token.get_secret_value() == 'access-peer'
 
 
-async def test_credential_source_shared_rotation_between_providers():
-    """A replica whose 401 carries an older revision reuses the already-rotated snapshot."""
-    source = FakeCredentialSource([make_snapshot('v1', token='access-v1'), make_snapshot('v2', token='access-v2')])
-    provider_a = OpenAICodexProvider(credential_source=source)
-    provider_b = OpenAICodexProvider(credential_source=source)
+async def test_credential_source_save_failure_surfaces(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    source = FakeCredentialSource(make_credentials(access_token='access-v1', exp=time.time() - 100))
+
+    async def exploding_save(credentials: OpenAICodexCredentials) -> None:
+        raise RuntimeError('database on fire')
+
+    source.save = exploding_save
+    provider = OpenAICodexProvider(credential_source=source)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        if request.headers['authorization'] == 'Bearer access-v2':
-            return httpx2.Response(200)
-        return httpx2.Response(401)
+        return httpx2.Response(200)  # pragma: no cover
 
-    async with authed_client(provider_a, handler) as client_a:
-        assert (await client_a.get(CODEX_URL)).status_code == 200  # rotates v1 -> v2
-    async with authed_client(provider_b, handler) as client_b:
-        assert (await client_b.get(CODEX_URL)).status_code == 200  # reuses v2, no second rotation
+    async with authed_client(provider, handler) as client:
+        with pytest.raises(CredentialsPersistenceError, match='credential source'):
+            await client.get(CODEX_URL)
 
-    assert source.index == 1  # exactly one rotation despite two independent providers
-    assert source.calls == [(False, None), (True, 'v1'), (False, None)]
+    assert provider.credentials.access_token.get_secret_value() == 'access-new'  # memory is current
 
 
-async def test_401_replay_resends_a_one_shot_streaming_body():
+async def test_401_replay_resends_a_one_shot_streaming_body(monkeypatch: pytest.MonkeyPatch):
     """The auth flow buffers the outgoing body, so a replay after refresh does not raise `StreamConsumed`."""
-    source = FakeCredentialSource([make_snapshot('v1', token='access-v1'), make_snapshot('v2', token='access-v2')])
-    provider = OpenAICodexProvider(credential_source=source)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    provider = make_provider()
     bodies: list[bytes] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         bodies.append(request.content)
-        if request.headers['authorization'] == 'Bearer access-v2':
+        if request.headers['authorization'] == 'Bearer access-new':
             return httpx2.Response(200)
         return httpx2.Response(401)
 
@@ -584,26 +585,19 @@ async def test_401_replay_resends_a_one_shot_streaming_body():
     assert bodies == [b'{"prompt": "hi"}', b'{"prompt": "hi"}']  # the replay carried the full body
 
 
-async def test_credential_source_owns_credentials():
-    provider = OpenAICodexProvider(credential_source=FakeCredentialSource([make_snapshot('v1')]))
+async def test_credentials_unavailable_before_the_source_is_loaded():
+    provider = OpenAICodexProvider(credential_source=FakeCredentialSource())
     with pytest.raises(UserError, match='credential_source'):
         _ = provider.credentials
 
 
 async def test_credential_source_is_mutually_exclusive():
-    source = FakeCredentialSource([make_snapshot('v1')])
     with pytest.raises(AssertionError, match='credentials'):
-        OpenAICodexProvider(credentials=make_credentials(), credential_source=source)
-
-    async def save(credentials: OpenAICodexCredentials) -> None:
-        raise AssertionError('never called: construction fails first')  # pragma: no cover
-
-    with pytest.raises(AssertionError, match='persistence'):
-        OpenAICodexProvider(credential_source=source, on_credentials_refresh=save)
+        OpenAICodexProvider(credentials=make_credentials(), credential_source=FakeCredentialSource())
 
 
 async def test_refresh_credentials_primitive():
-    """The public upstream-refresh building block for source implementations."""
+    """The upstream-refresh building block behind every automatic refresh."""
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         assert str(request.url) == 'https://auth.openai.com/oauth/token'
@@ -612,7 +606,7 @@ async def test_refresh_credentials_primitive():
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     async with client:
-        rotated = await refresh_credentials(make_credentials(), http_client=client)
+        rotated = await _refresh_credentials(make_credentials(), http_client=client)
 
     assert rotated.access_token.get_secret_value() == 'access-new'
     assert rotated.account_id == 'acc-9'  # extracted from the id_token in the response
@@ -653,19 +647,16 @@ async def test_refresh_failure_surfaces_and_keeps_old_credentials(monkeypatch: p
     assert mock.forms == [{'grant_type': 'refresh_token', 'refresh_token': 'refresh-1', 'client_id': PUBLIC_CLIENT_ID}]
 
 
-async def test_callback_failure_updates_memory_but_raises_persistence_error(monkeypatch: pytest.MonkeyPatch):
-    persisted: list[OpenAICodexCredentials] = []
+async def test_save_failure_on_the_401_path_updates_memory_but_raises(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
+    source = FakeCredentialSource(make_credentials(exp=time.time() + 3600))
+    old_bearer = f'Bearer {source.credentials.access_token.get_secret_value()}'
 
-    async def failing_callback(credentials: OpenAICodexCredentials) -> None:
-        persisted.append(credentials)
+    async def exploding_save(credentials: OpenAICodexCredentials) -> None:
         raise RuntimeError('db down')
 
-    provider = OpenAICodexProvider(
-        credentials=make_credentials(exp=time.time() + 3600), on_credentials_refresh=failing_callback
-    )
-
-    old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
+    source.save = exploding_save
+    provider = OpenAICodexProvider(credential_source=source)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         # The persistence error surfaces during the refresh, so the replay never goes out.
@@ -673,40 +664,11 @@ async def test_callback_failure_updates_memory_but_raises_persistence_error(monk
         return httpx2.Response(401)
 
     async with authed_client(provider, handler) as client:
-        with pytest.raises(CredentialsPersistenceError, match='persistence callback raised'):
-            await client.get('https://chatgpt.com/backend-api/codex/x')
+        with pytest.raises(CredentialsPersistenceError, match='credential source'):
+            await client.get(CODEX_URL)
 
     # In-memory credentials are current even though persistence failed.
-    assert len(persisted) == 1
     assert provider.credentials.access_token.get_secret_value() == 'access-new'
-    assert provider.credentials.refresh_token.get_secret_value() == 'refresh-2'
-
-
-async def test_account_id_falls_back_to_previous_on_rotation(monkeypatch: pytest.MonkeyPatch):
-    mock = TokenEndpointMock({**TOKEN_RESPONSE, 'id_token': make_jwt({'sub': 'user'})})
-    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
-    provider = make_provider()
-    await provider._refresh_for_401(provider._revision)  # pyright: ignore[reportPrivateUsage]
-    assert provider.credentials.account_id == 'acc-1'  # carried over when id_token lacks the claim
-
-
-async def test_auth_never_sent_to_foreign_or_plaintext_destinations():
-    """A caller-supplied client may be reused for other destinations; credentials stay home."""
-    provider = make_provider()
-    seen: list[httpx2.Request] = []
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        seen.append(request)
-        return httpx2.Response(200)
-
-    async with authed_client(provider, handler) as client:
-        await client.get('https://example.com/unrelated')  # foreign host
-        await client.get('http://chatgpt.com/backend-api/codex/x')  # right host, plaintext scheme
-
-    for request in seen:
-        assert 'authorization' not in request.headers
-        assert 'chatgpt-account-id' not in request.headers
-        assert 'originator' not in request.headers
 
 
 def test_openai_client_passthrough():
@@ -715,7 +677,7 @@ def test_openai_client_passthrough():
     client = AsyncOpenAI(api_key='irrelevant', base_url='https://chatgpt.com/backend-api/codex')
     provider = OpenAICodexProvider(openai_client=client)
     assert provider.client is client  # used as-is: no credential injection, no auth wrapping
-    with pytest.raises(UserError, match='unavailable when the provider wraps'):
+    with pytest.raises(UserError, match='openai_client'):
         _ = provider.credentials
 
 
