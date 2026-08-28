@@ -191,30 +191,23 @@ def write_snapshot(client: attention.GitHubClient, path: str, *, now: dt.datetim
 
 
 class _Candidate(BaseModel):
-    number: int = Field(ge=1)
+    number: int = Field(ge=1, strict=True)
     updated_at: str
     title: str
 
 
 class _SnapshotFile(BaseModel):
-    candidates: list[_Candidate]
-    model_requests_last_week: int = Field(ge=0)
+    candidates: list[_Candidate] = Field(max_length=_CANDIDATE_LIMIT)
+    model_requests_last_week: int = Field(ge=0, strict=True)
 
 
-class _Snapshot(BaseModel):
-    candidates: dict[int, _Candidate]
-    model_requests_last_week: int
-
-
-def _load_snapshot(path: str) -> _Snapshot:
+def _load_snapshot(path: str) -> tuple[dict[int, _Candidate], int]:
     """Return the trusted candidate map (number -> snapshot title and timestamp)."""
     loaded = _SnapshotFile.model_validate_json(Path(path).read_text(encoding='utf-8'))
     candidates = {candidate.number: candidate for candidate in loaded.candidates}
     if len(candidates) != len(loaded.candidates):
         raise ValueError('Snapshot candidates must have unique numbers')
-    if len(candidates) > _CANDIDATE_LIMIT:
-        raise ValueError('Snapshot exceeds the candidate limit')
-    return _Snapshot(candidates=candidates, model_requests_last_week=loaded.model_requests_last_week)
+    return candidates, loaded.model_requests_last_week
 
 
 def ensure_considered_label(client: attention.GitHubClient) -> None:
@@ -245,9 +238,9 @@ def apply_picks(
     Labeling happens in `finalize_picks`, only after the Slack post succeeds:
     a failed delivery must leave the picks in the pool, not consume them.
     """
-    snapshot = _load_snapshot(snapshot_path)
+    candidates, model_requests = _load_snapshot(snapshot_path)
     picks = agent_items(output_path, Pick, tag='record_feature_pick', limit=_PICK_LIMIT)
-    unknown = {pick.item_number for pick in picks} - snapshot.candidates.keys()
+    unknown = {pick.item_number for pick in picks} - candidates.keys()
     if unknown:
         raise ValueError(f'Agent output contains numbers outside the snapshot: {sorted(unknown)}')
     lines: list[str] = []
@@ -259,13 +252,13 @@ def apply_picks(
         labels = item_labels(current)
         if (
             str(current.get('state') or '').casefold() != 'open'
-            or str(current.get('updated_at')) != snapshot.candidates[number].updated_at
+            or str(current.get('updated_at')) != candidates[number].updated_at
             or CONSIDERED_LABEL in labels
             or not labels.intersection(FEATURE_LABELS)
         ):
             lines.append(f'#{number}: skipped because the item changed after selection')
             continue
-        title = _slack_escape(snapshot.candidates[number].title[:_TITLE_LIMIT])
+        title = _slack_escape(candidates[number].title[:_TITLE_LIMIT])
         reason = _sanitize_reason(pick.reason)
         bullets.append(f'• <https://github.com/{REPO}/issues/{number}|#{number} {title}> — {reason}')
         surfaced.append(number)
@@ -276,7 +269,7 @@ def apply_picks(
         f':bulb: *Weekly feature digest — {REPO}* · {now.date().isoformat()}',
         *bullets,
     ]
-    if model_requests := snapshot.model_requests_last_week:
+    if model_requests:
         noun = 'request' if model_requests == 1 else 'requests'
         text_lines.append(f'+ {model_requests} new model {noun} this week')
     text_lines.append(

@@ -196,9 +196,12 @@ def test_pick_parsing_rejects_too_many_and_duplicates(tmp_path: Path):
 def test_pick_parsing_ignores_foreign_output_types(tmp_path: Path):
     path = picks_file(tmp_path, [{'type': 'noop', 'summary': 'nothing'}, pick(7)])
 
-    assert digest.agent_items(path, digest.Pick, tag='record_feature_pick', limit=digest._PICK_LIMIT) == [
-        digest.Pick(item_number='7', reason=pick(7)['reason'])
-    ]
+    # The expected value is stated as a literal so the string-to-int contract
+    # cannot drift silently along with the validator under test.
+    assert [
+        parsed.model_dump()
+        for parsed in digest.agent_items(path, digest.Pick, tag='record_feature_pick', limit=digest._PICK_LIMIT)
+    ] == [{'item_number': 7, 'reason': pick(7)['reason']}]
 
 
 def test_apply_rejects_picks_outside_the_snapshot(tmp_path: Path):
@@ -207,6 +210,35 @@ def test_apply_rejects_picks_outside_the_snapshot(tmp_path: Path):
 
     with pytest.raises(ValueError, match='outside the snapshot'):
         digest.apply_picks(client, picks_file(tmp_path, [pick(8)]), snapshot, now=NOW)
+
+    assert not any(method == 'POST' for method, _, _ in client.calls)
+
+
+def test_apply_rejects_an_injection_shaped_pick_before_any_write(tmp_path: Path):
+    client = FakeClient(issues={7: issue(7)})
+    snapshot = snapshot_file(tmp_path, [candidate(7)])
+    hostile = {'type': 'record_feature_pick', 'item_number': '7; echo pwned', 'reason': 'r'}
+
+    with pytest.raises(ValueError, match='positive decimal'):
+        digest.apply_picks(client, picks_file(tmp_path, [hostile]), snapshot, now=NOW)
+
+    assert not any(method == 'POST' for method, _, _ in client.calls)
+
+
+@pytest.mark.parametrize(
+    ('candidates', 'message'),
+    [
+        ([candidate(7), candidate(7)], 'unique numbers'),
+        ([{**candidate(7), 'number': '7'}], r'number\s+Input should be a valid integer'),
+        ([candidate(number) for number in range(1, digest._CANDIDATE_LIMIT + 2)], 'at most'),
+    ],
+)
+def test_apply_rejects_a_tampered_snapshot(tmp_path: Path, candidates: list[dict[str, Any]], message: str):
+    client = FakeClient(issues={7: issue(7)})
+    snapshot = snapshot_file(tmp_path, candidates)
+
+    with pytest.raises(ValueError, match=message):
+        digest.apply_picks(client, picks_file(tmp_path, [pick(7)]), snapshot, now=NOW)
 
     assert not any(method == 'POST' for method, _, _ in client.calls)
 
