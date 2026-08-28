@@ -1765,19 +1765,34 @@ class TestLoadMCPToolsets:
                 sys.executable,
                 '-c',
                 (
-                    'import socket; import uvicorn; from tests.mcp_server import mcp; '
-                    "server_socket = socket.create_server(('127.0.0.1', 0)); "
-                    'print(server_socket.getsockname()[1], flush=True); '
-                    'uvicorn.run(mcp.streamable_http_app(), fd=server_socket.fileno(), '
-                    "lifespan='on', log_level='warning')"
+                    'import socket\n'
+                    'import uvicorn\n'
+                    'from fastmcp import FastMCP\n'
+                    "mcp = FastMCP('test_server')\n"
+                    "mcp.tool(name='get_weather_forecast')"
+                    "(lambda location: f'The weather in {location} is sunny and 26 degrees Celsius.')\n"
+                    "server_socket = socket.create_server(('127.0.0.1', 0))\n"
+                    'print(server_socket.getsockname()[1], flush=True)\n'
+                    "uvicorn.run(mcp.http_app(), fd=server_socket.fileno(), lifespan='on', log_level='warning')"
                 ),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+        async def read_stderr() -> str:
+            assert process.stderr is not None
+            try:
+                return (await process.stderr.receive()).decode()
+            except anyio.EndOfStream:
+                return '<no stderr>'
+
         try:
             assert process.stdout is not None
-            port = int((await process.stdout.receive()).decode().strip())
+            try:
+                port = int((await process.stdout.receive()).decode().strip())
+            except anyio.EndOfStream:
+                raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
             config = {
                 'mcpServers': {
                     'beta': {'url': f'http://127.0.0.1:{port}/mcp', 'headers': {'X-Key': 'foo'}},
@@ -1801,9 +1816,7 @@ class TestLoadMCPToolsets:
                     result = await agent.run('weather')
             except BaseException:
                 if process.returncode is not None:
-                    assert process.stderr is not None
-                    stderr = (await process.stderr.receive()).decode()
-                    raise AssertionError(f'HTTP MCP test server exited during startup: {stderr}') from None
+                    raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
                 raise
         finally:
             with anyio.CancelScope(shield=True):
