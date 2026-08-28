@@ -46,6 +46,9 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
         number state createdAt
         comments { totalCount }
         reactions { totalCount }
+        timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
+          nodes { ... on UnassignedEvent { createdAt } }
+        }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
       }
@@ -194,19 +197,37 @@ def _labels(item: Mapping[str, Any]) -> set[str]:
     return values
 
 
-def _community_backed(item: Mapping[str, Any]) -> bool:
-    """True when the item sat ignored for two weeks while people kept engaging."""
-    created = item.get('createdAt')
-    if not isinstance(created, str):
-        return False
+def _graphql_time(value: object) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
     try:
-        created_at = dt.datetime.fromisoformat(created.replace('Z', '+00:00'))
+        parsed = dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
     except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _community_backed(item: Mapping[str, Any]) -> bool:
+    """True when the item sat ignored for two weeks while people kept engaging.
+
+    An unassignment inside the window resets the clock: a maintainer who just
+    removed an assignee has looked at the item, and this lane must not fight
+    that decision by re-assigning it on the next quiet run.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    window = dt.timedelta(days=_COMMUNITY_IGNORED_DAYS)
+    created_at = _graphql_time(item.get('createdAt'))
+    if created_at is None or now - created_at < window:
         return False
-    if created_at.tzinfo is None:
+    timeline = item.get('timelineItems')
+    if not isinstance(timeline, Mapping):
         return False
-    if dt.datetime.now(dt.timezone.utc) - created_at < dt.timedelta(days=_COMMUNITY_IGNORED_DAYS):
-        return False
+    for node in _connection_nodes(cast(Mapping[str, object], timeline)):
+        removed_at = (
+            _graphql_time(cast(Mapping[str, object], node).get('createdAt')) if isinstance(node, Mapping) else None
+        )
+        if removed_at is None or now - removed_at < window:
+            return False
     interactions = 0
     for field in ('comments', 'reactions'):
         value = item.get(field)
@@ -483,7 +504,9 @@ def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequenc
 
 def _community_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
     """List unassigned items ignored for two weeks despite community interactions."""
-    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=_COMMUNITY_IGNORED_DAYS)).date().isoformat()
+    # `created:` has date granularity, so search one day wide of the threshold and
+    # let `_community_backed` apply the precise two-week check per item.
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=_COMMUNITY_IGNORED_DAYS - 1)).date().isoformat()
     query = (
         f'repo:{repo} is:open -draft:true created:<{cutoff} no:assignee '
         f'interactions:>{_COMMUNITY_MIN_INTERACTIONS} sort:updated-desc'

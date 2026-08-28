@@ -1462,6 +1462,14 @@ def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
             'actor': {'login': 'dsfaccini'},
             'assignee': {'login': 'dsfaccini'},
         },
+        {
+            # Removing a non-maintainer assignee is routine cleanup, not a
+            # correction of the routing automation.
+            'event': 'unassigned',
+            'created_at': '2026-07-18T01:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+            'assignee': {'login': 'community-contributor'},
+        },
     ]
 
     report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=NOW)
@@ -1474,7 +1482,26 @@ def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
     assert '@pydanty' not in report
     assert '`bug`' not in report
     assert '#1: @dsfaccini unassigned' not in report
+    assert 'community-contributor' not in report
     assert 'none recorded' not in report
+
+
+def test_weekly_corrections_stay_bounded_so_the_digest_always_ships():
+    client = WeeklyClient({1: {**item(1), 'created_at': '2026-07-01T00:00:00Z'}})
+    client.timelines[1] = [
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'p:3-mid'},
+        }
+        for _ in range(monitor._OVERRIDE_LINE_LIMIT + 5)
+    ]
+
+    report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=NOW)
+
+    assert report.count('added `p:3-mid`') == monitor._OVERRIDE_LINE_LIMIT
+    assert '…and 5 more corrections' in report
 
 
 def test_weekly_digest_records_no_corrections_without_maintainer_events():

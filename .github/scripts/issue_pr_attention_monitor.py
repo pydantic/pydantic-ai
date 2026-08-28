@@ -61,6 +61,7 @@ _PRIORITY_LABELS_ALL = (*PRIORITY_GATE_LABELS, 'p:3-mid', 'p:4-low')
 _GATE_BATCH_BREACH = 15
 _OVERRIDE_SCAN_LIMIT = 30
 _OVERRIDE_WINDOW_DAYS = 7
+_OVERRIDE_LINE_LIMIT = 30
 # One hour of overlap between daily census runs; the GitHub event id attribute
 # lets Logfire queries deduplicate corrections seen by two consecutive runs.
 _CORRECTION_WINDOW = dt.timedelta(hours=25)
@@ -1551,7 +1552,12 @@ def _override_scan(
             if not isinstance(event_id, (int, str)) or isinstance(event_id, bool):
                 event_id = None
             if kind == 'unassigned':
-                detail = _nested_field(event, 'assignee', 'login') or 'unknown'
+                detail = _nested_field(event, 'assignee', 'login')
+                # Routing only ever assigns maintainer owners, so only those
+                # unassignments correct the automation; removing a stale
+                # contributor or bot assignee is routine cleanup.
+                if detail.casefold() not in owner_keys:
+                    continue
                 bot_origin = _bot_assignment_origin(events[:index], detail)
             else:
                 detail = _nested_field(event, 'label', 'name')
@@ -1582,6 +1588,12 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
         else:
             verb = 'added' if record['kind'] == 'labeled' else 'removed'
             lines.append(f'• #{number}: @{actor} {verb} `{_slack_escape(record["detail"])}`')
+    # Bound the section so a relabel-heavy week cannot push the digest past the
+    # Slack payload limit and suppress the whole Monday report.
+    if len(lines) > _OVERRIDE_LINE_LIMIT:
+        omitted = len(lines) - _OVERRIDE_LINE_LIMIT
+        del lines[_OVERRIDE_LINE_LIMIT:]
+        lines.append(f'…and {omitted} more corrections')
     if total > scanned:
         lines.append(f'…covering the {scanned} most recently updated of {total} changed items')
     return lines
