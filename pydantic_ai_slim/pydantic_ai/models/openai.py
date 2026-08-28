@@ -2789,10 +2789,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         prompt_cache_key: str | Omit = model_settings.get('openai_prompt_cache_key', OMIT)
         if profile.get('openai_responses_session_affinity', False) and (session_id := _session_affinity_id(messages)):
-            # Explicit user-supplied headers and cache key win over the derived affinity.
-            extra_headers.setdefault('session-id', session_id)
-            extra_headers.setdefault('thread-id', session_id)
-            extra_headers.setdefault('x-client-request-id', session_id)
+            # Explicit user-supplied headers and cache key win over the derived affinity;
+            # HTTP field names are case-insensitive, so a case-variant override counts too.
+            supplied_headers = {name.lower() for name in extra_headers}
+            for header in ('session-id', 'thread-id', 'x-client-request-id'):
+                if header not in supplied_headers:
+                    extra_headers[header] = session_id
             if isinstance(prompt_cache_key, Omit):
                 prompt_cache_key = session_id
 

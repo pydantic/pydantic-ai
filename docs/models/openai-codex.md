@@ -68,12 +68,13 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import (
     OpenAICodexCredentials,
     OpenAICodexCredentialSnapshot,
+    OpenAICodexCredentialSource,
     OpenAICodexProvider,
     refresh_credentials,
 )
 
 
-class DatabaseCredentialSource:
+class DatabaseCredentialSource(OpenAICodexCredentialSource):
     """Sketch of a store-backed source; the storage internals are yours."""
 
     def __init__(self, user_id: str):

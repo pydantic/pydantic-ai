@@ -351,6 +351,9 @@ class OpenAICodexCredentialSource(Protocol):
     [`refresh_credentials`][pydantic_ai.providers.openai_codex.refresh_credentials]), durably
     replace the stored set with a compare-and-swap on the expected revision, and return the new
     snapshot.
+
+    Conformance is structural, but implementations are encouraged to subclass the protocol
+    explicitly so type checkers verify the `get_credentials` signature.
     """
 
     async def get_credentials(

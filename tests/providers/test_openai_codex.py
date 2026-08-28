@@ -1074,13 +1074,17 @@ async def test_session_affinity_isolated_between_conversations(allow_model_reque
 async def test_session_affinity_explicit_overrides_win(allow_model_requests: None):
     model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
     settings = OpenAIResponsesModelSettings(
-        openai_prompt_cache_key='my-key', extra_headers={'session-id': 'my-session'}
+        openai_prompt_cache_key='my-key',
+        # `Thread-Id` is a case-variant override: HTTP field names are case-insensitive.
+        extra_headers={'session-id': 'my-session', 'Thread-Id': 'child-thread'},
     )
     await model.request([_turn('conv-1', 'run-1')], settings, ModelRequestParameters())
 
     kwargs = mock.response_kwargs[0]
     assert kwargs['extra_headers']['session-id'] == 'my-session'  # the explicit header wins
-    assert kwargs['extra_headers']['thread-id'] == 'conv-1'  # unspecified headers are still derived
+    assert kwargs['extra_headers']['Thread-Id'] == 'child-thread'  # a case-variant override also wins
+    assert 'thread-id' not in kwargs['extra_headers']  # no duplicate of the same case-insensitive field
+    assert kwargs['extra_headers']['x-client-request-id'] == 'conv-1'  # unspecified headers are still derived
     assert kwargs['prompt_cache_key'] == 'my-key'  # the explicit cache key only affects the body
     assert 'my-key' not in kwargs['extra_headers'].values()  # and is never copied into headers
 
