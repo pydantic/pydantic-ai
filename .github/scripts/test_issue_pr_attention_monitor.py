@@ -1222,7 +1222,7 @@ def test_census_counts_coverage_without_writing_or_reading_prose():
     assert monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>') == (
         '<@UADITYA> :rotating_light: Attention coverage for pydantic/pydantic-ai — '
         'queue: 14 active, 9 cooling; assignment gate: 2 priority issues unassigned; '
-        'oldest #7740 opened 5d ago; triage pool: 240 unlabeled issues; PR intake: 3 unowned. '
+        'oldest #7740 in the gate 5d; triage pool: 240 unlabeled issues; PR intake: 3 unowned. '
         'The Monday digest covers assigned, legacy, and draft work.'
     )
     # Count-only plus one event-page read vetting the oldest candidate: no
@@ -1307,6 +1307,18 @@ def test_census_oldest_looks_past_vetoed_issues_across_the_whole_breach_window()
     assert client.gate_first == monitor._GATE_BATCH_BREACH
 
 
+def test_census_gate_age_runs_from_the_priority_label_not_creation():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-10T00:00:00Z'}])
+    client.timelines[7740] = [{'event': 'labeled', 'created_at': '2026-08-24T18:00:00Z', 'label': {'name': 'p:2-high'}}]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    # Triage labeling an old backlog issue puts it in the gate *now*; its
+    # creation date must not fire the one-day breach.
+    assert report.startswith(':telescope:')
+    assert 'oldest #7740 in the gate 0d' in report
+
+
 def test_census_rejects_an_untrusted_urgent_mention():
     client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
 
@@ -1322,17 +1334,20 @@ def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytes
     client.timelines[5] = [
         {
             # Outside the daily window: never a correction record, but it still
-            # proves the removed assignment was made by automation.
+            # proves the removed assignment was made by automation. GitHub's
+            # real event shape: `actor` mirrors the assignee, `assigner` acted.
             'event': 'assigned',
             'created_at': '2026-08-20T00:00:00Z',
-            'actor': {'login': 'github-actions[bot]'},
+            'actor': {'login': 'DouweM'},
             'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'github-actions[bot]'},
         },
         {
             'event': 'unassigned',
             'created_at': '2026-08-24T12:00:00Z',
             'actor': {'login': 'DouweM'},
             'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'DouweM'},
         },
         {
             'event': 'labeled',
@@ -1345,14 +1360,16 @@ def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytes
         {
             'event': 'assigned',
             'created_at': '2026-08-20T01:00:00Z',
-            'actor': {'login': 'DouweM'},
+            'actor': {'login': 'dsfaccini'},
             'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'DouweM'},
         },
         {
             'event': 'unassigned',
             'created_at': '2026-08-24T14:00:00Z',
-            'actor': {'login': 'adtyavrdhn'},
+            'actor': {'login': 'dsfaccini'},
             'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'adtyavrdhn'},
         },
     ]
 
@@ -1365,6 +1382,8 @@ def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytes
     assert corrections[0]['detail'] == 'DouweM'
     assert corrections[1]['detail'] == 'p:3-mid'
     assert corrections[2]['bot_origin'] is False
+    # The record names the performer (`assigner`), not the removed assignee.
+    assert corrections[2]['actor'] == 'adtyavrdhn'
     assert all(attrs['number'] == 5 and attrs['event_id'] is not None for attrs in corrections)
     assert [attrs for name, attrs in events if name == 'census.run'] == [
         {
@@ -1386,8 +1405,8 @@ def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytes
 
 def test_bot_assignment_origin_walks_back_to_the_matching_assignment():
     prior = [
-        {'event': 'assigned', 'actor': {'login': 'DouweM'}, 'assignee': {'login': 'dsfaccini'}},
-        {'event': 'assigned', 'actor': {'login': 'github-actions[bot]'}, 'assignee': {'login': 'DouweM'}},
+        {'event': 'assigned', 'assignee': {'login': 'dsfaccini'}, 'assigner': {'login': 'DouweM'}},
+        {'event': 'assigned', 'assignee': {'login': 'DouweM'}, 'assigner': {'login': 'github-actions[bot]'}},
     ]
 
     assert monitor._bot_assignment_origin(prior, 'DouweM') is True
@@ -1510,10 +1529,13 @@ def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
             'label': {'name': 'bug'},
         },
         {
+            # GitHub's real event shape: `actor` is the removed assignee,
+            # `assigner` is who acted. Out of the window, so excluded.
             'event': 'unassigned',
             'created_at': '2026-07-01T00:00:00Z',
             'actor': {'login': 'dsfaccini'},
             'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'DouweM'},
         },
     ]
     client.timelines[2] = [
@@ -1522,14 +1544,24 @@ def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
             'created_at': '2026-07-18T00:00:00Z',
             'actor': {'login': 'dsfaccini'},
             'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'DouweM'},
         },
         {
             # Removing a non-maintainer assignee is routine cleanup, not a
             # correction of the routing automation.
             'event': 'unassigned',
             'created_at': '2026-07-18T01:00:00Z',
-            'actor': {'login': 'dsfaccini'},
+            'actor': {'login': 'community-contributor'},
             'assignee': {'login': 'community-contributor'},
+            'assigner': {'login': 'dsfaccini'},
+        },
+        {
+            # An automated unassignment is not a human correction.
+            'event': 'unassigned',
+            'created_at': '2026-07-18T02:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'github-actions[bot]'},
         },
     ]
 
@@ -1538,11 +1570,12 @@ def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
     assert '*Maintainer corrections this week*' in report
     assert '• #1: @DouweM removed `p:2-high`' in report
     assert '• #1: @DouweM added `p:3-mid`' in report
-    assert '• #2: @dsfaccini unassigned @dsfaccini' in report
-    # Bot relabels, non-priority labels, and events older than the window stay out.
+    assert '• #2: @DouweM unassigned @dsfaccini' in report
+    # Bot relabels, bot unassignments, non-priority labels, and events older
+    # than the window stay out.
+    assert report.count('unassigned') == 1
     assert '@pydanty' not in report
     assert '`bug`' not in report
-    assert '#1: @dsfaccini unassigned' not in report
     assert 'community-contributor' not in report
     assert 'none recorded' not in report
 
