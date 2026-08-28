@@ -1463,16 +1463,31 @@ def _pull_intake_query(repo: str, owners: Sequence[str]) -> str:
     return f'repo:{repo} is:pr is:open created:>={ROUTING_RECOVERY_EPOCH} -draft:true {exclusions}'
 
 
-def _recent_unassignment(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> bool:
+def _recent_unassignment(events: Sequence[dict[str, Any]], *, now: dt.datetime) -> bool:
     """Whether anyone removed an assignee from this item inside the back-off window."""
-    # Two pages: mention/subscribe noise can push an unassignment off the last one.
-    for event in client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2):
+    for event in events:
         if str(event.get('event') or '') != 'unassigned':
             continue
         created = event.get('created_at')
         if isinstance(created, str) and now - _parse_time(created) < dt.timedelta(days=ROUTING_UNASSIGN_BACKOFF_DAYS):
             return True
     return False
+
+
+def _gate_entry_time(events: Sequence[dict[str, Any]]) -> dt.datetime | None:
+    """When the newest priority label landed — the moment the issue entered the gate."""
+    entered: dt.datetime | None = None
+    for event in events:
+        if str(event.get('event') or '') != 'labeled':
+            continue
+        if _nested_field(event, 'label', 'name') not in PRIORITY_GATE_LABELS:
+            continue
+        created = event.get('created_at')
+        if isinstance(created, str):
+            when = _parse_time(created)
+            if entered is None or when > entered:
+                entered = when
+    return entered
 
 
 def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention: str | None = None) -> str:
@@ -1488,14 +1503,19 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
     )
     # A recently unassigned issue is unassigned on purpose, so it stays in the
     # count but must not trigger the oldest-item page day after day.
-    oldest = next(
-        (
-            (int(candidate['number']), _parse_time(str(candidate['created_at'])))
-            for candidate in gate_items
-            if not _recent_unassignment(client, repo, int(candidate['number']), now=now)
-        ),
-        None,
-    )
+    oldest: tuple[int, dt.datetime] | None = None
+    for candidate in gate_items:
+        number = int(candidate['number'])
+        # Two pages: mention/subscribe noise can push an unassignment off the last one.
+        events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
+        if _recent_unassignment(events, now=now):
+            continue
+        # Age runs from the priority label, not issue creation: triage labels
+        # old backlog issues, and their creation dates would breach instantly.
+        # When the label event predates the fetched pages the creation fallback
+        # errs towards alarming, which fits — the label is genuinely old.
+        oldest = (number, _gate_entry_time(events) or _parse_time(str(candidate['created_at'])))
+        break
     untriaged = _search_count(client, _untriaged_query(repo))
     pull_intake = _search_count(client, _pull_intake_query(repo, owners))
     # Counts and item numbers only: the heartbeat must stay free of issue and PR
@@ -1510,7 +1530,7 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         raise ValueError('A valid Aditya Slack mention is required for an intake breach')
     prefix = f'{urgent_mention} :rotating_light:' if breach else ':telescope:'
     gate = (
-        f'{gate_total} priority issues unassigned; oldest #{oldest[0]} opened {oldest_age}d ago'
+        f'{gate_total} priority issues unassigned; oldest #{oldest[0]} in the gate {oldest_age}d'
         if oldest
         else f'{gate_total} priority issues unassigned'
     )
@@ -1650,18 +1670,21 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
             created = event.get('created_at')
             if not isinstance(created, str) or _parse_time(created) < since:
                 continue
-            actor = _actor(event)
-            if actor.casefold() not in owner_keys:
-                continue
             if kind == 'unassigned':
+                # On (un)assigned events GitHub puts the *removed assignee* in
+                # `actor`; the person who acted is in `assigner`.
+                performer = _nested_field(event, 'assigner', 'login')
                 target = _nested_field(event, 'assignee', 'login')
                 # Routing only ever assigns maintainer owners, so only those
                 # unassignments correct the automation; removing a stale
                 # contributor or bot assignee is routine cleanup.
-                if target.casefold() not in owner_keys:
+                if performer.casefold() not in owner_keys or target.casefold() not in owner_keys:
                     continue
-                lines.append(f'• #{number}: @{_slack_escape(actor)} unassigned @{_slack_escape(target)}')
+                lines.append(f'• #{number}: @{_slack_escape(performer)} unassigned @{_slack_escape(target)}')
             else:
+                actor = _actor(event)
+                if actor.casefold() not in owner_keys:
+                    continue
                 name = _nested_field(event, 'label', 'name')
                 if not name.startswith('p:'):
                     continue
