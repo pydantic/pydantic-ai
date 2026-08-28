@@ -14,16 +14,17 @@ import argparse
 import datetime as dt
 import json
 import os
-import re
 import sys
 import unicodedata
 import urllib.error
 import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, TypedDict, cast  # noqa: TID251
+from typing import Any, cast
 
 import issue_pr_attention_monitor as attention
+from pydantic import BaseModel, Field, field_validator
+from triage_models import AgentItem, agent_items, item_labels
 
 REPO = 'pydantic/pydantic-ai'
 # The triage agent applies `pydanty:feature`; older and human-triaged requests
@@ -43,11 +44,17 @@ _MODEL_REQUEST_WINDOW_DAYS = 7
 SNAPSHOT_PATH = 'feature-candidates.json'
 
 
-class Pick(TypedDict):
+class Pick(AgentItem):
     """One validated agent selection."""
 
-    item_number: int
     reason: str
+
+    @field_validator('reason')
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError('reason must be a non-empty string')
+        return value
 
 
 def _repository(value: str) -> str:
@@ -183,68 +190,31 @@ def write_snapshot(client: attention.GitHubClient, path: str, *, now: dt.datetim
     return [f'wrote {len(candidates)} feature candidate(s)']
 
 
-class _Snapshot(TypedDict):
-    candidates: dict[int, dict[str, str]]
+class _Candidate(BaseModel):
+    number: int = Field(ge=1)
+    updated_at: str
+    title: str
+
+
+class _SnapshotFile(BaseModel):
+    candidates: list[_Candidate]
+    model_requests_last_week: int = Field(ge=0)
+
+
+class _Snapshot(BaseModel):
+    candidates: dict[int, _Candidate]
     model_requests_last_week: int
 
 
 def _load_snapshot(path: str) -> _Snapshot:
     """Return the trusted candidate map (number -> snapshot title and timestamp)."""
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Snapshot must contain a candidates list')
-    data = cast(Mapping[str, object], loaded)
-    raw_candidates = data.get('candidates')
-    model_requests = data.get('model_requests_last_week')
-    if not isinstance(raw_candidates, list) or not isinstance(model_requests, int) or model_requests < 0:
-        raise ValueError('Snapshot must contain a candidates list and a model-request count')
-    candidates: dict[int, dict[str, str]] = {}
-    for value in cast(list[object], raw_candidates):
-        if not isinstance(value, Mapping):
-            raise ValueError('Snapshot candidate must be an object')
-        candidate = cast(Mapping[str, object], value)
-        number = candidate.get('number')
-        updated_at = candidate.get('updated_at')
-        title = candidate.get('title')
-        if (
-            not isinstance(number, int)
-            or number < 1
-            or number in candidates
-            or not isinstance(updated_at, str)
-            or not isinstance(title, str)
-        ):
-            raise ValueError('Snapshot candidates must have unique positive numbers, titles, and timestamps')
-        candidates[number] = {'updated_at': updated_at, 'title': title}
+    loaded = _SnapshotFile.model_validate_json(Path(path).read_text(encoding='utf-8'))
+    candidates = {candidate.number: candidate for candidate in loaded.candidates}
+    if len(candidates) != len(loaded.candidates):
+        raise ValueError('Snapshot candidates must have unique numbers')
     if len(candidates) > _CANDIDATE_LIMIT:
         raise ValueError('Snapshot exceeds the candidate limit')
-    return _Snapshot(candidates=candidates, model_requests_last_week=model_requests)
-
-
-def _parse_picks(path: str) -> list[Pick]:
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Agent output must contain an items list')
-    raw_items = cast(Mapping[str, object], loaded).get('items')
-    if not isinstance(raw_items, list):
-        raise ValueError('Agent output must contain an items list')
-    picks: list[Pick] = []
-    for value in cast(list[object], raw_items):
-        if not isinstance(value, Mapping):
-            continue
-        pick = cast(Mapping[str, object], value)
-        if pick.get('type') != 'record_feature_pick':
-            continue
-        number = pick.get('item_number')
-        reason = pick.get('reason')
-        if not isinstance(number, str) or re.fullmatch(r'[1-9][0-9]*', number) is None:
-            raise ValueError('Pick item_number must be a positive decimal string')
-        if not isinstance(reason, str) or not reason.strip():
-            raise ValueError('Pick reason must be a non-empty string')
-        picks.append(Pick(item_number=int(number), reason=reason))
-    numbers = [pick['item_number'] for pick in picks]
-    if len(numbers) > _PICK_LIMIT or len(numbers) != len(set(numbers)):
-        raise ValueError('Agent output contains too many or duplicate picks')
-    return picks
+    return _Snapshot(candidates=candidates, model_requests_last_week=loaded.model_requests_last_week)
 
 
 def ensure_considered_label(client: attention.GitHubClient) -> None:
@@ -263,16 +233,6 @@ def ensure_considered_label(client: attention.GitHubClient) -> None:
     )
 
 
-def _labels(item: Mapping[str, Any]) -> set[str]:
-    values: set[str] = set()
-    for entry in item.get('labels', []):
-        if isinstance(entry, Mapping):
-            name = cast(Mapping[str, object], entry).get('name')
-            if isinstance(name, str):
-                values.add(name)
-    return values
-
-
 def apply_picks(
     client: attention.GitHubClient,
     output_path: str,
@@ -286,27 +246,27 @@ def apply_picks(
     a failed delivery must leave the picks in the pool, not consume them.
     """
     snapshot = _load_snapshot(snapshot_path)
-    picks = _parse_picks(output_path)
-    unknown = {pick['item_number'] for pick in picks} - snapshot['candidates'].keys()
+    picks = agent_items(output_path, Pick, tag='record_feature_pick', limit=_PICK_LIMIT)
+    unknown = {pick.item_number for pick in picks} - snapshot.candidates.keys()
     if unknown:
         raise ValueError(f'Agent output contains numbers outside the snapshot: {sorted(unknown)}')
     lines: list[str] = []
     bullets: list[str] = []
     surfaced: list[int] = []
     for pick in picks:
-        number = pick['item_number']
+        number = pick.item_number
         current = cast(dict[str, Any], client.get(f'/repos/{REPO}/issues/{number}'))
-        labels = _labels(current)
+        labels = item_labels(current)
         if (
             str(current.get('state') or '').casefold() != 'open'
-            or str(current.get('updated_at')) != snapshot['candidates'][number]['updated_at']
+            or str(current.get('updated_at')) != snapshot.candidates[number].updated_at
             or CONSIDERED_LABEL in labels
             or not labels.intersection(FEATURE_LABELS)
         ):
             lines.append(f'#{number}: skipped because the item changed after selection')
             continue
-        title = _slack_escape(snapshot['candidates'][number]['title'][:_TITLE_LIMIT])
-        reason = _sanitize_reason(pick['reason'])
+        title = _slack_escape(snapshot.candidates[number].title[:_TITLE_LIMIT])
+        reason = _sanitize_reason(pick.reason)
         bullets.append(f'• <https://github.com/{REPO}/issues/{number}|#{number} {title}> — {reason}')
         surfaced.append(number)
         lines.append(f'#{number}: surfaced in the weekly feature digest')
@@ -316,7 +276,7 @@ def apply_picks(
         f':bulb: *Weekly feature digest — {REPO}* · {now.date().isoformat()}',
         *bullets,
     ]
-    if model_requests := snapshot['model_requests_last_week']:
+    if model_requests := snapshot.model_requests_last_week:
         noun = 'request' if model_requests == 1 else 'requests'
         text_lines.append(f'+ {model_requests} new model {noun} this week')
     text_lines.append(
@@ -339,7 +299,7 @@ def finalize_picks(client: attention.GitHubClient, numbers: list[int]) -> tuple[
             current = cast(dict[str, Any], client.get(f'/repos/{REPO}/issues/{number}'))
             # A pick closed since delivery is still labeled (labels apply to
             # closed issues): reopening must not surface it a second time.
-            if CONSIDERED_LABEL in _labels(current):
+            if CONSIDERED_LABEL in item_labels(current):
                 lines.append(f'#{number}: already marked, not relabeled')
                 continue
             client.post(f'/repos/{REPO}/issues/{number}/labels', {'labels': [CONSIDERED_LABEL]})

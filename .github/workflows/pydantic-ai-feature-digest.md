@@ -63,7 +63,12 @@ safe-outputs:
             sparse-checkout: |
               .github/scripts/feature_digest.py
               .github/scripts/issue_pr_attention_monitor.py
+              .github/scripts/triage_models.py
             sparse-checkout-cone-mode: false
+        - name: Install the typed-boundary dependency
+          # Pinned exactly: this job holds a write-scoped token, so a
+          # compromised new release must never reach it.
+          run: python3 -m pip install --quiet 'pydantic==2.13.4'
         - name: Restore exact candidate allowlist
           uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
           with:
@@ -115,6 +120,8 @@ pre-agent-steps:
     run: bash .github/scripts/install-sandbox-tools.sh
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
+  - name: Install the typed-boundary dependency
+    run: python3 -m pip install --quiet 'pydantic==2.13.4'
   - name: Build bounded feature snapshot
     env:
       GITHUB_TOKEN: ${{ github.token }}

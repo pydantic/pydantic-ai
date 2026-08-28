@@ -172,21 +172,33 @@ def test_pick_parsing_rejects_malformed_entries(tmp_path: Path, value: dict[str,
     path = picks_file(tmp_path, [value])
 
     with pytest.raises(ValueError):
-        digest._parse_picks(path)  # pyright: ignore[reportPrivateUsage]
+        digest.agent_items(path, digest.Pick, tag='record_feature_pick', limit=digest._PICK_LIMIT)
 
 
 def test_pick_parsing_rejects_too_many_and_duplicates(tmp_path: Path):
     with pytest.raises(ValueError, match='too many or duplicate'):
-        digest._parse_picks(picks_file(tmp_path, [pick(number) for number in range(1, 7)]))  # pyright: ignore[reportPrivateUsage]
+        digest.agent_items(
+            picks_file(tmp_path, [pick(number) for number in range(1, 7)]),
+            digest.Pick,
+            tag='record_feature_pick',
+            limit=digest._PICK_LIMIT,
+        )
 
     with pytest.raises(ValueError, match='too many or duplicate'):
-        digest._parse_picks(picks_file(tmp_path, [pick(7), pick(7)]))  # pyright: ignore[reportPrivateUsage]
+        digest.agent_items(
+            picks_file(tmp_path, [pick(7), pick(7)]),
+            digest.Pick,
+            tag='record_feature_pick',
+            limit=digest._PICK_LIMIT,
+        )
 
 
 def test_pick_parsing_ignores_foreign_output_types(tmp_path: Path):
     path = picks_file(tmp_path, [{'type': 'noop', 'summary': 'nothing'}, pick(7)])
 
-    assert digest._parse_picks(path) == [{'item_number': 7, 'reason': pick(7)['reason']}]  # pyright: ignore[reportPrivateUsage]
+    assert digest.agent_items(path, digest.Pick, tag='record_feature_pick', limit=digest._PICK_LIMIT) == [
+        digest.Pick(item_number='7', reason=pick(7)['reason'])
+    ]
 
 
 def test_apply_rejects_picks_outside_the_snapshot(tmp_path: Path):
