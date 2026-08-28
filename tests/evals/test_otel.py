@@ -96,27 +96,36 @@ async def test_context_subtree_concurrent():
     assert task2_child.children[0].name == 'task2_grandchild', "task2_child1's child should be task2_grandchild"
 
 
-async def test_context_subtree_skips_teardown_when_context_id_is_unset(mocker: MockerFixture):
+async def test_context_subtree_skips_teardown_when_context_id_is_unset(monkeypatch: pytest.MonkeyPatch):
     """Test that span collection is skipped when no exporter context id could be established.
 
     `context_id` stays `None` if `_set_exporter_context_id` fails on entry. Calling `clear(None)` or
     `get_finished_spans(None)` in that case would discard spans belonging to every other context, so
     the `finally` block has to skip collection entirely.
+
+    This uses `monkeypatch` rather than `mocker.spy`: older `pytest-mock` releases call the
+    `asyncio.iscoroutinefunction` alias that Python 3.14 deprecates, and this project escalates
+    `DeprecationWarning`s to errors, which broke the lowest-versions matrix job.
     """
     from pydantic_evals.otel import _context_in_memory_span_exporter as exporter_module
 
-    clear_spy = mocker.spy(exporter_module._ContextInMemorySpanExporter, 'clear')  # pyright: ignore[reportPrivateUsage]
+    exporter_cls = exporter_module._ContextInMemorySpanExporter  # pyright: ignore[reportPrivateUsage]
+    cleared: list[str | None] = []
+
+    def recording_clear(self: object, context_id: str | None = None) -> None:
+        cleared.append(context_id)
 
     def fail_to_set_context_id(*args: object, **kwargs: object) -> None:
         raise RuntimeError('failed to set exporter context id')
 
-    mocker.patch.object(exporter_module, '_set_exporter_context_id', fail_to_set_context_id)
+    monkeypatch.setattr(exporter_cls, 'clear', recording_clear)
+    monkeypatch.setattr(exporter_module, '_set_exporter_context_id', fail_to_set_context_id)
 
     with pytest.raises(RuntimeError, match='failed to set exporter context id'):
         with context_subtree():
             pass  # pragma: no cover
 
-    assert clear_spy.call_count == 0, 'teardown must not clear spans when no context id was set'
+    assert cleared == [], 'teardown must not clear spans when no context id was set'
 
 
 @pytest.fixture
