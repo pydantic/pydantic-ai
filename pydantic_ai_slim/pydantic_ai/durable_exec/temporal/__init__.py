@@ -24,11 +24,11 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
-from ...messages import ModelMessage, ModelMessagesTypeAdapter
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
-from ._durability import ContinueAsNewCallbacks, TemporalDurability
+from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
-from ._payload_converter import PydanticAIPayloadConverter, _type_adapter  # pyright: ignore[reportPrivateUsage]
+from ._operation_names import TemporalOperationNamer
+from ._payload_converter import PydanticAIPayloadConverter
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 from ._workflow import PydanticAIWorkflow
@@ -36,12 +36,12 @@ from ._workflow import PydanticAIWorkflow
 __all__ = [
     'TemporalAgent',
     'TemporalDurability',
-    'ContinueAsNewCallbacks',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
+    'TemporalOperationNamer',
     'PydanticAIWorkflow',
     'PydanticAIPayloadConverter',
 ]
@@ -56,24 +56,6 @@ try:
     import anyio._backends._trio  # pyright: ignore[reportUnusedImport]  # noqa: F401
 except ImportError:
     pass
-
-# Same reasoning as the anyio backends above: `ModelMessagesTypeAdapter` is built with
-# `defer_build=True`, so its pydantic-core schema for the wide `ModelMessage` union is only
-# compiled on the first real `dump_json`/`validate_json` call. Force that build now, during
-# ordinary worker startup, so a workflow that's first to serialize message history across a
-# `continue_as_new` boundary never pays that compile cost inside sandboxed workflow compute
-# (where it would count against Temporal's deadlock-detection timeout).
-ModelMessagesTypeAdapter.dump_json([])
-
-# This is a *separate* `TypeAdapter` from the one above: `PydanticAIPayloadConverter` builds and
-# memoizes its own adapter per type hint (see `_payload_converter.py`), so warming
-# `ModelMessagesTypeAdapter` doesn't touch it — verified empirically, not assumed: a fresh
-# `TypeAdapter(list[ModelMessage])` pays its own ~40ms build even right after the warm-up above.
-# `list[ModelMessage]` crosses a Temporal payload boundary twice in this package — as the `messages`
-# field of every model-request activity's params, and optionally as a `continue_as_new` argument —
-# so warm this cache entry too, for the same reason as above: the first of those calls in a worker's
-# life would otherwise pay the build cost wherever it happens to land, activity or workflow sandbox.
-_type_adapter(list[ModelMessage])
 
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:
@@ -137,6 +119,12 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # e.g. a `gateway/anthropic:` or `anthropic:` model resolved lazily via `infer_model`.
             # Safe to pass through: a deterministic, read-only config lookup.
             'anthropic',
+            # The OpenAI SDK defers importing its large generated resource tree until a model constructor
+            # accesses `client.chat.completions` or `client.responses`. Without passthrough, Temporal reloads
+            # that tree in every isolated workflow sandbox. Pass through the whole SDK so resource classes and
+            # their base classes come from one coherent module graph. Pydantic AI does not use the SDK's global
+            # client configuration: it creates per-model clients and invokes their request methods in activities.
+            'openai',
             # The `google-genai` SDK lazily imports `google.auth` submodules (e.g.
             # `google.auth.aio.credentials`) while constructing its client, which Temporal flags as
             # "imported after initial workflow load" when a `gateway/google-cloud:` (or `google-*:`)
@@ -149,12 +137,14 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
             'numpy',
             'pandas',
-            # `response.cost()` lazily imports `genai_prices` (and its `httpx2` dependency) on first call.
-            # When cost is calculated inside a workflow, the sandbox re-imports that chain and `httpx2._models`
-            # subclasses `urllib.request.Request`, which is restricted unless `genai_prices`/`httpx2` are passed
+            # `response.cost()` lazily imports `genai_prices` (and its httpx2 dependencies) on first call.
+            # When cost is calculated or an httpx2-backed model is constructed inside a workflow, the sandbox
+            # re-imports that chain and touches restricted request/lock types unless these modules are passed
             # through alongside the rest of the HTTP stack.
             'genai_prices',
             'httpx2',
+            'httpcore2',
+            'truststore',
         ),
     )
 

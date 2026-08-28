@@ -19,6 +19,8 @@ from types import TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
+import anyio
+import httpx2
 import pytest
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
@@ -949,6 +951,9 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
     try:
         with pytest.raises(error_type) as exc_info:
             SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
+        # The watchdog only guards against a hung constructor; cancel it before the liveness
+        # check so a slow worker can't have it fire mid-`run_until_complete`.
+        stop_handle.cancel()
         assert exc_info.value is error
         assert not forced_stop
         assert loop.run_until_complete(asyncio.sleep(0)) is None
@@ -1431,6 +1436,108 @@ async def test_run_stream_early_break_during_debounce_closes_cleanly():
     async with agent.run_stream('hello') as result:
         stream = result.stream_text(delta=True)
         assert await anext(stream)
+
+
+async def test_run_stream_cancel_during_debounce_from_another_task():
+    """`cancel()` interrupts a debounced background pull without cancelling its caller.
+
+    A synthetic `PeekableAsyncStream` makes the second chunk wait deterministically; a recorded provider response cannot
+    guarantee that the debounced prefetch is still active when cancellation starts.
+    """
+    pull_started = anyio.Event()
+    finalization_started = anyio.Event()
+
+    async def source() -> AsyncIterator[str]:
+        try:
+            yield 'chunk '
+            pull_started.set()
+            await anyio.sleep_forever()
+        finally:
+            finalization_started.set()
+
+    @dataclass
+    class CancellableStreamedResponse(models.StreamedResponse):
+        stream: _utils.PeekableAsyncStream[str, AsyncIterator[str]]
+
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            async for text in self.stream:
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content=text):
+                    yield event
+
+        async def close_stream(self) -> None:
+            await self.stream.aclose()
+
+        @property
+        def model_name(self) -> str:
+            return 'cancellable'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    class CancellableModel(models.Model):
+        @property
+        def system(self) -> str:
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'cancellable'
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+        ) -> ModelResponse:
+            raise AssertionError('Only streaming requests are expected')  # pragma: no cover
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext[object] | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            yield CancellableStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                stream=_utils.PeekableAsyncStream(source()),
+            )
+
+    model = CancellableModel()
+    assert model.model_id == 'test:cancellable'
+    agent = Agent(model)
+
+    async with agent.run_stream('hello') as result:
+        stream = result.stream_text(delta=True)
+        with anyio.fail_after(1):
+            assert await anext(stream) == 'chunk '
+            await pull_started.wait()
+
+        cancel_finished = anyio.Event()
+
+        async def cancel() -> None:
+            await result.cancel()
+            cancel_finished.set()
+
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(cancel)
+            with anyio.fail_after(1):
+                await cancel_finished.wait()
+
+        assert result.cancelled
+        assert finalization_started.is_set()
+
+    assert result.response.state == 'interrupted'
 
 
 def test_run_stream_sync_rejects_already_entered_result():
@@ -6373,6 +6480,44 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
     )
 
 
+async def test_stream_cancel_guard_suppresses_httpx2_transport_error():
+    @dataclass
+    class _HTTPX2Stream(models.StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[Any]:
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                yield event
+            assert self.cancelled
+            raise httpx2.StreamClosed()
+
+        async def close_stream(self) -> None:
+            pass
+
+        @property
+        def model_name(self) -> str:
+            return 'httpx2'
+
+        @property
+        def provider_name(self) -> str:
+            return 'httpx2'
+
+        @property
+        def provider_url(self) -> str | None:
+            return None
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime.now(tz=timezone.utc)
+
+    stream = _HTTPX2Stream(models.ModelRequestParameters())
+    iterator = stream.__aiter__()
+    await iterator.__anext__()
+    await stream.cancel()
+    async for _ in iterator:
+        pass
+
+    assert stream.get().state == 'interrupted'
+
+
 async def test_run_stream_cancel_after_complete():
     agent = Agent(TestModel())
 
@@ -6392,8 +6537,8 @@ async def test_testmodel_stream_cancel_reports_interrupted():
     """Cancelling a `TestModel` sub-stream mid-iteration simulates the transport tear-down and reports interrupted.
 
     Driven directly against `model.request_stream` (not the continuation composite, which tears segments
-    down via `close_stream` rather than `cancel`) so the stream's own `cancel()` fires the simulated
-    `httpx.StreamClosed`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
+    down via `close_stream` rather than `cancel`) so the stream's own `cancel()` makes the next chunk pull
+    raise `_StreamCancelled`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
     """
     model = TestModel(custom_output_text='hello world')
     params = models.ModelRequestParameters()
@@ -6402,7 +6547,7 @@ async def test_testmodel_stream_cancel_reports_interrupted():
         iterator = stream.__aiter__()
         await iterator.__anext__()
         await stream.cancel()
-        async for _ in iterator:  # the next pull raises the simulated `StreamClosed`, suppressed by the guard
+        async for _ in iterator:  # the next pull raises `_StreamCancelled`, suppressed by the guard
             pass
 
     assert stream.get().state == 'interrupted'

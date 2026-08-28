@@ -151,7 +151,7 @@ print(result.output)
 #> {"sum":0}
 ```
 
-Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
+Pydantic AI does not validate tool arguments here; it passes them as keyword arguments.
 
 ## Strict Mode {#strict-mode}
 
@@ -410,7 +410,8 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
-hidden names are ignored when forcing by name, and an explicit choice raises only when every requested tool is hidden. `'required'` raises when every function
+hidden is ignored when forcing by name, and an explicit choice raises only when every requested
+tool is hidden. `'required'` raises when every function
 tool is hidden. A tool *declared* with its schema deferred can be forced. On providers that carry
 revealed definitions outside the `tools` list (OpenAI Responses `additional_tools`), a revealed
 tool can't be forced by name either, since by-name forcing can only target declared tools.
@@ -494,12 +495,15 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with thinking enabled |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
+| Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
 | xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
+
+The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, with two exceptions. Ollama documents `tool_choice` as unsupported and ignores it. OpenRouter raises a `UserError` for an explicit `'required'` or named subset on models that can't combine forced tool choice with thinking, rather than silently dropping the reasoning; forcing that Pydantic AI merely inferred falls back to `'auto'` instead.
 
 ### Prompt caching implications {#tool-choice-caching}
 
@@ -512,11 +516,12 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 
 | Provider | Cache-breaking case |
 |----------|---------------------|
-| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled |
+| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
 | Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
+| Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
 | OpenAI Responses | Never — `allowed_tools` handles all cases natively |
 | Google | Never — `allowed_function_names` handles all cases natively |
@@ -552,7 +557,7 @@ def my_flaky_tool(query: str) -> str:
 
 Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(retries={'tools': N})`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence. The agent-wide default can also be overridden per run via [`agent.run(retries={'tools': N})`][pydantic_ai.agent.Agent.run] (and `run_sync`/`run_stream`/`iter`, or for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]); a per-run value replaces the agent-wide default at the bottom of the precedence chain, so explicit per-tool and per-toolset limits still win. A bare `int` at these run-time call sites overrides both budgets (matching construction) — pass a dict such as `retries={'tools': N}` or `retries={'output': N}` to change just one.
 
-Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'`. User-provided toolsets inherit the agent-wide tool-retry default — or its per-run override — as their default when no per-toolset value is set.
+Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'`. User-provided toolsets inherit the agent-wide tool-retry default — or its per-run override — as their default when no per-toolset value is set.
 
 ### Which retry limit wins
 
@@ -633,7 +638,7 @@ Both settings are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionT
 
 ### Cancelling the Run from a Tool
 
-A tool can abort the entire run by calling [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] -- e.g. when it discovers that further work is pointless, or a stop signal reaches your application while a tool holds the `RunContext`. From outside the run, pass a [`CancellationToken`][pydantic_ai.CancellationToken] to any run method. The run tears down whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] to the caller. Tool calls executing [in parallel](#parallel-tool-calls-concurrency) are cancelled and drained, but any that already completed keep their results in the message history, and a tool call that never produced a result is repaired automatically when that history is reused. Both cancellation surfaces require being in the same process as the run, so they do not cross a [durable execution](durable_execution/overview.md) serialization boundary such as a Temporal activity.
+A tool can abort the entire run by calling [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] -- e.g. when it discovers that further work is pointless, or a stop signal reaches your application while a tool holds the `RunContext`. From outside the run, pass a [`CancellationToken`][pydantic_ai.CancellationToken] to any run method. The run requests cancellation of whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] to the caller. Async tool tasks executing [in parallel](#parallel-tool-calls-concurrency) are cancelled and drained, but Python cannot forcibly stop a synchronous tool's worker thread; cancellation may wait for the worker or let it finish in the background. Either way, its eventual result is discarded while any side effects remain. Tool calls that already completed keep their results in the message history, and a tool call that never produced a result is repaired automatically when that history is reused. Both cancellation surfaces require being in the same process as the run, so they do not cross a [durable execution](durable_execution/overview.md) serialization boundary such as a Temporal activity.
 
 See [Cancelling a Run](agent.md#cancelling-a-run) for the full picture, including cancelling from outside the run and accessing the cancelled run's state.
 
@@ -726,9 +731,11 @@ _(This example is complete, it can be run "as is")_
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
+Under [durable execution](durable_execution/overview.md), a tool with an `args_validator` gets a dedicated validation activity, step, or task wherever the engine wraps that toolset. The validator may perform I/O and can retry, fail, or defer the call. Tools without an `args_validator` schedule no extra durable unit.
+
 The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — both schema validation and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).
 
-### Parallel tool calls & concurrency
+### Parallel tool calls & concurrency {#parallel-tool-calls-concurrency}
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`, executing them in the order the model emitted them.
 
@@ -777,6 +784,9 @@ print(calls)
 You can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering any function tool, and the same barrier is available for [output tools](output.md#tool-output) via [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] (see [Controlling output tool parallelism](output.md#controlling-output-tool-parallelism)). To run an entire run's tools serially regardless of which tools were called, wrap the run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager, or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
+
+!!! note "Sync tools run on a separate thread"
+    Because a sync function runs on a worker thread, a value it sets on a [`contextvars.ContextVar`][contextvars.ContextVar] is not visible outside the function, and asyncio APIs like `asyncio.get_running_loop()` raise an error, since the worker thread has no event loop. Reading context variables still works, but the write limitation also applies to libraries that use them internally, such as tracing and logging integrations. If your tool needs any of these, make it async. The same applies to any sync function the agent runs for you, including [hooks](hooks.md), system prompt functions, output functions, and history processors.
 
 #### Thread executor for long-running servers
 

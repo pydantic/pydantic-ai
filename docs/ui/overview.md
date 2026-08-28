@@ -13,7 +13,7 @@ These integrations are implemented as subclasses of the abstract [`UIAdapter`][p
 
 ## Usage
 
-The protocol-specific [`UIAdapter`][pydantic_ai.ui.UIAdapter] subclass (i.e. [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] or [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter]) is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`](../agent.md#running-agents), running the agent, and then transforming Pydantic AI events into protocol-specific events. The event stream transformation is handled by a protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass, but you typically won't use this directly.
+The protocol-specific [`UIAdapter`][pydantic_ai.ui.UIAdapter] subclass (i.e. [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] or [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter]) is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`](../agent.md#running-agents), running the agent, and then transforming Pydantic AI events into protocol-specific events. The event stream transformation is handled by a protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass, which you typically won't use directly unless the agent's events reach you outside the request that serves the frontend, as covered in ["Encoding events without a request"](#encoding-events-without-a-request).
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of protocol-specific events. This is demonstrated in the next section.
 
@@ -93,6 +93,35 @@ async def chat(request: Request) -> Response:
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+### Encoding events without a request
+
+If the agent doesn't run inside the request that serves the frontend — its events reach your API edge over a transport of their own, like a [durable execution](../durable_execution/overview.md) workflow, a queue, or a websocket fan-out — there's no request body to build a run input from, and no `UIAdapter` to run the agent. Use the protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass on its own instead: it transforms and encodes [the agent's events](../agent.md#streaming-all-events) and takes no run input.
+
+```py {title="encode_events.py"}
+from collections.abc import AsyncIterator
+
+from pydantic_ai.ui import NativeEvent
+from pydantic_ai.ui.vercel_ai import VercelAIEventStream
+
+
+async def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
+    event_stream = VercelAIEventStream()
+    async for sse_event in event_stream.encode_stream(event_stream.transform_stream(events)):
+        yield sse_event
+```
+
+An event stream instance carries the state of one run as it goes (the current message ID, the part it's streaming, the tool calls it's waiting on), so build a new one per run rather than reusing it.
+
+The AG-UI protocol identifies every run to the frontend: its `RUN_STARTED` and `RUN_FINISHED` events carry a thread ID and a run ID, which [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] reads off the run input when it has one, warning you if you pass IDs it then overrides. Without a run input, pass the IDs your own transport already assigns to the conversation and the run:
+
+```py {title="encode_ag_ui_events.py"}
+from pydantic_ai.ui.ag_ui import AGUIEventStream
+
+event_stream = AGUIEventStream(thread_id='conversation-123', run_id='workflow-456')
+```
+
+Each defaults to a new UUID, minted every time the stream is constructed: a conversation that spans more than one run — a run resumed after a [tool approval](./ag-ui.md#tool-approval-interrupts) above all — has to pass its own `thread_id` for the frontend to correlate the runs. Constructing the stream inside replay-able [durable execution](../durable_execution/overview.md) workflow code makes that a determinism hazard too, as the defaults are re-minted on every replay, so pass an explicit `thread_id` and `run_id` there. Passing the [`conversation_id` and `run_id`](../message-history.md#correlating-runs-with-run_id-and-conversation_id) of the agent run itself lines the protocol's identity up with the run's traces. On the request path, [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] lines up the thread ID only: it maps the run input's thread ID onto the agent's `conversation_id`, while the protocol's run ID stays the one the client sent and is never wired to the agent run's `run_id`, so the two differ.
 
 ## Trust model for client-submitted messages
 

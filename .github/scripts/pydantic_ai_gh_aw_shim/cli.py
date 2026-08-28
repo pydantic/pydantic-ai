@@ -44,9 +44,9 @@ import time
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypeAlias, cast
+from typing import Any, TypeAlias, cast
 
-import httpx
+import httpx2
 import logfire
 from anthropic import AsyncAnthropic
 from mcp.shared.exceptions import McpError
@@ -178,7 +178,7 @@ def run_request_limit() -> int:
 # sending data. Two minutes is generous enough for large generations but
 # prevents indefinite hangs. SDK-level retries cover transient 429/5xx before
 # raising.
-_LLM_TIMEOUT = httpx.Timeout(timeout=120.0, connect=10.0)
+_LLM_TIMEOUT = httpx2.Timeout(timeout=120.0, connect=10.0)
 _LLM_MAX_RETRIES = 4
 
 # Wall-clock caps (seconds).  These are last-resort guards on top of the
@@ -459,9 +459,13 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
     # Fresh `RunUsage` so `request_limit=2` bounds the summariser, not
     # (parent + summariser). Merge the totals back regardless of outcome.
     sub_usage = RunUsage()
+    # `RunContext.model` is the wider `AbstractModel`; the shim only ever runs regular agents, so it is
+    # always a `Model` here.
+    model = ctx.model
+    assert isinstance(model, Model)
     try:
         r = await asyncio.wait_for(
-            Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
+            Agent(cast('Model[Any]', model), instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
                 f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
                 usage_limits=UsageLimits(request_limit=2),
                 usage=sub_usage,
@@ -867,8 +871,12 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     # `seen` AGENTS.md set would silently hide context the sub-agent needs.
     reset_context_state()
     sub_toolset = select_claude_code_toolset(READ_ONLY_SUBAGENT_TOOLS, permission_mode=None, task=None)
+    # `RunContext.model` is the wider `AbstractModel`; the shim only ever runs regular agents, so it is
+    # always a `Model` here.
+    model = ctx.model
+    assert isinstance(model, Model)
     sub = Agent(
-        ctx.model,
+        cast('Model[Any]', model),
         instructions=[INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt],
         toolsets=[sub_toolset],
         capabilities=[

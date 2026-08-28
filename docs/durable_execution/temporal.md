@@ -152,7 +152,7 @@ async def main():
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
-8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own `PayloadSizeError` failure type (see [Large Payloads](#large-payloads)), while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], and `UnsupportedEventLoopError` as `workflow_failure_exception_types`.
+8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], and `UnsupportedEventLoopError` as `workflow_failure_exception_types`.
 9. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
 10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
@@ -196,11 +196,19 @@ To ensure that Temporal knows what code to run when an activity fails or is inte
 
 When [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] dynamically creates activities for the agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
 
+Upgrading to this version changes the activity sequence for tools that have an `args_validator`, so workflows already in flight that call such a tool need [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a [patch](https://python.temporal.io/temporalio.workflow.html#patched). Workflows that don't call a tool with an `args_validator` are unaffected.
+
 [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] and toolsets contributed by [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] are supported. Their factory is re-resolved inside activities when tools are listed and called, so it must be deterministic given the run dependencies. Like other wrapped toolsets, every `DynamicToolset` requires an explicit `id`: pass `id=` when constructing one directly, set the `id` parameter of the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator, or set a stable capability `id` on `DynamicCapability`. Note that with Temporal, `per_run_step=False` is not respected, as the toolset always needs to be created on-the-fly in the activity.
 
 [Capabilities](../capabilities/overview.md) that contribute a toolset — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or an [`MCP`][pydantic_ai.capabilities.MCP] server running locally — derive the toolset's `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. (`MCP` falls back to an id derived from the server URL's host and path when no `id` is given.) A toolset passed to a capability via `toolsets=` keeps its own `id`, which must be set on the toolset itself.
 
-Other than that, any agent and toolset will just work!
+All other agents and toolsets are supported.
+
+### Tool Argument Validation
+
+A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in a `validate_args` activity, so it may perform I/O and dynamic-tool validators survive the workflow boundary. A tool without one schedules no extra activity. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. A validator may also raise `ApprovalRequired` or `CallDeferred`; resuming an approved call runs validation again with `tool_call_approved` set.
+
+Each activity derives its typed arguments independently, so schema validators must be idempotent. A Pydantic validation context is rebuilt from the `validation_context` configured on [`Agent`][pydantic_ai.agent.Agent]; a callable context builder runs again with the activity's own run context.
 
 ### Agent Run Context and Dependencies
 
@@ -215,7 +223,7 @@ Values that Pydantic AI carries across the boundary as untyped dictionaries — 
 !!! warning "Persisted payload schemas"
     Temporal deserializes persisted workflow and activity payloads using the models and type annotations available in the currently deployed worker, so treat these models as durable contracts across deployments. Adding an optional field with a default stays compatible, but adding a required field or making another incompatible change can cause payload decoding to fail before the workflow or activity body executes. This is especially relevant to application-owned workflow inputs and dependency models: since Pydantic AI does not own or migrate Temporal workflow history, applications with long-running workflows should adopt a versioning or migration strategy when changing them.
 
-Specifically, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `partial_output`, `usage`, `usage_limits`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_loaded` fields are available by default. `agent` and `root_capability` are re-attached from the worker's agent instance, `tool_manager` is `None` (which is what makes `available_tool_names` fall back to `discovered_tool_names`), and `pending_messages` holds a guard that makes [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, since the activity's recorded result is replayed without re-running your code and the enqueued messages would be dropped.
+Specifically, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `partial_output`, `usage`, `usage_limits`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_active` fields are available by default. `agent` and `root_capability` are re-attached from the worker's agent instance, `tool_manager` is `None` (so [`available_tool_names`][pydantic_ai.tools.RunContext.available_tool_names] returns the snapshot resolved when the activity was dispatched, and falls back to `discovered_tool_names` only for a subclass whose `serialize_run_context` doesn't carry it; [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids] is carried the same way, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a tool owned by a capability), and `pending_messages` holds a guard that makes [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, since the activity's recorded result is replayed without re-running your code and the enqueued messages would be dropped.
 
 Trying to access any other field — `model`, `prompt`, `messages`, `model_settings`, `tracer`, `validation_context`, or `capabilities` — raises a `UserError` rather than returning that field's default value, so a field that didn't cross the boundary can't be mistaken for real run state. A multi-modal `prompt` can carry large [`BinaryContent`][pydantic_ai.messages.BinaryContent], and carrying it would put that content in every activity payload, creating the same Temporal [payload size](#large-payloads) concern as `messages`.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can opt in to carrying `prompt` if it knows its prompts are text-only.
@@ -329,21 +337,19 @@ This has a few operational implications:
 
 ### Continuing as New for Long-Running Agents
 
-A Temporal workflow's execution history is capped (around 50,000 events or 50MB); an agent run with enough turns — many tool calls, a long-lived conversation — can eventually hit that ceiling. Temporal's answer is [`continue_as_new`](https://docs.temporal.io/develop/python/continue-as-new), which atomically completes the current workflow execution and starts a fresh one with a clean history, carrying forward whatever arguments you pass it.
+A Temporal workflow's execution history is capped at around 50,000 events or 50MB. An agent run with enough turns can eventually hit that ceiling. Temporal's answer is [`continue_as_new`](https://docs.temporal.io/develop/python/continue-as-new), which completes the current workflow execution and starts a fresh one with a clean history while carrying forward the arguments you provide.
 
-[`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] can trigger this for you: pass `continue_as_new`, a [`ContinueAsNewCallbacks`][pydantic_ai.durable_exec.temporal.ContinueAsNewCallbacks] bundling the callbacks that opt an agent into this. Its `args` callable receives the run's [`RunContext`][pydantic_ai.tools.RunContext] and returns the keyword arguments for `workflow.continue_as_new()` — any of its own parameters (`args`, `task_queue`, `memo`, `retry_policy`, and so on), not the parameter names of your workflow's `@workflow.run` method. Just before each model request — the one point in the agent graph where every previous turn's tool results are already folded into `ctx.messages` and nothing is in flight — the capability checks whether it's due to continue as new; if so, it calls `args` and immediately continues as new with the returned kwargs. `workflow.continue_as_new()` never returns, so nothing escapes into your workflow code and no new exception type is involved.
+[`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] can trigger this for you. Pass `continue_as_new_args`, a callable that receives the run's [`RunContext`][pydantic_ai.tools.RunContext] and returns the keyword arguments for `workflow.continue_as_new()`. Just before each model request, the capability checks `workflow.info().is_continue_as_new_suggested()`. If Temporal suggests a continuation, it calls your callable and immediately continues as new with the returned arguments.
 
-`args` is entirely responsible for building the arguments your workflow's `@workflow.run` method needs to resume, including carrying over the conversation itself — `continue_as_new=None` (the default) leaves this feature off, with no change in behavior.
-
-By default, "due to continue as new" means `workflow.info().is_continue_as_new_suggested()`, Temporal's own heuristic, based on the current history size. That's a conservative lower bound tuned for the general case, not necessarily for yours: if `args` carries expensive state to rebuild, or you'd rather batch several turns per workflow run, set `ContinueAsNewCallbacks.when` to a callable with the same `RunContext` signature that returns whether to continue as new now. It fully replaces Temporal's suggestion — call `workflow.info().is_continue_as_new_suggested()` yourself inside it if you still want to factor that in (e.g. alongside your own turn counter).
+The callable is responsible for building the arguments your workflow's `@workflow.run` method needs to resume, including carrying over the conversation. Its returned mapping must use `workflow.continue_as_new()` parameter names such as `args`, `task_queue`, `memo`, or `retry_policy`, rather than the parameter names of the workflow run method. Setting `continue_as_new_args=None`, the default, leaves the feature disabled.
 
 !!! warning "Don't pass `list[ModelMessage]` directly to `continue_as_new`"
-    `TemporalDurability` uses [`PydanticAIPayloadConverter`][pydantic_ai.durable_exec.temporal.PydanticAIPayloadConverter] by default, which memoizes the [`TypeAdapter`](https://docs.pydantic.dev/latest/api/type_adapter/) it builds per type hint for the life of the worker, unlike the stock `temporalio.contrib.pydantic` converter it's based on ([temporalio/sdk-python#1695](https://github.com/temporalio/sdk-python/issues/1695)) — so the once-expensive rebuild for `list[ModelMessage]`'s wide discriminated union is now a one-time cost, not a per-call one. Even that first build is precompiled at worker startup, so it shouldn't land inside a live activity or workflow.
+    `TemporalDurability` uses [`PydanticAIPayloadConverter`][pydantic_ai.durable_exec.temporal.PydanticAIPayloadConverter] by default. It memoizes the [`TypeAdapter`](https://docs.pydantic.dev/latest/api/type_adapter/) built per type hint for the life of the worker, unlike the stock `temporalio.contrib.pydantic` converter it is based on ([temporalio/sdk-python#1695](https://github.com/temporalio/sdk-python/issues/1695)). This makes the expensive build for the wide `list[ModelMessage]` union a one-time cost rather than a per-call cost.
 
-    What memoization doesn't remove is per-message validation: decoding a `list[ModelMessage]` still walks and validates every message, while a `bytes` argument skips that walk entirely. Measured on an 11MB / 2,000-message history, warm: ~40ms typed as `list[ModelMessage]` vs ~2ms as `bytes` — a real, size-proportional gap, not just a cold-start one. Serialize the history to `bytes` yourself with [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] — already public and built once — before passing it to `continue_as_new`, and deserialize it the same way when the new run starts.
+    Memoization does not remove per-message validation. Decoding a `list[ModelMessage]` still validates every message, while a `bytes` argument skips that pass. Serialize the history to `bytes` with [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] before passing it to `continue_as_new`, then deserialize it when the new run starts.
 
 !!! warning "`continue_as_new` arguments share Temporal's per-payload size limit"
-    Just like activity and workflow inputs, arguments passed to `continue_as_new` are individually capped at Temporal's payload size limit (2MB by default) — carrying the *entire* message history through unconditionally will eventually fail for a long-lived conversation, which is exactly the case this feature targets. Bound what you carry (e.g. only the most recent messages) or compact it first with a history-processing capability like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] before building the payload in `args`.
+    Like activity and workflow inputs, arguments passed to `continue_as_new` are individually capped at Temporal's payload size limit, which is 2MB by default. Bound what you carry, such as only the most recent messages, or compact it first with a history-processing capability like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory].
 
 ```python {title="temporal_continue_as_new.py" test="skip"}
 from typing import Any
@@ -354,7 +360,6 @@ from temporalio.worker import Worker
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import (
-    ContinueAsNewCallbacks,
     PydanticAIPlugin,
     PydanticAIWorkflow,
     TemporalDurability,
@@ -378,7 +383,7 @@ def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
 agent = Agent(
     'openai:gpt-5.6-sol',
     name='investigator',
-    capabilities=[TemporalDurability(continue_as_new=ContinueAsNewCallbacks(args=continue_as_new_args))],
+    capabilities=[TemporalDurability(continue_as_new_args=continue_as_new_args)],
 )
 
 
@@ -415,7 +420,7 @@ async def main():
         )
 ```
 
-Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../agent.md#usage-limits) like `request_limit` bounding the whole logical run rather than resetting on each continuation. `history`, `usage`, and `usage_limits` are ordinary workflow arguments here, not a feature of `TemporalDurability` itself — the callable and the `@workflow.run` signature that receives them are entirely yours to shape.
+Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../agent.md#usage-limits) like `request_limit` bounding the whole logical run rather than resetting on each continuation. `history`, `usage`, and `usage_limits` are ordinary workflow arguments here, not a feature of `TemporalDurability` itself. The callable and the `@workflow.run` signature that receives them are yours to shape.
 
 ### Model Selection at Runtime
 
@@ -556,6 +561,9 @@ agent = Agent(
 2. Set `'temporal': False` to skip activity wrapping entirely (only valid for `async` tools — sync tools always need an activity since threads aren't deterministic).
 3. Selector-based: [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] applies the same metadata across a selection of tools (`'all'`, a name list, a dict, or a callable).
 
+The opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
+their Temporal activity, so `metadata={'temporal': False}` on an MCP tool raises a `UserError`.
+
 !!! tip "Configuring third-party tools"
     [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is the recommended path when the activity config doesn't belong on the tool definition — for example, tools defined in third-party packages, or a group of tools that share the same timeout profile but live in different files.
 
@@ -586,7 +594,11 @@ async def main():
     )
 ```
 
-By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). To disable sending Temporal metrics to Logfire, you can pass `metrics=False` to the `LogfirePlugin` constructor.
+By default, the `LogfirePlugin` will instrument Temporal (including metrics) and Pydantic AI and send all data to Logfire. Temporal metrics are exported every 60 seconds. You can change the interval by passing a `datetime.timedelta` as `metric_periodicity` to the `LogfirePlugin` constructor.
+
+If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`).
+
+To disable sending Temporal metrics to Logfire, pass `metrics=False` to the `LogfirePlugin` constructor. This also lets you supply your own [`Runtime`](https://python.temporal.io/temporalio.runtime.Runtime.html) to `Client.connect()` when you need to configure other Temporal telemetry options; the plugin will still configure tracing.
 
 ## Known Issues
 

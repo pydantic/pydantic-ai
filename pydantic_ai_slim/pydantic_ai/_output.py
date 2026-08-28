@@ -32,7 +32,7 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
-from .toolsets.abstract import AbstractToolset, ToolsetTool
+from .toolsets.abstract import OUTPUT_TOOLSET_ID, AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability, RawOutput
@@ -119,13 +119,7 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
 
 
 def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
-    if isinstance(e, ValidationError):
-        content: list[Any] | str = e.errors(include_url=False, include_context=False)
-    else:
-        content = e.message
-    m = _messages.RetryPromptPart(content=content, tool_name=run_context.tool_name)
-    if run_context.tool_call_id:
-        m.tool_call_id = run_context.tool_call_id
+    m = _messages.RetryPromptPart.from_error(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
     return ToolRetryError(m)
 
 
@@ -393,12 +387,9 @@ async def execute_output_function(
         return await function_schema.call(args, run_context)
     except ModelRetry as r:
         if wrap_validation_errors:
-            m = _messages.RetryPromptPart(
-                content=r.message,
-                tool_name=run_context.tool_name,
+            m = _messages.RetryPromptPart.from_error(
+                r, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id
             )
-            if run_context.tool_call_id:
-                m.tool_call_id = run_context.tool_call_id  # pragma: no cover
             raise ToolRetryError(m) from r
         else:
             raise
@@ -433,8 +424,9 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         if self._is_async:
             function = cast(Callable[[Any], Awaitable[T]], self.function)
             return await function(*args)
-        function = cast(Callable[[Any], T], self.function)
-        return await _utils.run_in_executor(function, *args)
+        # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+        function = cast(Callable[[Any], T | Awaitable[T]], self.function)
+        return await _utils.await_maybe(await _utils.run_in_executor(function, *args))
 
 
 @dataclass(kw_only=True)
@@ -873,7 +865,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             # Extract the function's input type (what the model produces) for output_type
             type_hints = _utils.get_function_type_hints(output)
             for hint_name, hint_type in type_hints.items():  # pragma: no branch
-                if hint_name != 'return' and not _function_schema._is_call_ctx(hint_type):  # pyright: ignore[reportPrivateUsage]
+                if hint_name != 'return' and not _function_schema.is_call_ctx(hint_type):
                     self.output_type = hint_type
                     break
         else:
@@ -1510,7 +1502,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return '<output>'
+        return OUTPUT_TOOLSET_ID
 
     @property
     def label(self) -> str:
