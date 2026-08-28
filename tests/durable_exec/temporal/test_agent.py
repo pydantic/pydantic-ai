@@ -191,7 +191,7 @@ warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', categ
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.xdist_group(name='temporal'),
+    pytest.mark.xdist_group(name='temporal-agent'),
     pytest.mark.filterwarnings(
         'ignore:`TemporalAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),

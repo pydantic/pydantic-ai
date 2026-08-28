@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
+from anyio.pytest_plugin import FreePortFactory
 
 from pydantic_ai import (
     Agent,
@@ -62,8 +63,6 @@ with workflow.unsafe.imports_passed_through():
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
-        TEMPORAL_PORT,
-        _kill_leaked_temporal_server,  # pyright: ignore[reportPrivateUsage]
         http_client,
     )
 
@@ -109,9 +108,17 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
         Agent.instrument_all(False)
 
 
-@pytest.fixture(scope='package')
-async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
-    _kill_leaked_temporal_server(TEMPORAL_PORT)
+# One dev server (and thus one xdist group) per test module so the four temporal files can
+# run on four xdist workers concurrently instead of forming one serial chain. The port comes
+# from anyio's `free_tcp_port_factory`, so parallel workers (and a previously leaked server)
+# can never collide on a hardcoded port.
+@pytest.fixture(scope='module')
+def temporal_port(free_tcp_port_factory: FreePortFactory) -> int:
+    return free_tcp_port_factory()
+
+
+@pytest.fixture(scope='module')
+async def temporal_env(temporal_port: int) -> AsyncIterator[WorkflowEnvironment]:
     # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
     # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
     # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
@@ -120,7 +127,7 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
     download_dest_dir.mkdir(parents=True, exist_ok=True)
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
-        port=TEMPORAL_PORT,
+        port=temporal_port,
         ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
         download_dest_dir=str(download_dest_dir),
@@ -129,16 +136,16 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
 
 
 @pytest.fixture
-async def client(temporal_env: WorkflowEnvironment) -> Client:
+async def client(temporal_env: WorkflowEnvironment, temporal_port: int) -> Client:
     return await Client.connect(
-        f'localhost:{TEMPORAL_PORT}',
+        f'localhost:{temporal_port}',
         plugins=[PydanticAIPlugin()],
     )
 
 
 @pytest.fixture
-async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
+async def client_with_logfire(temporal_env: WorkflowEnvironment, temporal_port: int) -> Client:
     return await Client.connect(
-        f'localhost:{TEMPORAL_PORT}',
+        f'localhost:{temporal_port}',
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
     )
