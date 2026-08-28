@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Deterministically assign open items to their semantic maintainer owners."""
+"""Deterministically assign open items to their semantic maintainer owners.
+
+Issues enter routing only once triage has applied a priority label
+(`p:1-highest` or `p:2-high`); everything else stays unassigned, on the
+triage automation's plate. The one exception is community pressure: an item
+ignored for two weeks while people kept commenting or reacting may also be
+assigned.
+"""
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
-import re
 import sys
 import urllib.error
 from collections.abc import Mapping, Sequence
@@ -20,24 +27,37 @@ _REPOSITORIES = attention.REPOSITORIES
 _OWNERS = frozenset(attention.MAINTAINER_OWNERS)
 _MANUAL_OWNER = 'adtyavrdhn'
 _RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
-_LEGACY_BATCH_LIMIT = 6
+_PRIORITY_LABELS = frozenset(attention.PRIORITY_GATE_LABELS)
+_RECENT_BATCH_LIMIT = 3
+_COMMUNITY_BATCH_LIMIT = 3
+_COMMUNITY_IGNORED_DAYS = 14
+_COMMUNITY_MIN_INTERACTIONS = 3
 _FILE_LIMIT = 100
 _ASSIGNEE_LIMIT = 10
-_PARTICIPATION_TIMELINE_PAGES = 2
 _MAX_ITEM_NUMBER = 2_147_483_647
+# Must match the `last:` on both `timelineItems` connections below.
+_UNASSIGNED_EVENT_PAGE = 10
 _ITEM_QUERY = """
 query RoutingItem($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issueOrPullRequest(number: $number) {
       __typename
       ... on Issue {
-        number state
+        number state createdAt
+        comments { totalCount }
+        reactions { totalCount }
+        timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
+          nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
+        }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
       }
       ... on PullRequest {
         number state isDraft changedFiles
         author { login }
+        timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
+          nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
+        }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
         files(first: 100) { nodes { path } pageInfo { hasNextPage } }
@@ -137,7 +157,6 @@ _RULES: dict[str, tuple[Rule, ...]] = {
         Rule('DouweM', ('durable-exec', 'cap:step-persistence'), ('pydantic_ai_harness/step_persistence/',)),
     ),
 }
-_PARTICIPATION_OWNERS = frozenset({'adtyavrdhn', 'dsfaccini', 'DouweM'})
 
 
 class Decision(TypedDict):
@@ -168,19 +187,6 @@ def _item_number(value: object) -> int:
     return value
 
 
-def event_number(issue_value: str | None, pull_request_value: str | None) -> int | None:
-    """Validate the runner-projected issue or pull request number."""
-    values = [value for value in (issue_value, pull_request_value) if value]
-    if not values:
-        return None
-    if len(values) != 1:
-        raise ValueError('GitHub event must identify exactly one issue or pull request')
-    value = values[0]
-    if re.fullmatch(r'[1-9][0-9]{0,9}', value) is None:
-        raise ValueError('item number must be a bounded positive integer')
-    return _item_number(int(value))
-
-
 def _labels(item: Mapping[str, Any]) -> set[str]:
     values: set[str] = set()
     for entry in item.get('labels', []):
@@ -192,6 +198,73 @@ def _labels(item: Mapping[str, Any]) -> set[str]:
         if name.isascii() and not any(character.isspace() and character != ' ' for character in name):
             values.add(name.casefold())
     return values
+
+
+def _graphql_time(value: object) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _nested_str(value: object, *keys: str) -> str | None:
+    """Walk `keys` through nested mappings, returning the final string if present."""
+    for key in keys:
+        if not isinstance(value, Mapping):
+            return None
+        value = cast(Mapping[str, object], value).get(key)
+    return value if isinstance(value, str) else None
+
+
+def _recently_unassigned(item: Mapping[str, Any]) -> bool:
+    """Whether a human took an assignee off this issue inside the back-off window.
+
+    An unassignment means "leave this alone": whoever removed the assignee has
+    looked at the item, and routing must not redo what they undid. Malformed
+    timeline data counts as recent, failing toward not assigning.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    window = dt.timedelta(days=attention.ROUTING_UNASSIGN_BACKOFF_DAYS)
+    timeline = item.get('timelineItems')
+    if not isinstance(timeline, Mapping) or not isinstance(cast(Mapping[str, object], timeline).get('nodes'), list):
+        return True
+    nodes = _connection_nodes(cast(Mapping[str, object], timeline))
+    for node in nodes:
+        # A bot removing an assignee (sweeps, placeholder swaps) is cleanup,
+        # not a decision. GraphQL's `__typename` marks app accounts as `Bot`;
+        # a missing actor (deleted account) counts as human.
+        if _nested_str(node, 'actor', '__typename') == 'Bot':
+            continue
+        removed_at = _graphql_time(_nested_str(node, 'createdAt'))
+        if removed_at is None or now - removed_at < window:
+            return True
+    # A full page whose oldest event is still inside the window may hide an
+    # older human removal behind bot cleanup: truncation fails toward backing
+    # off, like everywhere else in this stack. `nodes[0]` is the oldest
+    # fetched (`last:` pages are chronological) and must match `_ITEM_QUERY`.
+    if len(nodes) == _UNASSIGNED_EVENT_PAGE:
+        oldest = _graphql_time(_nested_str(nodes[0], 'createdAt'))
+        return oldest is None or now - oldest < window
+    return False
+
+
+def _community_backed(item: Mapping[str, Any]) -> bool:
+    """True when the item sat ignored for two weeks while people kept engaging."""
+    now = dt.datetime.now(dt.timezone.utc)
+    created_at = _graphql_time(item.get('createdAt'))
+    if created_at is None or now - created_at < dt.timedelta(days=_COMMUNITY_IGNORED_DAYS):
+        return False
+    interactions = 0
+    for field in ('comments', 'reactions'):
+        value = item.get(field)
+        count = cast(Mapping[str, object], value).get('totalCount') if isinstance(value, Mapping) else None
+        if type(count) is not int or count < 0:
+            return False
+        interactions += count
+    return interactions > _COMMUNITY_MIN_INTERACTIONS
 
 
 def _valid_path(value: str) -> bool:
@@ -300,32 +373,6 @@ def _connection_complete(value: object) -> bool:
     return isinstance(page_info, Mapping) and cast(Mapping[str, object], page_info).get('hasNextPage') is False
 
 
-def _participant_owner(login: str) -> str | None:
-    key = login.casefold()
-    return next((owner for owner in _PARTICIPATION_OWNERS if owner.casefold() == key), None)
-
-
-def _latest_participant(
-    client: attention.GitHubClient,
-    repo: str,
-    number: int,
-    owners: Sequence[str],
-) -> str | None:
-    """Return the latest configured owner visible in the bounded timeline."""
-    allowed = {owner.casefold(): owner for owner in owners}
-    latest: str | None = None
-    for event in client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=_PARTICIPATION_TIMELINE_PAGES):
-        reply = attention.structured_reply(event)
-        if reply is not None and (owner := allowed.get(reply[0].casefold())) is not None:
-            latest = owner
-    return latest
-
-
-def _participant_from_evidence(decision: Decision) -> str | None:
-    expected = f'participant:{decision["owner"]}'
-    return decision['owner'] if decision['evidence'] == expected else None
-
-
 def _fetch_item(client: attention.GitHubClient, repo: str, number: int) -> Mapping[str, Any] | None:
     owner, name = repo.split('/', 1)
     result = client.post(
@@ -345,24 +392,6 @@ def _fetch_item(client: attention.GitHubClient, repo: str, number: int) -> Mappi
         return None
     value = cast(Mapping[str, object], repository).get('issueOrPullRequest')
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else None
-
-
-def _participant_decision(
-    client: attention.GitHubClient,
-    repo: str,
-    number: int,
-    login: str | None,
-) -> Decision | None:
-    if not login or (owner := _participant_owner(login)) is None:
-        return None
-    qualified = tuple(
-        candidate
-        for candidate in _PARTICIPATION_OWNERS
-        if client.maintainer_login(repo, candidate, refresh=True) is not None
-    )
-    if _latest_participant(client, repo, number, qualified) != owner:
-        return None
-    return _decision(client, repo, number, owner, f'participant:{owner}')
 
 
 def _pull_request_draft_status(item: Mapping[str, Any]) -> str | None:
@@ -394,13 +423,16 @@ def _pull_request_precedence(
     return None
 
 
-def decision_for(
-    client: attention.GitHubClient,
-    repo: str,
-    number: int,
-    *,
-    participant_login: str | None = None,
-) -> Selection:
+def _issue_gate(item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
+    """Decide whether an issue may be routed at all; None means proceed."""
+    # A gate label missing from a truncated first page counts as absent, which
+    # fails toward leaving the issue unassigned.
+    if not _labels(normalized) & _PRIORITY_LABELS and not _community_backed(item):
+        return Selection(number=number, decision=None, status='awaiting-triage')
+    return None
+
+
+def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Selection:
     """Refetch one item and make a deterministic, fail-closed decision."""
     repo = _repository(repo)
     number = _item_number(number)
@@ -417,18 +449,20 @@ def decision_for(
         'labels': _connection_nodes(labels),
         'assignees': _connection_nodes(assignees),
     }
+    # The back-off covers pull requests too: a human unassignment means "leave
+    # this alone", and without it the same owner would be re-assigned six
+    # hours after a maintainer removed them.
+    if _recently_unassigned(item):
+        return Selection(number=number, decision=None, status='recently-unassigned')
+    is_pull_request = item.get('__typename') == 'PullRequest'
+    if not is_pull_request and (gated := _issue_gate(item, normalized, number)) is not None:
+        return gated
     if _maintainer_assignees(client, repo, normalized):
         return Selection(number=number, decision=None, status='maintainer-present')
     if len(normalized['assignees']) >= _ASSIGNEE_LIMIT:
         return Selection(number=number, decision=None, status='assignee-capacity')
-    is_pull_request = item.get('__typename') == 'PullRequest'
     if is_pull_request and (precedence := _pull_request_precedence(client, repo, number, item)) is not None:
         return precedence
-    participant = _participant_decision(client, repo, number, participant_login)
-    if participant is not None:
-        return Selection(number=number, decision=participant, status='route')
-    if participant_login:
-        return Selection(number=number, decision=None, status='superseded-maintainer-response')
     filenames: list[str] | None = None
     if is_pull_request:
         changed_files = item.get('changedFiles')
@@ -500,18 +534,24 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
     )
 
 
-def _recovery_numbers(
-    client: attention.GitHubClient,
-    repo: str,
-    qualified: Sequence[str],
-    *,
-    legacy: bool = False,
-) -> list[int]:
+def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
+    """List candidates, priority-labeled issues before pull requests."""
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
-    created = f'created:<{_RECOVERY_EPOCH}' if legacy else f'created:>={_RECOVERY_EPOCH}'
-    order = 'updated-desc' if legacy else 'created-asc'
-    assignees = 'no:assignee' if legacy else negatives
-    query = f'repo:{repo} is:open {created} -draft:true {assignees} sort:{order}'
+    priorities = ','.join(f'"{label}"' for label in sorted(_PRIORITY_LABELS))
+    issues = f'repo:{repo} is:open is:issue label:{priorities} {negatives} sort:created-asc'
+    pulls = f'repo:{repo} is:open is:pr -draft:true created:>={_RECOVERY_EPOCH} {negatives} sort:created-asc'
+    return list(dict.fromkeys(_search_numbers(client, issues) + _search_numbers(client, pulls)))
+
+
+def _community_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
+    """List unassigned items ignored for two weeks despite community interactions."""
+    # `created:` has date granularity, so search one day wide of the threshold and
+    # let `_community_backed` apply the precise two-week check per item.
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=_COMMUNITY_IGNORED_DAYS - 1)).date().isoformat()
+    query = (
+        f'repo:{repo} is:open -draft:true created:<{cutoff} no:assignee '
+        f'interactions:>{_COMMUNITY_MIN_INTERACTIONS} sort:updated-desc'
+    )
     return _search_numbers(client, query)
 
 
@@ -535,42 +575,16 @@ def _select_numbers(
 def select_batch(
     client: attention.GitHubClient,
     repo: str,
-    issue_number: str | None,
-    pull_request_number: str | None,
-    participant_login: str | None = None,
     *,
-    legacy_recovery: bool = False,
+    community_recovery: bool = False,
 ) -> list[Selection]:
-    """Select an event item, one recent recovery, or a bounded legacy batch."""
+    """Select a bounded gated batch, or a community batch when the gate is quiet."""
     repo = _repository(repo)
-    if number := event_number(issue_number, pull_request_number):
-        if participant_login:
-            owner = _participant_owner(participant_login)
-            if owner is None or client.maintainer_login(repo, owner, refresh=True) is None:
-                return [Selection(number=number, decision=None, status='non-maintainer-response')]
-        return [decision_for(client, repo, number, participant_login=participant_login)]
     qualified = _qualified_owners(client, repo)
-    recent = _select_numbers(client, repo, _recovery_numbers(client, repo, qualified), limit=1)
-    if recent or not legacy_recovery:
-        return recent
-    return _select_numbers(
-        client,
-        repo,
-        _recovery_numbers(client, repo, qualified, legacy=True),
-        limit=_LEGACY_BATCH_LIMIT,
-    )
-
-
-def select(
-    client: attention.GitHubClient,
-    repo: str,
-    issue_number: str | None,
-    pull_request_number: str | None,
-    participant_login: str | None = None,
-) -> Selection:
-    """Select exactly the event item or one recent recovery candidate."""
-    selected = select_batch(client, repo, issue_number, pull_request_number, participant_login)
-    return selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
+    gated = _select_numbers(client, repo, _gated_numbers(client, repo, qualified), limit=_RECENT_BATCH_LIMIT)
+    if gated or not community_recovery:
+        return gated
+    return _select_numbers(client, repo, _community_numbers(client, repo), limit=_COMMUNITY_BATCH_LIMIT)
 
 
 def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> bool:
@@ -578,12 +592,7 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     repo = _repository(repo)
     if expected['owner'] not in _OWNERS:
         raise ValueError('owner is not allowlisted')
-    current = decision_for(
-        client,
-        repo,
-        expected['number'],
-        participant_login=_participant_from_evidence(expected),
-    )
+    current = decision_for(client, repo, expected['number'])
     if current['decision'] is None:
         return False
     if current['decision'] != expected:
@@ -618,8 +627,6 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
 def _routing_reason(decision: Decision, mention: str) -> str:
     evidence = decision['evidence']
     owner = decision['owner']
-    if evidence == f'participant:{owner}':
-        return f'{mention} was the most recent qualified maintainer to participate.'
     if evidence == f'author:{owner}':
         return f'{mention} authored this pull request.'
     source, separator, detail = evidence.partition(':')
@@ -664,12 +671,7 @@ def prepare_current(
     item_type = item.get('__typename')
     if item_type not in ('Issue', 'PullRequest'):
         raise RuntimeError('GitHub returned invalid routing metadata')
-    current = decision_for(
-        client,
-        repo,
-        expected['number'],
-        participant_login=_participant_from_evidence(expected),
-    )
+    current = decision_for(client, repo, expected['number'])
     if current['decision'] != expected:
         return None
     return _slack_payload(repo, item_type, expected, mentions_value)
@@ -720,13 +722,9 @@ def main() -> int:
             selected = select_batch(
                 client,
                 repo,
-                os.environ.get('ROUTING_ISSUE_NUMBER'),
-                os.environ.get('ROUTING_PULL_REQUEST_NUMBER'),
-                os.environ.get('ROUTING_PARTICIPANT_LOGIN'),
-                legacy_recovery=os.environ.get('ROUTING_LEGACY_RECOVERY') == 'true',
+                community_recovery=os.environ.get('ROUTING_COMMUNITY_RECOVERY') == 'true',
             )
             decisions = [selection['decision'] for selection in selected if selection['decision'] is not None]
-            first = selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
             _output(
                 {
                     'should_assign': str(bool(decisions)).lower(),
@@ -736,7 +734,7 @@ def main() -> int:
             if decisions:
                 _summary(', '.join(f'#{route["number"]}' for route in decisions) + ': route')
             else:
-                _summary(f'#{first["number"]}: {first["status"]}' if first['number'] else first['status'])
+                _summary('nothing-to-route')
             return 0
         if args.number is None or args.owner is None or args.evidence is None:
             parser.error('assign requires --number, --owner, and --evidence')
