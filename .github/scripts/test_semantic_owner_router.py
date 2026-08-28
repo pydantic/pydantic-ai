@@ -112,8 +112,7 @@ class FakeClient(router.attention.GitHubClient):
                 }
                 value['timelineItems'] = {
                     'nodes': [
-                        {'createdAt': stamp} if isinstance(stamp, str) else stamp
-                        for stamp in source['unassigned_at']
+                        {'createdAt': stamp} if isinstance(stamp, str) else stamp for stamp in source['unassigned_at']
                     ]
                 }
                 if 'pull_request' in source:
