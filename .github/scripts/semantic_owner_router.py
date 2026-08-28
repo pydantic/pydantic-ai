@@ -418,8 +418,10 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
 
 
 def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
-    """List routing candidates: gated repos search priority-labeled issues
-    only; ungated repos search all new intake, issues before pull requests.
+    """List routing candidates.
+
+    Gated repos search priority-labeled issues only; ungated repos search
+    all new intake, issues before pull requests.
     """
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
     if repo in _GATED_REPOS:
