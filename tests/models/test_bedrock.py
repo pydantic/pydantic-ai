@@ -1288,6 +1288,116 @@ async def test_bedrock_stream_usage_with_cached_tokens(
     )
 
 
+_BEDROCK_GUARDRAIL_TRACE: dict[str, Any] = {'guardrail': {'modelOutput': ['blocked']}}
+_BEDROCK_EMPTY_TRACE: dict[str, Any] = {}
+
+
+@pytest.mark.parametrize('trace', [_BEDROCK_GUARDRAIL_TRACE, _BEDROCK_EMPTY_TRACE])
+async def test_bedrock_trace(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    trace: dict[str, Any],
+):
+    """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'guardrail_intervened',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'trace': trace,
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    result = await agent.run('hello')
+
+    message = cast(ModelResponse, result.all_messages()[-1])
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': trace,
+    }
+    assert message.finish_reason == 'content_filter'
+
+
+@pytest.mark.parametrize('trace', [_BEDROCK_GUARDRAIL_TRACE, _BEDROCK_EMPTY_TRACE])
+async def test_bedrock_trace_streamed(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    trace: dict[str, Any],
+):
+    """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'guardrail_intervened'}}
+        yield {
+            'metadata': {
+                'usage': {'inputTokens': 1, 'outputTokens': 1},
+                'trace': trace,
+            }
+        }
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    message = cast(ModelResponse, result.all_messages()[-1])
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': trace,
+    }
+    assert message.finish_reason == 'content_filter'
+
+
+async def test_bedrock_trace_streamed_metadata_before_stop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {
+            'metadata': {
+                'usage': {'inputTokens': 1, 'outputTokens': 1},
+                'trace': _BEDROCK_GUARDRAIL_TRACE,
+            }
+        }
+        yield {'messageStop': {'stopReason': 'guardrail_intervened'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    message = cast(ModelResponse, result.all_messages()[-1])
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': _BEDROCK_GUARDRAIL_TRACE,
+    }
+    assert message.finish_reason == 'content_filter'
+
+
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_service_tier={'type': 'flex'})
@@ -1643,6 +1753,7 @@ async def test_map_user_prompt_with_text_content_input(allow_model_requests: Non
         ),
         document_count=count(1),
         supports_prompt_caching=False,
+        prior_messages=[],
     )
     assert m == snapshot(
         [
@@ -3414,6 +3525,49 @@ async def test_bedrock_delta_renders_announcement_and_plain_tool_spec(
     assert 'defer_loading' not in json.dumps(request['toolConfig'])
 
 
+async def test_bedrock_tool_results_lead_multi_reveal_turn(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Two tools revealed in one turn keep every `toolResult` block ahead of the announcement text."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    tools = [
+        ToolDefinition(name='first_tool', defer_loading=True),
+        ToolDefinition(name='second_tool', defer_loading=True),
+    ]
+    parameters = ModelRequestParameters(function_tools=tools, revealed_tool_names={tool.name for tool in tools})
+    settings, parameters = model.prepare_request(None, parameters)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='load_capability', args={'id': 'first'}, tool_call_id='tooluse_1'),
+                ToolCallPart(tool_name='load_capability', args={'id': 'second'}, tool_call_id='tooluse_2'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='tooluse_1'),
+                ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='tooluse_2'),
+                ToolAvailabilityDeltaPart(tools_added=['second_tool']),
+            ]
+        ),
+    ]
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await model.request(model.prepare_messages(history, parameters), settings, parameters)
+
+    *_, last_message = mock_converse.call_args.kwargs['messages']
+    assert [next(iter(block)) for block in last_message['content']] == ['toolResult', 'toolResult', 'text', 'text']
+    assert [block['toolResult']['toolUseId'] for block in last_message['content'][:2]] == ['tooluse_1', 'tooluse_2']
+
+
 async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
     """Hallucinated tool names with invalid chars (e.g. dots) are sanitized when replayed to Bedrock."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
@@ -4107,13 +4261,202 @@ async def test_bedrock_cache_messages_with_video_as_last_content(
     assert usage.cache_read_tokens == 0
 
 
-async def test_bedrock_cache_point_as_first_content_raises_error(
+async def test_bedrock_cache_point_with_no_prior_user_content_raises_error(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """CachePoint should raise a UserError if it appears before any other content."""
+    """A CachePoint with no prior user content anywhere in the conversation raises a UserError."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should fail'])])]
     with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
+        await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_bedrock_leading_cache_point_attaches_to_previous_user_message(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A CachePoint that is first in its part puts its cache marker at the end of the previous user message."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(parts=[TextPart(content='First answer')]),
+        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'Ephemeral reminder'])]),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'First question'}, {'cachePoint': {'type': 'default', 'ttl': '5m'}}]},
+            {'role': 'assistant', 'content': [{'text': 'First answer'}]},
+            {'role': 'user', 'content': [{'text': 'Ephemeral reminder'}]},
+        ]
+    )
+
+
+async def test_bedrock_leading_cache_point_after_tool_return_shares_the_turn(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A tool return followed by a `[CachePoint, text]` part maps to one user message with the cache marker between them.
+
+    This is the shape reported in https://github.com/pydantic/pydantic-ai/issues/7004
+    (a reminder part injected behind a cache boundary after a tool call).
+    """
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Make a plan')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='write_plan', args={'plan': 'the plan'}, tool_call_id='tc1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='write_plan', content='Plan saved', tool_call_id='tc1'),
+                UserPromptPart(content=[CachePoint(), 'Current plan: the plan']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Make a plan'}]},
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'tc1', 'name': 'write_plan', 'input': {'plan': 'the plan'}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'tc1', 'content': [{'text': 'Plan saved'}], 'status': 'success'}},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Current plan: the plan'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_leading_cache_point_replaces_existing_boundary_marker(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """When the previous user message already ends with a cache point, a leading CachePoint replaces it: the latest one wins."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Some context', CachePoint()]),
+                UserPromptPart(content=[CachePoint(ttl='1h'), 'A reminder']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Some context'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                    {'text': 'A reminder'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_leading_cache_point_replaces_existing_marker_before_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A cache point sitting before trailing documents in the previous user message is also replaced: the latest one wins."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Read this',
+                        CachePoint(),
+                        BinaryContent(data=b'Document content', media_type='text/plain'),
+                    ]
+                ),
+                UserPromptPart(content=[CachePoint(ttl='1h'), 'A reminder']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Read this'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                    {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Document content'}}},
+                    {'text': 'A reminder'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_leading_cache_point_with_video_only_preceding_content_is_skipped(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """When the previous user message is only a video, the cache point is dropped (AWS rejects a cache point directly after a video)."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=[BinaryContent(data=b'video data', media_type='video/mp4')]),
+                UserPromptPart(content=[CachePoint(), 'A reminder']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'video': {'format': 'mp4', 'source': {'bytes': b'video data'}}}, {'text': 'A reminder'}],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_point_only_part_attaches_and_emits_no_message(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A part containing only a CachePoint adds its marker to the previous user message and emits no message of its own."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='Some context'),
+                UserPromptPart(content=[CachePoint()]),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [{'role': 'user', 'content': [{'text': 'Some context'}, {'cachePoint': {'type': 'default', 'ttl': '5m'}}]}]
+    )
+
+
+async def test_bedrock_consecutive_cache_points_raise_error(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Two cache points with no content between them raise a UserError."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['some text', CachePoint(), CachePoint()])])
+    ]
+    with pytest.raises(UserError, match='CachePoint cannot be preceded by another CachePoint'):
         await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
 
 

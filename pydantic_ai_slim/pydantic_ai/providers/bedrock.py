@@ -247,7 +247,7 @@ class BedrockModelProfile(ModelProfile, total=False):
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # These Opus models support structured output on the direct Anthropic API but are not listed
+    # These models support structured output on the direct Anthropic API but are not listed
     # in the Bedrock Runtime structured-output docs:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
     bedrock_structured_output_unsupported = (
@@ -255,6 +255,8 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         'claude-opus-4-7',
         'claude-opus-4-8',
         'claude-opus-5',
+        'claude-sonnet-5',
+        'claude-fable-5',
     )
     downstream = anthropic_model_profile(model_name)
     supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))

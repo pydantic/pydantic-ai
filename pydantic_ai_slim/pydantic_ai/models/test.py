@@ -8,7 +8,6 @@ from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Literal, cast
 
-import httpx
 import pydantic_core
 from typing_extensions import assert_never
 
@@ -26,6 +25,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -344,6 +344,10 @@ class TestModel(Model):
                 )
 
 
+class _StreamCancelled(Exception):
+    pass
+
+
 @dataclass
 class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
@@ -376,7 +380,7 @@ class TestStreamedResponse(StreamedResponse):
                     # Simulate the transport error that real providers raise
                     # when the HTTP connection is closed mid-stream by cancel().
                     if self._cancelled:
-                        raise httpx.StreamClosed()
+                        raise _StreamCancelled()
                     self._usage += _get_string_usage(word)
                     for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
                         yield event
@@ -402,6 +406,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
                 assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since `SpeechPart`s are converted in `Model.prepare_messages`.
+                assert False, 'This should be unreachable — `SpeechPart`s are converted in `Model.prepare_messages`.'
             else:
                 assert_never(part)
 
@@ -423,6 +430,9 @@ class TestStreamedResponse(StreamedResponse):
     async def close_stream(self) -> None:
         # TestModel has no underlying connection to close.
         pass
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (_StreamCancelled,)
 
     @property
     def timestamp(self) -> datetime:
@@ -450,8 +460,8 @@ class _JsonSchemaTestData:
 
     def _gen_any(self, schema: dict[str, Any]) -> Any:
         """Generate data for any JSON Schema."""
-        if const := schema.get('const'):
-            return const
+        if 'const' in schema:
+            return schema['const']
         elif enum := schema.get('enum'):
             return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
@@ -474,7 +484,7 @@ class _JsonSchemaTestData:
         elif type_ == 'integer':
             return self._int_gen(schema)
         elif type_ == 'number':
-            return float(self._int_gen(schema))
+            return self._number_gen(schema)
         elif type_ == 'boolean':
             return self._bool_gen()
         elif type_ == 'array':
@@ -523,25 +533,67 @@ class _JsonSchemaTestData:
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
         maximum = schema.get('maximum')
+        minimum = schema.get('minimum')
+        if minimum is not None and maximum == minimum:
+            return minimum
+
         if maximum is None:
             exc_max = schema.get('exclusiveMaximum')
             if exc_max is not None:
                 maximum = exc_max - 1
 
-        minimum = schema.get('minimum')
         if minimum is None:
             exc_min = schema.get('exclusiveMinimum')
             if exc_min is not None:
                 minimum = exc_min + 1
 
         if minimum is not None and maximum is not None:
-            return minimum + self.seed % (maximum - minimum)
+            span = maximum - minimum
+            if span == 0:
+                # Exclusive-bound adjustments can collapse a valid narrow range.
+                return minimum
+            if (
+                schema.get('type') == 'integer'
+                and minimum % 1 == 0
+                and maximum % 1 == 0
+                and 'exclusiveMinimum' not in schema
+                and 'exclusiveMaximum' not in schema
+                and span > 0
+            ):
+                minimum = int(minimum)
+                span = int(maximum) - minimum + 1
+            return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
         elif maximum is not None:
             return maximum - self.seed
         else:
             return self.seed
+
+    def _number_gen(self, schema: dict[str, Any]) -> float:
+        """Generate a float from a JSON Schema number."""
+        minimum = schema.get('minimum')
+        if (exclusive_minimum := schema.get('exclusiveMinimum')) is not None:
+            minimum = exclusive_minimum if minimum is None else max(minimum, exclusive_minimum)
+        maximum = schema.get('maximum')
+        if (exclusive_maximum := schema.get('exclusiveMaximum')) is not None:
+            maximum = exclusive_maximum if maximum is None else min(maximum, exclusive_maximum)
+        if minimum is not None and maximum is not None:
+            if minimum == maximum:
+                return float(minimum)
+            span = maximum - minimum
+            value = minimum + self.seed % span
+            if value == schema.get('exclusiveMinimum'):
+                value = minimum + span / 2
+            return float(value)
+        elif minimum is not None:
+            offset = 1 if 'exclusiveMinimum' in schema else 0
+            return float(minimum + self.seed + offset)
+        elif maximum is not None:
+            offset = 1 if 'exclusiveMaximum' in schema else 0
+            return float(maximum - self.seed - offset)
+        else:
+            return float(self.seed)
 
     def _bool_gen(self) -> bool:
         """Generate a boolean from a JSON Schema boolean."""

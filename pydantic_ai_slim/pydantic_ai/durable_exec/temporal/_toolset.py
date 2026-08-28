@@ -12,7 +12,7 @@ from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError, ChildWorkflowError
+from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 from typing_extensions import Self, TypedDict
 
@@ -34,13 +34,13 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class GetToolsParams:
     serialized_run_context: Any
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class CallToolParams:
     name: str
@@ -139,17 +139,20 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         return unwrap_tool_call_result(result)
 
 
-PAYLOAD_SIZE_ERROR_TYPE = 'PayloadSizeError'
-"""The failure type Temporal stamps on an activity whose payload exceeds the server blob-size limit.
+PAYLOAD_SIZE_ERROR_TYPES = ('PayloadsTooLarge', 'PayloadSizeError')
+"""The failure types Temporal stamps on an activity whose payload exceeds the server blob-size limit.
 
-Matched by name rather than by class: the SDK raises a private `_PayloadSizeError` from inside its own
-result-encoding step, after the activity function has returned, so only the converted failure type ever
-reaches code we own.
+Both spellings live inside the `>=1.24` range the `temporal` extra declares, so both are matched:
+`temporalio` 1.31 moved the size check out of the Python SDK and into Temporal's Rust core, which stamps
+`PayloadsTooLarge`; up to and including 1.30 the SDK raised a private `_PayloadSizeError` that its own
+`DefaultFailureConverter` stamped `PayloadSizeError`.
 
-The name is stamped by Temporal's `DefaultFailureConverter`, which special-cases that private class; any
-other converter falls back to the class name. As `PydanticAIPlugin` deliberately preserves a custom
-`failure_converter_class`, a user who supplies one that doesn't special-case it loses both this guard and
-the non-retryable entry below.
+Matched by name rather than by class either way: the check runs inside Temporal's own result-encoding
+step, after the activity function has returned, so only the converted failure type ever reaches code we
+own. On the pre-1.31 path the name comes from `DefaultFailureConverter` special-casing that private
+class, and any other converter falls back to the class name -- so as `PydanticAIPlugin` deliberately
+preserves a custom `failure_converter_class`, a user who supplies one that doesn't special-case it loses
+both this guard and the non-retryable entry below. The core-stamped name has no such dependency.
 """
 
 
@@ -164,7 +167,7 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
         FallbackExceptionGroup.__name__,
         # An over-limit payload is deterministic, so Temporal's default unlimited retries would resend the
         # same oversized result forever and hang the workflow instead of ever surfacing an error (#7110).
-        PAYLOAD_SIZE_ERROR_TYPE,
+        *PAYLOAD_SIZE_ERROR_TYPES,
     ]
     retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
     return retry_policy
@@ -174,24 +177,21 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
 def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
     """Re-raise an over-limit activity payload as a `UserError` that points at the cause.
 
-    Temporal rejects the payload during result encoding, so the failure that reaches the workflow names
-    only a byte count. Without this, an activity returning a large `BinaryImage` fails with a bare
-    `[TMPRL1103] ... Size: N bytes, Limit: M bytes` that mentions neither what produced it, nor the
-    image, nor Pydantic AI, leaving no way to get from the error to the fix (#7110).
+    Temporal rejects the payload during result encoding, so the failure that reaches the workflow says
+    only that a limit was exceeded. Without this, an activity returning a large `BinaryImage` fails with
+    a bare `[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit` that
+    mentions neither what produced it, nor the image, nor Pydantic AI, leaving no way to get from the
+    error to the fix (#7110).
 
     The guard sits at the workflow side of the boundary rather than pre-checking the result size inside
     the activity, because the limit is a server setting an activity cannot read: Temporal reports it to
-    the worker at startup and keeps it on a private data converter. Catching what Temporal actually
-    rejected reports the real limit instead of a hardcoded guess at it.
+    the worker at startup and keeps it to itself. Passing Temporal's own sentence through is what carries
+    the real numbers where it has them -- up to `temporalio` 1.30 it appended `Size: N bytes, Limit: M
+    bytes`, which beats a hardcoded guess at the limit; from 1.31 the core-stamped failure drops them.
 
     Nothing here establishes what made the payload large, so the message offers the base64 budget as a
     likely explanation rather than asserting it: an over-limit payload can just as well be a large JSON
     tool return.
-
-    Catches `ChildWorkflowError` alongside `ActivityError`: a `child_workflow`-tagged tool's result
-    crosses the exact same result-encoding boundary, just reported back to `execute_child_workflow()`
-    wrapped differently — `_failure_converter.py`'s `from_failure()` sets `err.__cause__` identically
-    for both, keyed only on which failure-info variant the server sent, not on the guard here.
 
     Args:
         subject: What produced the over-limit payload, as a sentence without its final period.
@@ -199,30 +199,28 @@ def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
     """
     try:
         yield
-    except (ActivityError, ChildWorkflowError) as exc:
+    except ActivityError as exc:
         cause = exc.__cause__
-        if not isinstance(cause, ApplicationError) or cause.type != PAYLOAD_SIZE_ERROR_TYPE:
+        if not isinstance(cause, ApplicationError) or cause.type not in PAYLOAD_SIZE_ERROR_TYPES:
             raise
+        # 1.31's core-stamped message is a complete sentence ending in a period, while the pre-1.31 one
+        # trails off in `Limit: M bytes`, so without this the two join as `...error limit.. Binary`.
+        detail = cause.message.removesuffix('.')
         raise UserError(
-            f'{subject}. {cause.message}. '
+            f'{subject}. {detail}. '
             'Binary content like an image is base64-encoded into the activity payload, so if that is the '
             f'cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB '
             f'default. {remedy} To keep large payloads out of the workflow history without changing what '
             'your tools or models return, configure Temporal external storage (or a claim-check '
             '`payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers '
             'every payload in both directions. '
-            'See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads'
+            'See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads'
         ) from exc
 
 
 @contextmanager
 def tool_result_payload_errors(tool_name: str) -> Generator[None]:
-    """Guard a tool call's result against Temporal's payload size limit.
-
-    Covers both durable-unit shapes a tool call can take: the default activity, and a
-    `child_workflow`-tagged tool's child workflow (see `payload_size_errors`'s docstring for why
-    catching `ChildWorkflowError` alongside `ActivityError` is required for the latter).
-    """
+    """Guard a tool-call activity's result against Temporal's payload size limit."""
     with payload_size_errors(
         f'Tool {tool_name!r} returned a result too large for Temporal',
         'Return a reference instead of the value itself, like a URL or a key your application resolves later.',
@@ -287,55 +285,29 @@ _ValidatedChildWorkflowConfig = with_config(ConfigDict(extra='forbid', arbitrary
         total=ChildWorkflowConfig.__total__,
     )
 )
-"""A `typing_extensions.TypedDict` copy of `ChildWorkflowConfig` with unknown keys forbidden.
-
-Mirrors `_ValidatedActivityConfig` for the same two reasons: `typing_extensions.TypedDict` is required
-because Pydantic cannot generate schemas for `typing.TypedDict` on Python before 3.12 (`ChildWorkflowConfig`
-is one, like `ActivityConfig`), and a `child_workflow`-tagged tool on a `DynamicToolset` reaches
-`resolve_tool_temporal_wrapping` with its metadata JSON-round-tripped through the get-tools activity
-before the dynamic-toolset-specific rejection below gets to run, so this has to validate (or cleanly
-reject) that shape rather than assume live Python objects.
-
-`arbitrary_types_allowed=True` (unlike `_ValidatedActivityConfig`): `search_attributes` accepts
-`temporalio.common.TypedSearchAttributes`, which is built on `SearchAttributeKey[...]` generics
-Pydantic can't generate a schema for. That field isn't part of the JSON-round-trip concern this
-validator exists for (`memo`/timeouts/`retry_policy`/etc. are), so accepting it opaquely is fine.
-"""
-
-
-# Pyright cannot see that the dynamic `TypedDict` has the exact `ChildWorkflowConfig` annotations.
 _child_workflow_config_adapter = cast('TypeAdapter[ChildWorkflowConfig]', TypeAdapter(_ValidatedChildWorkflowConfig))
 
 
 def validate_child_workflow_config(config: ChildWorkflowConfig, source: str) -> ChildWorkflowConfig:
-    """Return `config` validated into Temporal's own types, or raise a `UserError`.
-
-    Mirrors `validate_activity_config` for the same reason, one level up: an unknown key, or a value
-    Temporal's own types don't accept, would otherwise only fail once splatted into
-    `workflow.start_child_workflow()` inside the workflow, wedging the workflow *task* forever instead
-    of failing cleanly at construction time.
-
-    `source` names where the config came from, for example '`child_workflow_config`'.
-    """
+    """Return `config` validated into Temporal's own types, or raise a `UserError`."""
     try:
         return _child_workflow_config_adapter.validate_python(config)
     except ValidationError as e:
         raise UserError(f'Invalid Temporal `ChildWorkflowConfig` in {source}: {e}') from e
 
 
-def resolve_tool_temporal_wrapping(
+def resolve_tool_activity_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
     tool_activity_config: Mapping[str, ActivityConfig | Literal[False]],
-) -> ActivityConfig | Mapping[Literal['child_workflow'], ChildWorkflowConfig] | Literal[False]:
-    """Resolve how a tool call is durably wrapped under Temporal.
+) -> ActivityConfig | Literal[False]:
+    """Resolve per-tool Temporal activity config.
 
     Reads `tool.tool_def.metadata['temporal']` first, then falls back to the explicit
     `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
-    (possibly empty) to run the tool as an activity, `{'child_workflow': ChildWorkflowConfig(...)}`
-    to run it as a child workflow, or `False` to run it inline in the parent workflow.
+    (possibly empty), or `False` to skip activity wrapping.
 
-    The activity config is validated back into Temporal's own types: a `DynamicToolset`'s tools are
+    The config is validated back into Temporal's own types: a `DynamicToolset`'s tools are
     discovered inside the get-tools activity, so their `ToolDefinition.metadata` returns to the
     workflow as JSON, where `timedelta(minutes=5)` has become `'PT5M'`, a `RetryPolicy` a plain
     dict, and an `ActivityCancellationType` an int. Handing those to
@@ -343,39 +315,24 @@ def resolve_tool_temporal_wrapping(
     a `UserError` for what validation can't restore fails the workflow instead.
     """
     config = cast(
-        'ActivityConfig | Mapping[Literal["child_workflow"], ChildWorkflowConfig] | Literal[False]',
+        'ActivityConfig | Literal[False]',
         resolve_tool_durable_config(
             tool,
             tool_name,
             tool_activity_config,
             metadata_key='temporal',
-            config_type_label="ActivityConfig, or {'child_workflow': ChildWorkflowConfig(...)}",
+            config_type_label='ActivityConfig',
         ),
     )
-    match config:
-        case False:
-            return False
-        case {'child_workflow': child_workflow_config} if len(config) == 1:
-            try:
-                resolved_child = _child_workflow_config_adapter.validate_python(child_workflow_config)
-            except ValidationError as e:
-                raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ChildWorkflowConfig`: {e}') from e
-            if 'retry_policy' in resolved_child:
-                resolved_child['retry_policy'] = with_non_retryable_errors(resolved_child.get('retry_policy'))
-            return {'child_workflow': resolved_child}
-        case {'child_workflow': _}:
-            raise UserError(
-                f"Tool {tool_name!r} has invalid 'temporal' metadata: {{'child_workflow': ...}} must be "
-                'the only key when configuring a tool to run as a child workflow.'
-            )
-        case _:
-            try:
-                resolved = _activity_config_adapter.validate_python(config)
-            except ValidationError as e:
-                raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ActivityConfig`: {e}') from e
-            if 'retry_policy' in resolved:
-                resolved['retry_policy'] = with_non_retryable_errors(resolved.get('retry_policy'))
-            return resolved
+    if config is False:
+        return False
+    try:
+        config = _activity_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Tool {tool_name!r} has an invalid Temporal `ActivityConfig`: {e}') from e
+    if 'retry_policy' in config:
+        config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
+    return config
 
 
 def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[..., Any]]:
@@ -384,13 +341,6 @@ def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[
         return toolset.durable_registrations
     if isinstance(toolset, TemporalWrapperToolset):
         return toolset.temporal_activities
-    return []
-
-
-def toolset_temporal_workflows(toolset: AbstractToolset[Any]) -> list[type[Any]]:
-    """The Temporal workflow classes a durable-wrapped toolset needs registered with the worker."""
-    if isinstance(toolset, DurableToolsetBase):
-        return toolset.durable_container_registrations
     return []
 
 
@@ -413,8 +363,6 @@ def temporalize_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
-    *,
-    child_workflow_config: ChildWorkflowConfig | None = None,
 ) -> AbstractToolset[AgentDepsT]:
     """Temporalize a toolset.
 
@@ -426,7 +374,6 @@ def temporalize_toolset(
         deps_type: The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`.
         run_context_type: The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context.
         agent: The agent instance to attach to deserialized run contexts in activities.
-        child_workflow_config: The base Temporal child workflow config for tools that run as child workflows.
     """
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import temporalize_function_toolset
@@ -439,7 +386,6 @@ def temporalize_toolset(
             deps_type=deps_type,
             run_context_type=run_context_type,
             agent=agent,
-            child_workflow_config=child_workflow_config,
         )
 
     if isinstance(toolset, DynamicToolset):

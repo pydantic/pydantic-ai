@@ -26,7 +26,14 @@ from pydantic_ai.agent import (
     ParallelExecutionMode,
     WrapperAgent,
 )
-from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, AgentRunEvents, RunOutputDataT
+from pydantic_ai.agent.abstract import (
+    AgentMetadata,
+    AgentModelSettings,
+    AgentRetries,
+    AgentRunEvents,
+    RunOutputDataT,
+    _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
@@ -47,6 +54,14 @@ from ._utils import StepConfig
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
+    from pydantic_ai.realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeProviderSession,
+        RealtimeSession,
+    )
 
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """The mode for executing tool calls in DBOS durable workflows. This is a subset of the ParallelExecutionMode because 'parallel' cannot guarantee deterministic ordering.
@@ -466,7 +481,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -581,6 +596,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
+        This method cannot be used inside a synchronous tool, output function, or other function called
+        during an agent run.
+
         Example:
         ```python
         from pydantic_ai import Agent
@@ -616,12 +634,14 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
             The result of the run.
         """
+        _utils.check_no_nested_sync_run()
+
         reject_cancellation_token(cancellation_token, engine='DBOS')
         if model is not None and not isinstance(model, DBOSModel):  # pragma: lax no cover
             raise UserError(
@@ -765,7 +785,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -932,7 +952,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1113,7 +1133,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1148,6 +1168,107 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 spec=spec,
             ) as run:
                 yield run
+
+    @asynccontextmanager
+    async def _resolve_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        run_lifecycle: bool = False,
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve realtime configuration; backs the browser-call signaling helpers.
+
+        Signaling issues a live provider request (and runs dynamic instructions and toolset setup to
+        build it), so it is non-deterministic and cannot run in DBOS workflow code directly; calling
+        it there raises a `UserError`. Inside a step — where DBOS records non-deterministic I/O, the
+        same boundary `run()`/`run_stream()` use — and outside workflows entirely, it delegates to
+        the wrapped agent unchanged.
+        """
+        if DBOS.workflow_id is not None and DBOS.step_id is None:
+            raise UserError(
+                '`agent.realtime(...).answer_webrtc_offer()` and `.create_client_secret()` cannot be used '
+                'directly inside a DBOS workflow, as they issue non-deterministic provider requests. Call '
+                'them from inside a DBOS step, or outside the workflow.'
+            )
+        async with super()._resolve_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            run_lifecycle=run_lifecycle,
+        ) as resolved:
+            yield resolved
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime speech-to-speech session; see [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for the parameters.
+
+        A realtime session runs a long-lived, non-deterministic connection, so it cannot be opened
+        inside a DBOS workflow; calling it there raises a `UserError`. Outside a workflow it delegates
+        to the wrapped agent unchanged.
+        """
+        if DBOS.workflow_id is not None:
+            raise UserError(
+                '`agent.realtime(...).session()` cannot be used inside a DBOS workflow, as it runs a '
+                'long-lived, non-deterministic connection. Use it outside a workflow instead.'
+            )
+        async with super()._open_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            audio_retention=audio_retention,
+            retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
+            provider_session=provider_session,
+        ) as session:
+            yield session
 
     @contextmanager
     def override(

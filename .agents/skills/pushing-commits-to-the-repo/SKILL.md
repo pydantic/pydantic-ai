@@ -1,8 +1,7 @@
 ---
 name: pushing-commits-to-the-repo
-description: What to do when you open a PR and every time you push — label the PR, run a local
-  review, watch CI to green, triage every review comment to a reply and a reaction, and escalate
-  genuine design trade-offs to maintainers. Use whenever you open a PR or push a commit to one.
+description: Open and advance a PR — write a current title and body, label it, review before every
+  push, watch CI, and triage every comment. Use whenever you open a PR or push a commit to one.
 ---
 
 # pushing-commits-to-the-repo
@@ -11,6 +10,36 @@ Pushing starts a loop; it does not end the task. **Work stops only when CI is gr
 is left unresolved.**
 
 ## When you open the PR
+
+### Write the title and body
+
+Follow the title and template rules in the root `AGENTS.md`.
+
+Keep visible body content within 40 lines. Exclude template lines and collapsed `<details>`
+contents from the count. For a feature or behavior change, use this order:
+
+1. **Why we make these changes** — State the problem and decision in a few sentences. Link the issue.
+2. **New public surface** — List each new maintained symbol. Write `none` when there is none.
+3. **User-visible behavior** — Show the smallest before-and-after example. Replace it with a
+   call-path diff when the changed call chain explains the behavior; do not include both.
+4. **Verification** — Link the exact proving tests from the PR diff. Put a minimal runnable
+   playground in `<details>` only when it helps reviewers reproduce the behavior.
+5. **What changes for existing users** — State the effect in one sentence. `Nothing` is valid.
+
+Use one collapsed `<details>` section per goal only when the PR has multiple independent goals.
+For a trivial PR, use the issue link, a short summary, and the test plan.
+
+#### User-visible call-path diff
+
+Use one fenced `diff` tree from the public entry point to the changed observable result.
+
+- Format each node as `path/file.py :: Class.method()` or `path/file.py :: function()`.
+- Indent each callee beneath its caller with `└─`. Preserve enough unchanged nodes to show each edge.
+- Collapse irrelevant intermediate calls as `… unchanged machinery …`.
+- Include arguments only when they explain the change.
+- Include results only on relevant leaves.
+- Keep the shared caller prefix unmarked. Mark only diverging nodes, relevant arguments, or results.
+- Target 12 content lines inside the fence. Never exceed 20; collapse secondary branches instead.
 
 Apply a label — the repo triages and filters by them. Fetch the real list first with
 `gh label list --limit 100`, because the set changes and a guessed label silently fails to
@@ -76,3 +105,16 @@ before handing the PR back or requesting merge:
   instructions. Don't apply the label to those PRs; the red check is the guard working.
 - **Afterwards, re-enter the loop.** The review posts comments that need the same triage as any
   other.
+
+## Before handing the PR back
+
+Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
+
+1. Dispatch a fresh subagent that has not worked on the PR.
+2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, and body.
+3. Ask it to check only the title and body against this section and the root `AGENTS.md`.
+4. Require either `current` or an exact replacement title and body.
+5. Apply every correction. Code changes restart the post-push loop; metadata-only changes do not.
+6. After a replacement, repeat the check with another fresh subagent.
+7. Hand the PR back only after the check reports `current`.
+8. Report the human-only AI-code checkbox separately.

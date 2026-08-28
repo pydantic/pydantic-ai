@@ -19,6 +19,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.cohere import CohereProvider
+    from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
@@ -60,6 +61,7 @@ with try_import() as imports_successful:
         ('github', GitHubProvider, 'GITHUB_API_KEY'),  # pyright: ignore[reportDeprecated]
         ('ollama', OllamaProvider, 'OLLAMA_BASE_URL'),
         ('litellm', LiteLLMProvider, None),
+        ('crusoe', CrusoeProvider, 'CRUSOE_API_KEY'),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
         ('snowflake', SnowflakeProvider, 'SNOWFLAKE_ACCOUNT'),
@@ -76,6 +78,10 @@ if not imports_successful():
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages'),
 ]
+
+
+def test_provider_default_realtime_profile_is_unknown() -> None:
+    assert Provider.realtime_model_profile('voice') is None
 
 
 @pytest.fixture(autouse=True)

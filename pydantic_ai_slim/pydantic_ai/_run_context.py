@@ -1,26 +1,31 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import Generator, Sequence
+import sys
+import warnings
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
+from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic
 
 from opentelemetry.trace import NoOpTracer, Tracer
-from typing_extensions import TypeVar
+from typing_extensions import TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
 if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
-    from .models import Model
+    from .models import AbstractModel
+    from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -33,16 +38,40 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 """Type variable for the agent dependencies in `RunContext`."""
 
 
+@dataclasses.dataclass(frozen=True)
+class AnchoredEvidence:
+    """Reveal and load evidence the provider that served a response could still see.
+
+    `RunContext.discovered_tool_names` and `loaded_capability_ids` are cut at any `CompactionPart`,
+    because the consumer that matters for them is the *next* request, whose provider isn't knowable
+    when history is parsed. A call the model already made is a different question with a different
+    answer: the response records which provider served it, so a boundary that provider would have
+    skipped on the wire — another provider's, or one whose payload it doesn't render — hid nothing
+    from it. This holds what those parts of history still evidence.
+
+    Additive, never a replacement: the sets it widens are shared mutable run state that tool
+    execution writes in-step reveals into, so the widened view has to be a separate object.
+    """
+
+    discovered_tool_names: frozenset[str] = frozenset()
+    """Deferred tools revealed inside the anchored window but not in `discovered_tool_names`."""
+
+    loaded_capability_ids: frozenset[str] = frozenset()
+    """Capabilities loaded inside the anchored window but not in `loaded_capability_ids`."""
+
+
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
 
     deps: RunContextAgentDepsT
     """Dependencies for the agent."""
-    model: Model
-    """The model used in this run."""
+    model: AbstractModel
+    """The active model, which is a `RealtimeModel` during a realtime session."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    _model_id: str | None = field(default=None, repr=False)
+    """The model selection token used to resolve `model`, for internal durable transport."""
     usage_limits: UsageLimits | None = None
     """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run.
 
@@ -58,6 +87,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
+
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
@@ -107,7 +137,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
-    model_settings: ModelSettings | None = None
+    model_settings: ModelSettings | RealtimeModelSettings | None = None
     """The resolved model settings for the current run step.
 
     Populated before each model request, after all model settings layers
@@ -115,6 +145,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Available in model request hooks (`before_model_request`, `wrap_model_request`,
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
+
+    During a realtime session this holds the merged
+    [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
+    with, for the whole session (realtime settings are fixed at connect time).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
@@ -145,6 +179,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     A public API for emitting custom events is intentionally not exposed yet.
     """
 
+    _durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None = field(default=None, repr=False)
+    """Per-run durable capability operation dispatchers, for internal use only."""
+
+    _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
+    """Per-run capability instances used for durable recovery, for internal use only."""
+
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -167,6 +207,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
+    realtime_session: RealtimeSession | None = field(default=None, repr=False)
+    """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
+
+    `None` in classic runs, and during the parts of a realtime run that precede the connection:
+    `before_run`, `wrap_run` before `handler()` starts the session, and instruction resolution.
+    Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
+    stages. Tools and hooks that run during the live session can use it to e.g.
+    [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
+    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content.
+    """
+
     root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
     """The effective root capability for this run.
 
@@ -187,28 +238,95 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
 
     The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
-    Seeded during run preparation from message history (`parse_loaded_capabilities`); the
-    `load_capability` tool body adds to it for in-step loads. Use `available_capability_ids`
-    for the full set of currently-active capabilities (auto/always-on plus these).
-    Managed by the framework: safe to read, but don't mutate it directly.
+    Derived from message history (`parse_loaded_capabilities`) before each request, so a capability
+    loaded during a step appears from the *next* one — the same step that first carries its
+    instructions to the model, and therefore the first on which its tools can be called. Use
+    `active_capability_ids` for the full set of currently-active capabilities (auto/always-on
+    plus these). Managed by the framework: safe to read, but don't mutate it directly.
     """
 
-    capability_loaded: bool | None = None
-    """Whether the capability whose hook or callback is currently running is loaded.
+    capability_active: bool | None = None
+    """Whether the capability whose hook or callback is currently running is active right now.
+
+    *Active*, not *available* and not *loaded*: see
+    [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids] for why
+    capabilities use "active" while tools use "available".
+
+    An always-on capability is active for the whole run, so this reads `True` inside its hooks
+    although nothing ever loaded it. A deferred capability has to be loaded before it becomes
+    active, and its hooks are skipped until then — so it reads `True` there too. What it answers is
+    "may this capability act now?", not "was it selected?"; for the latter, look an id up in
+    [`loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
 
     This is `None` outside capability dispatch, where there is no current capability.
     """
 
     discovered_tool_names: set[str] = field(default_factory=set[str])
-    """Names of deferred function tools revealed by durable message history.
+    """Names of deferred function tools named by durable message history.
 
-    Includes names revealed by tool-search returns and `ToolAvailabilityDeltaPart`s, including
-    deltas from any tool's `ToolReturn.tools` and `load_capability`. Read by
-    `is_tool_available` and the reveal builders. Populated during run preparation from message
-    history. Use `available_tool_names` for the full set of currently-callable tools
-    (always-visible plus these).
+    Raw evidence, not a verdict: it collects every name tool-search returns and
+    `ToolAvailabilityDeltaPart`s mention — including deltas from any tool's `ToolReturn.tools` and
+    from `load_capability` — without checking that the tool still exists or that its owner is
+    loaded. Read by `is_tool_available` and the reveal builders, which apply those checks.
+    Populated during run preparation from message history. Use `available_tool_names` for the full
+    set of currently-callable tools (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
+
+    _anchored_evidence: AnchoredEvidence = field(default_factory=lambda: AnchoredEvidence(), repr=False)
+    """Evidence the serving provider could still see that the conservative window dropped.
+
+    Set at tool-call dispatch and read only by `is_tool_available`. Private because the sets above
+    stay the answer for everything that feeds a *future* request, whose provider isn't knowable yet;
+    this one is the answer for a call the model has already made, where it is. See `AnchoredEvidence`.
+    """
+
+    @property
+    def model_id(self) -> str | None:
+        """The identifier from which the run's active `model` was resolved.
+
+        This is `None` when the model was passed as an instance instead of being resolved from an
+        identifier. The property is read-only; Pydantic AI manages the selection token internally.
+        """
+        return self._model_id
+
+    @property
+    @deprecated(
+        '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
+        'always-on capability that was never loaded.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def capability_loaded(self) -> bool | None:
+        """Whether the capability whose hook or callback is currently running is active right now.
+
+        Deprecated: use [`capability_active`][pydantic_ai.tools.RunContext.capability_active]. This
+        never meant "loaded" — it is `True` for an always-on capability nothing ever loaded.
+        """
+        return self.capability_active
+
+    @capability_loaded.setter
+    @deprecated(
+        '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
+        'always-on capability that was never loaded.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def capability_loaded(self, value: bool | None) -> None:
+        # A plain dataclass field until this rename, so assignment used to work; a read-only property
+        # would turn that into an `AttributeError` at runtime rather than a deprecation.
+        self.capability_active = value
+
+    @property
+    def realtime(self) -> bool:
+        """Whether this run is a realtime session, i.e. `model` is the connected `RealtimeModel`.
+
+        Reliable from `before_run` through session close, including instruction resolution — unlike
+        [`realtime_session`][pydantic_ai.tools.RunContext.realtime_session], which is only set once
+        the session is connected. The class is looked up through `sys.modules` rather than imported:
+        if the realtime package was never imported, no realtime model can exist, and a classic run
+        should not pay for (or cycle into) that import.
+        """
+        realtime = sys.modules.get('pydantic_ai.realtime')
+        return realtime is not None and isinstance(self.model, realtime.RealtimeModel)
 
     @property
     def last_attempt(self) -> bool:
@@ -225,16 +343,28 @@ class RunContext(Generic[RunContextAgentDepsT]):
         self._event_stream_buffer.append(event)
 
     @property
-    def available_capability_ids(self) -> set[str]:
+    def active_capability_ids(self) -> set[str]:
         """IDs of the capabilities whose contributions are live to the model right now.
 
-        The capability-side mirror of `available_tool_names`: `available = auto/always ∪
-        runtime-revealed`. Here that's the non-deferred capabilities (`defer_loading` not
-        `True`) plus the deferred ones the model has loaded (`loaded_capability_ids`), so
-        `available_capability_ids - loaded_capability_ids` is the auto/always-on subset.
+        *Active*, deliberately not *available*: a capability is not something the model calls, so
+        "available" would read as "offered in the catalog, there for the loading" — which is the
+        opposite set, the deferred ones that are **not** yet contributing. Active means the
+        capability's instructions, tools, settings and hooks are in force on this step:
+        non-deferred capabilities (`defer_loading` not `True`) plus the deferred ones the model has
+        loaded, so `active_capability_ids - loaded_capability_ids` is the auto/always-on subset.
+
+        Tools keep the word *available* because for them there is only one question — may the model
+        call this now? — and no catalog sense to collide with. So `is_tool_available` reads "revealed,
+        and its owning capability is active".
+
+        Two axes, deliberately not mixed. *Configuration* is set once by the author: a capability is
+        either **deferred** (`defer_loading=True`) or **always-on**. *Runtime* is derived per step:
+        **loaded** records what the model asked for, **active** what is in force. So "always-on" is
+        the antonym of "deferred", never of "active" — an always-on capability is always active, and
+        a deferred one becomes active once loaded.
 
         Distinct from `capabilities`, the full registry (including deferred ones not yet
-        loaded). See `loaded_capability_ids` for the runtime-revealed subset.
+        loaded). See `loaded_capability_ids` for the subset the model explicitly loaded.
 
         Reliable from `before_run` onwards: the `capabilities` registry is seeded once at
         run start, and `loaded_capability_ids` is refreshed from history before each model
@@ -246,6 +376,31 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return {
             id for id, cap in self.capabilities.items() if cap.defer_loading is not True
         } | self.loaded_capability_ids
+
+    @property
+    @deprecated(
+        '`available_capability_ids` is deprecated, use `active_capability_ids` instead: for a '
+        'capability, "available" reads as "there for the loading", which is the opposite set.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def available_capability_ids(self) -> set[str]:
+        """IDs of the capabilities whose contributions are live to the model right now.
+
+        Deprecated: use [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids].
+        """
+        return self.active_capability_ids
+
+    @property
+    def _deferred_capability_ids(self) -> set[str]:
+        """IDs of the capabilities configured to load on demand.
+
+        Private, and read only by `is_tool_available`, which needs the *configured* shape rather
+        than the runtime one: `loaded_capability_ids` records what history says was loaded, which
+        can name a capability that has since been reconfigured as always-on. Overridden in
+        `TemporalRunContext` with the snapshot serialized at activity dispatch, since the
+        `capabilities` registry this reads does not cross that boundary.
+        """
+        return {id for id, cap in self.capabilities.items() if cap.defer_loading is True}
 
     @property
     def available_tool_names(self) -> set[str]:
@@ -300,12 +455,32 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # definition can be observed before tool search stamps `with_native='tool-search'` on it.
         if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
             return True
-        if tool_def.name in self.discovered_tool_names:
-            # Deliberately not gated on capability state: a fabricated history part could equally
-            # fabricate the full `load_capability` exchange, so a gate here adds no trust boundary.
-            # History integrity is the deployment's job (authenticated endpoints, server-side history).
-            return True
-        return False
+        capability_id = tool_def.capability_id
+        # Loading a deferred capability discloses its tools as a bundle — the load exchange carries
+        # the instructions *and* the schemas — so for its own tools the load already is the reveal.
+        # Demanding a separate reveal marker on top would strand a tool permanently: history
+        # processing can drop the reveal while keeping the load, and from there the model has no way
+        # back, because a capability-owned tool is not in the search corpus and reloading an
+        # already-active capability is refused.
+        #
+        # Both halves are load-bearing. The capability must still be *configured* deferred, not just
+        # named by a load record in history: a capability that has since been reconfigured as
+        # always-on never announced its tools as a bundle, so a stale record must not reveal them.
+        evidence = self._anchored_evidence
+        if (
+            capability_id is not None
+            and capability_id in self._deferred_capability_ids
+            and capability_id in self.loaded_capability_ids | evidence.loaded_capability_ids
+        ):
+            return capability_id in self.active_capability_ids | evidence.loaded_capability_ids
+        if tool_def.name not in self.discovered_tool_names | evidence.discovered_tool_names:
+            return False
+        # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
+        # evidence and only answers the middle step, so it can name a tool whose capability was
+        # never loaded — a history no real run produces, and one that would skip the instructions
+        # written to be read first. Checking the owner here keeps this predicate in step with what
+        # `ToolManager` will run, so "available" means one thing everywhere it is asked.
+        return capability_id is None or capability_id in (self.active_capability_ids | evidence.loaded_capability_ids)
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:
@@ -341,8 +516,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end).
+                    or a redirect if the agent would otherwise end). In a realtime session, an active
+                    assistant response is allowed to finish before the content is sent; otherwise it
+                    is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+                    In a realtime session, this means after the next response completes.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
@@ -377,7 +555,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], preserving everything that
         completed before the cancellation took effect in message history. Idempotent; a no-op once
         the run has finished. Cancellation is terminal: capability hooks may observe it and clean
-        up, but cannot recover the run to success.
+        up, but cannot recover the run to success. Cancellation cannot forcibly stop synchronous
+        code running in a worker thread; it may continue and perform side effects, although its
+        result is discarded.
 
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent (e.g. the synthetic
@@ -397,6 +577,32 @@ class RunContext(Generic[RunContextAgentDepsT]):
         cancellation.cancel()
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_run_context_init = RunContext.__init__
+
+
+@wraps(_run_context_init)
+def _run_context_init_with_capability_loaded(
+    self: RunContext[Any], *, capability_loaded: bool | None = None, **kwargs: Any
+) -> None:
+    if capability_loaded is not None:
+        warnings.warn(
+            '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
+            'always-on capability that was never loaded.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        kwargs.setdefault('capability_active', capability_loaded)
+    _run_context_init(self, **kwargs)
+
+
+# Wrapping the generated `__init__` rather than keeping an `InitVar` field: on Python 3.13+
+# `dataclasses.replace()` round-trips every init-only variable through `getattr`, which would fire
+# the deprecation warning on each of the run's internal `replace(ctx, ...)` calls. A non-field
+# keyword is invisible to `replace()`, and `@wraps` keeps `inspect.signature` resolving to the real
+# one. `TemporalRunContext` defines its own `__init__` and is unaffected either way.
+RunContext.__init__ = _run_context_init_with_capability_loaded
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(

@@ -15,6 +15,7 @@ from pydantic_ai.durable_exec._toolset import (
     call_dynamic_tool,
     get_dynamic_tools,
     unwrap_tool_call_result,
+    validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UserError
@@ -27,7 +28,7 @@ from ._toolset import (
     CallToolParams,
     GetToolsParams,
     heartbeating,
-    resolve_tool_temporal_wrapping,
+    resolve_tool_activity_config,
     tool_result_payload_errors,
 )
 
@@ -71,6 +72,18 @@ def temporalize_dynamic_toolset(
         call_tool_activity
     )
 
+    async def validate_args_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
+        async with heartbeating():
+            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            return await wrap_tool_call_result(
+                validate_dynamic_tool_args(toolset, params.name, params.tool_args, ctx, tool_def=params.tool_def)
+            )
+
+    validate_args_activity.__annotations__['deps'] = deps_type
+    registered_validate_args = activity.defn(
+        name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__validate_args'
+    )(validate_args_activity)
+
     async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
         config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}
         return await execute_activity(
@@ -85,6 +98,7 @@ def temporalize_dynamic_toolset(
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
@@ -113,38 +127,55 @@ def temporalize_dynamic_toolset(
             )
         return unwrap_tool_call_result(result)
 
+    async def validate_args_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        *,
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
+    ) -> None:
+        merged_config = cast(
+            'ActivityConfig', {'summary': f'validate tool args: {toolset.id}:{name}', **activity_config, **config}
+        )
+        result = await execute_activity(
+            activity=registered_validate_args,
+            args=[
+                CallToolParams(
+                    name=name,
+                    tool_args=tool_args,
+                    serialized_run_context=run_context_type.serialize_run_context(ctx),
+                    tool_def=tool.tool_def,
+                ),
+                ctx.deps,
+            ],
+            **merged_config,
+        )
+        unwrap_tool_call_result(result)
+
     def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
-        config = resolve_tool_temporal_wrapping(tool, name, tool_activity_config)
-        match config:
-            case False:
-                raise UserError(
-                    f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
-                    '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
-                    'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
-                    '`FunctionToolset` (async tools there may opt out of activities).'
-                )
-            case {'child_workflow': _}:
-                raise UserError(
-                    f'Temporal metadata for dynamic toolset tool {name!r} configures it to run as a child workflow, '
-                    'but dynamic-toolset tools cannot run inside a child workflow: resolving the '
-                    'toolset and calling the tool may perform I/O. Remove the child workflow config, or move the '
-                    'tool to a static `FunctionToolset` (async tools there may run as child workflows).'
-                )
-            case _:
-                pass
-        return cast('ToolConfig', config)
+        config = resolve_tool_activity_config(tool, name, tool_activity_config)
+        if config is False:
+            raise UserError(
+                f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
+                '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
+                'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
+                '`FunctionToolset` (async tools there may opt out of activities).'
+            )
+        return config
 
     return DurableDynamicToolset(
         toolset,
         in_durable_context=workflow.in_workflow,
         get_tools_operation=get_tools_operation,
         call_tool_operation=call_tool_operation,
+        validate_args_operation=validate_args_operation,
         resolve_tool_config=resolve_tool_config,
         # Resolution and lifecycle happen inside the activities (or, outside a workflow,
         # on the resolved toolset that `for_run` hands the run); the construction-time
         # factory itself has nothing to enter.
         lifecycle='enter-never',
-        durable_registrations=[registered_get_tools, registered_call_tool],
+        durable_registrations=[registered_get_tools, registered_call_tool, registered_validate_args],
         durable_config=activity_config,
     )
 
