@@ -249,6 +249,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .vllm import VLLMProvider
 
         return VLLMProvider
+    elif provider == 'sglang':
+        from .sglang import SGLangProvider
+
+        return SGLangProvider
     elif provider == 'nebius':
         from .nebius import NebiusProvider
 

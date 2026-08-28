@@ -235,6 +235,14 @@ TEST_CASES = [
         'openai',
         OpenAIChatModel,
     ),
+    pytest.param(
+        {'SGLANG_BASE_URL': 'http://localhost:30000/v1/'},
+        'sglang:Qwen/Qwen3-32B',
+        'Qwen/Qwen3-32B',
+        'sglang',
+        'openai',
+        OpenAIChatModel,
+    ),
 ]
 
 

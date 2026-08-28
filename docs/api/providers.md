@@ -56,6 +56,8 @@
 
 ::: pydantic_ai.providers.vllm.VLLMProvider
 
+::: pydantic_ai.providers.sglang.SGLangProvider
+
 ::: pydantic_ai.providers.nebius.NebiusProvider
 
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider

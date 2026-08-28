@@ -36,6 +36,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.sglang import SGLangProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
@@ -169,6 +170,13 @@ CASES = [
         lambda http_client: VLLMProvider(base_url='http://localhost:8000/v1', api_key='test', http_client=http_client),
     ),
     Case(
+        'sglang',
+        lambda: SGLangProvider(base_url='http://localhost:30000/v1', api_key='test'),
+        lambda http_client: SGLangProvider(
+            base_url='http://localhost:30000/v1', api_key='test', http_client=http_client
+        ),
+    ),
+    Case(
         'zai',
         lambda: ZaiProvider(api_key='test'),
         lambda http_client: ZaiProvider(api_key='test', http_client=http_client),
@@ -195,6 +203,7 @@ IMPORT_GUARD_CASES = [
     ('snowflake', 'use the Snowflake provider'),
     ('together', 'use the Together AI provider'),
     ('vercel', 'use the Vercel provider'),
+    ('sglang', 'use the SGLang provider'),
     ('vllm', 'use the vLLM provider'),
     ('zai', 'use the Z.AI provider'),
 ]

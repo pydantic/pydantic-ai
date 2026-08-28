@@ -138,6 +138,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'openrouter',
         'ovhcloud',
         'sambanova',
+        'sglang',
         'snowflake',
         'together',
         'vercel',

@@ -116,6 +116,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.sglang import SGLangProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -136,6 +137,7 @@ else:
         from pydantic_ai.providers.openrouter import OpenRouterProvider
         from pydantic_ai.providers.ovhcloud import OVHcloudProvider
         from pydantic_ai.providers.sambanova import SambaNovaProvider
+        from pydantic_ai.providers.sglang import SGLangProvider
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
         from pydantic_ai.providers.vllm import VLLMProvider
@@ -144,7 +146,7 @@ else:
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
-        TogetherProvider = VercelProvider = VLLMProvider = None
+        SGLangProvider = TogetherProvider = VercelProvider = VLLMProvider = None
 
     try:
         from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -9025,6 +9027,9 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
         pytest.param(lambda: VLLMProvider(base_url='http://localhost:8000/v1'), marks=[requires_openai], id='vllm'),
+        pytest.param(
+            lambda: SGLangProvider(base_url='http://localhost:30000/v1'), marks=[requires_openai], id='sglang'
+        ),
     ],
 )
 async def test_provider_reentry_recreates_http_client(provider_factory: Callable[[], Provider[Any]]):
