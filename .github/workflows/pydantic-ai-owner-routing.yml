@@ -51,7 +51,8 @@ jobs:
       - name: Install the telemetry dependency (best effort)
         # Telemetry rides along; a registry outage must not stop the GitHub
         # write path, and the scripts no-op emission when logfire is absent.
-        run: python3 -m pip install --quiet logfire || echo "logfire unavailable; telemetry disabled"
+        # The exact pin keeps a compromised new release away from these jobs.
+        run: python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Select routing decisions
         id: select
         env:
@@ -97,7 +98,8 @@ jobs:
       - name: Install the telemetry dependency (best effort)
         # Telemetry rides along; a registry outage must not stop the GitHub
         # write path, and the scripts no-op emission when logfire is absent.
-        run: python3 -m pip install --quiet logfire || echo "logfire unavailable; telemetry disabled"
+        # The exact pin keeps a compromised new release away from these jobs.
+        run: python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Revalidate and prepare canonical routing intent
         id: prepare
         env:
