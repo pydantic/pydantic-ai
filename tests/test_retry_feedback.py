@@ -46,7 +46,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.ui._adapter import retry_feedback_from_payload, retry_feedback_payload
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, message_part
+from .conftest import IsDatetime, IsStr, message_part
 
 pytestmark = pytest.mark.anyio
 
@@ -668,7 +668,7 @@ def test_the_metadata_channel_discloses_no_more_than_the_text_beside_it():
                 }
             ],
             'cause': 'validation_error',
-            'timestamp': IsDatetime(iso_string=True),
+            'timestamp': IsStr(regex=r'\d{4}-\d{2}-\d{2}T[\d:.]+Z'),
             'part_kind': 'retry-feedback',
         }
     )
@@ -689,7 +689,7 @@ def test_a_string_retry_feedback_payload_round_trips_whole():
         {
             'content': 'answer with the number spelled out',
             'cause': 'model_retry',
-            'timestamp': IsDatetime(iso_string=True),
+            'timestamp': IsStr(regex=r'\d{4}-\d{2}-\d{2}T[\d:.]+Z'),
             'part_kind': 'retry-feedback',
         }
     )
