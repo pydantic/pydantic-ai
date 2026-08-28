@@ -233,6 +233,7 @@ def import_guard_errors() -> dict[str, str | None]:
     return json.loads(result.stdout)
 
 
+@pytest.mark.xdist_group(name='provider_import_guard')
 @pytest.mark.parametrize(('module', 'error_hint'), IMPORT_GUARD_CASES)
 def test_openai_compatible_provider_import_guard(
     module: str, error_hint: str, import_guard_errors: dict[str, str | None]
