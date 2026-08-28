@@ -436,7 +436,7 @@ def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
     write_output(output, ['7'])
     client = FakeClient({7: item(7)})
 
-    lines = monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot))
+    lines = monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot), now=NOW)
 
     assert lines == ['#7: requested maintainer attention from @adtyavrdhn']
     assert (
@@ -458,7 +458,7 @@ def test_owner_selection_reads_the_live_item_not_the_classified_copy():
     client.permissions = {'DouweM': 'write'}
     client.comments[7] = [{'user': {'login': 'DouweM'}, 'created_at': '2026-07-17T00:00:00Z'}]
 
-    assert monitor._ensure_recipients(client, 'r', stale) == ['DouweM']
+    assert monitor._ensure_recipients(client, 'r', stale, now=NOW) == ['DouweM']
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
 
 
@@ -483,7 +483,7 @@ def test_owner_selection_keeps_a_maintainer_authored_pull_request():
     client = FakeClient({7: pull})
     client.permissions = {'DouweM': 'admin'}
 
-    assert monitor._ensure_recipients(client, 'r', pull) == ['DouweM']
+    assert monitor._ensure_recipients(client, 'r', pull, now=NOW) == ['DouweM']
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['DouweM']}) in client.calls
 
 
@@ -509,7 +509,7 @@ def test_owner_selection_never_overrides_an_explicit_assignment():
     client = FakeClient({7: issue})
     client.permissions = {'DouweM': 'admin', 'alice': 'write'}
 
-    assert monitor._ensure_recipients(client, 'r', issue) == ['alice']
+    assert monitor._ensure_recipients(client, 'r', issue, now=NOW) == ['alice']
     assert not any(path.endswith('/assignees') for _, path, _ in client.calls)
 
 
@@ -544,7 +544,7 @@ def test_a_flood_of_unknown_participants_defers_instead_of_reassigning():
 
     assert monitor._first_maintainer_in_discussion(client, 'r', issue) == (None, False)
     assert len(client.permission_reads()) == monitor._ITEM_PROBE_LIMIT
-    assert monitor._ensure_recipients(client, 'r', issue) is None
+    assert monitor._ensure_recipients(client, 'r', issue, now=NOW) is None
     assert not any(path.endswith('/assignees') for _, path, _ in client.calls)
     # The quota is per item, so the flood cannot hide the next item's maintainer.
     followup = item(8)
@@ -560,7 +560,7 @@ def test_a_truncated_discussion_defers_instead_of_reassigning():
     client.truncated = {7}
 
     assert monitor._first_maintainer_in_discussion(client, 'r', issue) == (None, False)
-    assert monitor._ensure_recipients(client, 'r', issue) is None
+    assert monitor._ensure_recipients(client, 'r', issue, now=NOW) is None
 
 
 def test_apply_defers_an_item_whose_owner_cannot_be_identified(tmp_path: Path):
@@ -573,7 +573,7 @@ def test_apply_defers_an_item_whose_owner_cannot_be_identified(tmp_path: Path):
     client.items[7]['comments'] = 1
     client.comments[7] = [{'user': {'login': 'contributor-1'}}]
 
-    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW) == [
         '#7: deferred until its owner can be identified'
     ]
     assert not any(path.endswith('/assignees') for _, path, _ in client.calls)
@@ -660,7 +660,7 @@ def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path
     # field returns; `maintain` appears only in role_name, never here.
     client.permissions = {'alice': 'admin', 'bob': 'write', 'reader': 'read'}
 
-    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW) == [
         '#7: requested maintainer attention from @alice @bob'
     ]
     assert not any(call[1].endswith('/assignees') for call in client.calls)
@@ -673,7 +673,7 @@ def test_apply_restarts_a_prior_terminal_escalation(tmp_path: Path):
     write_output(output, ['7'])
     client = FakeClient({7: item(7, labels=[monitor._ESCALATED_LABEL])})
 
-    monitor.apply_decisions(client, 'r', str(output), str(snapshot))
+    monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW)
 
     assert any(call[0] == 'DELETE' and monitor._ESCALATED_LABEL in call[1] for call in client.calls)
     assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._ACTION_LABEL]} for call in client.calls)
@@ -686,7 +686,7 @@ def test_apply_records_settled_negative_without_requesting_attention(tmp_path: P
     write_output(output, ['7'], next_actor='contributor')
     client = FakeClient({7: item(7)})
 
-    assert monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot)) == [
+    assert monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot), now=NOW) == [
         '#7: did not request maintainer attention'
     ]
     assert not any(call[0] == 'POST' and call[1].endswith('/labels') for call in client.calls)
@@ -699,12 +699,12 @@ def test_apply_leaves_uncertain_or_low_confidence_item_for_reconsideration(tmp_p
     write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
     write_output(output, ['7'], next_actor='uncertain', confidence='high')
     client = FakeClient({7: item(7)})
-    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW) == [
         '#7: left unclassified for a future run'
     ]
 
     write_output(output, ['7'], confidence='medium')
-    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW) == [
         '#7: left unclassified for a future run'
     ]
 
@@ -717,7 +717,7 @@ def test_apply_rejects_numbers_outside_the_immutable_snapshot(tmp_path: Path):
     client = FakeClient()
 
     with pytest.raises(ValueError, match='outside the snapshot'):
-        monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot))
+        monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot), now=NOW)
     assert client.calls == []
 
 
@@ -727,7 +727,7 @@ def test_apply_requires_one_decision_per_candidate(tmp_path: Path):
     write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}, {'number': 8, 'updated_at': OLD}])
     write_output(output, ['7'])
     with pytest.raises(ValueError, match='classify every'):
-        monitor.apply_decisions(FakeClient(), 'r', str(output), str(snapshot))
+        monitor.apply_decisions(FakeClient(), 'r', str(output), str(snapshot), now=NOW)
 
 
 def test_apply_abstains_when_item_changed_after_classification(tmp_path: Path):
@@ -737,7 +737,7 @@ def test_apply_abstains_when_item_changed_after_classification(tmp_path: Path):
     write_output(output, ['7'])
     client = FakeClient({7: item(7, updated_at='2026-07-19T00:00:00Z')})
 
-    lines = monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot))
+    lines = monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot), now=NOW)
 
     assert lines == ['#7: skipped because the item changed after classification']
     assert not any(call[0] == 'POST' and '/issues/7/' in call[1] for call in client.calls)
@@ -752,7 +752,7 @@ def test_apply_fails_if_github_silently_ignores_assignment(tmp_path: Path):
     client.assignment_succeeds = False
 
     with pytest.raises(RuntimeError, match=r'#7: RuntimeError: GitHub did not assign'):
-        monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot))
+        monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot), now=NOW)
     assert any(call[0] == 'POST' and call[1].endswith('/labels') for call in client.calls)
 
 
@@ -765,7 +765,7 @@ def test_apply_keeps_processing_after_one_item_fails(tmp_path: Path):
     client.fail_get.add(1)
 
     with pytest.raises(RuntimeError, match=r'#1: HTTPError'):
-        monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot))
+        monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot), now=NOW)
     assert any(call[0] == 'POST' and call[1].endswith('/issues/2/labels') for call in client.calls)
 
 
@@ -776,11 +776,11 @@ def test_apply_rejects_unknown_actor_or_confidence(tmp_path: Path):
 
     write_output(output, ['7'], next_actor='attacker')
     with pytest.raises(ValueError, match=r"next_actor\s+Input should be 'maintainer'"):
-        monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot))
+        monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot), now=NOW)
 
     write_output(output, ['7'], confidence='certain')
     with pytest.raises(ValueError, match=r"confidence\s+Input should be 'high'"):
-        monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot))
+        monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot), now=NOW)
 
 
 def test_apply_assigns_fallback_when_no_assignee_is_a_maintainer(tmp_path: Path):
@@ -791,7 +791,7 @@ def test_apply_assigns_fallback_when_no_assignee_is_a_maintainer(tmp_path: Path)
     client = FakeClient({7: item(7, assignees=['reader'])})
     client.permissions = {'reader': 'read'}
 
-    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW) == [
         '#7: requested maintainer attention from @adtyavrdhn'
     ]
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': ['adtyavrdhn']}) in client.calls
@@ -807,7 +807,7 @@ def test_apply_skips_closed_or_already_actioned_items(tmp_path: Path):
 
     for changed in (closed, item(7, labels=[monitor._ACTION_LABEL])):
         client = FakeClient({7: changed})
-        assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        assert monitor.apply_decisions(client, 'r', str(output), str(snapshot), now=NOW) == [
             '#7: skipped because the item changed after classification'
         ]
         assert not any(call[0] == 'POST' and '/issues/7/' in call[1] for call in client.calls)
@@ -829,7 +829,7 @@ def notice_ref(
 
 
 def test_reconcile_queues_channel_reminder_for_assigned_maintainers():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['bob', 'alice'])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['bob', 'alice'])})
     client.permissions = {'alice': 'admin', 'bob': 'write'}
     notices: list[monitor.Notice] = []
 
@@ -859,6 +859,8 @@ def test_reconcile_queues_channel_reminder_for_assigned_maintainers():
 
 
 def test_reconcile_hands_a_placeholder_assignment_to_the_first_maintainer_participant():
+    # Only the agent-marked lane uses the placeholder heuristic; its stage-0
+    # notice stays gated, so the handoff is bookkeeping without a ping.
     issue = item(4261, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])
     issue['comments'] = 2
     client = FakeClient({4261: issue})
@@ -869,13 +871,38 @@ def test_reconcile_hands_a_placeholder_assignment_to_the_first_maintainer_partic
     ]
     notices: list[monitor.Notice] = []
 
-    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
-        ['#4261: queued channel reminder'],
-        [],
-    )
-    assert notices[0]['recipients'] == ['DouweM']
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == ([], [])
+    assert notices == []
     assert ('POST', '/repos/r/issues/4261/assignees', {'assignees': ['DouweM']}) in client.calls
     assert [assignee['login'] for assignee in client.items[4261]['assignees']] == ['DouweM']
+
+
+def test_reminder_lane_pings_the_real_owner_without_reassigning():
+    # A sole-fallback assignment on a priority issue is a routing decision,
+    # not the monitor's placeholder: nobody gets swapped in.
+    issue = item(4262, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=[monitor._FALLBACK_OWNER])
+    client = FakeClient({4262: issue})
+    client.permissions = {monitor._FALLBACK_OWNER: 'admin', 'DouweM': 'admin'}
+    client.comments[4262] = [{'user': {'login': 'DouweM'}, 'created_at': '2026-02-09T16:48:57Z'}]
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#4262: queued channel reminder'],
+        [],
+    )
+    assert notices[0]['recipients'] == [monitor._FALLBACK_OWNER]
+    assert not any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
+
+
+def test_reminder_lane_stands_down_once_its_owner_is_unassigned():
+    client = FakeClient({4263: item(4263, labels=[monitor._ACTION_LABEL, 'p:1-highest'])})
+    notices: list[monitor.Notice] = []
+
+    lines, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    assert lines == ['#4263: stood down after its owner was unassigned']
+    assert failures == [] and notices == []
+    assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[4263]['labels']}
 
 
 def test_reconcile_drops_a_notice_if_the_owner_changes_before_queueing():
@@ -899,7 +926,10 @@ def test_reconcile_drops_a_notice_if_the_owner_changes_before_queueing():
 
 
 def test_reconcile_queues_channel_escalation_without_advancing_before_delivery():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, 'p:1-highest'], assignees=['alice'])}
+    )
+    client.permissions['alice'] = 'write'
     notices: list[monitor.Notice] = []
 
     assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW, notices=notices) == (
@@ -953,7 +983,10 @@ def test_reconcile_finishes_a_delivered_escalation_receipt_without_reposting():
 
 
 def test_reconcile_ignores_a_foreign_delivery_receipt():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._DELIVERED_LABEL])})
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, monitor._DELIVERED_LABEL, 'p:1-highest'], assignees=['alice'])}
+    )
+    client.permissions['alice'] = 'write'
     client.timelines[7] = [
         label_event(monitor._ACTION_LABEL),
         label_event(monitor._DELIVERED_LABEL, actor='maintainer'),
@@ -1101,6 +1134,259 @@ def test_snapshot_and_decision_batch_limits_are_enforced(tmp_path: Path):
         )
 
 
+def test_notice_output_pings_the_owner_directly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / 'github-output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setenv(
+        'PYDANTIC_AI_TRIAGE_SLACK_MENTIONS',
+        json.dumps({'adtyavrdhn': '<@UADITYA>', 'DouweM': '<@UDOUWE>'}),
+    )
+
+    monitor._write_notices(
+        'pydantic/pydantic-ai',
+        [
+            {
+                'number': 7,
+                'kind': 'reminder',
+                'expected_stage': 0,
+                'transition_id': 'event-7',
+                'title': 'Streaming hangs',
+                'recipients': ['DouweM'],
+                'status': 'issue · no replies yet',
+            }
+        ],
+    )
+
+    values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
+    text = json.loads(values['slack_payload'])['text']
+    assert 'owner <@UDOUWE>' in text
+    assert '<!channel>' not in text
+
+
+def test_invalid_mention_map_degrades_to_plain_names_and_records_a_failure(monkeypatch: pytest.MonkeyPatch):
+    # A typo in the mentions variable would otherwise disable every owner ping
+    # while runs stay green; recording a failure trips the alert instead.
+    monkeypatch.setenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', 'not json')
+    failures: list[str] = []
+
+    assert monitor._notice_mentions(failures) == {}
+    assert failures and failures[0].startswith('mention map:')
+
+
+def test_reconcile_marks_assigned_priority_issues_for_attention():
+    client = FakeClient(
+        {
+            7: item(7, labels=['p:1-highest'], assignees=['alice']),
+            8: item(8, labels=['p:2-high']),
+        }
+    )
+    client.permissions = {'alice': 'write'}
+
+    lines, failures = monitor.reconcile(client, 'r', now=NOW, notices=[])
+
+    assert failures == []
+    assert '#7: queued assigned p:1-highest issue for owner attention' in lines
+    assert monitor._ACTION_LABEL in {label['name'] for label in client.items[7]['labels']}
+    # The unassigned p:2 issue stays on the automation's plate.
+    assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[8]['labels']}
+
+
+def test_non_priority_attention_items_never_ping():
+    """Only assigned p:1/p:2/community-backed issues may interrupt a maintainer in Slack."""
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+    notices: list[monitor.Notice] = []
+
+    lines, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    assert failures == []
+    assert notices == []
+    assert all('queued channel' not in line for line in lines)
+
+
+def test_priority_reminder_windows_follow_the_label():
+    def build(number: int, reminder_label: str, owner_quiet_days: int) -> FakeClient:
+        commented_at = (NOW - dt.timedelta(days=owner_quiet_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        client = FakeClient({number: item(number, labels=[reminder_label], assignees=['alice'])})
+        client.permissions = {'alice': 'write'}
+        client.timelines[number] = [
+            {'event': 'commented', 'actor': {'login': 'alice'}, 'created_at': commented_at},
+            label_event(monitor._ACTION_LABEL, created_at=NOW.strftime('%Y-%m-%dT%H:%M:%SZ')),
+        ]
+        return client
+
+    def queued(number: int, reminder_label: str, owner_quiet_days: int) -> list[int]:
+        notices: list[monitor.Notice] = []
+        _, failures = monitor.reconcile(build(number, reminder_label, owner_quiet_days), 'r', now=NOW, notices=notices)
+        assert failures == []
+        return [notice['number'] for notice in notices]
+
+    # The window measures the *owner's* quiet, from their own last comment.
+    # Four days: past the 3-day p:1 window, inside the 5-day p:2 window and
+    # the 7-day community window. A breached item is marked and pinged in the
+    # same pass.
+    assert queued(7, 'p:1-highest', 4) == [7]
+    assert queued(9, 'p:2-high', 4) == []
+    assert queued(11, monitor.COMMUNITY_LABEL, 4) == []
+    assert queued(11, monitor.COMMUNITY_LABEL, 8) == [11]
+
+
+def test_community_chatter_neither_suppresses_nor_hastens_the_owner_reminder():
+    def build(owner_comment_days: int, contributor_comment_days: int) -> FakeClient:
+        client = FakeClient({7: item(7, labels=['p:1-highest'], assignees=['alice'])})
+        client.permissions = {'alice': 'write'}
+        client.timelines[7] = [
+            {
+                'event': 'commented',
+                'actor': {'login': 'alice'},
+                'created_at': (NOW - dt.timedelta(days=owner_comment_days)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            },
+            {
+                'event': 'commented',
+                'actor': {'login': 'impatient-user'},
+                'created_at': (NOW - dt.timedelta(days=contributor_comment_days)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            },
+            label_event(monitor._ACTION_LABEL, created_at=NOW.strftime('%Y-%m-%dT%H:%M:%SZ')),
+        ]
+        return client
+
+    def marked(client: FakeClient) -> bool:
+        _, failures = monitor.reconcile(client, 'r', now=NOW, notices=[])
+        assert failures == []
+        return monitor._ACTION_LABEL in {label['name'] for label in client.items[7]['labels']}
+
+    # Daily "any update?" comments must not shield a silent owner...
+    assert marked(build(owner_comment_days=4, contributor_comment_days=0)) is True
+    # ...and a responsive owner is not pinged, however loud the thread is.
+    assert marked(build(owner_comment_days=1, contributor_comment_days=0)) is False
+
+
+def test_owner_activity_other_than_comments_counts_as_responding():
+    # An owner who triages daily through labels but last commented long ago
+    # must not be pinged and re-pinged: the quiet rule counts the same actions
+    # acknowledgment does, or the two would disagree and loop.
+    client = FakeClient({7: item(7, labels=['p:1-highest'], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'actor': {'login': 'alice'},
+            'created_at': (NOW - dt.timedelta(days=6)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        },
+        {
+            'event': 'labeled',
+            'actor': {'login': 'alice'},
+            'created_at': (NOW - dt.timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'label': {'name': 'bug'},
+        },
+    ]
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW, notices=[])
+
+    assert failures == []
+    assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[7]['labels']}
+
+
+def test_agent_marked_reminder_items_respect_the_owner_quiet_window():
+    # The triage agent can mark an assigned p:2 issue after 3 total-quiet days;
+    # the owner-quiet gate at the notice seam still holds the ping until the
+    # owner has been silent for the label's full 5-day window.
+    client = FakeClient({7: item(7, labels=['p:2-high', monitor._ACTION_LABEL], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'actor': {'login': 'alice'},
+            'created_at': (NOW - dt.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        },
+        label_event(monitor._ACTION_LABEL, created_at=(NOW - dt.timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')),
+    ]
+    notices: list[monitor.Notice] = []
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    assert failures == []
+    assert notices == []
+
+
+def test_bot_unassignments_do_not_back_off_the_placeholder_heuristic():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.permissions = {'samuelcolvin': 'admin'}
+    client.comments[7] = [{'user': {'login': 'samuelcolvin'}, 'created_at': OLD}]
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL),
+        {
+            'event': 'unassigned',
+            'created_at': (NOW - dt.timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'actor': {'login': 'samuelcolvin'},
+            'assignee': {'login': 'samuelcolvin'},
+            'assigner': {'login': 'github-actions[bot]', 'type': 'Bot'},
+        },
+    ]
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW)
+
+    # The sweep's own unassignment is cleanup, not a decision to back off
+    # from: the discussion heuristic may still hand the item to a maintainer.
+    assert failures == []
+    assert any(method == 'POST' and path.endswith('/assignees') for method, path, _ in client.calls)
+
+
+def test_placeholder_heuristic_backs_off_after_a_recent_unassignment():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    # A maintainer outside the routing roster: the back-off must probe live
+    # permissions, because the discussion heuristic would recognize (and
+    # re-assign) exactly the same person.
+    client.permissions = {'samuelcolvin': 'admin'}
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL),
+        {
+            'event': 'commented',
+            'actor': {'login': 'samuelcolvin'},
+            'created_at': OLD,
+        },
+        {
+            'event': 'unassigned',
+            'created_at': (NOW - dt.timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'actor': {'login': 'samuelcolvin'},
+            'assignee': {'login': 'samuelcolvin'},
+            'assigner': {'login': 'samuelcolvin'},
+        },
+    ]
+    notices: list[monitor.Notice] = []
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    # He took himself off two days ago: the discussion heuristic must not
+    # hand the item straight back to him.
+    assert failures == []
+    assert notices == []
+    assert not any(method == 'POST' and path.endswith('/assignees') for method, path, _ in client.calls)
+
+
+def test_owner_quiet_check_skips_events_without_timestamps():
+    # PR timelines open with `committed` events that carry no created_at; the
+    # coverage anchor must skip them instead of reading them as owner activity
+    # and silencing the reminder forever.
+    client = FakeClient({7: item(7, labels=['p:1-highest'], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+    client.timelines[7] = [
+        {'event': 'committed'},
+        {
+            'event': 'commented',
+            'actor': {'login': 'alice'},
+            'created_at': (NOW - dt.timedelta(days=4)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        },
+        label_event(monitor._ACTION_LABEL, created_at=NOW.strftime('%Y-%m-%dT%H:%M:%SZ')),
+    ]
+    notices: list[monitor.Notice] = []
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    assert failures == []
+    assert [notice['number'] for notice in notices] == [7]
+
+
 def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
@@ -1124,14 +1410,15 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
     assert values['has_notices'] == 'true'
     assert json.loads(values['notice_items']) == [notice_ref(7, 0, transition_id='event-7', recipients=['DouweM'])]
     text = json.loads(values['slack_payload'])['text']
-    assert text.count('<!channel>') == 1
+    # The notice targets its owner; the channel as a whole is never pinged.
+    assert '<!channel>' not in text
     assert '*Maintainer attention requested in pydantic/pydantic-ai*' in text
     assert '#7 Handle &lt;unsafe&gt; fake owner &lt;!channel&gt;' in text
     assert 'owner @DouweM' in text
     # A login is the only untrusted value the status line carries, and it is
     # escaped on the same path as the title.
     assert 'opened by @evil &lt;!channel&gt; · 2 replies · last from @evil 5d ago (author)' in text
-    assert 'why: no maintainer has acted for three days' in text
+    assert 'why: it has been waiting on its owner past the reminder window' in text
     assert '*Expected action:*' in text
     assert 'If no work is needed, say so briefly' in text
     assert 'Do not remove the attention labels' in text
@@ -1998,7 +2285,7 @@ def test_private_maintainer_reply_completes_the_request():
 
 
 def test_status_line_reports_the_last_reply_and_its_role():
-    issue = item(7, labels=[monitor._ACTION_LABEL], assignees=['DouweM'])
+    issue = item(7, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['DouweM'])
     issue['created_at'] = '2026-06-20T00:00:00Z'
     issue['comments'] = 2
     client = FakeClient({7: issue})
@@ -2031,9 +2318,10 @@ def test_status_line_reports_the_last_reply_and_its_role():
 
 
 def test_status_line_does_not_count_a_bot_reply_as_engagement():
-    issue = item(7, labels=[monitor._ACTION_LABEL])
+    issue = item(7, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice'])
     issue['created_at'] = '2026-07-01T00:00:00Z'
     client = FakeClient({7: issue})
+    client.permissions['alice'] = 'write'
     notices: list[monitor.Notice] = []
     client.timelines[7] = [
         label_event(monitor._ACTION_LABEL, created_at='2026-07-02T00:00:00Z'),
@@ -2110,8 +2398,12 @@ def test_reopened_item_without_action_label_fires_no_reminder():
 
 def test_full_page_processes_a_bounded_batch_instead_of_aborting():
     client = FakeClient(
-        {number: item(number, labels=[monitor._ACTION_LABEL]) for number in range(1, monitor._RECONCILE_LIMIT + 1)}
+        {
+            number: item(number, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice'])
+            for number in range(1, monitor._RECONCILE_LIMIT + 1)
+        }
     )
+    client.permissions['alice'] = 'write'
 
     lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
 
@@ -2143,26 +2435,28 @@ def test_active_attention_pages_rotate_between_runs():
 def test_one_item_failure_does_not_block_later_items():
     client = FakeClient(
         {
-            1: item(1, labels=[monitor._ACTION_LABEL]),
-            2: item(2, labels=[monitor._ACTION_LABEL]),
+            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
+            2: item(2, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
         }
     )
+    client.permissions['alice'] = 'write'
     client.fail_get.add(1)
 
     lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
 
     assert lines == ['#2: queued channel reminder']
-    assert failures and failures[0].startswith('#1: HTTPError')
+    assert any(failure.startswith('#1: HTTPError') for failure in failures)
     assert not any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
 
 
 def test_network_failure_on_dormant_item_does_not_abort_the_run():
     client = FakeClient(
         {
-            1: item(1, labels=[monitor._ACTION_LABEL]),
+            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
             7: item(7, labels=[monitor._ESCALATED_LABEL]),
         }
     )
+    client.permissions['alice'] = 'write'
     client.fail_get_network.add(7)
 
     lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
@@ -2174,10 +2468,11 @@ def test_network_failure_on_dormant_item_does_not_abort_the_run():
 def test_invalid_event_timestamp_does_not_block_later_items():
     client = FakeClient(
         {
-            1: item(1, labels=[monitor._ACTION_LABEL]),
-            2: item(2, labels=[monitor._ACTION_LABEL]),
+            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
+            2: item(2, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
         }
     )
+    client.permissions['alice'] = 'write'
     client.timelines[1] = [
         {
             'event': 'labeled',
@@ -2197,10 +2492,11 @@ def test_invalid_event_timestamp_does_not_block_later_items():
 def test_one_item_failure_still_queues_other_notices():
     client = FakeClient(
         {
-            1: item(1, labels=[monitor._ACTION_LABEL]),
-            2: item(2, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL]),
+            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
+            2: item(2, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, 'p:1-highest'], assignees=['alice']),
         }
     )
+    client.permissions['alice'] = 'write'
     client.fail_get.add(1)
     notices: list[monitor.Notice] = []
 
@@ -2208,11 +2504,12 @@ def test_one_item_failure_still_queues_other_notices():
 
     assert lines == ['#2: queued channel escalation']
     assert [notice['number'] for notice in notices] == [2]
-    assert failures and failures[0].startswith('#1: HTTPError')
+    assert any(failure.startswith('#1: HTTPError') for failure in failures)
 
 
 def test_bot_triggered_mention_event_is_not_an_acknowledgement():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice'])})
+    client.permissions['alice'] = 'write'
     client.timelines[7] = [
         {
             'event': 'labeled',
@@ -2305,6 +2602,27 @@ def test_sweep_keeps_untouched_escalated_item_dormant():
 
     assert monitor.reconcile(client, 'r', now=NOW) == ([], [])
     assert not any(call[0] == 'DELETE' for call in client.calls)
+
+
+def test_resurfaced_reminder_item_stands_down_instead_of_placeholder_assignment():
+    client = FakeClient({7: item(7, labels=[monitor._ESCALATED_LABEL, 'p:1-highest'])})
+    client.timelines[7] = [
+        label_event(monitor._ESCALATED_LABEL, created_at='2026-07-12T00:00:00Z'),
+        {
+            'event': 'unlabeled',
+            'created_at': '2026-07-12T00:00:01Z',
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+    ]
+
+    lines, failures = monitor.reconcile(client, 'r', now=NOW)
+
+    # A reminder-labeled item's owner was removed while it cooled off: the
+    # resurface must stand down, never re-assign the placeholder.
+    assert failures == []
+    assert lines == ['#7: stood down after its owner was unassigned']
+    assert not any(method == 'POST' and path.endswith('/assignees') for method, path, _ in client.calls)
 
 
 def test_sweep_returns_unresolved_escalation_to_active_queue_after_cooldown():

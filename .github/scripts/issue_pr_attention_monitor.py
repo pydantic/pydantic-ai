@@ -37,6 +37,17 @@ except ImportError:  # sparse checkouts that omit the telemetry module stay sile
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
+# Applied only by the community-demand sweep; scripts trust the label.
+COMMUNITY_LABEL = 'community-backed'
+# Assigned priority or community-backed issues are kept in the attention queue
+# by `reconcile`; the owner is pinged once *they* have been inactive past the
+# window. Community chatter neither suppresses nor hastens the reminder.
+_REMINDER_SLAS = {
+    'p:1-highest': dt.timedelta(days=3),
+    'p:2-high': dt.timedelta(days=5),
+    COMMUNITY_LABEL: dt.timedelta(days=7),
+}
+_SLA_MARK_LIMIT = 10
 _RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
@@ -95,6 +106,7 @@ _LABELS = {
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
     _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
+    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this; it routes and reminds like a priority issue'),
 }
 _SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _SEARCH_SUMMARY_QUERY = """
@@ -375,7 +387,7 @@ def _candidate_context(
     ], pr_context
 
 
-def _rotated_search(
+def rotated_search(
     client: GitHubClient,
     query: str,
     *,
@@ -383,6 +395,7 @@ def _rotated_search(
     limit: int,
     slot: int,
 ) -> list[dict[str, Any]]:
+    """Return one slot-rotated page of results so bounded sweeps cover the whole pool."""
     encoded = urllib.parse.quote_plus(query)
     first = cast(
         dict[str, Any],
@@ -408,7 +421,7 @@ def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
     recent_after = (now - _RECENT_ACTIVITY_WINDOW).date()
     stale_through = cutoff_date - dt.timedelta(days=1)
-    recent = _rotated_search(
+    recent = rotated_search(
         client,
         # GitHub Search does not intersect repeated `updated:` qualifiers; a
         # single range is required or the lower bound silently wins.
@@ -417,7 +430,7 @@ def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
         limit=_RECENT_CANDIDATE_LIMIT,
         slot=slot,
     )
-    backlog = _rotated_search(
+    backlog = rotated_search(
         client,
         f'{base_query} updated:<{recent_after.isoformat()}',
         order='asc',
@@ -591,10 +604,63 @@ def _first_maintainer_in_discussion(
     return None, complete and not probe.exhausted
 
 
+def _resolve_recipients(
+    client: GitHubClient,
+    repo: str,
+    current: Mapping[str, Any],
+    labels: set[str],
+    maintainers: list[str],
+    *,
+    now: dt.datetime,
+) -> tuple[list[str] | None, str | None]:
+    """Return the notice recipients, or a completion line when the lane stands down.
+
+    A reminder-labeled item's assignment is a routing or human decision, never
+    the monitor's own placeholder: notify exactly the current owners, and stand
+    down entirely once a human removes them. Only the agent-marked lane uses
+    the placeholder heuristic in `_ensure_recipients`.
+    """
+    if not labels.intersection(_REMINDER_SLAS):
+        return _ensure_recipients(client, repo, current, now=now), None
+    number = int(current['number'])
+    if not maintainers:
+        _complete(client, repo, number, labels)
+        return None, f'#{number}: stood down after its owner was unassigned'
+    return maintainers, None
+
+
+def _recent_human_unassignment(
+    client: GitHubClient, repo: str, events: Sequence[dict[str, Any]], *, now: dt.datetime
+) -> bool:
+    """Whether a person took a maintainer off this item inside the back-off window.
+
+    Unlike the census veto's static roster, maintainership is probed live: the
+    placeholder heuristic recognizes any maintainer with push access, so its
+    back-off must recognize the same people it might otherwise re-assign.
+    """
+    probe = _MaintainerProbe(client, repo)
+    for event in (IssueEvent.model_validate(value) for value in events):
+        if event.event != 'unassigned':
+            continue
+        if not event.created_at or now - parse_time(event.created_at) >= dt.timedelta(
+            days=ROUTING_UNASSIGN_BACKOFF_DAYS
+        ):
+            continue
+        # GitHub types app principals as `Bot`; login naming is a convention,
+        # not a contract. An unattributable event cannot count as a decision.
+        if not event.assigner.login or event.assigner.type == 'Bot':
+            continue
+        if probe.login(event.assignee.login):
+            return True
+    return False
+
+
 def _ensure_recipients(
     client: GitHubClient,
     repo: str,
     item: Mapping[str, Any],
+    *,
+    now: dt.datetime,
 ) -> list[str] | None:
     """Return who to notify, or None when ownership could not be decided."""
     number = int(item['number'])
@@ -608,6 +674,13 @@ def _ensure_recipients(
     logins = [login.casefold() for login in current_maintainers]
     if current_maintainers and logins != [_FALLBACK_OWNER.casefold()]:
         return current_maintainers
+
+    # A recent unassignment is a decision too: the placeholder heuristic must
+    # not hand the item straight back to whoever a human just took off it.
+    # Mirrors the router's back-off window.
+    events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
+    if _recent_human_unassignment(client, repo, events, now=now):
+        return None
 
     found, conclusive = _first_maintainer_in_discussion(client, repo, current)
     if found is None and not conclusive:
@@ -638,7 +711,9 @@ def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> N
             raise
 
 
-def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_path: str) -> list[str]:
+def apply_decisions(
+    client: GitHubClient, repo: str, output_path: str, snapshot_path: str, *, now: dt.datetime
+) -> list[str]:
     """Revalidate allowlisted model decisions, then assign and label them."""
     candidates = snapshot_candidates(snapshot_path, limit=_CANDIDATE_LIMIT)
     decisions = agent_items(output_path, Decision, tag='record_attention_decision', limit=_CANDIDATE_LIMIT)
@@ -674,7 +749,7 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             attention_item = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
             if attention_item.get('state') != 'open' or _ACTION_LABEL not in item_labels(attention_item):
                 raise RuntimeError('Attention state changed while applying the request')
-            recipients = _ensure_recipients(client, repo, attention_item)
+            recipients = _ensure_recipients(client, repo, attention_item, now=now)
             if recipients is None:
                 lines.append(f'#{number}: deferred until its owner can be identified')
                 continue
@@ -1016,17 +1091,53 @@ def _reconcile_item(
     if _acknowledged(client, repo, timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
-    recipients = _ensure_recipients(client, repo, current)
+    recipients, stood_down = _resolve_recipients(client, repo, current, labels, maintainers, now=now)
+    if stood_down is not None:
+        return stood_down, None
     if recipients is None:
         return None
+    return _queue_stage_notice(
+        client, repo, number, labels, current_stage, transition, recipients, acknowledged_since, now=now
+    )
+
+
+def _queue_stage_notice(
+    client: GitHubClient,
+    repo: str,
+    number: int,
+    labels: set[str],
+    current_stage: Literal[0, 1, 2],
+    transition: tuple[dt.datetime, dict[str, Any]],
+    recipients: list[str],
+    acknowledged_since: dt.datetime,
+    *,
+    now: dt.datetime,
+) -> tuple[str, Notice | None] | None:
+    """Re-check settlement, apply the interrupt gates, and queue one notice."""
+    transition_at = transition[0]
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     if _closed_since(timeline, transition_at) or _acknowledged(client, repo, timeline, acknowledged_since, recipients):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
     # Stage 2 is the existing durable "terminal Slack delivery pending" state.
     # Keeping that meaning makes the channel cutover safe for in-flight items.
-    if current_stage != 2 and now - transition_at < _SLA:
+    # Stage 1 waits its window between the ping and the channel escalation.
+    if current_stage == 1 and now - transition_at < _sla_for(labels):
         return None
+    if current_stage == 0:
+        # Only assigned priority or community-backed issues enter the
+        # interrupt pipeline: anything else the triage agent marks stays
+        # tracked, visible in the Monday digest, and silent. Items already
+        # pinged before the cutover finish their lifecycle rather than
+        # stranding at stage 1.
+        if not labels.intersection(_REMINDER_SLAS):
+            return None
+        # Items reach stage 0 from several lanes (the reminder sweep, agent
+        # classification, escalation resurface), so the owner-quiet window is
+        # enforced here, at the one seam every ping passes through: a lane
+        # cannot ping early, and owner activity after marking holds the ping.
+        if not _owner_quiet_since(timeline, recipients, since=now - _sla_for(labels)):
+            return None
     kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
         client,
@@ -1072,13 +1183,113 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: 
         return f'#{number}: restored attention eligibility after new activity'
     if now - transition[0] >= _RESURFACE_AFTER:
         # Add the active marker first so a partial GitHub failure cannot leave
-        # unresolved work in neither state. Its label event starts a fresh SLA.
+        # unresolved work in neither state; the notice seam's owner-quiet
+        # check then decides when the next ping is due.
         _add_labels(client, repo, number, [_ACTION_LABEL])
         _remove_label(client, repo, number, _ESCALATED_LABEL)
         reactivated = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-        _ensure_recipients(client, repo, reactivated)
+        # The reminder lanes own their assignment: only the agent-marked lane
+        # may re-run the placeholder heuristic on resurface.
+        _, stood_down = _resolve_recipients(
+            client,
+            repo,
+            reactivated,
+            item_labels(reactivated),
+            _maintainer_assignees(client, repo, reactivated),
+            now=now,
+        )
+        if stood_down is not None:
+            return stood_down
         return f'#{number}: returned unresolved attention to the active queue'
     return None
+
+
+def _sla_for(labels: set[str]) -> dt.timedelta:
+    """The reminder window for an item: tightest matching label wins."""
+    windows = [window for label, window in _REMINDER_SLAS.items() if label in labels]
+    return min(windows) if windows else _SLA
+
+
+def _owner_quiet_since(timeline: Sequence[dict[str, Any]], owners: Sequence[str], *, since: dt.datetime) -> bool:
+    """Whether the owners took no visible action in the timeline since `since`.
+
+    Counts the same actions as `_acknowledged` — any owner-attributed event
+    except the passive kinds — so "quiet enough to remind" and "responded
+    after the reminder" can never disagree and loop. When the fetched pages
+    do not reach back to `since`, the owners' action may have been pushed off
+    by newer noise: treated as not quiet, never as a false reminder. (On
+    `assigned` events GitHub mirrors the assignee into `actor`, so being
+    assigned counts as that owner's activity with no special case.)
+    """
+    # The coverage anchor is the first event *with* a time: PR timelines open
+    # with `committed` events that carry none and must not read as "active".
+    anchor = next((when for event in timeline if (when := _event_time(event)) is not None), None)
+    if timeline and (anchor is None or anchor > since):
+        return False
+    keys = {owner.casefold() for owner in owners}
+    return not any(
+        (event_time := _event_time(event)) is not None
+        and event_time >= since
+        and event.get('event') not in _NON_ACK_EVENTS
+        and _actor(event).casefold() in keys
+        for event in timeline
+    )
+
+
+def _mark_assigned_reminders(
+    client: GitHubClient, repo: str, *, slot: int, now: dt.datetime
+) -> tuple[list[str], list[str]]:
+    """Keep every assigned priority or community-backed issue inside the attention queue.
+
+    An issue is marked once its owner has gone quiet past the label's window
+    (`_owner_quiet_since` — the same activity rule acknowledgment uses), so
+    community chatter can never cause a false reminder; only a flood that
+    pushes the owner's actions past the fetched timeline pages can delay one.
+    Owner activity acknowledges and clears the cycle, which re-arms the next
+    one. One label's failure never blocks the rest.
+    """
+    lines: list[str] = []
+    failures: list[str] = []
+    excluded = ' '.join(f'-label:"{label}"' for label in (_ACTION_LABEL, *_LIFECYCLE_LABELS))
+    for reminder_label in _REMINDER_SLAS:
+        try:
+            matches = rotated_search(
+                client,
+                f'repo:{repo} is:open is:issue label:"{reminder_label}" {excluded}',
+                order='asc',
+                limit=_SLA_MARK_LIMIT,
+                slot=slot,
+            )
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            failures.append(f'{reminder_label} marking: {type(exc).__name__}: {exc}')
+            continue
+        for match in matches:
+            number = int(match['number'])
+            try:
+                # The search index lags: revalidate against live state so a
+                # just-unassigned or just-deprioritized issue is never marked.
+                current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+                labels = item_labels(current)
+                maintainers = _maintainer_assignees(client, repo, current)
+                if (
+                    str(current.get('state') or '').casefold() != 'open'
+                    or reminder_label not in labels
+                    or labels.intersection((_ACTION_LABEL, *_LIFECYCLE_LABELS))
+                    or not maintainers
+                ):
+                    continue
+                timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+                if not _owner_quiet_since(timeline, maintainers, since=now - _sla_for(labels)):
+                    continue
+                _add_labels(client, repo, number, [_ACTION_LABEL])
+                lines.append(f'#{number}: queued assigned {reminder_label} issue for owner attention')
+            except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+                if isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
+                failures.append(f'#{number} marking: {type(exc).__name__}: {exc}')
+    return lines, failures
 
 
 def reconcile(
@@ -1091,14 +1302,17 @@ def reconcile(
     """
     ensure_labels(client, repo)
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
-    closed = _rotated_search(
+    lines: list[str] = []
+    marked, failures = _mark_assigned_reminders(client, repo, slot=slot, now=now)
+    lines.extend(marked)
+    closed = rotated_search(
         client,
         f'repo:{repo} is:closed label:"{_ACTION_LABEL}"',
         order='asc',
         limit=_CLOSED_CLEANUP_LIMIT,
         slot=slot,
     )
-    active = _rotated_search(
+    active = rotated_search(
         client,
         f'repo:{repo} is:open label:"{_ACTION_LABEL}"',
         order='asc',
@@ -1107,8 +1321,6 @@ def reconcile(
     )
     items = [*closed, *active]
     processed = {int(item['number']) for item in items}
-    lines: list[str] = []
-    failures: list[str] = []
     for item in items:
         number = int(item['number'])
         try:
@@ -1123,7 +1335,7 @@ def reconcile(
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
     if len(closed) == _CLOSED_CLEANUP_LIMIT or len(active) == _ACTIVE_OPEN_LIMIT:
         lines.append('additional attention items remain for a later rotated batch')
-    dormant = _rotated_search(
+    dormant = rotated_search(
         client,
         # No is:open qualifier so a dormant item closed while escalated still
         # sheds its marker instead of carrying it forever.
@@ -1159,15 +1371,34 @@ def _slack_escape(value: str) -> str:
     return normalized.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
-def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
+def _notice_mentions(failures: list[str] | None = None) -> dict[str, str]:
+    """The per-maintainer Slack mentions, or plain names when unconfigured.
+
+    A configured-but-invalid map degrades to plain names, which ping nobody;
+    recording the failure turns that into a failure alert instead of a silent
+    loss of every owner notification.
+    """
+    raw = os.environ.get('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS')
+    if not raw:
+        return {}
+    try:
+        return slack_mentions(raw, _FALLBACK_OWNER)
+    except ValueError as exc:
+        if failures is not None:
+            failures.append(f'mention map: {exc}')
+        return {}
+
+
+def _write_notices(repo: str, notices: Sequence[Notice], failures: list[str] | None = None) -> None:
     if output_path := os.environ.get('GITHUB_OUTPUT'):
         reasons = {
-            'reminder': 'no maintainer has acted for three days',
-            'escalation': 'the previous reminder has had no maintainer response for three more days',
+            'reminder': 'it has been waiting on its owner past the reminder window',
+            'escalation': 'the earlier reminder got no maintainer response',
         }
+        mentions = _notice_mentions(failures)
         details: list[str] = []
         for notice in notices:
-            owners = ', '.join(f'@{_slack_escape(login)}' for login in notice['recipients'])
+            owners = ', '.join(mentions.get(login) or f'@{_slack_escape(login)}' for login in notice['recipients'])
             title = _slack_escape(notice['title']) or '(untitled)'
             details.append(
                 f'• *{notice["kind"].title()}*: '
@@ -1179,7 +1410,7 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
         payload = {
             'text': '\n'.join(
                 [
-                    f'<!channel> *Maintainer attention requested in {_slack_escape(repo)}*',
+                    f'*Maintainer attention requested in {_slack_escape(repo)}*',
                     *details,
                     '',
                     '*Expected action:* Open each item and make its next maintainer decision there. Reply, review, '
@@ -1882,17 +2113,17 @@ def main() -> int:
     elif args.mode == 'apply':
         if not args.agent_output:
             parser.error('--agent-output is required')
-        lines = apply_decisions(client, repo, args.agent_output, args.snapshot_path)
+        lines = apply_decisions(client, repo, args.agent_output, args.snapshot_path, now=now)
     elif args.mode == 'reconcile':
         notices: list[Notice] = []
         lines, failures = reconcile(client, repo, now=now, notices=notices)
-        _write_notices(repo, notices)
+        _write_notices(repo, notices, failures)
     elif args.mode == 'prepare':
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:
             parser.error('ATTENTION_NOTICES is required')
         notices = prepare_notices(client, repo, _notice_refs(json.loads(source)), now=now)
-        _write_notices(repo, notices)
+        _write_notices(repo, notices, failures)
         lines = [f'prepared {len(notices)} current attention notice(s)']
     elif args.mode == 'census':
         mention = None

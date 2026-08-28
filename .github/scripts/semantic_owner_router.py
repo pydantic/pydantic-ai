@@ -3,9 +3,9 @@
 
 Issues enter routing only once triage has applied a priority label
 (`p:1-highest` or `p:2-high`); everything else stays unassigned, on the
-triage automation's plate. The one exception is community pressure: an item
-ignored for two weeks while people kept commenting or reacting may also be
-assigned.
+triage automation's plate. The one exception is community pressure: the
+weekly community-demand sweep judges old-but-active unassigned issues and
+applies `community-backed`, which also opens the gate.
 """
 
 from __future__ import annotations
@@ -39,8 +39,7 @@ _RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
 _PRIORITY_LABELS = frozenset(attention.PRIORITY_GATE_LABELS)
 _RECENT_BATCH_LIMIT = 3
 _COMMUNITY_BATCH_LIMIT = 3
-_COMMUNITY_IGNORED_DAYS = 14
-_COMMUNITY_MIN_INTERACTIONS = 3
+_COMMUNITY_LABEL = attention.COMMUNITY_LABEL
 _FILE_LIMIT = 100
 _ASSIGNEE_LIMIT = 10
 _MAX_ITEM_NUMBER = 2_147_483_647
@@ -52,9 +51,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
     issueOrPullRequest(number: $number) {
       __typename
       ... on Issue {
-        number state createdAt
-        comments { totalCount }
-        reactions { totalCount }
+        number state
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
           nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
@@ -152,20 +149,14 @@ _RULES: dict[str, tuple[Rule, ...]] = {
             ),
         ),
     ),
-    'pydantic/pydantic-ai-harness': (
-        Rule(
-            'adtyavrdhn',
-            ('cap:code-mode', 'cap:acp', 'upstream-compat'),
-            (
-                'pydantic_ai_harness/code_mode/',
-                'pydantic_ai_harness/acp/',
-                'pydantic_ai_harness/runtime_authoring/',
-            ),
-        ),
-        Rule('dsfaccini', ('cap:compaction',), ('pydantic_ai_harness/compaction/',)),
-        Rule('DouweM', ('durable-exec', 'cap:step-persistence'), ('pydantic_ai_harness/step_persistence/',)),
-    ),
+    'pydantic/pydantic-ai-harness': (),
 }
+# Repos where one maintainer currently owns all intake. Harness has no triage
+# labeler, so its issues skip the priority gate and route straight here.
+_DEFAULT_OWNERS = {'pydantic/pydantic-ai-harness': 'mpfaffenberger'}
+# Repos whose issues are triaged and priority-labeled; only these apply the
+# priority gate before assignment.
+_GATED_REPOS = frozenset({'pydantic/pydantic-ai'})
 
 
 class Decision(TypedDict):
@@ -260,22 +251,6 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     return False
 
 
-def _community_backed(item: Mapping[str, Any]) -> bool:
-    """True when the item sat ignored for two weeks while people kept engaging."""
-    now = dt.datetime.now(dt.timezone.utc)
-    created_at = _graphql_time(item.get('createdAt'))
-    if created_at is None or now - created_at < dt.timedelta(days=_COMMUNITY_IGNORED_DAYS):
-        return False
-    interactions = 0
-    for field in ('comments', 'reactions'):
-        value = item.get(field)
-        count = cast(Mapping[str, object], value).get('totalCount') if isinstance(value, Mapping) else None
-        if type(count) is not int or count < 0:
-            return False
-        interactions += count
-    return interactions > _COMMUNITY_MIN_INTERACTIONS
-
-
 def _valid_path(value: str) -> bool:
     if not value or len(value) > 300 or not value.isascii() or '\\' in value or value.startswith('/'):
         return False
@@ -314,6 +289,8 @@ def _route(repo: str, labels: set[str], filenames: Sequence[str] | None) -> tupl
             if signal := _path_rule(repo, filename):
                 signals.add(signal)
             elif not _neutral_path(filename):
+                if default := _DEFAULT_OWNERS.get(repo):
+                    return default, 'default:repo-intake'
                 return _MANUAL_OWNER, 'manual:unowned-production-path'
     has_ui_signal = any(
         owner == 'dsfaccini'
@@ -326,6 +303,8 @@ def _route(repo: str, labels: set[str], filenames: Sequence[str] | None) -> tupl
         signals -= {('adtyavrdhn', 'label:streaming'), ('adtyavrdhn', 'label:run_stream')}
     owners = {owner for owner, _ in signals}
     if len(owners) != 1:
+        if not owners and (default := _DEFAULT_OWNERS.get(repo)):
+            return default, 'default:repo-intake'
         return _MANUAL_OWNER, 'manual:conflict-or-unknown'
     owner = owners.pop()
     evidence = min(evidence for signal_owner, evidence in signals if signal_owner == owner)
@@ -432,11 +411,12 @@ def _pull_request_precedence(
     return None
 
 
-def _issue_gate(item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
+def _issue_gate(repo: str, item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
     """Decide whether an issue may be routed at all; None means proceed."""
     # A gate label missing from a truncated first page counts as absent, which
-    # fails toward leaving the issue unassigned.
-    if not _labels(normalized) & _PRIORITY_LABELS and not _community_backed(item):
+    # fails toward leaving the issue unassigned. `community-backed` (a judged
+    # community-demand verdict, see `community_demand.py`) opens the gate too.
+    if repo in _GATED_REPOS and not _labels(normalized) & (_PRIORITY_LABELS | {_COMMUNITY_LABEL}):
         return Selection(number=number, decision=None, status='awaiting-triage')
     return None
 
@@ -464,7 +444,7 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
     if _recently_unassigned(item):
         return Selection(number=number, decision=None, status='recently-unassigned')
     is_pull_request = item.get('__typename') == 'PullRequest'
-    if not is_pull_request and (gated := _issue_gate(item, normalized, number)) is not None:
+    if not is_pull_request and (gated := _issue_gate(repo, item, normalized, number)) is not None:
         return gated
     if _maintainer_assignees(client, repo, normalized):
         return Selection(number=number, decision=None, status='maintainer-present')
@@ -546,21 +526,18 @@ def _qualified_owners(client: attention.GitHubClient, repo: str) -> tuple[str, .
 def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequence[str]) -> list[int]:
     """List candidates, priority-labeled issues before pull requests."""
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
-    priorities = ','.join(f'"{label}"' for label in sorted(_PRIORITY_LABELS))
-    issues = f'repo:{repo} is:open is:issue label:{priorities} {negatives} sort:created-asc'
+    if repo in _GATED_REPOS:
+        priorities = ','.join(f'"{label}"' for label in sorted(_PRIORITY_LABELS))
+        issues = f'repo:{repo} is:open is:issue label:{priorities} {negatives} sort:created-asc'
+    else:
+        issues = f'repo:{repo} is:open is:issue {negatives} sort:created-asc'
     pulls = f'repo:{repo} is:open is:pr -draft:true created:>={_RECOVERY_EPOCH} {negatives} sort:created-asc'
     return list(dict.fromkeys(_search_numbers(client, issues) + _search_numbers(client, pulls)))
 
 
 def _community_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
-    """List unassigned items ignored for two weeks despite community interactions."""
-    # `created:` has date granularity, so search one day wide of the threshold and
-    # let `_community_backed` apply the precise two-week check per item.
-    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=_COMMUNITY_IGNORED_DAYS - 1)).date().isoformat()
-    query = (
-        f'repo:{repo} is:open -draft:true created:<{cutoff} no:assignee '
-        f'interactions:>{_COMMUNITY_MIN_INTERACTIONS} sort:updated-desc'
-    )
+    """List unassigned items the triage agent judged to have genuine community demand."""
+    query = f'repo:{repo} is:open -draft:true no:assignee label:"{_COMMUNITY_LABEL}" sort:updated-desc'
     return _search_numbers(client, query)
 
 
@@ -657,6 +634,8 @@ def _routing_reason(decision: Decision, mention: str) -> str:
     source, separator, detail = evidence.partition(':')
     if separator and detail and source in {'label', 'path'}:
         return f'Matched ownership {source} `{detail}`.'
+    if evidence == 'default:repo-intake':
+        return 'All intake for this repository is currently routed to one owner.'
     if evidence.startswith('manual:'):
         return 'Automatic routing could not determine an available semantic owner, so this needs manual triage.'
     return 'Matched the semantic ownership policy.'
@@ -670,8 +649,13 @@ def _slack_payload(
 ) -> str:
     """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
-    mentions = attention.slack_mentions(mentions_value, decision['owner'])
-    mention = mentions[decision['owner']]
+    if decision['evidence'] == 'default:repo-intake':
+        # Blanket intake routing would ping the same person on every drained
+        # item; the channel record keeps the plain name and GitHub's own
+        # assignment notification does the alerting.
+        mention = decision['owner']
+    else:
+        mention = attention.slack_mentions(mentions_value, decision['owner'])[decision['owner']]
     if item_type == 'Issue':
         kind, path = 'Issue', 'issues'
     else:
