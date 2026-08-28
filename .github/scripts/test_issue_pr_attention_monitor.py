@@ -1101,11 +1101,12 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
 class CensusClient(FakeClient):
     """Search counts only: the whole surface the coverage heartbeat touches."""
 
-    def __init__(self, counts: dict[str, int], *, stalest: dict[str, Any] | None = None) -> None:
+    def __init__(self, counts: dict[str, int], *, stale_page: list[dict[str, Any]] | None = None) -> None:
         super().__init__()
         self.permissions = {owner: 'write' for owner in TRIAGE_OWNERS}
         self.counts = counts
-        self.stalest = stalest
+        self.stale_page = stale_page or []
+        self.gate_first: int | None = None
         self.correction_matches: list[dict[str, Any]] = []
 
     def get(self, path: str) -> Any:
@@ -1132,8 +1133,9 @@ class CensusClient(FakeClient):
             terms = terms.removesuffix(' sort:created-asc')
             assert terms == monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS)
         nodes = []
-        if oldest and self.stalest:
-            nodes = [{'number': self.stalest['number'], 'createdAt': self.stalest['created_at']}]
+        if oldest:
+            self.gate_first = int(str(variables['first']))
+            nodes = [{'number': item['number'], 'createdAt': item['created_at']} for item in self.stale_page]
         return {'data': {'search': {'issueCount': self.counts[terms], 'nodes': nodes}}}
 
 
@@ -1214,8 +1216,8 @@ CENSUS_COUNTS = {
 }
 
 
-def test_census_counts_coverage_without_fetching_or_writing_anything():
-    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-20T00:00:00Z'})
+def test_census_counts_coverage_without_writing_or_reading_prose():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
 
     assert monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>') == (
         '<@UADITYA> :rotating_light: Attention coverage for pydantic/pydantic-ai — '
@@ -1249,7 +1251,7 @@ def test_census_escalates_when_the_pull_intake_search_is_saturated():
         **CENSUS_COUNTS,
         monitor._pull_intake_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 101,
     }
-    client = CensusClient(counts, stalest={'number': 7800, 'created_at': '2026-08-25T00:00:00Z'})
+    client = CensusClient(counts, stale_page=[{'number': 7800, 'created_at': '2026-08-25T00:00:00Z'}])
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
 
@@ -1263,7 +1265,7 @@ def test_census_escalates_when_the_assignment_gate_backs_up():
         **CENSUS_COUNTS,
         monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS): monitor._GATE_BATCH_BREACH + 1,
     }
-    client = CensusClient(counts, stalest={'number': 7800, 'created_at': '2026-08-25T00:00:00Z'})
+    client = CensusClient(counts, stale_page=[{'number': 7800, 'created_at': '2026-08-25T00:00:00Z'}])
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
 
@@ -1272,7 +1274,7 @@ def test_census_escalates_when_the_assignment_gate_backs_up():
 
 
 def test_census_oldest_page_skips_a_deliberately_unassigned_issue():
-    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-10T00:00:00Z'})
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-10T00:00:00Z'}])
     client.timelines[7740] = [
         {'event': 'unassigned', 'created_at': '2026-08-24T00:00:00Z', 'actor': {'login': 'DouweM'}}
     ]
@@ -1285,8 +1287,28 @@ def test_census_oldest_page_skips_a_deliberately_unassigned_issue():
     assert 'oldest' not in report
 
 
+def test_census_oldest_looks_past_vetoed_issues_across_the_whole_breach_window():
+    client = CensusClient(
+        CENSUS_COUNTS,
+        stale_page=[
+            {'number': 7740, 'created_at': '2026-08-10T00:00:00Z'},
+            {'number': 7741, 'created_at': '2026-08-24T12:00:00Z'},
+        ],
+    )
+    client.timelines[7740] = [
+        {'event': 'unassigned', 'created_at': '2026-08-24T00:00:00Z', 'actor': {'login': 'DouweM'}}
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    # Vetoed issues cannot suppress the alarm: the eligible one behind them is
+    # found, and the window spans the count-breach threshold.
+    assert 'oldest #7741' in report
+    assert client.gate_first == monitor._GATE_BATCH_BREACH
+
+
 def test_census_rejects_an_untrusted_urgent_mention():
-    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-20T00:00:00Z'})
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
 
     with pytest.raises(ValueError, match='valid Aditya Slack mention'):
         monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<!channel>')
@@ -1295,7 +1317,7 @@ def test_census_rejects_an_untrusted_urgent_mention():
 def test_census_reports_daily_corrections_and_emits_telemetry(monkeypatch: pytest.MonkeyPatch):
     events: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(monitor, '_emit_event', lambda name, **attrs: events.append((name, attrs)))
-    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-20T00:00:00Z'})
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
     client.correction_matches = [{'number': 5}]
     client.timelines[5] = [
         {
