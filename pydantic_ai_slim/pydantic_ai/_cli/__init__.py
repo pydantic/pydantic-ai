@@ -299,13 +299,7 @@ def _load_mcp_toolsets_for_cli(config_path: str, console: Console) -> Sequence[A
         console.print('[red]Error: --mcp-config needs a path to a configuration file[/red]')
         return None
 
-    try:
-        from ..mcp import load_mcp_toolsets
-    except ImportError as e:  # pragma: no cover
-        raise ImportError(
-            'Please install the `mcp` package to use --mcp-config, '
-            'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
-        ) from e
+    from ..mcp import load_mcp_toolsets
 
     try:
         return load_mcp_toolsets(config_path)
@@ -510,8 +504,9 @@ async def ask_agent(
                         async with node.stream(agent_run.ctx) as handle_stream:
                             # Inside the `async with`, so the spinner survives request preparation
                             # and time-to-first-byte rather than handing the user a blank display.
-                            # The first node is always a model request, so `live` is entered before
-                            # any tool-call node needs it — and the flag enters it exactly once.
+                            # The first `ModelRequestNode` always precedes any tool-call node, so
+                            # `live` is entered before any tool-call node needs it — and the flag
+                            # enters it exactly once.
                             if not live_started:
                                 status.stop()
                                 stack.enter_context(live)
