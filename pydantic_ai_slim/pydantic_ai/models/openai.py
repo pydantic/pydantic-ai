@@ -2213,14 +2213,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
             # streamed-response path, which handles `response.completed` arriving with an empty `output`.
             # Note: if a higher-level path to enforce streaming is ever added, this branch belongs there instead.
-            stream = await self._responses_create(messages, True, settings, model_request_parameters)
+            stream = await self._responses_create(
+                messages, stream=True, model_settings=settings, model_request_parameters=model_request_parameters
+            )
             async with stream:
                 streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
                 async for _ in streamed_response:
                     pass
             return streamed_response.get()
         else:
-            response = await self._responses_create(messages, False, settings, model_request_parameters)
+            response = await self._responses_create(
+                messages, stream=False, model_settings=settings, model_request_parameters=model_request_parameters
+            )
 
         if isinstance(response, ModelResponse):
             return response
@@ -2319,7 +2323,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             previous_model_name = None
             expected_response_id = None
-            response = await self._responses_create(messages, True, settings, model_request_parameters)
+            response = await self._responses_create(
+                messages, stream=True, model_settings=settings, model_request_parameters=model_request_parameters
+            )
         if isinstance(response, ModelResponse):
             yield _ModelResponseStreamedResponse(
                 model_request_parameters=model_request_parameters,
