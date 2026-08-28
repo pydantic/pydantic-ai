@@ -53,6 +53,7 @@ from .._cancel import CancellationToken, RunCancellation, take_run_binding
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
+from .._run_context import set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -216,10 +217,15 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
-        await run_capability.before_run(run_ctx)
+        run_ctx._run_capabilities_by_id = {  # pyright: ignore[reportPrivateUsage]
+            capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
+        }
+        run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
+        with set_current_run_context(run_ctx):
+            await run_capability.before_run(run_ctx)
+            current_ctx = contextvars.copy_context()
         # Capture context vars set by wrap_run/before_run so they can be propagated to the
         # caller's task, where the run body and any child tasks execute.
-        current_ctx = contextvars.copy_context()
         _wrap_context = [
             (var, current_ctx[var])
             for var in current_ctx
@@ -1126,6 +1132,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
 
+    @property
+    def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        """The Pydantic validation context used to validate tool arguments and outputs.
+
+        Set this when validators need values from [`ValidationInfo.context`][pydantic.ValidationInfo.context].
+        A callable can build the context from the current [`RunContext`][pydantic_ai.tools.RunContext].
+        """
+        return self._validation_context
+
+    def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        return self._validation_context
+
     def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r})'
 
@@ -1541,6 +1559,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             agent=self,
             model=model_used,
+            _model_id=model_id,
             usage=usage,
             usage_limits=usage_limits,
             prompt=user_prompt,

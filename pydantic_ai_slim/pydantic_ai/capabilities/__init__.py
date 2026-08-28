@@ -38,6 +38,7 @@ from .capability import Capability
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
+from .durable_operation import durable_operation
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
@@ -153,6 +154,7 @@ __all__ = [
     'XSearch',
     'CombinedCapability',
     'DynamicCapability',
+    'durable_operation',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',
