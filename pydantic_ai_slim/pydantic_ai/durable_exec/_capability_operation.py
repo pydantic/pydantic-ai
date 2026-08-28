@@ -8,11 +8,11 @@ from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints, overl
 
 from pydantic_ai._function_schema import (
     FunctionSchema,
-    _extract_return_schema_type,  # pyright: ignore[reportPrivateUsage]
-    _find_typed_parameter,  # pyright: ignore[reportPrivateUsage]
-    _is_call_ctx,  # pyright: ignore[reportPrivateUsage]
-    _validate_schema_signature,  # pyright: ignore[reportPrivateUsage]
+    extract_return_schema_type,
+    find_typed_parameter,
     function_schema,
+    is_call_ctx,
+    validate_schema_signature,
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
@@ -361,17 +361,17 @@ def collect_capability_operations(
         bound = function.__get__(capability, type(capability))
         signature = inspect.signature(bound)
         type_hints = get_type_hints(bound, include_extras=True)
-        ctx_parameter = _find_typed_parameter(
-            function, type_hints, _is_call_ctx, 'RunContext', callable_kind='Durable operation'
+        ctx_parameter = find_typed_parameter(
+            function, type_hints, is_call_ctx, 'RunContext', callable_kind='Durable operation'
         )
-        model_request_parameter = _find_typed_parameter(
+        model_request_parameter = find_typed_parameter(
             function,
             type_hints,
             lambda annotation: annotation is ModelRequestContext,
             'ModelRequestContext',
             callable_kind='Durable operation',
         )
-        _validate_schema_signature(function, signature, type_hints, ctx_parameter)
+        validate_schema_signature(function, signature, type_hints, ctx_parameter)
         if (
             model_request_parameter is not None
             and signature.parameters[model_request_parameter].kind is inspect.Parameter.VAR_POSITIONAL
@@ -388,7 +388,7 @@ def collect_capability_operations(
         result_type = (
             ModelRequestContextProjection
             if model_request_parameter is not None
-            else _extract_return_schema_type(type_hints.get('return'), bound)
+            else extract_return_schema_type(type_hints.get('return'), bound)
         )
         declarations[operation_name] = CapabilityMethodDeclaration(
             name=operation_name,
