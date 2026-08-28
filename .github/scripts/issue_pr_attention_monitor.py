@@ -57,8 +57,7 @@ ROUTING_RECOVERY_EPOCH = '2026-08-18'
 PRIORITY_GATE_LABELS = ('p:1-highest', 'p:2-high')
 _PRIORITY_LABELS_ALL = (*PRIORITY_GATE_LABELS, 'p:3-mid', 'p:4-low')
 _GATE_BATCH_BREACH = 15
-# A human unassignment means "leave this alone": routing backs off for this
-# many days, and the census oldest-item page skips such issues meanwhile.
+# Human unassignment ⇒ routing back-off window; see `_recently_unassigned`.
 ROUTING_UNASSIGN_BACKOFF_DAYS = 14
 _OVERRIDE_SCAN_LIMIT = 30
 _OVERRIDE_WINDOW_DAYS = 7
@@ -1324,7 +1323,8 @@ def _pull_intake_query(repo: str, owners: Sequence[str]) -> str:
 
 def _recent_unassignment(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> bool:
     """Whether anyone removed an assignee from this item inside the back-off window."""
-    for event in client.last_pages(f'/repos/{repo}/issues/{number}/events?per_page=100'):
+    # Two pages: mention/subscribe noise can push an unassignment off the last one.
+    for event in client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2):
         if str(event.get('event') or '') != 'unassigned':
             continue
         created = event.get('created_at')
@@ -1338,7 +1338,12 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
     active = _search_count(client, f'repo:{repo} is:open label:"{_ACTION_LABEL}"')
     cooling = _search_count(client, f'repo:{repo} is:open label:"{_ESCALATED_LABEL}"')
     owners = _qualified_routing_owners(client, repo)
-    gate_total, gate_items = _search_summary(client, f'{_gate_query(repo, owners)} sort:created-asc', first=5)
+    # The window matches `_GATE_BATCH_BREACH`: if every fetched issue is vetoed
+    # below and more exist beyond the window, the batch-size breach fires
+    # instead, so no state is left where a stuck issue can suppress the alarm.
+    gate_total, gate_items = _search_summary(
+        client, f'{_gate_query(repo, owners)} sort:created-asc', first=_GATE_BATCH_BREACH
+    )
     # A recently unassigned issue is unassigned on purpose, so it stays in the
     # count but must not trigger the oldest-item page day after day.
     oldest = next(
@@ -1496,7 +1501,7 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     lines: list[str] = []
     for match in matches:
         number = int(match['number'])
-        for event in client.last_pages(f'/repos/{repo}/issues/{number}/events?per_page=100'):
+        for event in client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2):
             kind = str(event.get('event') or '')
             if kind not in ('labeled', 'unlabeled', 'unassigned'):
                 continue
