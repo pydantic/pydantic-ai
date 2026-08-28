@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal
 from pydantic import ValidationError
 
 from . import messages as _messages
+from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
     OutputToolset,
@@ -1143,7 +1144,8 @@ class ToolManager(Generic[AgentDepsT]):
         """
         if self.root_capability is None or self.ctx is None:
             return None
-        return await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
+        results = await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
+        return filter_deferred_results(requests, results) if results is not None else None
 
     async def _resolve_single_deferred(
         self,
