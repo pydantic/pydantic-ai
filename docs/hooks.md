@@ -464,11 +464,12 @@ See [Error hooks](capabilities/custom.md#error-hooks) for the full pattern and r
 
 ## Triggering retries with `ModelRetry` and failures with `ToolFailed` {#triggering-retries-with-modelretry}
 
-Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools-advanced.md#tool-retries) and output validators.
+Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools-advanced.md#tool-retries) and output validators. `ModelRetry` always means "ask the model again": to abort the run from a hook instead, raise any other exception and it propagates to the caller.
 
 **Model request hooks** (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`):
 
 - The retry message is sent back to the model as a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]
+- `before_model_request`: the retry fires before the model answered, so the model sees only the retry message — and the before-chain runs again on the retry request, so a hook that raises unconditionally exhausts the retry budget
 - `after_model_request`: the original response is preserved in message history so the model can see what it said
 - `wrap_model_request`: the response is preserved only if the handler was called
 - Retries count against the output side of the agent's retry budget
