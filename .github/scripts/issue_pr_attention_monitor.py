@@ -1517,19 +1517,38 @@ def _recent_unassignment(events: Sequence[dict[str, Any]], *, now: dt.datetime) 
     return False
 
 
+# A priority swap removes one gate label and adds the other within moments,
+# in either order; a gap that short is continuous residence, not an exit.
+_GATE_RELABEL_GRACE = dt.timedelta(minutes=15)
+
+
 def _gate_entry_time(events: Sequence[dict[str, Any]]) -> dt.datetime | None:
-    """When the newest priority label landed — the moment the issue entered the gate."""
+    """When the issue entered its current stretch in the gate.
+
+    Tracks the priority-label set through the fetched events: entry is the
+    moment the set last became non-empty, so a p:2 → p:1 escalation never
+    resets the clock. `None` when the entry predates the fetched pages — the
+    caller falls back to the creation date, erring towards alarming on a
+    genuinely old label.
+    """
+    present: set[str] = set()
     entered: dt.datetime | None = None
+    left: dt.datetime | None = None
     for event in events:
-        if str(event.get('event') or '') != 'labeled':
+        name = _nested_field(event, 'label', 'name')
+        if name not in PRIORITY_GATE_LABELS:
             continue
-        if _nested_field(event, 'label', 'name') not in PRIORITY_GATE_LABELS:
-            continue
+        kind = str(event.get('event') or '')
         created = event.get('created_at')
-        if isinstance(created, str):
-            when = _parse_time(created)
-            if entered is None or when > entered:
+        when = _parse_time(created) if isinstance(created, str) else None
+        if kind == 'labeled' and when is not None:
+            if not present and (left is None or when - left > _GATE_RELABEL_GRACE):
                 entered = when
+            present.add(name)
+        elif kind == 'unlabeled':
+            present.discard(name)
+            if not present:
+                left = when
     return entered
 
 
@@ -1546,6 +1565,11 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
     )
     # A recently unassigned issue is unassigned on purpose, so it stays in the
     # count but must not trigger the oldest-item page day after day.
+    # Age runs from when the issue entered the gate, not from creation: triage
+    # labels old backlog issues, and their creation dates would breach
+    # instantly. The search sorts by creation, which no longer matches the
+    # clock, so every fetched candidate is examined (bounded, daily): the
+    # first one could be a just-labeled ancient issue masking a stale one.
     oldest: tuple[int, dt.datetime] | None = None
     for candidate in gate_items:
         number = int(candidate['number'])
@@ -1553,12 +1577,9 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
         if _recent_unassignment(events, now=now):
             continue
-        # Age runs from the priority label, not issue creation: triage labels
-        # old backlog issues, and their creation dates would breach instantly.
-        # When the label event predates the fetched pages the creation fallback
-        # errs towards alarming, which fits — the label is genuinely old.
-        oldest = (number, _gate_entry_time(events) or _parse_time(str(candidate['created_at'])))
-        break
+        entered = _gate_entry_time(events) or _parse_time(str(candidate['created_at']))
+        if oldest is None or entered < oldest[1]:
+            oldest = (number, entered)
     untriaged = _search_count(client, _untriaged_query(repo))
     pull_intake = _search_count(client, _pull_intake_query(repo, owners))
     # Counts and item numbers only: the heartbeat must stay free of issue and PR
@@ -1713,26 +1734,25 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
             created = event.get('created_at')
             if not isinstance(created, str) or _parse_time(created) < since:
                 continue
+            # On (un)assigned events GitHub puts the *removed assignee* in
+            # `actor`; the person who acted is in `assigner`.
+            performer = _nested_field(event, 'assigner', 'login') if kind == 'unassigned' else _actor(event)
+            if performer.casefold() not in owner_keys:
+                continue
             if kind == 'unassigned':
-                # On (un)assigned events GitHub puts the *removed assignee* in
-                # `actor`; the person who acted is in `assigner`.
-                performer = _nested_field(event, 'assigner', 'login')
                 target = _nested_field(event, 'assignee', 'login')
                 # Routing only ever assigns maintainer owners, so only those
                 # unassignments correct the automation; removing a stale
                 # contributor or bot assignee is routine cleanup.
-                if performer.casefold() not in owner_keys or target.casefold() not in owner_keys:
+                if target.casefold() not in owner_keys:
                     continue
                 lines.append(f'• #{number}: @{_slack_escape(performer)} unassigned @{_slack_escape(target)}')
             else:
-                actor = _actor(event)
-                if actor.casefold() not in owner_keys:
-                    continue
                 name = _nested_field(event, 'label', 'name')
                 if not name.startswith('p:'):
                     continue
                 verb = 'added' if kind == 'labeled' else 'removed'
-                lines.append(f'• #{number}: @{_slack_escape(actor)} {verb} `{_slack_escape(name)}`')
+                lines.append(f'• #{number}: @{_slack_escape(performer)} {verb} `{_slack_escape(name)}`')
     # Bound the section so a relabel-heavy week cannot push the digest past the
     # Slack payload limit and suppress the whole Monday report.
     if len(lines) > _OVERRIDE_LINE_LIMIT:

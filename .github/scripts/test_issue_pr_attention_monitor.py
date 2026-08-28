@@ -1475,6 +1475,42 @@ def test_census_gate_age_runs_from_the_priority_label_not_creation():
     assert 'oldest #7740 in the gate 0d' in report
 
 
+def test_census_oldest_is_the_stalest_in_gate_not_the_first_by_creation():
+    # The gate search sorts by creation, but the clock runs from the label: a
+    # just-labeled ancient issue must not mask a five-day-stale younger one.
+    client = CensusClient(
+        CENSUS_COUNTS,
+        stale_page=[
+            {'number': 100, 'created_at': '2023-01-01T00:00:00Z'},
+            {'number': 200, 'created_at': '2026-08-24T00:00:00Z'},
+        ],
+    )
+    client.timelines[100] = [{'event': 'labeled', 'created_at': '2026-08-24T18:00:00Z', 'label': {'name': 'p:2-high'}}]
+    client.timelines[200] = [
+        {'event': 'labeled', 'created_at': '2026-08-20T00:00:00Z', 'label': {'name': 'p:1-highest'}}
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    assert report.startswith('<@UADITYA> :rotating_light:')
+    assert 'oldest #200 in the gate 5d' in report
+
+
+def test_census_gate_clock_survives_a_priority_escalation_swap():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2023-01-01T00:00:00Z'}])
+    client.timelines[7740] = [
+        {'event': 'labeled', 'created_at': '2026-08-20T00:00:00Z', 'label': {'name': 'p:2-high'}},
+        {'event': 'unlabeled', 'created_at': '2026-08-24T12:00:00Z', 'label': {'name': 'p:2-high'}},
+        {'event': 'labeled', 'created_at': '2026-08-24T12:00:30Z', 'label': {'name': 'p:1-highest'}},
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    # Escalating p:2 → p:1 is more urgency, not a fresh arrival: the clock
+    # keeps running from the original gate entry.
+    assert 'oldest #7740 in the gate 5d' in report
+
+
 def test_census_rejects_an_untrusted_urgent_mention():
     client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
 
