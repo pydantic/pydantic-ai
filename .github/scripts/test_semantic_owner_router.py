@@ -103,6 +103,7 @@ class FakeClient(router.attention.GitHubClient):
                         'pageInfo': {'hasNextPage': False},
                     },
                 }
+                value['timelineItems'] = {'nodes': [{'createdAt': stamp} for stamp in source['unassigned_at']]}
                 if 'pull_request' in source:
                     filenames = self.files.get(number, [])
                     value.update(
@@ -114,12 +115,6 @@ class FakeClient(router.attention.GitHubClient):
                                 'nodes': [{'path': filename} for filename in filenames],
                                 'pageInfo': {'hasNextPage': False},
                             },
-                        }
-                    )
-                else:
-                    value.update(
-                        {
-                            'timelineItems': {'nodes': [{'createdAt': value} for value in source['unassigned_at']]},
                         }
                     )
             return {'data': {'repository': {'issueOrPullRequest': value}}}
@@ -644,7 +639,7 @@ def _search_queries(client: FakeClient) -> list[str]:
     ]
 
 
-def test_gated_selection_excludes_every_fixed_owner_and_prefers_issues():
+def test_gated_selection_queries_exclude_every_fixed_owner():
     client = FakeClient({7: item(7, labels=['MCP', 'p:2-high']), 8: item(8, labels=['tools', 'p:1-highest'])})
 
     selected = router.select_batch(client, CORE)
@@ -745,6 +740,14 @@ def test_gated_routing_backs_off_after_a_recent_unassignment():
     # hours later would fight that decision.
     assert selection == {'number': 7, 'decision': None, 'status': 'recently-unassigned'}
     assert router.select_batch(client, CORE) == []
+
+    # The back-off protects pull requests the same way.
+    pr_client = FakeClient({7: item(7, pull_request=True, author='adtyavrdhn', unassigned_at=[recent])})
+    assert router.decision_for(pr_client, CORE, 7) == {
+        'number': 7,
+        'decision': None,
+        'status': 'recently-unassigned',
+    }
 
 
 def test_community_recovery_backs_off_after_a_recent_unassignment():

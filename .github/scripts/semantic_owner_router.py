@@ -5,8 +5,7 @@ Issues enter routing only once triage has applied a priority label
 (`p:1-highest` or `p:2-high`); everything else stays unassigned, on the
 triage automation's plate. The one exception is community pressure: an item
 ignored for two weeks while people kept commenting or reacting may also be
-assigned. The workflow only polls on a schedule, so a freshly labeled issue
-is picked up on the next run.
+assigned.
 """
 
 from __future__ import annotations
@@ -51,6 +50,9 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
       ... on PullRequest {
         number state isDraft changedFiles
         author { login }
+        timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
+          nodes { ... on UnassignedEvent { createdAt } }
+        }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
         files(first: 100) { nodes { path } pageInfo { hasNextPage } }
@@ -207,7 +209,7 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     now = dt.datetime.now(dt.timezone.utc)
     window = dt.timedelta(days=attention.ROUTING_UNASSIGN_BACKOFF_DAYS)
     timeline = item.get('timelineItems')
-    if not isinstance(timeline, Mapping):
+    if not isinstance(timeline, Mapping) or not isinstance(cast(Mapping[str, object], timeline).get('nodes'), list):
         return True
     for node in _connection_nodes(cast(Mapping[str, object], timeline)):
         removed_at = (
@@ -380,11 +382,6 @@ def _pull_request_precedence(
 
 def _issue_gate(repo: str, item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
     """Decide whether an issue may be routed at all; None means proceed."""
-    # A human unassignment means "leave this alone", whatever the labels say:
-    # without the back-off, a p:1 issue would be re-assigned to the same owner
-    # six hours after a maintainer removed them.
-    if _recently_unassigned(item):
-        return Selection(number=number, decision=None, status='recently-unassigned')
     # A gate label missing from a truncated first page counts as absent, which
     # fails toward leaving the issue unassigned. `community-backed` (a judged
     # community-demand verdict, see `community_demand.py`) opens the gate too.
@@ -410,6 +407,11 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
         'labels': _connection_nodes(labels),
         'assignees': _connection_nodes(assignees),
     }
+    # The back-off covers pull requests too: a human unassignment means "leave
+    # this alone", and without it the same owner would be re-assigned six
+    # hours after a maintainer removed them.
+    if _recently_unassigned(item):
+        return Selection(number=number, decision=None, status='recently-unassigned')
     is_pull_request = item.get('__typename') == 'PullRequest'
     if not is_pull_request and (gated := _issue_gate(repo, item, normalized, number)) is not None:
         return gated
@@ -685,7 +687,6 @@ def main() -> int:
                 community_recovery=os.environ.get('ROUTING_COMMUNITY_RECOVERY') == 'true',
             )
             decisions = [selection['decision'] for selection in selected if selection['decision'] is not None]
-            first = selected[0] if selected else Selection(number=0, decision=None, status='nothing-to-route')
             _output(
                 {
                     'should_assign': str(bool(decisions)).lower(),
@@ -695,7 +696,7 @@ def main() -> int:
             if decisions:
                 _summary(', '.join(f'#{route["number"]}' for route in decisions) + ': route')
             else:
-                _summary(f'#{first["number"]}: {first["status"]}' if first['number'] else first['status'])
+                _summary('nothing-to-route')
             return 0
         if args.number is None or args.owner is None or args.evidence is None:
             parser.error('assign requires --number, --owner, and --evidence')
