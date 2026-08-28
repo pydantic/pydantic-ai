@@ -785,6 +785,20 @@ def test_a_full_page_of_recent_bot_cleanup_still_backs_off():
     assert selection == {'number': 7, 'decision': None, 'status': 'recently-unassigned'}
 
 
+def test_a_full_page_of_old_bot_cleanup_does_not_back_off():
+    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
+    cleanup: list[str | dict[str, Any]] = [
+        {'createdAt': old, 'actor': {'__typename': 'Bot'}} for _ in range(router._UNASSIGNED_EVENT_PAGE)
+    ]
+    client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'], unassigned_at=cleanup)})
+
+    selection = router.decision_for(client, CORE, 7)
+
+    # The page is full but every event is outside the window: a human removal
+    # recent enough to matter cannot be hiding past it, so routing proceeds.
+    assert selection['decision'] is not None
+
+
 def test_community_recovery_backs_off_after_a_recent_unassignment():
     recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
     old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()

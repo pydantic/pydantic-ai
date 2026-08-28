@@ -5,20 +5,20 @@ Data from outside enters script logic through the models here instead of
 hand-walked JSON. The two boundaries have opposite postures: agent output and
 snapshot files are validated strictly, because a model wrote them and a flood
 or malformed entry must fail the run loudly; GitHub payloads are read
-leniently, because GitHub omits fields per event kind and each call site
-chooses its own failure direction when data is missing.
+leniently — a null or missing field reads as its default, because GitHub omits
+fields per event kind — while a wrong-typed field still fails loudly, because
+that means corruption rather than an absent value.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, TypeVar, cast
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 
 def parse_time(value: str) -> dt.datetime:
@@ -58,6 +58,10 @@ class AgentItem(BaseModel):
 TItem = TypeVar('TItem', bound=AgentItem)
 
 
+class _AgentOutput(BaseModel):
+    items: list[dict[str, Any]]
+
+
 def agent_items(path: str, item_model: type[TItem], *, tag: str, limit: int) -> list[TItem]:
     """Parse the agent's output entries of one `type` tag, ignoring the rest.
 
@@ -65,15 +69,8 @@ def agent_items(path: str, item_model: type[TItem], *, tag: str, limit: int) -> 
     fail the run: the agent must not be able to act on an item twice or flood
     the batch past what the snapshot allowed.
     """
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    entries = cast('dict[str, object]', loaded).get('items') if isinstance(loaded, dict) else None
-    if not isinstance(entries, list):
-        raise ValueError('Agent output must contain an items list')
-    items = [
-        item_model.model_validate(value)
-        for value in cast('list[object]', entries)
-        if isinstance(value, dict) and cast('dict[str, object]', value).get('type') == tag
-    ]
+    entries = _AgentOutput.model_validate_json(Path(path).read_text(encoding='utf-8')).items
+    items = [item_model.model_validate(entry) for entry in entries if entry.get('type') == tag]
     numbers = [item.item_number for item in items]
     if len(numbers) > limit or len(numbers) != len(set(numbers)):
         raise ValueError('Agent output contains too many or duplicate items')
@@ -81,7 +78,7 @@ def agent_items(path: str, item_model: type[TItem], *, tag: str, limit: int) -> 
 
 
 class SnapshotCandidate(BaseModel):
-    number: int = Field(ge=1)
+    number: int = Field(ge=1, strict=True)
     updated_at: str
 
 
@@ -100,30 +97,38 @@ def snapshot_candidates(path: str, *, limit: int) -> dict[int, str]:
     return candidates
 
 
-def _account(value: object) -> object:
-    # GitHub sends `null` for deleted accounts; read it as an empty account so
-    # call sites compare logins without None-guards.
-    return cast('dict[str, object]', value) if isinstance(value, dict) else {}
+class _GitHubObject(BaseModel):
+    """Lenient base for GitHub payloads: null and absent both read as defaults."""
+
+    @model_validator(mode='before')
+    @classmethod
+    def _nulls_as_missing(cls, value: object) -> object:
+        # GitHub sends explicit `null` for deleted accounts and absent
+        # performers; a non-object payload reads as an entirely absent one.
+        if isinstance(value, dict):
+            return {key: item for key, item in cast('dict[str, object]', value).items() if item is not None}
+        return {}
 
 
-class Account(BaseModel):
+class Account(_GitHubObject):
     login: str = ''
     type: str = ''
 
 
-class LabelStub(BaseModel):
+class LabelStub(_GitHubObject):
     name: str = ''
 
 
-class IssueEvent(BaseModel):
+class IssueEvent(_GitHubObject):
     """One REST issue or timeline event; GitHub omits fields per event kind."""
 
     event: str = ''
-    id: Annotated[int | str | None, BeforeValidator(lambda value: value if isinstance(value, (int, str)) else None)] = None
+    # The census dedup key; a non-scalar id reads as unknown.
+    id: Annotated[int | str | None, BeforeValidator(lambda value: value if type(value) in (int, str) else None)] = None
     created_at: str = ''
-    actor: Annotated[Account, BeforeValidator(_account)] = Field(default_factory=Account)
+    actor: Account = Field(default_factory=Account)
     # On `assigned`/`unassigned` events `actor` mirrors the assignee; the
     # performer is `assigner`. Verified against the live API.
-    assignee: Annotated[Account, BeforeValidator(_account)] = Field(default_factory=Account)
-    assigner: Annotated[Account, BeforeValidator(_account)] = Field(default_factory=Account)
-    label: Annotated[LabelStub, BeforeValidator(_account)] = Field(default_factory=LabelStub)
+    assignee: Account = Field(default_factory=Account)
+    assigner: Account = Field(default_factory=Account)
+    label: LabelStub = Field(default_factory=LabelStub)
