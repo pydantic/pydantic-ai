@@ -209,7 +209,7 @@ jobs:
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
+    # Use Ubicloud 8-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     # `github.event.pull_request` is null on push/tag runs, so those need their own clause to
     # reach Ubicloud -- without it main and release runs silently fall back to `ubuntu-latest`.
@@ -222,7 +222,7 @@ jobs:
           || github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
-        && 'ubicloud-premium-4'
+        && 'ubicloud-premium-8'
         || 'ubuntu-latest'
       }}
     timeout-minutes: 20
@@ -250,7 +250,7 @@ jobs:
       # per-activation budget to `None` instead of 2s). That budget is wall-clock, so it measures
       # runner contention as readily as a blocking call: `tests/test_temporal.py`,
       # `tests/test_prefect.py` and `tests/test_dbos.py` each pin an xdist group, putting three
-      # durable-execution servers on four vCPUs, and a descheduled workflow thread trips it as
+      # durable-execution servers on a few vCPUs, and a descheduled workflow thread trips it as
       # `TMPRL1101`. The cost: a genuine in-workflow blocking call now hangs to the job timeout
       # instead of failing in 2s.
       TEMPORAL_DEBUG: '1'
@@ -347,7 +347,7 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
-    # Use Ubicloud 4-core runners for maintainers or opted in via 'ci:fast' label
+    # Use Ubicloud 8-core runners for maintainers or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     # See the note on the `test` job for why push/tag runs need their own clause.
     runs-on: >-
@@ -358,7 +358,7 @@ jobs:
           || github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
-        && 'ubicloud-premium-4'
+        && 'ubicloud-premium-8'
         || 'ubuntu-latest'
       }}
     timeout-minutes: 20
