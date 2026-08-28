@@ -800,6 +800,32 @@ _HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
 _HttpClientCache: TypeAlias = 'dict[tuple[str, int, int], _HttpClient]'
 
 
+# Which loaded modules hold a reference to an HTTP client factory, keyed by module name and
+# invalidated on module identity change. Scanning all of `sys.modules` (thousands of entries)
+# on every test is the single largest per-test fixture cost, and the answer only changes when
+# a module is imported or reloaded, so `track_httpx_clients` only scans what it hasn't seen.
+_factory_holding_modules: dict[str, tuple[Any, bool, bool]] = {}
+
+
+def _modules_holding_http_factories(original_httpx: Any, original_httpx2: Any) -> Iterator[tuple[Any, bool, bool]]:
+    for name, mod in list(sys.modules.items()):
+        cached = _factory_holding_modules.get(name)
+        if cached is None or cached[0] is not mod:
+            # Read the module's own namespace via `__dict__` rather than `getattr`: some
+            # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
+            # that imports submodules on attribute access, and probing every loaded module
+            # with `getattr` would trigger those unrelated (and possibly failing) imports.
+            mod_dict: dict[str, object] = getattr(mod, '__dict__', None) or {}
+            cached = (
+                mod,
+                mod_dict.get('create_async_http_client', None) is original_httpx,
+                mod_dict.get('create_async_httpx2_client', None) is original_httpx2,
+            )
+            _factory_holding_modules[name] = cached
+        if cached[1] or cached[2]:
+            yield cached
+
+
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
     """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
@@ -830,15 +856,10 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     cached_per_test = make_cached('httpx', original_httpx, httpx.AsyncClient)
     cached_httpx2_per_test = make_cached('httpx2', original_httpx2, httpx2.AsyncClient)
 
-    for mod in list(sys.modules.values()):
-        # Read the module's own namespace via `__dict__` rather than `getattr`: some
-        # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
-        # that imports submodules on attribute access, and probing every loaded module
-        # with `getattr` would trigger those unrelated (and possibly failing) imports.
-        mod_dict: dict[str, object] = getattr(mod, '__dict__', None) or {}
-        if mod_dict.get('create_async_http_client', None) is original_httpx:
+    for mod, holds_httpx, holds_httpx2 in _modules_holding_http_factories(original_httpx, original_httpx2):
+        if holds_httpx:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
-        if mod_dict.get('create_async_httpx2_client', None) is original_httpx2:
+        if holds_httpx2:
             monkeypatch.setattr(mod, 'create_async_httpx2_client', cached_httpx2_per_test)
 
     yield cache

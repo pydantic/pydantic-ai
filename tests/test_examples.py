@@ -241,6 +241,7 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
+    mocker.patch('asyncio.sleep', side_effect=fast_asyncio_sleep)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
@@ -1330,6 +1331,18 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             model_name=model_name,
             profile=model.profile if isinstance(model, Model) else None,
         )
+
+
+_real_asyncio_sleep = asyncio.sleep
+
+
+async def fast_asyncio_sleep(delay: float, result: Any = None) -> Any:
+    """Scale down example sleeps so illustrative delays don't burn real CI time.
+
+    Division rather than zeroing preserves the relative ordering that concurrency
+    examples (joins, toolset logging) rely on for deterministic output.
+    """
+    return await _real_asyncio_sleep(delay / 100, result)
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:

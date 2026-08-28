@@ -1901,6 +1901,7 @@ class TestGoogle:
 
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
+@pytest.mark.xdist_group(name='sentence_transformers')
 class TestSentenceTransformers:
     def _load_stsb_bert_tiny_model(self):
         # The pinned commit revision lets huggingface_hub serve every model file
