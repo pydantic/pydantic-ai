@@ -1561,8 +1561,9 @@ def _bot_assignment_origin(prior: Sequence[dict[str, Any]], login: str) -> bool 
             continue
         if _nested_field(event, 'assignee', 'login').casefold() != key:
             continue
-        # The router assigns through the workflow token, so its events carry
-        # exactly this actor; other bots' assignments are not ours to correct.
+        # All our triage automation (router and monitor) assigns through the
+        # workflow token, so this actor means "the bot assigned it"; other
+        # bots' assignments are not ours to correct.
         return _actor(event) == 'github-actions[bot]'
     return None
 
