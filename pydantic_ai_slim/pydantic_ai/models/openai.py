@@ -2784,12 +2784,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         _drop_unsupported_params(profile, model_settings)
         store: bool | Omit | None = model_settings.get('openai_store', OMIT)
         if profile.get('openai_responses_requires_store_false', False):
-            if store:
-                warnings.warn(
-                    '`openai_store=True` is ignored: this endpoint requires `store=false`.',
-                    UserWarning,
-                    stacklevel=2,
-                )
             store = False
         extra_headers, timeout = self._build_request_options(model_settings)
 

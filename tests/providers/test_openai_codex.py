@@ -1067,8 +1067,8 @@ async def test_forced_stream_drops_unsupported_settings(allow_model_requests: No
         openai_store=True,
     )
 
-    # The Codex backend rejects tuning fields outright, and the generic reasoning seam also warns
-    # about sampling params on GPT-5.6-family models; both land as UserWarnings here.
+    # Unsupported fields (including `openai_store`) are dropped silently; the warning here is the
+    # generic reasoning seam's, about sampling params on GPT-5.6-family models.
     with pytest.warns(UserWarning):
         response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], settings, ModelRequestParameters())
 
