@@ -1,4 +1,4 @@
-"""Tests for custom events emitted into the run event stream via `emit_event`."""
+"""Tests for custom events emitted into the run event stream via `emit`."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ class ProgressEvent(CustomEvent):
 
 @dataclass(kw_only=True)
 class ExternalEvent(CustomEvent):
-    """Reusable event for driver-code (`AgentRun.emit_event`) tests."""
+    """Reusable event for driver-code (`AgentRun.emit`) tests."""
 
     payload: Any = None
 
@@ -84,7 +84,7 @@ async def test_emit_from_tool_auto_stamps_tool_call_id():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(ProgressEvent(payload={'pct': 50}))
+        await ctx.emit(ProgressEvent(payload={'pct': 50}))
         return 'ok'
 
     events = await _collect_events(agent)
@@ -98,7 +98,7 @@ async def test_explicit_tool_call_id_preserved():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(ProgressEvent(tool_call_id='explicit'))
+        await ctx.emit(ProgressEvent(tool_call_id='explicit'))
         return 'ok'
 
     events = await _collect_events(agent)
@@ -121,7 +121,7 @@ async def test_emit_from_capability_hook():
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            await ctx.emit_event(StartingEvent(payload='before request'))
+            await ctx.emit(StartingEvent(payload='before request'))
             return request_context
 
     agent = Agent(FunctionModel(stream_function=only_text), capabilities=[EmitCapability()])
@@ -132,7 +132,7 @@ async def test_emit_from_capability_hook():
 
 
 async def test_agent_run_emit_event():
-    """Code driving `agent.iter()` can inject events via `AgentRun.emit_event`."""
+    """Code driving `agent.iter()` can inject events via `AgentRun.emit`."""
 
     async def only_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'done'
@@ -141,7 +141,7 @@ async def test_agent_run_emit_event():
 
     collected: list[AgentStreamEvent] = []
     async with agent.iter('go') as run:
-        await run.emit_event(ExternalEvent(payload={'source': 'bus'}))
+        await run.emit(ExternalEvent(payload={'source': 'bus'}))
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
@@ -163,7 +163,7 @@ async def test_agent_run_emit_event_after_end_rejected():
         async for _ in run:
             pass
         with pytest.raises(UserError, match='cannot be called after the run has ended'):
-            await run.emit_event(ExternalEvent())
+            await run.emit(ExternalEvent())
 
 
 async def test_agent_run_emit_event_before_call_tools_stream():
@@ -182,7 +182,7 @@ async def test_agent_run_emit_event_before_call_tools_stream():
                     async for _ in request_stream:
                         pass
             elif Agent.is_call_tools_node(node):
-                await run.emit_event(ExternalEvent())
+                await run.emit(ExternalEvent())
                 async with node.stream(run.ctx) as stream:
                     async for event in stream:
                         collected.append(event)
@@ -201,7 +201,7 @@ async def test_emit_from_output_validator():
 
     @agent.output_validator
     async def validate(ctx: RunContext[Any], output: str) -> str:
-        await ctx.emit_event(ValidatedEvent())
+        await ctx.emit(ValidatedEvent())
         return output
 
     events = await _collect_events(agent)
@@ -215,12 +215,12 @@ async def test_custom_events_excluded_from_stream_output():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(ProgressEvent())
+        await ctx.emit(ProgressEvent())
         return 'ok'
 
     outputs: list[str] = []
     async with agent.iter('go') as run:
-        await run.emit_event(ExternalEvent())
+        await run.emit(ExternalEvent())
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
@@ -236,7 +236,7 @@ async def test_surfaced_via_run_stream_events():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(ProgressEvent(payload={'pct': 50}))
+        await ctx.emit(ProgressEvent(payload={'pct': 50}))
         return 'ok'
 
     events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
@@ -260,7 +260,7 @@ async def test_surfaced_via_run_stream():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(ProgressEvent(payload={'pct': 50}))
+        await ctx.emit(ProgressEvent(payload={'pct': 50}))
         return 'ok'
 
     async with agent.run_stream('go', event_stream_handler=event_stream_handler) as result:
@@ -273,8 +273,8 @@ async def test_surfaced_via_run_stream():
 async def test_emit_without_buffer_raises():
     """A `RunContext` not backed by a running agent has nowhere to emit to."""
     ctx = RunContext[Any](deps=None, model=FunctionModel(stream_function=_tool_then_text), usage=None)  # type: ignore[arg-type]
-    with pytest.raises(UserError, match='`emit_event` is only available during an agent run'):
-        await ctx.emit_event(ProgressEvent())
+    with pytest.raises(UserError, match='`emit` is only available during an agent run'):
+        await ctx.emit(ProgressEvent())
 
 
 def test_serialization_round_trip():
@@ -421,7 +421,7 @@ async def test_event_delivered_while_tool_still_running():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(ProgressEvent(payload={'done': 1}))
+        await ctx.emit(ProgressEvent(payload={'done': 1}))
         await asyncio.wait_for(received.wait(), timeout=5)
         return 'ok'
 
@@ -440,7 +440,7 @@ async def test_typed_subclass_emitted_from_tool():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(UploadProgressEvent(done=1, total=2))
+        await ctx.emit(UploadProgressEvent(done=1, total=2))
         return 'ok'
 
     events = await _collect_events(agent)
@@ -454,7 +454,7 @@ async def test_event_stream_position_relative_to_framework_events():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(ProgressEvent())
+        await ctx.emit(ProgressEvent())
         return 'ok'
 
     events = await _collect_events(agent)
@@ -481,7 +481,7 @@ async def test_emission_before_model_retry_is_delivered():
     async def progress(ctx: RunContext[Any]) -> str:
         nonlocal attempts
         attempts += 1
-        await ctx.emit_event(ProgressEvent(payload=attempts))
+        await ctx.emit(ProgressEvent(payload=attempts))
         if attempts == 1:
             raise ModelRetry('try again')
         return 'ok'
@@ -496,7 +496,7 @@ async def test_emission_before_fatal_tool_error_is_delivered():
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(ProgressEvent(payload='before-crash'))
+        await ctx.emit(ProgressEvent(payload='before-crash'))
         raise RuntimeError('tool crashed')
 
     events: list[AgentStreamEvent] = []
@@ -664,7 +664,7 @@ async def test_output_function_emission_is_delivered():
         yield {0: DeltaToolCall(name='final_result', json_args='{"value": "ok"}', tool_call_id='call_out')}
 
     async def produce(ctx: RunContext[Any], value: str) -> str:
-        await ctx.emit_event(ProgressEvent(payload='from output'))
+        await ctx.emit(ProgressEvent(payload='from output'))
         return value
 
     agent: Agent[Any, str] = Agent(

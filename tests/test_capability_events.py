@@ -1,4 +1,4 @@
-"""Tests for typed events emitted by capabilities via `emit_event`."""
+"""Tests for typed events emitted by capabilities via `emit`."""
 
 from __future__ import annotations
 
@@ -227,7 +227,7 @@ class EmitCapability(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        await ctx.emit_event(FileReadEvent(path='hook.txt'))
+        await ctx.emit(FileReadEvent(path='hook.txt'))
         return request_context
 
 
@@ -250,7 +250,7 @@ async def test_capability_tool_emission_stamps_attribution(capability_id: str | 
 
     @capability.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(FileReadEvent(path='tool.txt'))
+        await ctx.emit(FileReadEvent(path='tool.txt'))
         return 'ok'
 
     events = await _collect(Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[capability]))
@@ -296,7 +296,7 @@ async def test_app_tool_cannot_emit_capability_event():
 
     @agent.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(FileReadEvent(path='tool.txt'))
+        await ctx.emit(FileReadEvent(path='tool.txt'))
         return 'ok'  # pragma: no cover - the emit above raises
 
     with pytest.raises(UserError, match='Capability events belong to capabilities'):
@@ -304,7 +304,7 @@ async def test_app_tool_cannot_emit_capability_event():
 
 
 async def test_agent_run_cannot_emit_capability_event():
-    """`AgentRun.emit_event` is a driver-code (application) surface; the guard also holds at runtime."""
+    """`AgentRun.emit` is a driver-code (application) surface; the guard also holds at runtime."""
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='done')])
@@ -313,7 +313,7 @@ async def test_agent_run_cannot_emit_capability_event():
 
     async with agent.iter('go') as run:
         with pytest.raises(UserError, match='Capability events belong to capabilities'):
-            await run.emit_event(FileReadEvent(path='tool.txt'))  # pyright: ignore[reportArgumentType]
+            await run.emit(FileReadEvent(path='tool.txt'))  # pyright: ignore[reportArgumentType]
         async for _ in run:
             pass
 
@@ -324,7 +324,7 @@ async def test_capability_cannot_emit_custom_event():
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            await ctx.emit_event(BridgeEvent())
+            await ctx.emit(BridgeEvent())
             return request_context  # pragma: no cover - the emit above raises
 
     agent = Agent(FunctionModel(stream_function=_only_text), capabilities=[BadCapability()])
@@ -337,7 +337,7 @@ async def test_hooks_can_emit_custom_event():
 
     @hooks.on.before_model_request
     async def emit(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
-        await ctx.emit_event(BridgeEvent())
+        await ctx.emit(BridgeEvent())
         return request_context
 
     events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[hooks]))
@@ -350,7 +350,7 @@ async def test_wrapped_hooks_can_emit_custom_event():
 
     @hooks.on.before_model_request
     async def emit(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
-        await ctx.emit_event(BridgeEvent())
+        await ctx.emit(BridgeEvent())
         return request_context
 
     wrapper = WrapperCapability(wrapped=hooks, id='wrapped_hooks')
@@ -382,7 +382,7 @@ async def test_process_event_stream_handler_can_emit_custom_event():
         async for _ in stream:
             if not emitted:
                 emitted = True
-                await ctx.emit_event(BridgeEvent())
+                await ctx.emit(BridgeEvent())
 
     events = await _collect(
         Agent(FunctionModel(stream_function=_only_text), capabilities=[ProcessEventStream(handler)])
@@ -398,7 +398,7 @@ async def test_pre_set_capability_id_is_preserved():
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            await ctx.emit_event(FileReadEvent(path='relayed.txt', capability_id='original_instance'))
+            await ctx.emit(FileReadEvent(path='relayed.txt', capability_id='original_instance'))
             return request_context
 
     events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[RelayCapability()]))
@@ -418,7 +418,7 @@ async def test_emission_with_unresolvable_tool_name_attributes_nothing():
     @agent.tool
     async def read_file(ctx: RunContext[Any]) -> str:
         stale = dc.replace(ctx, tool_name='vanished')
-        await stale.emit_event(BridgeEvent())
+        await stale.emit(BridgeEvent())
         return 'ok'
 
     events = await _collect(agent)

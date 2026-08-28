@@ -155,13 +155,13 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         return super()._deferred_capability_ids
 
     @overload
-    async def emit_event(self, event: CustomEvent, /) -> CustomEvent: ...
+    async def emit(self, event: CustomEvent, /) -> CustomEvent: ...
 
     @overload
-    async def emit_event(self, event: CapabilityEvent, /) -> CapabilityEvent: ...
+    async def emit(self, event: CapabilityEvent, /) -> CapabilityEvent: ...
 
-    async def emit_event(self, event: CustomEvent | CapabilityEvent, /) -> CustomEvent | CapabilityEvent:
-        """Reject `emit_event` from inside a Temporal activity.
+    async def emit(self, event: CustomEvent | CapabilityEvent, /) -> CustomEvent | CapabilityEvent:
+        """Reject `emit` from inside a Temporal activity.
 
         Tools and event stream handlers run inside activities where the run's event stream isn't
         reachable, so events emitted there can't currently flow back into the stream; raising beats

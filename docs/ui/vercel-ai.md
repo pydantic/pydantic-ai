@@ -101,7 +101,7 @@ async def chat(request: Request) -> Response:
 
 ### Data Chunks
 
-To emit data while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../agent.md#custom-events) via [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event]. Each event is delivered as a [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk] with `type` set to `data-{name}` and the result of [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] — the event's own fields, unless overridden — as its `data`. When the event is tool-scoped, the chunk's `data` is `{'tool_call_id': ..., 'data': ...}` so the client can attribute it. A data-carrying chunk payload (see below) is passed through verbatim.
+To emit data while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../agent.md#custom-events) via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]. Each event is delivered as a [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk] with `type` set to `data-{name}` and the result of [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] — the event's own fields, unless overridden — as its `data`. When the event is tool-scoped, the chunk's `data` is `{'tool_call_id': ..., 'data': ...}` so the client can attribute it. A data-carrying chunk payload (see below) is passed through verbatim.
 
 In addition, Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) at the point a tool returns by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a data-carrying chunk

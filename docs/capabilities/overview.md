@@ -194,7 +194,7 @@ Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-dem
 
 ## Capability events
 
-Reusable capabilities can publish typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s for coordination and observability. Give an event family a stable namespace, define each payload as a dataclass, and emit it from an async capability hook or capability-contributed tool by awaiting [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event]:
+Reusable capabilities can publish typed [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s for coordination and observability. Give an event family a stable namespace, define each payload as a dataclass, and emit it from an async capability hook or capability-contributed tool by awaiting [`ctx.emit()`][pydantic_ai.tools.RunContext.emit]:
 
 ```python {title="capability_events.py"}
 from dataclasses import dataclass
@@ -216,7 +216,7 @@ class FileSystemCapability(AbstractCapability[None]):
     async def before_model_request(
         self, ctx: RunContext[None], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        await ctx.emit_event(FileReadEvent(path='README.md'))
+        await ctx.emit(FileReadEvent(path='README.md'))
         return request_context
 ```
 
@@ -291,7 +291,7 @@ class KeepFullHistory(AbstractCapability[Any]):
         event.cancel()
 ```
 
-For inline dispatch, Pydantic AI buffers the event before invoking listeners. After `event = await ctx.emit_event(CompactionStartEvent())`, the emitter can inspect `event.cancelled`, and an event emitted by a listener appears after the decision event in the stream. Inline events are still delivered exactly once. Stream-dispatch listeners run inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers. An `on_event` listener automatically enables streaming for an otherwise non-streaming `agent.run()`.
+For inline dispatch, Pydantic AI buffers the event before invoking listeners. After `event = await ctx.emit(CompactionStartEvent())`, the emitter can inspect `event.cancelled`, and an event emitted by a listener appears after the decision event in the stream. Inline events are still delivered exactly once. Stream-dispatch listeners run inside user-defined [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] wrappers. An `on_event` listener automatically enables streaming for an otherwise non-streaming `agent.run()`.
 
 ## Provider-adaptive tools
 

@@ -511,17 +511,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         return self._graph_run.state.pending_messages
 
-    async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent:
+    async def emit(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent:
         """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into this run's event stream.
 
         Lets code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] inject application-defined
         events (e.g. from an external harness or event bus) into the stream, alongside events emitted from
-        tools via [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
+        tools via [`RunContext.emit`][pydantic_ai.tools.RunContext.emit].
         The event surfaces on the next pull from the run's node stream.
 
         Designed to be called from the same event loop driving `agent.iter()`. If you're forwarding events
         from a different thread, submit the coroutine to the agent's loop
-        (e.g. `asyncio.run_coroutine_threadsafe(agent_run.emit_event(event), loop)`).
+        (e.g. `asyncio.run_coroutine_threadsafe(agent_run.emit(event), loop)`).
 
         Args:
             event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
@@ -536,7 +536,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         if self.result is not None:
             raise exceptions.UserError(
-                '`emit_event` cannot be called after the run has ended: nothing remains to deliver the event.'
+                '`emit` cannot be called after the run has ended: nothing remains to deliver the event.'
             )
         if isinstance(event, _messages.CapabilityEvent):
             raise exceptions.UserError(

@@ -222,7 +222,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     events to it via [`_emit_event`][pydantic_ai._run_context.RunContext._emit_event]; the agent graph
     drains it into the agent event stream so consumers (`event_stream_handler`, `agent.run_stream_events`,
     `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent,
-    where [`emit_event`][pydantic_ai.tools.RunContext.emit_event] raises.
+    where [`emit`][pydantic_ai.tools.RunContext.emit] raises.
     """
 
     _inline_dispatched_event_ids: set[int] = field(default_factory=set[int], repr=False)
@@ -532,12 +532,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
     @overload
-    async def emit_event(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
+    async def emit(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
 
     @overload
-    async def emit_event(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
+    async def emit(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
 
-    async def emit_event(
+    async def emit(
         self, event: _messages.CustomEvent | _messages.CapabilityEvent, /
     ) -> _messages.CustomEvent | _messages.CapabilityEvent:
         """Emit a custom or capability event into the current run's event stream.
@@ -581,8 +581,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """
         if self._event_stream_buffer is None:
             raise UserError(
-                '`emit_event` is only available during an agent run (from tools, capability hooks, or '
-                '`AgentRun.emit_event`). This `RunContext` has no event stream to emit into.'
+                '`emit` is only available during an agent run (from tools, capability hooks, or '
+                '`AgentRun.emit`). This `RunContext` has no event stream to emit into.'
             )
         capability_id: str | None = None
         capability = self._capability

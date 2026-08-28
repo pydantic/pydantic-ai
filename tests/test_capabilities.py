@@ -12753,7 +12753,7 @@ class TestHooksCapability:
         @dataclass
         class Emitter(AbstractCapability[Any]):
             async def before_run(self, ctx: RunContext[Any]) -> None:
-                await ctx.emit_event(FilteredEvent(value='matched'))
+                await ctx.emit(FilteredEvent(value='matched'))
 
         await Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
@@ -12779,7 +12779,7 @@ class TestHooksCapability:
         @dataclass
         class Emitter(AbstractCapability[Any]):
             async def before_run(self, ctx: RunContext[Any]) -> None:
-                event = await ctx.emit_event(DecisionEvent())
+                event = await ctx.emit(DecisionEvent())
                 observed.append(event.cancelled)
 
         await Agent(

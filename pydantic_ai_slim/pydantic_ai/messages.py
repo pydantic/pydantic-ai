@@ -4360,8 +4360,8 @@ class CustomEvent:
     """An application-defined event emitted into the agent's event stream.
 
     Emit these from tools or code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter]
-    via [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event] or
-    [`AgentRun.emit_event`][pydantic_ai.run.AgentRun.emit_event] to surface progress updates, intermediate
+    via [`RunContext.emit`][pydantic_ai.tools.RunContext.emit] or
+    [`AgentRun.emit`][pydantic_ai.run.AgentRun.emit] to surface progress updates, intermediate
     results, or status information to consumers of the stream without adding to the model's context.
 
     Define an event by subclassing this class with typed fields carrying the payload:
@@ -4513,11 +4513,11 @@ class CapabilityEvent:
     """A typed event emitted by a capability into the agent's event stream.
 
     Capability authors define dataclass subclasses with a namespace shared by their event family.
-    The emitting capability's run id is stamped by [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
+    The emitting capability's run id is stamped by [`RunContext.emit`][pydantic_ai.tools.RunContext.emit].
 
     Events dispatch at their stream position by default. Decision events can instead pass
     `dispatch='inline'` as a class argument so listeners run before
-    [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event] returns:
+    [`RunContext.emit`][pydantic_ai.tools.RunContext.emit] returns:
 
     ```python
     from dataclasses import dataclass

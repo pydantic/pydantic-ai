@@ -34,7 +34,7 @@ async def _iter_completed_or_buffered(
 ) -> AsyncIterator[_messages.AgentStreamEvent | asyncio.Task[TaskResultT]]:
     """Yield tasks as they complete, interleaving run events buffered while waiting.
 
-    Buffered events (e.g. `ctx.emit_event` from a running tool) are yielded as soon as they land,
+    Buffered events (e.g. `ctx.emit` from a running tool) are yielded as soon as they land,
     so stream consumers see a progress event while the emitting tool is still running instead of
     at the tool's completion. Events buffered before a task completion is yielded come first, so
     an event emitted inside a tool body always precedes that tool's result event.

@@ -119,7 +119,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def _emits_app_events(self) -> bool:
-        # The `RunContext.emit_event` gate must see through wrappers: wrapping an app-facing
+        # The `RunContext.emit` gate must see through wrappers: wrapping an app-facing
         # `Hooks`/`ProcessEventStream` must not revoke its user callbacks' permission to emit
         # `CustomEvent`s.
         return self.wrapped._emits_app_events

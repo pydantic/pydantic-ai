@@ -161,7 +161,7 @@ async def test_listener_enqueue_reaches_next_model_request() -> None:
 
     @files.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(FileReadEvent(path='AGENTS.md'))
+        await ctx.emit(FileReadEvent(path='AGENTS.md'))
         return 'contents'
 
     @dataclass
@@ -181,8 +181,8 @@ async def test_mutable_decision_event_is_inline() -> None:
 
     @emitter.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        stream_event = await ctx.emit_event(FileReadEvent(path='later'))
-        event = await ctx.emit_event(ThingStartEvent())
+        stream_event = await ctx.emit(FileReadEvent(path='later'))
+        event = await ctx.emit(ThingStartEvent())
         observed.append((stream_event.path == 'changed', event.cancelled))
         return 'cancelled' if event.cancelled else 'continued'
 
@@ -206,7 +206,7 @@ async def test_emitted_event_dispatches_before_tool_result() -> None:
 
     @files.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(FileReadEvent(path='AGENTS.md'))
+        await ctx.emit(FileReadEvent(path='AGENTS.md'))
         return 'contents'
 
     @dataclass
@@ -244,7 +244,7 @@ async def test_inline_event_delivered_exactly_once_in_stream_events() -> None:
     @dataclass
     class Emitter(AbstractCapability[Any]):
         async def before_run(self, ctx: RunContext[Any]) -> None:
-            await ctx.emit_event(ThingStartEvent())
+            await ctx.emit(ThingStartEvent())
 
     @dataclass
     class Listener(AbstractCapability[Any]):
@@ -272,7 +272,7 @@ async def test_nested_emit_from_inline_listener_is_cause_first() -> None:
         @on_event(ThingStartEvent)
         async def cause(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
             listener_log.append('cause')
-            await ctx.emit_event(NestedEvent(value='effect'))
+            await ctx.emit(NestedEvent(value='effect'))
 
         @on_event(NestedEvent)
         async def nested(self, ctx: RunContext[Any], event: NestedEvent) -> None:
@@ -281,7 +281,7 @@ async def test_nested_emit_from_inline_listener_is_cause_first() -> None:
     @dataclass
     class Emitter(AbstractCapability[Any]):
         async def before_run(self, ctx: RunContext[Any]) -> None:
-            await ctx.emit_event(ThingStartEvent())
+            await ctx.emit(ThingStartEvent())
 
     agent = Agent(FunctionModel(stream_function=_text_stream), capabilities=[Emitter(), Listener()])
     async with agent.run_stream_events('go') as stream:
@@ -334,7 +334,7 @@ class RecorderCapability(AbstractCapability[Any]):
 @dataclass
 class ThingStartEmitter(AbstractCapability[Any]):
     async def before_run(self, ctx: RunContext[Any]) -> None:
-        await ctx.emit_event(ThingStartEvent())
+        await ctx.emit(ThingStartEvent())
 
 
 async def test_listener_order_follows_capability_composition_order() -> None:
@@ -395,7 +395,7 @@ async def test_stream_listener_exception_fails_run() -> None:
 
     @emitter.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(FileReadEvent(path='a'))
+        await ctx.emit(FileReadEvent(path='a'))
         return 'ok'
 
     @dataclass
@@ -410,14 +410,14 @@ async def test_stream_listener_exception_fails_run() -> None:
 
 
 async def test_inline_listener_exception_propagates_to_emitter() -> None:
-    """An inline listener's exception surfaces from `emit_event`, where the emitter can recover."""
+    """An inline listener's exception surfaces from `emit`, where the emitter can recover."""
     caught: list[str] = []
     emitter = Capability[Any](id='emitter')
 
     @emitter.tool
     async def read_file(ctx: RunContext[Any]) -> str:
         try:
-            await ctx.emit_event(ThingStartEvent())
+            await ctx.emit(ThingStartEvent())
         except RuntimeError as e:
             caught.append(str(e))
         return 'ok'
@@ -527,7 +527,7 @@ async def test_hooks_subclass_marked_listeners_dispatch() -> None:
 
     @files.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(FileReadEvent(path='hook.txt'))
+        await ctx.emit(FileReadEvent(path='hook.txt'))
         return 'contents'
 
     await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[files, hooks]).run('go')
@@ -574,7 +574,7 @@ async def test_wrapper_delegates_on_event() -> None:
 
     @files.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(FileReadEvent(path='wrapped.txt'))
+        await ctx.emit(FileReadEvent(path='wrapped.txt'))
         return 'contents'
 
     wrapper = WrapperCapability(wrapped=Listener())
@@ -590,7 +590,7 @@ async def test_inline_event_without_listeners_returns_defaults() -> None:
 
     @emitter.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        event = await ctx.emit_event(ThingStartEvent())
+        event = await ctx.emit(ThingStartEvent())
         outcomes.append(event.cancelled)
         return 'done'
 
@@ -617,7 +617,7 @@ async def test_wrapper_subclass_markers_dispatch_over_non_listening_wrapped() ->
 
     @files.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        await ctx.emit_event(FileReadEvent(path='wrapped.txt'))
+        await ctx.emit(FileReadEvent(path='wrapped.txt'))
         return 'contents'
 
     wrapper = ListeningWrapper(wrapped=AbstractCapability())
@@ -707,7 +707,7 @@ async def test_hooks_on_event_legacy_replacement_of_inline_event_chains_without_
 
     @emitter.tool
     async def decide(ctx: RunContext[Any]) -> str:
-        emitted.append(await ctx.emit_event(InlineDecisionEvent()))
+        emitted.append(await ctx.emit(InlineDecisionEvent()))
         return 'done'
 
     hooks = Hooks[Any]()

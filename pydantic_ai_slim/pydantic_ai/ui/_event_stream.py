@@ -891,7 +891,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         yield  # Make this an async generator
 
     async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[EventT]:
-        """Handle a `CustomEvent` emitted during the run via `emit_event`.
+        """Handle a `CustomEvent` emitted during the run via `emit`.
 
         The default implementation drops the event. Protocol adapters override this to map custom events
         onto their own event/chunk types.
