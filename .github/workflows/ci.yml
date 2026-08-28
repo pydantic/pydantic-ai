@@ -254,6 +254,10 @@ jobs:
       # `TMPRL1101`. The cost: a genuine in-workflow blocking call now hangs to the job timeout
       # instead of failing in 2s.
       TEMPORAL_DEBUG: '1'
+      # `sys.monitoring`-based tracing: much lower overhead than the default C tracer, but
+      # it can only measure branch coverage on Python 3.14+. On older versions coverage
+      # falls back with a `no-sysmon` warning, so gate it to 3.14 rather than set it globally.
+      COVERAGE_CORE: ${{ matrix.python-version == '3.14' && 'sysmon' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -374,6 +378,8 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # See the note on the `test` job: same runner shape, same deadlock-detector false positives.
       TEMPORAL_DEBUG: '1'
+      # See the note on the `test` job: sysmon can only measure branches on 3.14+.
+      COVERAGE_CORE: ${{ matrix.python-version == '3.14' && 'sysmon' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
