@@ -54,7 +54,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
         comments { totalCount }
         reactions { totalCount }
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
-          nodes { ... on UnassignedEvent { createdAt actor { login } } }
+          nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
@@ -63,7 +63,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
         number state isDraft changedFiles
         author { login }
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
-          nodes { ... on UnassignedEvent { createdAt actor { login } } }
+          nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
@@ -217,6 +217,15 @@ def _graphql_time(value: object) -> dt.datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
+def _nested_str(value: object, *keys: str) -> str | None:
+    """Walk `keys` through nested mappings, returning the final string if present."""
+    for key in keys:
+        if not isinstance(value, Mapping):
+            return None
+        value = cast(Mapping[str, object], value).get(key)
+    return value if isinstance(value, str) else None
+
+
 def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     """Whether a human took an assignee off this issue inside the back-off window.
 
@@ -230,16 +239,12 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     if not isinstance(timeline, Mapping) or not isinstance(cast(Mapping[str, object], timeline).get('nodes'), list):
         return True
     for node in _connection_nodes(cast(Mapping[str, object], timeline)):
-        if not isinstance(node, Mapping):
-            return True
-        # GraphQL timeline actors are the performers: a bot removing an
-        # assignee (sweeps, placeholder swaps) is cleanup, not a decision;
+        # A bot removing an assignee (sweeps, placeholder swaps) is cleanup,
+        # not a decision. GraphQL's `__typename` marks app accounts as `Bot`;
         # a missing actor (deleted account) counts as human.
-        actor = cast(Mapping[str, object], node).get('actor')
-        performer = cast(Mapping[str, object], actor).get('login') if isinstance(actor, Mapping) else None
-        if isinstance(performer, str) and performer.endswith('[bot]'):
+        if _nested_str(node, 'actor', '__typename') == 'Bot':
             continue
-        removed_at = _graphql_time(cast(Mapping[str, object], node).get('createdAt'))
+        removed_at = _graphql_time(_nested_str(node, 'createdAt'))
         if removed_at is None or now - removed_at < window:
             return True
     return False
