@@ -1787,18 +1787,20 @@ class CapabilityInstructionSource:
 
 
 InstructionSource: TypeAlias = AgentInstructionSource | ToolsetInstructionSource | CapabilityInstructionSource
-"""The source that authored an instruction block."""
+"""The source that authored an instruction part."""
 
 
 @dataclass(frozen=True, repr=False)
 class InstructionId:
-    """A resolved instruction key: its authoring source and optional block name."""
+    """The key an instruction part is addressed by: who contributed it, and which of their parts it is."""
 
     source: InstructionSource
+    """Who contributed the part: the agent, a toolset with an `id`, or a capability with an `id`."""
 
     _: KW_ONLY
 
     name: str | None = None
+    """Which of that source's parts this is, or `None` to address everything the source contributes."""
 
     def __str__(self) -> str:
         return f'{self.source}:{self.name}' if self.name is not None else str(self.source)
@@ -1806,8 +1808,12 @@ class InstructionId:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _deserialize_instruction_part_id(value: str | InstructionId | None) -> str | InstructionId | None:
-    """Restore structured framework keys while leaving unresolved author names untouched."""
+def _deserialize_instruction_id(value: str | InstructionId | None) -> InstructionId | None:
+    """Rebuild a key from the string it renders to.
+
+    A namespace this version doesn't know can only come from a newer one, whose keys it has no way to
+    address anyway, so it reads as unaddressable rather than failing the message it arrived on.
+    """
     if not isinstance(value, str):
         return value
     if value == 'agent':
@@ -1822,24 +1828,24 @@ def _deserialize_instruction_part_id(value: str | InstructionId | None) -> str |
         if value.startswith(prefix):
             source_id, separator, name = value.removeprefix(prefix).partition(':')
             return InstructionId(source_type(source_id), name=name if separator else None)
-    return value
+    return None
 
 
-def _serialize_instruction_part_id(value: str | InstructionId | None) -> str | None:
-    return str(value) if isinstance(value, InstructionId) else value
+def _serialize_instruction_id(value: InstructionId | None) -> str | None:
+    return str(value) if value is not None else None
 
 
-InstructionPartId: TypeAlias = Annotated[
-    str | InstructionId | None,
-    pydantic.BeforeValidator(_deserialize_instruction_part_id),
-    pydantic.PlainSerializer(_serialize_instruction_part_id, return_type=str | None, when_used='json'),
+SerializedInstructionId: TypeAlias = Annotated[
+    InstructionId | None,
+    pydantic.BeforeValidator(_deserialize_instruction_id),
+    pydantic.PlainSerializer(_serialize_instruction_id, return_type=str | None, when_used='json'),
 ]
-"""An unresolved author name, a resolved framework key, or no key."""
+"""An [`InstructionId`][pydantic_ai.messages.InstructionId] that persists as the string it renders to."""
 
 
 @dataclass(repr=False)
 class InstructionPart:
-    """A single instruction block with metadata about its origin.
+    """A single instruction part with metadata about its origin.
 
     Instructions are composed of one or more parts, each of which can be static (from a literal string)
     or dynamic (from a function, template, or toolset). This distinction allows model implementations
@@ -1848,7 +1854,7 @@ class InstructionPart:
     """
 
     content: str
-    """The text content of this instruction block."""
+    """The text content of this instruction part."""
 
     _: KW_ONLY
 
@@ -1860,28 +1866,36 @@ class InstructionPart:
     or toolset `get_instructions()` methods.
     """
 
-    id: InstructionPartId = None
-    """The block's unresolved author name, resolved framework key, or `None`.
+    name: str | None = None
+    """What the author calls this part, relative to whatever contributes it.
 
-    An author supplies a plain `str` name such as `'limits'`. Collection resolves it to an
-    [`InstructionId`][pydantic_ai.messages.InstructionId] when the authoring source has an identity,
-    so consumers can distinguish framework-issued keys from unresolved names without parsing strings.
-    A resolved id lets a consumer reading
+    Name a part relative to what you own — `'limits'`, not `'toolset:weather:limits'` — and the source
+    you contribute through qualifies it into an [`id`][pydantic_ai.messages.InstructionPart.id]. A name
+    cannot contain `:`, which delimits the segments of an id, and cannot be `'agent'`, which is the key
+    of the agent's own instructions.
+
+    Naming a part whose source has no identity of its own leaves `id` as `None`: there is no source key
+    to qualify the name against, so it says what the part is without making it addressable.
+    """
+
+    id: SerializedInstructionId = None
+    """The stable key this part is addressed by, or `None` if nothing addresses it.
+
+    The framework issues this while collecting instructions, from the author's
+    [`name`][pydantic_ai.messages.InstructionPart.name] and the identity of the source that contributed
+    the part — declare a `name` rather than setting this yourself. A consumer reading
     [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts]
-    persist configuration against a key that survives reordering and rewording.
+    can persist configuration against an id, because it survives the reordering and rewording that a
+    part's position and text do not.
 
-    The structured source identifies everything that source contributes:
+    [`InstructionId.source`][pydantic_ai.messages.InstructionId.source] is who contributed the part:
 
     - [`AgentInstructionSource`][pydantic_ai.messages.AgentInstructionSource] — the agent's literal instructions
     - [`ToolsetInstructionSource`][pydantic_ai.messages.ToolsetInstructionSource] — a toolset with an `id`
     - [`CapabilityInstructionSource`][pydantic_ai.messages.CapabilityInstructionSource] — a capability with an `id`
 
-    [`InstructionId.name`][pydantic_ai.messages.InstructionId.name] optionally identifies one declared
-    block within that source. Resolved ids serialize to the existing concatenated string form, such as
-    `'agent'`, `'toolset:weather'`, or `'capability:budget:remaining'`.
-
-    A declared name remains a plain `str` when its source has no identity. `None` means neither the author
-    nor the framework supplied any identity.
+    An id renders and serializes as its segments joined by `:` — `'agent'`, `'toolset:weather'`, or
+    `'capability:budget:remaining'`.
     """
 
     part_kind: Literal['instruction'] = 'instruction'

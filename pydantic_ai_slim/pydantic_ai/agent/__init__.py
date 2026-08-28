@@ -355,7 +355,7 @@ def _agent_instruction_source(instruction: _instructions.AgentInstruction[Any]) 
     """The source to attribute one of the agent's configured instructions to.
 
     Only the literal instructions the agent was built with are addressed by the agent's own key: an
-    instruction function becomes addressable when `@agent.instructions(id=...)` names it, so a bare
+    instruction function becomes addressable when `@agent.instructions(name=...)` names it, so a bare
     callable speaks for nobody and stays unidentified.
     """
     return _messages.AgentInstructionSource() if isinstance(instruction, (str, _messages.InstructionPart)) else None
@@ -662,8 +662,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
 
-        # The agent's own literal instructions are one addressable block; instruction functions are
-        # only addressable if `@agent.instructions(id=...)` declares an id for them.
+        # The agent's own literal instructions are one addressable part; instruction functions are
+        # only addressable if `@agent.instructions(name=...)` names them.
         self._instructions = [
             _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
             for instruction in _instructions.normalize_instructions(instructions)
@@ -2173,7 +2173,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def instructions(
-        self, /, *, id: str | None = None
+        self, /, *, name: str | None = None
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -2181,7 +2181,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
         *,
-        id: str | None = None,
+        name: str | None = None,
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function.
 
@@ -2210,21 +2210,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Args:
             func: The instructions function to register.
-            id: An optional ID for the instruction block this function produces, used as
-                `'agent:<id>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
-                application can address this block specifically, where the bare `'agent'` key addresses
-                the agent's literal instructions. See [instruction blocks](../agent.md#instruction-blocks).
+            name: An optional name for the instruction part this function produces, keyed as
+                `'agent:<name>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
+                application can address this part specifically, where the bare `'agent'` key addresses
+                the agent's literal instructions. See [instruction parts](../agent.md#instruction-parts).
         """
-        if id is not None:
-            _instructions.validate_instruction_name(id)
+        if name is not None:
+            _instructions.validate_instruction_name(name)
         instruction_id = (
-            _messages.InstructionId(_messages.AgentInstructionSource(), name=id) if id is not None else None
+            _messages.InstructionId(_messages.AgentInstructionSource(), name=name) if name is not None else None
         )
 
         def decorator(
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
-            self._instructions.append(_instructions.SourcedInstruction(func_, id=instruction_id, dynamic=True))
+            self._instructions.append(
+                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True)
+            )
             return func_
 
         return decorator if func is None else decorator(func)
@@ -3044,7 +3046,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
                 # Instructions passed to a specific run are already the caller's to change, and
-                # aren't part of the agent's own configured block.
+                # aren't part of the agent's own configured instructions.
                 instructions.extend(
                     _instructions.sourced_instruction(instruction, None)
                     for instruction in _instructions.normalize_instructions(additional_instructions)
@@ -4016,7 +4018,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
 
 
 def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[Any]]) -> None:
-    """Reject two instruction sources that would contribute blocks under one `capability:<id>` key.
+    """Reject two instruction sources that would contribute parts under one `capability:<id>` key.
 
     `_validate_capability_ids` walks the flattened capabilities, but a `CombinedCapability` subclass
     that overrides `get_instructions` contributes as a source in its own right and is deliberately

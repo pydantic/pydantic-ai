@@ -121,7 +121,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 in which case the ID will be used to identify the toolset's activities within the workflow.
             instructions: Instructions for this toolset that are automatically included in the model request.
                 Can be a string, an [`InstructionPart`][pydantic_ai.messages.InstructionPart] declaring the
-                block's [`id`][pydantic_ai.messages.InstructionPart.id] and whether it is
+                part's [`name`][pydantic_ai.messages.InstructionPart.name] and whether it is
                 [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], a function (sync or async, with
                 or without `RunContext`), or a sequence of these.
         """
@@ -138,8 +138,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self._defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
-        # A part is kept whole rather than reduced to its text, because it carries the block's
-        # declared `id` and its `dynamic` flag -- the flag that decides whether the block falls inside
+        # A part is kept whole rather than reduced to its text, because it carries the author's
+        # declared `name` and its `dynamic` flag -- the flag that decides whether the part falls inside
         # the cacheable prefix, so toolset collection preserves the part rather than reducing it to text.
         self._instructions: list[str | InstructionPart | SystemPromptRunner[AgentDepsT]] = [
             instruction

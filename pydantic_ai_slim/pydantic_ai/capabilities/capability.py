@@ -81,7 +81,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         Args:
             instructions: Static instructions and/or instruction function(s), available via
                 `get_instructions()`. Pass an [`InstructionPart`][pydantic_ai.messages.InstructionPart]
-                to declare a block's [`id`][pydantic_ai.messages.InstructionPart.id] or mark it
+                to declare a part's [`name`][pydantic_ai.messages.InstructionPart.name] or mark it
                 [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic]. Register more with the
                 [`instructions`][pydantic_ai.capabilities.Capability.instructions] decorator.
             toolsets: Toolsets to register with the agent.
@@ -129,7 +129,7 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         if type(self).get_instructions is not Capability.get_instructions:
-            # A subclass computes its own instructions, so there are no declared ids to resolve.
+            # A subclass computes its own instructions, so there are no declared names to resolve.
             return super()._collect_instructions()
         return list(self._instructions)
 
@@ -309,7 +309,7 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     @overload
     def instructions(
-        self, /, *, id: str | None = None
+        self, /, *, name: str | None = None
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -317,7 +317,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
         *,
-        id: str | None = None,
+        name: str | None = None,
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 
@@ -339,24 +339,29 @@ class Capability(AbstractCapability[AgentDepsT]):
 
         Args:
             func: The instructions function to register.
-            id: An optional ID for the instruction block this function produces, used as
-                `'capability:<capability id>:<id>'` on
+            name: An optional name for the instruction part this function produces, keyed as
+                `'capability:<capability id>:<name>'` on
                 [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an application can
-                address this block specifically, where the capability's own key addresses everything it
+                address this part specifically, where the capability's own key addresses everything it
                 contributes. Requires the capability to have an
                 [`id`][pydantic_ai.capabilities.AbstractCapability.id] — without one there is no source
-                key to qualify, so the name stays an unresolved string. See
-                [instruction blocks](../agent.md#instruction-blocks).
+                key to qualify the name against, so the part stays unaddressable. See
+                [instruction parts](../agent.md#instruction-parts).
         """
-        if id is not None:
-            validate_instruction_name(id)
+        if name is not None:
+            validate_instruction_name(name)
 
         def decorator(
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
             source = CapabilityInstructionSource(self.id) if self.id is not None else None
             self._instructions.append(
-                SourcedInstruction(func_, id=InstructionId(source, name=id) if source is not None else id, dynamic=True)
+                SourcedInstruction(
+                    func_,
+                    name=name,
+                    id=InstructionId(source, name=name) if source is not None else None,
+                    dynamic=True,
+                )
             )
             return func_
 

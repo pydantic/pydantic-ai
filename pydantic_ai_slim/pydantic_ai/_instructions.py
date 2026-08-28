@@ -15,8 +15,8 @@ from .tools import SystemPromptFunc
 
 AgentInstruction = TemplateStr[AgentDepsT] | str | InstructionPart | SystemPromptFunc[AgentDepsT]
 """One instruction: literal text, a function computing it, or an `InstructionPart` declaring both the
-text and how it should be treated — its [`id`][pydantic_ai.messages.InstructionPart.id] (resolved
-against the key of whatever source contributes it) and whether it counts as
+text and how it should be treated — its [`name`][pydantic_ai.messages.InstructionPart.name] (qualified
+into an id against whatever source contributes it) and whether it counts as
 [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic] for prompt caching."""
 
 AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
@@ -29,28 +29,29 @@ def validate_instruction_id_segment(id: str, *, kind: str) -> None:
 
 
 def validate_instruction_name(name: str) -> None:
-    """Reject names an author cannot declare on a block.
+    """Reject names an author cannot declare on an instruction part.
 
-    A name resolved against no source is written to the wire exactly as the author wrote it, so it
-    must not be able to spell a key the framework issues. `'agent'` is the only one it could reach:
-    every other key is namespaced, and a colon is rejected above.
+    A name is one segment of the id built around it, so it must not be able to spell a key by itself.
+    `'agent'` is the only one it could reach: every other key is namespaced, and a colon is rejected
+    above.
     """
-    validate_instruction_id_segment(name, kind='Declared instruction id')
+    validate_instruction_id_segment(name, kind='Instruction name')
     if name == 'agent':
         raise UserError(
-            "Declared instruction id 'agent' is reserved for the agent's own instructions; choose a different name."
+            "Instruction name 'agent' is reserved for the agent's own instructions; choose a different name."
         )
 
 
 @dataclass(frozen=True, repr=False)
 class SourcedInstruction(Generic[AgentDepsT]):
-    """A lazy instruction recipe with the `InstructionPart.id` its content should be addressed by."""
+    """A lazy instruction recipe with the name and key its content should be addressed by."""
 
     instruction: AgentInstruction[AgentDepsT]
 
     _: KW_ONLY
 
-    id: str | InstructionId | None = None
+    name: str | None = None
+    id: InstructionId | None = None
     dynamic: bool = False
 
     __repr__ = dataclasses_no_defaults_repr
@@ -62,18 +63,20 @@ def sourced_instruction(
     """Attribute one instruction recipe to the source that authored it.
 
     The single place a declared name meets its source, so every author applies the same rule: with a
-    source the name becomes an [`InstructionId`][pydantic_ai.messages.InstructionId] beneath it, and
-    without one it stays the plain string the author wrote, which is what marks it unresolved.
+    source the name is qualified into an [`InstructionId`][pydantic_ai.messages.InstructionId] beneath
+    it, and without one there is no key to qualify against, so the name stays a name and the part
+    stays unaddressable.
 
     A caller passes `None` for a recipe its source does not speak for -- a callable the agent was
     built with, or instructions belonging to a single run rather than to the agent.
     """
-    name = instruction.id if isinstance(instruction, InstructionPart) and isinstance(instruction.id, str) else None
+    name = instruction.name if isinstance(instruction, InstructionPart) else None
     if name is not None:
         validate_instruction_name(name)
     return SourcedInstruction(
         instruction,
-        id=InstructionId(source, name=name) if source is not None else name,
+        name=name,
+        id=InstructionId(source, name=name) if source is not None else None,
         dynamic=not isinstance(instruction, (str, InstructionPart)),
     )
 
@@ -83,7 +86,7 @@ async def resolve_sourced_instructions(
 ) -> list[InstructionPart]:
     """Resolve authored instructions into the parts sent to the model.
 
-    Literal strings with the same source key form one addressable block. An
+    Literal strings with the same source key form one addressable part. An
     [`InstructionPart`][pydantic_ai.messages.InstructionPart] always remains independent so its
     cache treatment applies only to its own text, while callable instructions are resolved lazily
     against the current `RunContext`.
@@ -91,7 +94,7 @@ async def resolve_sourced_instructions(
     parts: list[InstructionPart] = []
     group: list[InstructionPart] = []
     pending_parts: list[InstructionPart] = []
-    group_key: str | InstructionId | None = None
+    group_key: InstructionId | None = None
 
     def flush_group() -> None:
         if content := InstructionPart.join(group):
@@ -117,7 +120,7 @@ async def resolve_sourced_instructions(
             group.append(InstructionPart(content=content, id=sourced.id))
         else:
             if content := await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context):
-                part = InstructionPart(content=content, id=sourced.id, dynamic=sourced.dynamic)
+                part = InstructionPart(content=content, name=sourced.name, id=sourced.id, dynamic=sourced.dynamic)
                 if group:
                     pending_parts.append(part)
                 else:

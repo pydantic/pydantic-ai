@@ -1046,6 +1046,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                             {
                                 'content': 'Here are some instructions',
                                 'dynamic': False,
+                                'name': None,
                                 'id': 'agent',
                                 'part_kind': 'instruction',
                             }
