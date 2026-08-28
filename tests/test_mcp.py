@@ -1791,7 +1791,7 @@ class TestLoadMCPToolsets:
             assert process.stdout is not None
             try:
                 port = int((await process.stdout.receive()).decode().strip())
-            except anyio.EndOfStream:
+            except anyio.EndOfStream:  # pragma: no cover
                 raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
             config = {
                 'mcpServers': {
