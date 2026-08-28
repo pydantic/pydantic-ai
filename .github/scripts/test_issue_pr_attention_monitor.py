@@ -384,10 +384,12 @@ def test_parse_decisions_rejects_injection_and_duplicates(tmp_path: Path):
 @pytest.mark.parametrize(
     ('contents', 'message'),
     [
-        ([], 'should be an object'),
-        ({}, 'candidates'),
-        ({'candidates': [None]}, 'should be an object'),
-        ({'candidates': [{'number': 0, 'updated_at': OLD}]}, 'greater than or equal to 1'),
+        ([], 'Input should be an object'),
+        ({}, r'candidates\s+Field required'),
+        ({'candidates': [None]}, r'candidates\.0\s+Input should be an object'),
+        ({'candidates': [{'number': 0, 'updated_at': OLD}]}, r'number\s+Input should be greater than or equal to 1'),
+        ({'candidates': [{'number': '7', 'updated_at': OLD}]}, r'number\s+Input should be a valid integer'),
+        ({'candidates': [{'number': 7, 'updated_at': OLD}, {'number': 7, 'updated_at': OLD}]}, 'unique numbers'),
     ],
 )
 def test_snapshot_validation_rejects_invalid_shapes(tmp_path: Path, contents: object, message: str):
@@ -400,17 +402,31 @@ def test_snapshot_validation_rejects_invalid_shapes(tmp_path: Path, contents: ob
 def test_agent_output_requires_items_but_ignores_other_safe_outputs(tmp_path: Path):
     path = tmp_path / 'output.json'
     path.write_text('{}', encoding='utf-8')
-    with pytest.raises(ValueError, match='items list'):
+    with pytest.raises(ValueError, match=r'items\s+Field required'):
         monitor.agent_items(
             str(path), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
         )
-    path.write_text(json.dumps({'items': [None, {'type': 'noop'}]}), encoding='utf-8')
+    path.write_text(json.dumps({'items': [{'type': 'noop'}]}), encoding='utf-8')
     assert (
         monitor.agent_items(
             str(path), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
         )
         == []
     )
+    # A non-object entry means the file is corrupted, not that another tool
+    # wrote it; the strict boundary fails the run instead of guessing.
+    path.write_text(json.dumps({'items': [None, {'type': 'noop'}]}), encoding='utf-8')
+    with pytest.raises(ValueError, match=r'items\.0\s+Input should be an object'):
+        monitor.agent_items(
+            str(path), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
+
+
+def test_item_labels_skips_malformed_entries_rather_than_failing_the_item():
+    # GitHub labels always carry a string name; if one ever does not, reading
+    # the rest of the item beats failing the whole run. Pinned so the tolerant
+    # posture stays deliberate.
+    assert monitor.item_labels({'labels': [{'name': 'bug'}, {}, {'name': 3}, 'garbage']}) == {'bug'}
 
 
 def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
@@ -759,11 +775,11 @@ def test_apply_rejects_unknown_actor_or_confidence(tmp_path: Path):
     write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
 
     write_output(output, ['7'], next_actor='attacker')
-    with pytest.raises(ValueError, match='next_actor'):
+    with pytest.raises(ValueError, match=r"next_actor\s+Input should be 'maintainer'"):
         monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot), now=NOW)
 
     write_output(output, ['7'], confidence='certain')
-    with pytest.raises(ValueError, match='confidence'):
+    with pytest.raises(ValueError, match=r"confidence\s+Input should be 'high'"):
         monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot), now=NOW)
 
 
@@ -922,7 +938,13 @@ def test_reconcile_queues_channel_escalation_without_advancing_before_delivery()
     )
     assert notices[0]['kind'] == 'escalation'
     assert monitor._ESCALATED_LABEL not in {label['name'] for label in client.items[7]['labels']}
-    assert monitor.finalize_notices(client, 'pydantic/pydantic-ai', [notices[0]], now=NOW) == [
+    ref = monitor.NoticeRef(
+        number=notices[0]['number'],
+        expected_stage=notices[0]['expected_stage'],
+        transition_id=notices[0]['transition_id'],
+        recipients=notices[0]['recipients'],
+    )
+    assert monitor.finalize_notices(client, 'pydantic/pydantic-ai', [ref], now=NOW) == [
         '#7: recorded channel escalation'
     ]
     assert monitor._ESCALATED_LABEL in {label['name'] for label in client.items[7]['labels']}
@@ -937,7 +959,13 @@ def test_reconcile_retries_preexisting_pending_escalation():
         [],
     )
     assert notices[0]['expected_stage'] == 2
-    assert monitor.finalize_notices(client, 'r', [notices[0]], now=NOW) == ['#7: recorded channel escalation']
+    ref = monitor.NoticeRef(
+        number=notices[0]['number'],
+        expected_stage=notices[0]['expected_stage'],
+        transition_id=notices[0]['transition_id'],
+        recipients=notices[0]['recipients'],
+    )
+    assert monitor.finalize_notices(client, 'r', [ref], now=NOW) == ['#7: recorded channel escalation']
     assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[7]['labels']}
 
 
@@ -2668,15 +2696,93 @@ def test_operations_workflow_routes_all_notices_to_the_triage_channel():
         assert checkout['with']['persist-credentials'] is False
 
 
-def test_every_script_running_job_installs_the_pinned_boundary_dependency():
-    """pydantic is the scripts' one required package; every job that runs one pins it exactly."""
-    for name in ('issue-pr-attention-monitor.yml', 'pydantic-ai-owner-routing.yml'):
-        jobs = yaml.safe_load((Path(__file__).parent.parent / 'workflows' / name).read_text())['jobs']
+def _script_sources() -> dict[str, str]:
+    scripts = Path(__file__).parent
+    return {
+        path.name: path.read_text(encoding='utf-8')
+        for path in scripts.glob('*.py')
+        if not path.name.startswith('test_')
+    }
+
+
+def _local_import_closure(name: str, sources: dict[str, str]) -> set[str]:
+    """Every sibling script `name` imports, directly or through another sibling."""
+    closure: set[str] = set()
+    stack = [name]
+    while stack:
+        for module in re.findall(r'^(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)', sources[stack.pop()], flags=re.M):
+            filename = f'{module}.py'
+            if filename in sources and filename not in closure:
+                closure.add(filename)
+                stack.append(filename)
+    return closure
+
+
+def _boundary_script_names(sources: dict[str, str]) -> set[str]:
+    """The triage scripts: everything that imports the typed boundary, plus what those import."""
+    names = {name for name, text in sources.items() if 'from triage_models import' in text}
+    return names | {imported for name in names for imported in _local_import_closure(name, sources)}
+
+
+def _workflow_jobs() -> list[tuple[str, str, list[dict[str, Any]]]]:
+    """(file, job name, steps) for every job in every workflow file, compiled locks included."""
+    entries: list[tuple[str, str, list[dict[str, Any]]]] = []
+    for path in sorted((Path(__file__).parent.parent / 'workflows').glob('*.yml')):
+        jobs = (yaml.safe_load(path.read_text(encoding='utf-8')) or {}).get('jobs') or {}
         for job_name, job in jobs.items():
-            runs = [str(step.get('run', '')) for step in job.get('steps', [])]
-            if not any('python .github/scripts/' in run for run in runs):
-                continue
-            assert any("pip install --quiet 'pydantic==" in run for run in runs), (name, job_name)
+            steps = [step for step in job.get('steps', []) if isinstance(step, dict)]
+            entries.append((path.name, job_name, steps))
+    return entries
+
+
+def test_every_script_running_job_installs_the_same_pinned_boundary_dependency():
+    """pydantic is the scripts' one required package; every job that runs one pins it, to one version."""
+    boundary = _boundary_script_names(_script_sources())
+    pins: set[str] = set()
+    checked: list[tuple[str, str]] = []
+    for file_name, job_name, steps in _workflow_jobs():
+        runs = [str(step.get('run', '')) for step in steps]
+        if not any(f'.github/scripts/{name}' in run for run in runs for name in boundary):
+            continue
+        checked.append((file_name, job_name))
+        installs = re.findall(r"pip install --quiet 'pydantic==([0-9][0-9a-z.]*)'", '\n'.join(runs))
+        assert installs, (file_name, job_name)
+        pins.update(installs)
+    # The discovery itself is under test: if the glob or the import scan break,
+    # this fails instead of silently checking nothing.
+    assert len(checked) >= 4, checked
+    assert len(pins) == 1, pins
+
+
+def test_every_sparse_checkout_fetches_the_whole_import_closure_of_the_scripts_it_runs():
+    """A job that sparse-checks-out a script must also fetch every sibling module it imports."""
+    sources = _script_sources()
+    for file_name, job_name, steps in _workflow_jobs():
+        checkout = '\n'.join(
+            str((step.get('with') or {}).get('sparse-checkout', ''))
+            for step in steps
+            if isinstance(step.get('with'), dict)
+        )
+        if not checkout.strip():
+            continue
+        runs = '\n'.join(str(step.get('run', '')) for step in steps)
+        for name in sources:
+            if f'.github/scripts/{name}' in runs and f'.github/scripts/{name}' in checkout:
+                for imported in _local_import_closure(name, sources):
+                    assert f'.github/scripts/{imported}' in checkout, (file_name, job_name, name, imported)
+
+
+def test_boundary_scripts_import_only_the_stdlib_the_siblings_and_the_pinned_packages():
+    """The workflow jobs install exactly pydantic (and logfire where used); nothing else may creep in."""
+    sources = _script_sources()
+    siblings = {name.removesuffix('.py') for name in sources}
+    for name in sorted(_boundary_script_names(sources)):
+        for module in re.findall(r'^(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)', sources[name], flags=re.M):
+            root = module.split('.')[0]
+            assert root in sys.stdlib_module_names or root in siblings or root in {'pydantic', 'logfire'}, (
+                name,
+                module,
+            )
 
 
 def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
@@ -2721,7 +2827,8 @@ def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolate
     assert checkout['with']['repository'] == '${{ job.workflow_repository }}'
     assert checkout['with']['ref'] == '${{ job.workflow_sha }}'
     assert checkout['with']['persist-credentials'] is False
-    assert checkout['with']['sparse-checkout'] == '.github/scripts/issue_pr_attention_monitor.py'
+    # The import-closure test asserts the sibling modules ride along.
+    assert '.github/scripts/issue_pr_attention_monitor.py' in checkout['with']['sparse-checkout']
     build_text = json.dumps(jobs['build'])
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in build_text
     assert 'issue_pr_attention_monitor.py weekly' in build_text
