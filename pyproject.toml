@@ -269,6 +269,8 @@ include = [
     ".github/scripts/test_semantic_owner_router.py",
     ".github/scripts/community_demand.py",
     ".github/scripts/test_community_demand.py",
+    ".github/scripts/triage_telemetry.py",
+    ".github/scripts/test_triage_telemetry.py",
     ".github/scripts/feature_digest.py",
     ".github/scripts/test_feature_digest.py",
     ".github/scripts/agentic_workflow_guard.py",
@@ -335,6 +337,7 @@ quote-style = "single"
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
+".github/scripts/test_triage_telemetry.py" = ["D"]
 ".github/scripts/test_feature_digest.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
 ".github/scripts/test_agent_spend_report.py" = ["D"]
@@ -364,6 +367,7 @@ include = [
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/semantic_owner_router.py",
     ".github/scripts/community_demand.py",
+    ".github/scripts/triage_telemetry.py",
     ".github/scripts/feature_digest.py",
 ]
 # The monitor policy tests deliberately exercise private helpers and loose GitHub

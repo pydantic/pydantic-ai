@@ -23,6 +23,15 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 import issue_pr_attention_monitor as attention
 
+try:
+    from triage_telemetry import emit as _emit_event
+except ImportError:  # sparse checkouts that omit the telemetry module stay silent
+    # Emission is optional everywhere; every workflow that only reads or writes
+    # GitHub state must keep working without the telemetry file on disk.
+    def _emit_event(name: str, **attributes: object) -> None:
+        return
+
+
 _REPOSITORIES = attention.REPOSITORIES
 _OWNERS = frozenset(attention.MAINTAINER_OWNERS)
 _MANUAL_OWNER = 'adtyavrdhn'
@@ -538,11 +547,22 @@ def _select_numbers(
     numbers: Sequence[int],
     *,
     limit: int,
+    lane: str,
 ) -> list[Selection]:
     selected: list[Selection] = []
     for number in numbers:
         selection = decision_for(client, repo, number)
-        if selection['decision'] is not None:
+        decision = selection['decision']
+        _emit_event(
+            'router.decision',
+            repo=repo,
+            lane=lane,
+            number=number,
+            status=selection['status'],
+            owner=decision['owner'] if decision else None,
+            evidence=decision['evidence'] if decision else None,
+        )
+        if decision is not None:
             selected.append(selection)
             if len(selected) == limit:
                 break
@@ -558,10 +578,15 @@ def select_batch(
     """Select a bounded gated batch, or a community batch when the gate is quiet."""
     repo = _repository(repo)
     qualified = _qualified_owners(client, repo)
-    gated = _select_numbers(client, repo, _gated_numbers(client, repo, qualified), limit=_RECENT_BATCH_LIMIT)
+    gated_numbers = _gated_numbers(client, repo, qualified)
+    gated = _select_numbers(client, repo, gated_numbers, limit=_RECENT_BATCH_LIMIT, lane='gate')
+    _emit_event('router.sweep', repo=repo, lane='gate', candidates=len(gated_numbers), selected=len(gated))
     if gated or not community_recovery:
         return gated
-    return _select_numbers(client, repo, _community_numbers(client, repo), limit=_COMMUNITY_BATCH_LIMIT)
+    community_numbers = _community_numbers(client, repo)
+    community = _select_numbers(client, repo, community_numbers, limit=_COMMUNITY_BATCH_LIMIT, lane='community')
+    _emit_event('router.sweep', repo=repo, lane='community', candidates=len(community_numbers), selected=len(community))
+    return community
 
 
 def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> bool:
@@ -724,6 +749,14 @@ def main() -> int:
             parser.error('assign requires --number, --owner, and --evidence')
         expected = Decision(number=_item_number(args.number), owner=args.owner, evidence=args.evidence)
         did_assign = assign(client, repo, expected)
+        _emit_event(
+            'router.assigned',
+            repo=repo,
+            number=expected['number'],
+            owner=expected['owner'],
+            evidence=expected['evidence'],
+            did_assign=did_assign,
+        )
         _output(
             {
                 'did_assign': str(did_assign).lower(),
