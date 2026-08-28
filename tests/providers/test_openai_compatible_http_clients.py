@@ -193,11 +193,17 @@ IMPORT_GUARD_CASES = [
 ]
 
 
-@pytest.mark.parametrize(('module', 'error_hint'), IMPORT_GUARD_CASES)
-def test_openai_compatible_provider_import_guard(module: str, error_hint: str) -> None:
-    code = f"""
+@pytest.fixture(scope='module')
+def import_guard_errors() -> dict[str, str | None]:
+    # One subprocess for all providers: each interpreter spawn cold-imports pydantic_ai under
+    # coverage (~7s in CI), so 20 per-provider subprocesses cost minutes while one costs seconds.
+    # Each module still gets a fresh import: the guard fires at module import time, and no
+    # provider module is imported twice.
+    code = """
 import builtins
 import importlib
+import json
+import sys
 
 original_import = builtins.__import__
 
@@ -207,12 +213,30 @@ def import_without_openai(name, globals=None, locals=None, fromlist=(), level=0)
     return original_import(name, globals, locals, fromlist, level)
 
 builtins.__import__ = import_without_openai
-importlib.import_module("pydantic_ai.providers.{module}")
-"""
-    result = subprocess.run([sys.executable, '-c', code], text=True, capture_output=True)
 
-    assert result.returncode != 0
-    assert error_hint in result.stderr
+errors = {}
+for module in sys.argv[1:]:
+    try:
+        importlib.import_module(f"pydantic_ai.providers.{module}")
+    except ImportError as exc:
+        errors[module] = str(exc)
+    else:
+        errors[module] = None
+print(json.dumps(errors))
+"""
+    modules = [module for module, _ in IMPORT_GUARD_CASES]
+    result = subprocess.run([sys.executable, '-c', code, *modules], text=True, capture_output=True, check=True)
+    return json.loads(result.stdout)
+
+
+@pytest.mark.xdist_group(name='provider_import_guard')
+@pytest.mark.parametrize(('module', 'error_hint'), IMPORT_GUARD_CASES)
+def test_openai_compatible_provider_import_guard(
+    module: str, error_hint: str, import_guard_errors: dict[str, str | None]
+) -> None:
+    error = import_guard_errors[module]
+    assert error is not None, f'importing pydantic_ai.providers.{module} without openai did not raise ImportError'
+    assert error_hint in error
 
 
 @pytest.mark.anyio
