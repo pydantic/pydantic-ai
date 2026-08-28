@@ -530,7 +530,7 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     return True
 
 
-def _routing_reason(decision: Decision, mention: str) -> str:
+def _routing_reason(decision: Decision) -> str:
     evidence = decision['evidence']
     source, separator, detail = evidence.partition(':')
     if separator and detail and source == 'label':
@@ -563,7 +563,7 @@ def _slack_payload(
         kind, path = 'Pull request', 'pull'
     number = decision['number']
     item = f'<https://github.com/{repo}/{path}/{number}|{repo}#{number}>'
-    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision, mention)}'
+    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision)}'
     return json.dumps({'text': text}, separators=(',', ':'))
 
 
