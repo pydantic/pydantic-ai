@@ -125,26 +125,8 @@ class OpenAICodexCredentials:
         """Parse the Codex CLI `~/.codex/auth.json` shape (`{'tokens': {...}}`)."""
         try:
             tokens = _CodexCliAuth.model_validate(data).tokens
-        except ValidationError:
-            tokens = None
-        if tokens is None:
-            raise UserError(
-                "Malformed Codex CLI credentials: expected an object with a 'tokens' entry. "
-                'Run `codex login` to regenerate them.'
-            ) from None
-        missing = [
-            name
-            for name, value in [
-                ('access_token', tokens.access_token),
-                ('refresh_token', tokens.refresh_token),
-                ('account_id', tokens.account_id),
-            ]
-            if not value
-        ]
-        if missing:
-            raise UserError(
-                f'Malformed Codex CLI credentials: missing {", ".join(missing)}. Run `codex login` to regenerate them.'
-            )
+        except ValidationError as e:
+            raise UserError(f'Malformed Codex CLI credentials. Run `codex login` to regenerate them.\n\n{e}') from None
         return cls(
             access_token=SecretStr(tokens.access_token),
             refresh_token=SecretStr(tokens.refresh_token),
@@ -159,15 +141,15 @@ class OpenAICodexCredentials:
 class _CodexCliTokens(BaseModel):
     """The `tokens` entry of the Codex CLI's `auth.json`."""
 
-    access_token: str = ''
-    refresh_token: str = ''
-    account_id: str = ''
+    access_token: str
+    refresh_token: str
+    account_id: str
 
 
 class _CodexCliAuth(BaseModel):
     """The subset of the Codex CLI's `auth.json` that credentials are built from."""
 
-    tokens: _CodexCliTokens | None = None
+    tokens: _CodexCliTokens
 
 
 class _JwtAuthClaim(BaseModel):
@@ -188,10 +170,14 @@ class _JwtPayload(BaseModel):
 
 
 class _TokenResponse(BaseModel):
-    """The fields of an OAuth token-endpoint response that credentials are built from."""
+    """The fields of an OAuth token-endpoint response that credentials are built from.
 
-    access_token: str | None = None
-    refresh_token: str | None = None
+    `refresh_token` is required because the flow always requests the `offline_access` scope, and
+    credentials without it could not survive their first expiry.
+    """
+
+    access_token: str
+    refresh_token: str
     id_token: str | None = None
     account_id: str | None = None
 
@@ -240,12 +226,6 @@ def _credentials_from_token_response(
     data: _TokenResponse, fallback_account_id: str | None = None
 ) -> OpenAICodexCredentials:
     """Build credentials from an OAuth token-endpoint response."""
-    if not data.access_token:
-        raise CredentialsRefreshError('Token endpoint response is missing `access_token`.')
-    if not data.refresh_token:
-        raise CredentialsRefreshError(
-            'Token endpoint response is missing `refresh_token`; request the `offline_access` scope.'
-        )
     account_id = (
         data.account_id or (_account_id_from_id_token(data.id_token) if data.id_token else None) or fallback_account_id
     )
@@ -281,8 +261,8 @@ async def _post_token_request(
         )
     try:
         return _TokenResponse.model_validate(response.json())
-    except ValueError:
-        raise CredentialsRefreshError(f'Token endpoint {url} returned an unexpected response.') from None
+    except ValueError as e:
+        raise CredentialsRefreshError(f'Token endpoint {url} returned an unexpected response.\n\n{e}') from None
 
 
 async def refresh_credentials(

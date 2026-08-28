@@ -126,17 +126,19 @@ def test_credentials_from_codex_cli_auth():
     assert 'super-secret' not in rendered
 
 
-def test_credentials_missing_tokens_object():
-    with pytest.raises(UserError, match="expected an object with a 'tokens' entry"):
-        OpenAICodexCredentials.from_codex_cli_auth({'nope': {}})
-    # A `tokens` entry that is not an object fails validation outright and gets the same message.
-    with pytest.raises(UserError, match="expected an object with a 'tokens' entry"):
-        OpenAICodexCredentials.from_codex_cli_auth({'tokens': 'not-an-object'})
-
-
-def test_credentials_missing_fields():
-    with pytest.raises(UserError, match=r'missing access_token'):
-        OpenAICodexCredentials.from_codex_cli_auth({'tokens': {'refresh_token': 'r', 'account_id': 'acc'}})
+@pytest.mark.parametrize(
+    'data,expected',
+    [
+        pytest.param({'nope': {}}, 'tokens', id='no-tokens-entry'),
+        pytest.param({'tokens': 'not-an-object'}, 'tokens', id='tokens-not-an-object'),
+        pytest.param({'tokens': {'refresh_token': 'r', 'account_id': 'acc'}}, 'access_token', id='missing-field'),
+    ],
+)
+def test_credentials_malformed_codex_cli_auth(data: Any, expected: str):
+    """Validation is pydantic's job; the wrapper adds the `codex login` hint and the field detail."""
+    with pytest.raises(UserError, match=r'Run `codex login`') as exc_info:
+        OpenAICodexCredentials.from_codex_cli_auth(data)
+    assert expected in str(exc_info.value)
 
 
 def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
@@ -219,20 +221,18 @@ def test_credentials_errors_are_model_api_errors(
     assert restored.message == 'something broke'
 
 
-def test_token_response_validation_errors():
-    with pytest.raises(CredentialsRefreshError, match='access_token'):
-        _credentials_from_token_response(_TokenResponse())
-    with pytest.raises(CredentialsRefreshError, match='refresh_token'):
-        _credentials_from_token_response(_TokenResponse(access_token='a'))
+def test_token_response_without_account_id_anywhere():
+    """The account id has three possible sources, so its absence is the one check left to make."""
     with pytest.raises(CredentialsRefreshError, match='account id'):
         _credentials_from_token_response(_TokenResponse(access_token='a', refresh_token='r'))
 
 
 async def test_post_token_request_success_and_error_shapes(monkeypatch: pytest.MonkeyPatch):
-    """The OAuth POST helper: success, JSON error with `invalid_grant` hint, JSON error without
-    a description, and a non-JSON error body."""
+    """The OAuth POST helper: success, a 200 that is missing tokens, JSON error with `invalid_grant`
+    hint, JSON error without a description, and a non-JSON error body."""
     real_client = httpx2.AsyncClient
     queue = [
+        httpx2.Response(200, json={'access_token': 'a', 'refresh_token': 'r'}),
         httpx2.Response(200, json={'ok': True}),
         httpx2.Response(400, json={'error': 'invalid_grant', 'error_description': 'expired'}),
         httpx2.Response(403, json={'error': 'access_denied'}),
@@ -248,7 +248,12 @@ async def test_post_token_request_success_and_error_shapes(monkeypatch: pytest.M
     monkeypatch.setattr(httpx2, 'AsyncClient', client_factory)
 
     url = 'https://auth.openai.com/oauth/token'
-    assert await _post_token_request(url, {'grant_type': 'refresh_token'}) == _TokenResponse()
+    assert await _post_token_request(url, {'grant_type': 'refresh_token'}) == _TokenResponse(
+        access_token='a', refresh_token='r'
+    )
+    # A 200 that omits the tokens is as unusable as an error: pydantic catches it at the boundary.
+    with pytest.raises(CredentialsRefreshError, match='unexpected response'):
+        await _post_token_request(url, {})
     with pytest.raises(CredentialsRefreshError, match='expired; the grant was rejected'):
         await _post_token_request(url, {})
     with pytest.raises(CredentialsRefreshError, match='access_denied'):
