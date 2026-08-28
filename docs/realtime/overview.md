@@ -29,9 +29,9 @@ out, and a transcript log. The model hears the user, calls your tool on your bac
 out loud:
 
 ```python {title="reservations.py" dunder_name="not_main"}
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
-
-import anyio
 
 from pydantic_ai import Agent
 
@@ -54,12 +54,9 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 
 async def main():
-    async with (
-        agent.realtime('openai:gpt-realtime').session() as session,
-        anyio.create_task_group() as tg,
-    ):
-        tg.start_soon(session.send_audio, microphone_chunks())
-        tg.start_soon(play_audio, session.stream_audio())
+    async with agent.realtime('openai:gpt-realtime').session() as session:
+        microphone = asyncio.create_task(session.send_audio(microphone_chunks()))
+        speaker = asyncio.create_task(play_audio(session.stream_audio()))
 
         async for part in session.stream_transcripts():
             print(f'{part.speaker}: {part.transcript}')
@@ -68,13 +65,16 @@ async def main():
             if part.speaker == 'assistant':
                 break  # keep listening in a real call; we stop after one exchange
 
-        # The microphone and speaker run on live streams that outlast one exchange, so stop
-        # their tasks explicitly; leaving the `async with` block then closes the session.
-        tg.cancel_scope.cancel()
+    # Leaving the `async with` block closes the session, which ends the speaker's audio stream —
+    # but the microphone reads an external source, so stop it explicitly.
+    microphone.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await microphone
+    await speaker
 
 
 if __name__ == '__main__':
-    anyio.run(main)
+    asyncio.run(main())
 ```
 
 _(This example is complete, it can be run "as is" — after filling in the two audio placeholders,

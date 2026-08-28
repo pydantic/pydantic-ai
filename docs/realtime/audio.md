@@ -32,9 +32,8 @@ shutdown, use the [realtime voice assistant example](../examples/realtime-voice.
 Run media views alongside the main iterator:
 
 ```python
+import asyncio
 from collections.abc import AsyncIterator
-
-import anyio
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import SpeechPart
@@ -55,15 +54,15 @@ async def show_transcripts(parts: AsyncIterator[SpeechPart]) -> None:
 
 
 async def main():
-    async with anyio.create_task_group() as tg:
-        async with agent.realtime('openai:gpt-realtime').session() as session:
-            tg.start_soon(play_audio, session.stream_audio())
-            tg.start_soon(show_transcripts, session.stream_transcripts())
-            async for event in session:
-                if isinstance(event, RealtimeTurnCompleteEvent):
-                    break
-        # Leaving the `async with` block closes the session, which ends every live view,
-        # so the task group finishes on its own.
+    async with agent.realtime('openai:gpt-realtime').session() as session:
+        audio_task = asyncio.create_task(play_audio(session.stream_audio()))
+        transcript_task = asyncio.create_task(show_transcripts(session.stream_transcripts()))
+        async for event in session:
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+
+    # Leaving the `async with` block closes the session, which ends every live view.
+    await asyncio.gather(audio_task, transcript_task)
 ```
 
 Each view is independently bounded; a slow consumer drops its oldest item rather than stalling

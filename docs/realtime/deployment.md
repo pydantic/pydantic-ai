@@ -94,9 +94,8 @@ demonstrates this setup end to end; a minimal FastAPI relay — the browser send
 frames and plays the frames it receives — is:
 
 ```python
-from collections.abc import AsyncIterator
+import asyncio
 
-import anyio
 from fastapi import FastAPI, WebSocket
 
 from pydantic_ai import Agent
@@ -108,19 +107,18 @@ app = FastAPI()
 @app.websocket('/voice')
 async def voice_socket(websocket: WebSocket):
     await websocket.accept()
-    async with (
-        agent.realtime('openai:gpt-realtime').session() as session,
-        anyio.create_task_group() as tg,
-    ):
+    async with agent.realtime('openai:gpt-realtime').session() as session:
 
-        async def receive_audio() -> AsyncIterator[bytes]:
+        async def pump_input():
             while True:
-                yield await websocket.receive_bytes()
+                await session.send_audio(await websocket.receive_bytes())
 
-        tg.start_soon(session.send_audio, receive_audio())
-        async for chunk in session.stream_audio():
-            await websocket.send_bytes(chunk)
-        tg.cancel_scope.cancel()
+        input_task = asyncio.create_task(pump_input())
+        try:
+            async for chunk in session.stream_audio():
+                await websocket.send_bytes(chunk)
+        finally:
+            input_task.cancel()
 ```
 
 ## SIP/telephony bridge
