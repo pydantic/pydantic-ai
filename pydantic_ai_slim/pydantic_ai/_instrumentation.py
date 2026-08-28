@@ -6,6 +6,7 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
@@ -330,7 +331,32 @@ def model_metric_attributes(
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
+    return {
+        'model_request_parameters': safe_to_json(_serialize_model_request_parameters(model_request_parameters)).decode()
+    }
+
+
+def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
+    """Serialize the parameters through their own schema, falling back to inference.
+
+    `serialize_any` infers a shape from the value, which reads a dataclass as its fields and so
+    loses whatever its class meant. `InstructionPart.id` is exactly that case: its source is a
+    class rather than a tagged field, so inference renders a toolset and a capability sharing an
+    `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
+    the same flat key it serializes to everywhere else.
+    """
+    try:
+        return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+    except Exception:  # pragma: no cover
+        # A tool definition carrying something unserializable must not take the span down with it.
+        return serialize_any(model_request_parameters)
+
+
+@cache
+def _model_request_parameters_adapter() -> TypeAdapter[ModelRequestParameters]:
+    from pydantic_ai.models import ModelRequestParameters
+
+    return TypeAdapter(ModelRequestParameters)
 
 
 def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
