@@ -671,6 +671,54 @@ async def test_save_failure_on_the_401_path_updates_memory_but_raises(monkeypatc
     assert provider.credentials.access_token.get_secret_value() == 'access-new'
 
 
+def test_sync_auth_flow_is_rejected():
+    """Refresh-and-replay is async, so a sync client must fail loudly rather than send no auth."""
+    auth = OpenAICodexAuth(make_provider())
+    with pytest.raises(UserError, match='requires an async HTTP client'):
+        auth.sync_auth_flow(httpx2.Request('GET', 'https://example.com'))
+
+
+async def test_auth_never_sent_to_foreign_or_plaintext_destinations():
+    """A caller-supplied client may be reused for other destinations; credentials stay home."""
+    provider = make_provider()
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(200)
+
+    async with authed_client(provider, handler) as client:
+        await client.get('https://example.com/unrelated')  # foreign host
+        await client.get('http://chatgpt.com/backend-api/codex/x')  # right host, plaintext scheme
+
+    for request in seen:
+        assert 'authorization' not in request.headers
+        assert 'chatgpt-account-id' not in request.headers
+        assert 'originator' not in request.headers
+
+
+async def test_credential_source_loads_once_under_concurrency():
+    """Two tasks racing the first request load the source once, not once each."""
+    release = anyio.Event()
+    source = FakeCredentialSource()
+    inner_load = source.load
+
+    async def slow_load() -> OpenAICodexCredentials:
+        await release.wait()  # hold the lock so the second task queues behind it
+        return await inner_load()
+
+    source.load = slow_load
+    provider = OpenAICodexProvider(credential_source=source)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(provider._load_if_needed)  # pyright: ignore[reportPrivateUsage]
+        tg.start_soon(provider._load_if_needed)  # pyright: ignore[reportPrivateUsage]
+        await anyio.sleep(0)  # let both tasks reach the lock before the load completes
+        release.set()
+
+    assert source.loads == 1
+
+
 def test_openai_client_passthrough():
     from openai import AsyncOpenAI
 
