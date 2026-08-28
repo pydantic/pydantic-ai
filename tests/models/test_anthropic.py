@@ -994,20 +994,36 @@ async def test_anthropic_code_execution_files_500_keeps_caller_container(
     assert [kwargs['container'] for kwargs in completion_kwargs] == [expected_container]
 
 
-async def test_anthropic_code_execution_files_500_with_uploads_drops_history_container(allow_model_requests: None):
+@pytest.mark.parametrize(
+    'status_code,expected_containers',
+    [
+        pytest.param(500, ['container_from_history', OMIT], id='500-retried'),
+        pytest.param(429, ['container_from_history'], id='429-not-retried'),
+    ],
+)
+async def test_anthropic_code_execution_files_500_with_uploads_drops_history_container(
+    allow_model_requests: None, status_code: int, expected_containers: list[str | object]
+):
     """A 500 on a history-resolved id with uploads on the wire is resent once, carrying no container at all.
 
     A successful retry is covered live by
-    `test_code_execution_files_vcr.py::test_anthropic_code_execution_files_expired_container_is_dropped_and_retried`;
-    what this adds is the one-shot bound. Every attempt 500s here, so the second request shows the
+    `test_code_execution_files_vcr.py::test_anthropic_code_execution_files_rejected_container_is_dropped_and_retried`;
+    what this adds is the one-shot bound. Every attempt fails here, so the second request shows the
     retry drops the container and the third that never comes shows the drop is not a loop — the
     retry's own error is what surfaces. (`MockAnthropic` cannot answer the retry with a success: it
     only advances its response index on the way out, so an exception in a sequence is re-raised
     forever.)
+
+    The `429` case is what pins the status half of the guard, and coverage cannot stand in for it:
+    the `e.status_code != 500` operand shares its line with `not container_from_history`, which the
+    caller-container test already takes, so the line reads fully covered while the non-500 shape goes
+    unvisited. Without this param, deleting that operand leaves the suite green — and a rate-limited
+    request on a resumed code-execution conversation would be silently duplicated, surfacing the
+    retry's error in place of the original's `retry-after`.
     """
     error = APIStatusError(
         'server error',
-        response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
+        response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
         body={'error': 'server error'},
     )
     mock_client = MockAnthropic.create_mock(error)
@@ -1028,9 +1044,9 @@ async def test_anthropic_code_execution_files_500_with_uploads_drops_history_con
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('And now summarize it.', message_history=history)
 
-    assert exc_info.value.status_code == 500
+    assert exc_info.value.status_code == status_code
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
-    assert [kwargs['container'] for kwargs in completion_kwargs] == ['container_from_history', OMIT]
+    assert [kwargs['container'] for kwargs in completion_kwargs] == expected_containers
 
 
 async def test_anthropic_code_execution_files_append_to_every_user_message(allow_model_requests: None):

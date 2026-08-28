@@ -7,6 +7,9 @@ upload round-trip end to end: the file reference reaches the provider (Anthropic
 `code_interpreter` container `file_ids`) and the model reads the uploaded file. Each test also passes a
 foreign-provider `UploadedFile` to show it is filtered out on the wire.
 
+The mock-forced error shapes — what the container-drop retry does and does not fire on — live in
+`tests/models/test_anthropic.py` instead, beside the `MockAnthropic` harness they need.
+
 `test_openai_code_execution_files_all_filtered` is the one branch the round-trip
 can't exercise (files set, but none match the provider, so no `file_ids` is sent):
 it stays a unit test on the request-building path, kept here so the whole feature
@@ -53,9 +56,11 @@ _PROMPT = 'Use the code execution tool to read the uploaded CSV file and report 
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-async def test_anthropic_code_execution_files(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+async def test_anthropic_code_execution_files(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
     """Upload a real file to the Anthropic Files API and have code execution read it."""
-    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
     uploaded = await client.beta.files.upload(
         file=('data.csv', _CSV_BYTES, 'text/csv'),
         betas=['files-api-2025-04-14'],
@@ -87,9 +92,10 @@ async def test_anthropic_code_execution_files(allow_model_requests: None, anthro
     # The uploaded file goes up as a `container_upload` block (the API only accepts this under
     # the `files-api-2025-04-14` beta, which the model auto-enables); the foreign-provider file
     # is filtered out, so only the anthropic file id is sent.
-    messages_request = [r for r in vcr.requests if '/v1/messages' in r.uri][0]
-    assert 'beta=true' in messages_request.uri
-    container_uploads = content_blocks(json.loads(messages_request.body), 'container_upload')
+    # Read off the wire rather than `vcr.requests`: the default matchers ignore the body, so a
+    # recording cannot disagree with the filter it recorded — a regression that sent both file ids
+    # would replay green against it.
+    container_uploads = content_blocks(request_capture.body('/v1/messages'), 'container_upload')
     assert container_uploads == [{'type': 'container_upload', 'file_id': uploaded.id}]
 
 
@@ -285,13 +291,15 @@ async def test_anthropic_code_execution_files_with_function_tool(
     )
 
 
-# A real container from an earlier recording, dead for days. Anthropic 500s on a `container_upload`
-# aimed at an expired container instead of 404ing the way it does for an id that never existed.
-_EXPIRED_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
+# A real container from an earlier recording, days old. Anthropic answers a `container_upload` aimed
+# at it with a 500 rather than the 404 it gives for an id that never existed. Deliberately not called
+# expired: the docs put the lifetime at 30 days with a restore-on-request inside that window, so an
+# id this age should still resolve, and the cause of the refusal is not something we can read back.
+_DEAD_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-async def test_anthropic_code_execution_files_expired_container_is_dropped_and_retried(
+async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_retried(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
     """A rejected container id resolved from history is dropped and the request resent once.
@@ -330,7 +338,7 @@ async def test_anthropic_code_execution_files_expired_container_is_dropped_and_r
             ModelResponse(
                 parts=[TextPart(content='Earlier answer.')],
                 provider_name='anthropic',
-                provider_details={'container_id': _EXPIRED_CONTAINER_ID},
+                provider_details={'container_id': _DEAD_CONTAINER_ID},
             ),
         ]
         result = await agent.run(_PROMPT, message_history=history)
@@ -342,7 +350,7 @@ async def test_anthropic_code_execution_files_expired_container_is_dropped_and_r
 
     # Both attempts are on the wire, and only the first carries the dead id.
     bodies = request_capture.bodies('/v1/messages')
-    assert [body.get('container') for body in bodies] == [_EXPIRED_CONTAINER_ID, None]
+    assert [body.get('container') for body in bodies] == [_DEAD_CONTAINER_ID, None]
 
 
 # Large instructions so the cacheable prefix (system + tools + user text) clears Anthropic's

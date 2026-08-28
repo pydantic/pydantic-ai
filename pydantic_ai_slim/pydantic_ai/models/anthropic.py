@@ -482,11 +482,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically. That automatically-reused id is the one container
-    Pydantic AI may replace on its own: if the API rejects a request that also carries
-    `CodeExecutionTool` uploads, the id is dropped and the request is sent once more so
-    the upload lands in a fresh container. Whatever you set here is never replaced that
-    way — a request pinning a container that the API rejects raises instead.
+    it will be reused automatically. An id recovered that way is the only container
+    Pydantic AI may replace on its own: if a request carrying both that id and
+    `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
+    sent once more so the upload lands in a fresh container. Nothing else is replaced —
+    not a container you set here, and not the id used to reconnect a paused turn — so a
+    request pinning a container the API will not accept raises instead.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
@@ -1005,23 +1006,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 # Retrying an opaque 500 is blunt, so the guard is narrow on purpose. It needs both
                 # halves of the shape that reproduces — an id *we* resolved from history, and uploads
                 # actually on the wire — so any other 500 raises untouched and costs nobody a second
-                # round trip. A container the caller chose is never rewritten, whether they passed
-                # `{'skills': ...}`, a bare id, or are reconnecting a `pause_turn`: dropping one of
-                # those discards state they asked us to keep, and it would not self-heal, because
-                # `_get_container` prefers their setting over the fresh id the retry earns. The
-                # history-resolved id does self-heal — the next step's reverse scan finds the new
-                # container — which is what makes one retry enough rather than one retry per step.
+                # round trip. A container the caller set is never rewritten, whether they passed
+                # `{'skills': ...}` or a bare id: dropping one discards state they asked us to keep,
+                # and it would not self-heal, because `_get_container` prefers their setting over the
+                # fresh id the retry earns. A `pause_turn` id is preserved for a different reason —
+                # it belongs to the turn being resumed, and a fresh container would resume it without
+                # the state it is part-way through. The history-resolved id is the one that heals: a
+                # later reverse scan finds the new container, so one retry is enough rather than one
+                # per step. That healing needs a turn that actually runs code, since Anthropic only
+                # returns a `container` object on such a turn and `_process_response` records the id
+                # only when it does; until one lands, a resumed conversation pays this retry again.
                 #
-                # One retry, never a loop: if the retry fails, that error is what surfaces.
+                # One retry, never a loop: if the retry fails, that error is what surfaces. That bound
+                # is ours alone — the client's own `max_retries` multiplies it, so the guarded shape
+                # is 6 attempts at the SDK default against a generic 500, and 2 against the one this
+                # targets, which carries `x-should-retry: false`.
                 if e.status_code != 500 or not container_from_history:
                     raise
-                sends_container_uploads = False
-                for message in anthropic_messages:
-                    content = message['content']
-                    assert isinstance(content, list)
-                    if any(is_str_dict(block) and block['type'] == 'container_upload' for block in content):
-                        sends_container_uploads = True
-                        break
+                sends_container_uploads = any(
+                    is_str_dict(block) and block['type'] == 'container_upload'
+                    for message in anthropic_messages
+                    for block in message['content']
+                )
                 if not sends_container_uploads:
                     raise
                 return await create(None)
@@ -2288,8 +2294,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # constant, though every block outside the current turn falls inside a prefix an earlier
             # step already cached. The file still materializes exactly once. A synthetic anchor turn
             # from `_anchor_system_messages` is a user message like any other and takes a block too,
-            # which keeps it prefix-stable; that only arises under a profile enabling inline system
-            # prompts, which is not the default here.
+            # which keeps it prefix-stable. Anchors are rare rather than profile-gated: they need a
+            # mid-conversation system entry that lands with no user turn in front of it, on one of
+            # the models that honor inline system prompts.
             for msg in anthropic_messages:
                 if msg['role'] == 'user':
                     existing = msg['content']
