@@ -34,7 +34,7 @@ class ProcessHistory(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         messages = await _run_history_processor(self.processor, ctx, list(request_context.messages))
-        request_context.messages = messages
+        request_context.messages = tuple(messages)
         ctx.messages[:] = messages
 
         return request_context

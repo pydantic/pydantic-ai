@@ -1476,7 +1476,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         request_context = ModelRequestContext(
             model=ctx.deps.model,
-            messages=list(ctx.state.message_history),
+            messages=tuple(ctx.state.message_history),
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
@@ -1527,7 +1527,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # response); the innermost helpers split that response off as the continuation seed.
         request_context = ModelRequestContext(
             model=ctx.deps.model,
-            messages=list(ctx.state.message_history),
+            messages=tuple(ctx.state.message_history),
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
@@ -1576,7 +1576,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # request produced by the before-chain. The lifecycle also continues with this original
         # object, retaining read-only dispatch fields such as `streaming`.
         original_request_context.model = processed_context.model
-        original_request_context.messages = processed_context.messages
+        original_request_context.messages = tuple(processed_context.messages)
         original_request_context.model_settings = processed_context.model_settings
         original_request_context.model_request_parameters = processed_context.model_request_parameters
         original_request_context.model_id = processed_context.model_id
@@ -1634,7 +1634,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
             )
-            request_context.messages = messages
+            request_context.messages = tuple(messages)
 
             usage = ctx.state.usage
             if ctx.deps.usage_limits.count_tokens_before_request:

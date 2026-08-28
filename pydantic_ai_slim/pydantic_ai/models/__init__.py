@@ -303,6 +303,7 @@ class ModelRequestContext:
     messages: Sequence[ModelMessage]
     """Messages to send for this model request.
 
+    Stored as a tuple, so in-place calls like `.append()` raise; assign a new sequence instead.
     Assigning a new sequence changes only the current request. To rewrite the persistent
     message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
     instead, or update both explicitly when both effects are intended.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -15,6 +15,14 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 pytestmark = pytest.mark.anyio
+
+
+def _contains_marker(messages: list[ModelMessage]) -> bool:
+    return any(
+        isinstance(message, ModelRequest)
+        and any(isinstance(part, UserPromptPart) and part.content == 'hook marker' for part in message.parts)
+        for message in messages
+    )
 
 
 @pytest.mark.parametrize('hook', ['before', 'wrap'])
@@ -75,12 +83,54 @@ async def test_model_request_message_persistence_depends_on_context(
         assert result.output == 'done'
         result_messages = result.all_messages()
 
-    def contains_marker(messages: list[ModelMessage]) -> bool:
-        return any(
-            isinstance(message, ModelRequest)
-            and any(isinstance(part, UserPromptPart) and part.content == 'hook marker' for part in message.parts)
-            for message in messages
-        )
+    assert _contains_marker(model_messages[0]) is not persistent
+    assert _contains_marker(result_messages) is persistent
 
-    assert contains_marker(model_messages[0]) is not persistent
-    assert contains_marker(result_messages) is persistent
+
+@pytest.mark.parametrize('hook', ['before', 'wrap'])
+async def test_model_request_messages_reject_in_place_mutation(hook: Literal['before', 'wrap']) -> None:
+    """The framework hands hooks `request_context.messages` as a tuple.
+
+    In-place mutation such as `.append()` raises, so the only route to a request-only change is
+    assigning a new sequence — which must still work and stay ephemeral. A unit-style hook test
+    because the pinned behavior is the runtime type handed to hooks, which no wire recording shows.
+    """
+    marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
+    model_messages: list[list[ModelMessage]] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        model_messages.append(messages)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    def mutate_then_reassign(request_context: ModelRequestContext) -> None:
+        with pytest.raises(AttributeError):
+            cast('list[ModelMessage]', request_context.messages).append(marker)
+        request_context.messages = [*request_context.messages, marker]
+
+    @dataclass
+    class AppendMessages(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if hook == 'before':
+                mutate_then_reassign(request_context)
+            return request_context
+
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: Any,
+        ) -> ModelResponse:
+            if hook == 'wrap':
+                mutate_then_reassign(request_context)
+            return await handler(request_context)
+
+    agent = Agent(FunctionModel(model_function), capabilities=[AppendMessages()])
+    result = await agent.run('hello')
+    assert result.output == 'done'
+
+    # The reassigned message reached the wire but not persistent history.
+    assert _contains_marker(model_messages[0])
+    assert not _contains_marker(result.all_messages())
