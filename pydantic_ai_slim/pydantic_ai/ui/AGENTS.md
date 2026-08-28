@@ -31,6 +31,14 @@ the framework's pinned trust model, not an oversight.
 `SystemPromptPart` through. That is the setting's meaning — the client owns the system prompt — but it
 is a wider surface than it was, so reach for it only when the client is as trusted as the server.
 
+The marker is also an outbound channel, and it may carry no more than the rendered text beside it.
+`RetryFeedbackPart.model_response` is fixed at `include_input='none'`, so a validation error's `ctx`
+and `input` never reach the model; `retry_feedback_payload` strips them for the same reason before
+the part rides out, because the client reads and echoes that channel. Strip in the payload helper,
+not at the call sites — there are two, and a third would inherit the disclosure by default. `input`
+is emptied rather than dropped: `ErrorDetails` requires the key, so a payload without it fails to
+revalidate and loads back as a plain `SystemPromptPart`, losing the `cause` without erroring.
+
 ## Adapter properties are shared concepts the adapter itself consumes
 
 An unread field on a protocol's run input is not a gap. `run_input` is public, so every field is already reachable as `adapter.run_input.<field>`; a property that only forwards one adds no capability and takes on a permanent public-API commitment. AG-UI's `context`, `forwardedProps` and `parentRunId` are deliberately left that way — see [7106](https://github.com/pydantic/pydantic-ai/pull/7106#discussion_r3723844005), which closed [7105](https://github.com/pydantic/pydantic-ai/issues/7105) by documenting the wiring instead of exposing `AGUIAdapter.context`.

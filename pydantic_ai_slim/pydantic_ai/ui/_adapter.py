@@ -173,8 +173,25 @@ def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
     under a `retry_feedback` key in the metadata channel each protocol already uses for Pydantic AI
     continuity claims (Vercel AI's `providerMetadata`, AG-UI's `encrypted_value`), and that is what
     `load_messages` reconstructs from.
+
+    Each error's `ctx` and `input` are emptied here, matching the `include_input='none'` rendering
+    [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] is
+    fixed at, so this channel discloses no more than the text beside it. `ctx` can hold whatever a
+    `field_validator` was given as context and `input` is the value the model sent, and the client
+    reads and echoes this channel — neither belongs there when the rendered text drops both. Nothing
+    reads them back: the part is reconstructed only to be rendered. `input` is emptied rather than
+    excluded because [`pydantic_core.ErrorDetails`][] requires the key, and a payload missing it would
+    fail to revalidate and silently load as a plain
+    [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] instead.
     """
-    return _RETRY_FEEDBACK_PART_ADAPTER.dump_python(part, mode='json')
+    if isinstance(part.content, str):
+        return _RETRY_FEEDBACK_PART_ADAPTER.dump_python(part, mode='json')
+    payload = _RETRY_FEEDBACK_PART_ADAPTER.dump_python(
+        part, mode='json', exclude={'content': {'__all__': {'ctx', 'input'}}}
+    )
+    for error in payload['content']:
+        error['input'] = None
+    return payload
 
 
 def retry_feedback_from_payload(payload: object) -> RetryFeedbackPart | None:

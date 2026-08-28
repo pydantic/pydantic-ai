@@ -43,6 +43,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.ui._adapter import retry_feedback_from_payload, retry_feedback_payload
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message_part
@@ -625,3 +626,73 @@ async def test_retry_feedback_reaches_the_provider(
 
     second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert [(turn['role'], turn['content']) for turn in second_request['messages']] == expected_turns
+
+
+def test_the_metadata_channel_discloses_no_more_than_the_text_beside_it():
+    """The part rides a client-echoed metadata channel, so it may carry no more than the render does.
+
+    `RetryFeedbackPart.model_response` is fixed at `include_input='none'`, so neither `ctx` nor
+    `input` ever reaches the model. Both adapters dump the part itself alongside that text — Vercel
+    AI under `providerMetadata`, AG-UI under `encrypted_value` — for `load_messages` to reconstruct
+    from, and a client reads and echoes both. Dumping the dataclass whole would have put the value
+    the model sent and whatever context a `field_validator` was given in front of the browser, which
+    is why the payload strips them rather than the call sites remembering to.
+
+    `input` is emptied rather than dropped: `ErrorDetails` requires the key, so a payload without it
+    fails to revalidate and the message silently loads back as a plain `SystemPromptPart`, losing the
+    `cause`. The round-trip assertion below is what would catch that.
+    """
+    part = RetryFeedbackPart(
+        content=[
+            {
+                'type': 'string_type',
+                'loc': ('answer', 'title'),
+                'msg': 'Input should be a valid string',
+                'input': 'the whole document the model generated',
+                'ctx': {'api_key': 'the context a field_validator was handed'},
+            }
+        ],
+        cause='validation_error',
+    )
+
+    payload = retry_feedback_payload(part)
+
+    assert payload == snapshot(
+        {
+            'content': [
+                {
+                    'type': 'string_type',
+                    'loc': ['answer', 'title'],
+                    'msg': 'Input should be a valid string',
+                    'input': None,
+                }
+            ],
+            'cause': 'validation_error',
+            'timestamp': IsDatetime(iso_string=True),
+            'part_kind': 'retry-feedback',
+        }
+    )
+
+    reloaded = retry_feedback_from_payload(payload)
+    assert reloaded is not None
+    assert reloaded.cause == part.cause
+    assert reloaded.model_response() == part.model_response()
+
+
+def test_a_string_retry_feedback_payload_round_trips_whole():
+    """`ModelRetry` feedback is a string your own code wrote, so there is nothing to strip from it."""
+    part = RetryFeedbackPart(content='answer with the number spelled out', cause='model_retry')
+
+    payload = retry_feedback_payload(part)
+
+    assert payload == snapshot(
+        {
+            'content': 'answer with the number spelled out',
+            'cause': 'model_retry',
+            'timestamp': IsDatetime(iso_string=True),
+            'part_kind': 'retry-feedback',
+        }
+    )
+    assert retry_feedback_from_payload(payload) == snapshot(
+        RetryFeedbackPart(content='answer with the number spelled out', cause='model_retry', timestamp=IsDatetime())
+    )

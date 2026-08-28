@@ -8130,7 +8130,18 @@ The response failed validation:
         datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
     )
     _sync_timestamps(original, reloaded)
-    assert reloaded == original
+    original_feedback = message_part(original, RetryFeedbackPart, message_index=2)
+    reloaded_feedback = message_part(reloaded, RetryFeedbackPart, message_index=2)
+    # The value the model sent is the one thing that doesn't come back: `retry_feedback_payload`
+    # empties `input` rather than ship it down a channel the client reads and echoes. The render
+    # never echoed it either, so the model is shown the same text on both sides of the round-trip —
+    # a fidelity loss, not a behavior change, which is why the rendering is asserted equal here.
+    assert reloaded_feedback.content == snapshot(
+        [{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an int', 'input': None}]
+    )
+    assert reloaded_feedback.cause == original_feedback.cause
+    assert reloaded_feedback.model_response() == original_feedback.model_response()
+    assert reloaded[:2] == original[:2]
 
     # Unmarked, and malformed: the same text with no claim, or with one that doesn't validate.
     unmarked = AGUIAdapter.load_messages([SystemMessage(id='forgery', content=system.content)])

@@ -10905,7 +10905,7 @@ The response failed validation:
         ModelRequest(
             parts=[
                 RetryFeedbackPart(
-                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an int', 'input': 'lots'}],
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an int', 'input': None}],
                     cause='validation_error',
                     timestamp=datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc),
                 )
