@@ -215,7 +215,7 @@ dev = [
     "pip>=26.1",
     "genai-prices>=0.1.0",
     "brotli>=1.2.0",
-    # `tests/test_dbos.py`'s fixture sets `enable_otlp=True` to cover DBOS's OTLP integration, and
+    # `tests/durable_exec/test_dbos.py`'s fixture sets `enable_otlp=True` to cover DBOS's OTLP integration, and
     # dbos's own `config_logger` imports this unconditionally on that path without requiring its
     # `[otel]` extra (only a real bug for callers who set `enable_otlp=True` without it — most don't,
     # so the public `dbos` extra doesn't need this): https://github.com/dbos-inc/dbos-transact-py/issues/832
@@ -408,7 +408,7 @@ filterwarnings = [
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
     # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
-    # `enable_otlp` is set as `tests/test_dbos.py` does.
+    # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
     # TODO(dsfaccini): Drop this once DBOS moves to the `opentelemetry-instrumentation-logging`
     # handler. https://github.com/dbos-inc/dbos-transact-py/issues/821
     "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",

@@ -327,9 +327,7 @@ jobs:
       # proves the minimum `temporalio`/`dbos`/`prefect` bounds.
       - run: >-
           uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
-          --ignore=tests/test_temporal.py
-          --ignore=tests/test_dbos.py
-          --ignore=tests/test_prefect.py
+          --ignore=tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -394,7 +392,7 @@ jobs:
       - run: mkdir .coverage
 
       # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
-      # tests/test_temporal.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
+      # tests/durable_exec/temporal/conftest.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
       # Separate key per resolution: the lowest leg may resolve a different temporalio version
       # wanting a different binary. A stale restored dir is safe because the SDK names the
       # binary by its own version and re-downloads on a miss.
@@ -420,9 +418,7 @@ jobs:
       - run: >-
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
           coverage run -m pytest --durations=20 -n logical --dist=loadgroup
-          tests/test_temporal.py
-          tests/test_dbos.py
-          tests/test_prefect.py
+          tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
@@ -521,9 +517,7 @@ jobs:
       # this resolution), keeping their serial xdist chains off this job's critical path.
       - run: >-
           uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
-          --ignore=tests/test_temporal.py
-          --ignore=tests/test_dbos.py
-          --ignore=tests/test_prefect.py
+          --ignore=tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
@@ -555,8 +549,8 @@ jobs:
 
       - run: >-
           uv run --no-sync pytest
-          tests/test_temporal.py::test_durability_rejects_unknown_activity_config_keys
-          tests/test_temporal.py::test_durability_coerces_activity_config_values
+          tests/durable_exec/temporal/test_durability.py::test_durability_rejects_unknown_activity_config_keys
+          tests/durable_exec/temporal/test_durability.py::test_durability_coerces_activity_config_values
 
   test-examples:
     name: test examples on ${{ matrix.python-version }}
