@@ -33,6 +33,7 @@ except ImportError:  # sparse checkouts that omit the telemetry module stay sile
     def _emit_event(name: str, **attributes: object) -> None:
         return
 
+
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
 _RESURFACE_AFTER = dt.timedelta(days=7)
