@@ -1113,6 +1113,10 @@ class CensusClient(FakeClient):
             return super().get(path)
         raise AssertionError(path)
 
+    def last_page(self, path: str) -> list[dict[str, Any]]:
+        self.calls.append(('LAST', path, None))
+        return self.timelines.get(int(path.split('/issues/')[1].split('/')[0]), [])
+
     def post(self, path: str, payload: dict[str, object]) -> Any:
         self.calls.append(('POST', path, payload))
         assert path == '/graphql'
@@ -1217,8 +1221,9 @@ def test_census_counts_coverage_without_fetching_or_writing_anything():
         'oldest #7740 opened 5d ago; triage pool: 240 unlabeled issues; PR intake: 3 unowned. '
         'The Monday digest covers assigned, legacy, and draft work.'
     )
-    # Count-only by construction: no writes, no pagination, no per-item reads.
-    assert {method for method, _, _ in client.calls} == {'GET', 'POST'}
+    # Count-only plus one event-page read vetting the oldest candidate: no
+    # writes, no REST search, no item bodies.
+    assert {method for method, _, _ in client.calls} == {'GET', 'POST', 'LAST'}
     assert not any(path.startswith('/search/issues?') for _, path, _ in client.calls)
 
 
@@ -1262,6 +1267,20 @@ def test_census_escalates_when_the_assignment_gate_backs_up():
 
     assert report.startswith('<@UADITYA> :rotating_light:')
     assert f'assignment gate: {monitor._GATE_BATCH_BREACH + 1} priority issues unassigned' in report
+
+
+def test_census_oldest_page_skips_a_deliberately_unassigned_issue():
+    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-10T00:00:00Z'})
+    client.timelines[7740] = [
+        {'event': 'unassigned', 'created_at': '2026-08-24T00:00:00Z', 'actor': {'login': 'DouweM'}}
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    # A maintainer took this issue off someone's plate on purpose; paging about
+    # its age every morning would train everyone to ignore the heartbeat.
+    assert report.startswith(':telescope:')
+    assert 'oldest' not in report
 
 
 def test_census_rejects_an_untrusted_urgent_mention():

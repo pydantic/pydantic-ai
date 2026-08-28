@@ -728,6 +728,18 @@ def test_community_recovery_is_opt_in_second_choice_and_bounded():
         )
 
 
+def test_gated_routing_backs_off_after_a_recent_unassignment():
+    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'], unassigned_at=[recent])})
+
+    selection = router.decision_for(client, CORE, 7)
+
+    # A maintainer just removed the assignee; re-assigning the same owner six
+    # hours later would fight that decision.
+    assert selection == {'number': 7, 'decision': None, 'status': 'recently-unassigned'}
+    assert router.select_batch(client, CORE) == []
+
+
 def test_community_recovery_backs_off_after_a_recent_unassignment():
     recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
     old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
