@@ -602,11 +602,11 @@ def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> boo
     return True
 
 
-def _routing_reason(decision: Decision, owner_display: str) -> str:
+def _routing_reason(decision: Decision, mention: str) -> str:
     evidence = decision['evidence']
     owner = decision['owner']
     if evidence == f'author:{owner}':
-        return f'{owner_display} authored this pull request.'
+        return f'{mention} authored this pull request.'
     source, separator, detail = evidence.partition(':')
     if separator and detail and source in {'label', 'path'}:
         return f'Matched ownership {source} `{detail}`.'
@@ -621,22 +621,24 @@ def _slack_payload(
     repo: str,
     item_type: Literal['Issue', 'PullRequest'],
     decision: Decision,
+    mentions_value: str,
 ) -> str:
-    """Build one canonical Slack assignment record.
-
-    Deliberately ping-free: GitHub's own assignment notification alerts the
-    owner, and the Slack interrupt is reserved for the reminder that fires
-    once an assigned priority issue sits quiet past its window.
-    """
+    """Build one canonical Slack assignment notice."""
     repo = _repository(repo)
-    owner = decision['owner']
+    if decision['evidence'] == 'default:repo-intake':
+        # Blanket intake routing would ping the same person on every drained
+        # item; the channel record keeps the plain name and GitHub's own
+        # assignment notification does the alerting.
+        mention = decision['owner']
+    else:
+        mention = attention.slack_mentions(mentions_value, decision['owner'])[decision['owner']]
     if item_type == 'Issue':
         kind, path = 'Issue', 'issues'
     else:
         kind, path = 'Pull request', 'pull'
     number = decision['number']
     item = f'<https://github.com/{repo}/{path}/{number}|{repo}#{number}>'
-    text = f'Routing intent: {kind} {item} → {owner}\nWhy: {_routing_reason(decision, owner)}'
+    text = f'Routing intent: {kind} {item} → {mention}\nWhy: {_routing_reason(decision, mention)}'
     return json.dumps({'text': text}, separators=(',', ':'))
 
 
@@ -644,6 +646,7 @@ def prepare_current(
     client: attention.GitHubClient,
     repo: str,
     expected: Decision,
+    mentions_value: str,
 ) -> str | None:
     """Build a notice only while the selected route still matches GitHub."""
     repo = _repository(repo)
@@ -656,7 +659,7 @@ def prepare_current(
     current = decision_for(client, repo, expected['number'])
     if current['decision'] != expected:
         return None
-    return _slack_payload(repo, item_type, expected)
+    return _slack_payload(repo, item_type, expected, mentions_value)
 
 
 def _output(values: Mapping[str, object]) -> None:
@@ -691,7 +694,12 @@ def main() -> int:
             if args.number is None or args.owner is None or args.evidence is None:
                 parser.error('prepare requires --number, --owner, and --evidence')
             expected = Decision(number=_item_number(args.number), owner=args.owner, evidence=args.evidence)
-            payload = prepare_current(client, repo, expected)
+            payload = prepare_current(
+                client,
+                repo,
+                expected,
+                os.environ['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'],
+            )
             _output({'should_notify': str(payload is not None).lower(), 'slack_payload': payload or ''})
             _summary(f'#{args.number}: ' + ('prepared routing intent' if payload else 'route changed'))
             return 0
