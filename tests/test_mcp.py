@@ -1795,22 +1795,16 @@ class TestLoadMCPToolsets:
             assert isinstance(wrapped.client.transport, StreamableHttpTransport)
             assert wrapped.client.transport.headers == {'X-Key': 'foo'}
 
-            with anyio.fail_after(10):
-                while True:
-                    if process.returncode is not None:
-                        assert process.stderr is not None
-                        stderr = (await process.stderr.receive()).decode()
-                        raise AssertionError(f'HTTP MCP test server exited during startup: {stderr}')
-                    try:
-                        stream = await anyio.connect_tcp('127.0.0.1', port)
-                    except OSError:
-                        await anyio.sleep(0.01)
-                    else:
-                        await stream.aclose()
-                        break
-
-            agent = Agent(TestModel(call_tools=['beta_get_weather_forecast']), toolsets=toolsets)
-            result = await agent.run('weather')
+            try:
+                with anyio.fail_after(10):
+                    agent = Agent(TestModel(call_tools=['beta_get_weather_forecast']), toolsets=toolsets)
+                    result = await agent.run('weather')
+            except BaseException:
+                if process.returncode is not None:
+                    assert process.stderr is not None
+                    stderr = (await process.stderr.receive()).decode()
+                    raise AssertionError(f'HTTP MCP test server exited during startup: {stderr}') from None
+                raise
         finally:
             with anyio.CancelScope(shield=True):
                 if process.returncode is None:
