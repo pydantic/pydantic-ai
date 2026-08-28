@@ -663,6 +663,32 @@ def _resolve_recipients(
     return maintainers, None
 
 
+def _recent_human_unassignment(
+    client: GitHubClient, repo: str, events: Sequence[dict[str, Any]], *, now: dt.datetime
+) -> bool:
+    """Whether a person took a maintainer off this item inside the back-off window.
+
+    Unlike the census veto's static roster, maintainership is probed live: the
+    placeholder heuristic recognizes any maintainer with push access, so its
+    back-off must recognize the same people it might otherwise re-assign.
+    """
+    probe = _MaintainerProbe(client, repo)
+    for event in events:
+        if str(event.get('event') or '') != 'unassigned':
+            continue
+        created = event.get('created_at')
+        if not isinstance(created, str) or now - _parse_time(created) >= dt.timedelta(
+            days=ROUTING_UNASSIGN_BACKOFF_DAYS
+        ):
+            continue
+        performer = _nested_field(event, 'assigner', 'login')
+        if not performer or performer.endswith('[bot]'):
+            continue
+        if probe.login(_nested_field(event, 'assignee', 'login')):
+            return True
+    return False
+
+
 def _ensure_recipients(
     client: GitHubClient,
     repo: str,
@@ -687,7 +713,7 @@ def _ensure_recipients(
     # not hand the item straight back to whoever a human just took off it.
     # Mirrors the router's back-off window.
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
-    if _recent_unassignment(events, now=now):
+    if _recent_human_unassignment(client, repo, events, now=now):
         return None
 
     found, conclusive = _first_maintainer_in_discussion(client, repo, current)
@@ -1218,7 +1244,10 @@ def _owner_quiet_since(timeline: Sequence[dict[str, Any]], owners: Sequence[str]
     `assigned` events GitHub mirrors the assignee into `actor`, so being
     assigned counts as that owner's activity with no special case.)
     """
-    if timeline and ((first := _event_time(timeline[0])) is None or first > since):
+    # The coverage anchor is the first event *with* a time: PR timelines open
+    # with `committed` events that carry none and must not read as "active".
+    anchor = next((when for event in timeline if (when := _event_time(event)) is not None), None)
+    if timeline and (anchor is None or anchor > since):
         return False
     keys = {owner.casefold() for owner in owners}
     return not any(
@@ -1237,9 +1266,10 @@ def _mark_assigned_reminders(
 
     An issue is marked once its owner has gone quiet past the label's window
     (`_owner_quiet_since` — the same activity rule acknowledgment uses), so
-    community chatter can neither delay the reminder nor cause one while the
-    owner is responding. Owner activity acknowledges and clears the cycle,
-    which re-arms the next one. One label's failure never blocks the rest.
+    community chatter can never cause a false reminder; only a flood that
+    pushes the owner's actions past the fetched timeline pages can delay one.
+    Owner activity acknowledges and clears the cycle, which re-arms the next
+    one. One label's failure never blocks the rest.
     """
     lines: list[str] = []
     failures: list[str] = []

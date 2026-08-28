@@ -1272,30 +1272,57 @@ def test_agent_marked_reminder_items_respect_the_owner_quiet_window():
 
 def test_placeholder_heuristic_backs_off_after_a_recent_unassignment():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    # A maintainer outside the routing roster: the back-off must probe live
+    # permissions, because the discussion heuristic would recognize (and
+    # re-assign) exactly the same person.
+    client.permissions = {'samuelcolvin': 'admin'}
     client.timelines[7] = [
         label_event(monitor._ACTION_LABEL),
         {
             'event': 'commented',
-            'actor': {'login': 'DouweM'},
+            'actor': {'login': 'samuelcolvin'},
             'created_at': OLD,
         },
         {
             'event': 'unassigned',
             'created_at': (NOW - dt.timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'actor': {'login': 'DouweM'},
-            'assignee': {'login': 'DouweM'},
-            'assigner': {'login': 'DouweM'},
+            'actor': {'login': 'samuelcolvin'},
+            'assignee': {'login': 'samuelcolvin'},
+            'assigner': {'login': 'samuelcolvin'},
         },
     ]
     notices: list[monitor.Notice] = []
 
     _, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
 
-    # DouweM took himself off two days ago: the discussion heuristic must not
+    # He took himself off two days ago: the discussion heuristic must not
     # hand the item straight back to him.
     assert failures == []
     assert notices == []
     assert not any(method == 'POST' and path.endswith('/assignees') for method, path, _ in client.calls)
+
+
+def test_owner_quiet_check_skips_events_without_timestamps():
+    # PR timelines open with `committed` events that carry no created_at; the
+    # coverage anchor must skip them instead of reading them as owner activity
+    # and silencing the reminder forever.
+    client = FakeClient({7: item(7, labels=['p:1-highest'], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+    client.timelines[7] = [
+        {'event': 'committed'},
+        {
+            'event': 'commented',
+            'actor': {'login': 'alice'},
+            'created_at': (NOW - dt.timedelta(days=4)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        },
+        label_event(monitor._ACTION_LABEL, created_at=NOW.strftime('%Y-%m-%dT%H:%M:%SZ')),
+    ]
+    notices: list[monitor.Notice] = []
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    assert failures == []
+    assert [notice['number'] for notice in notices] == [7]
 
 
 def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
