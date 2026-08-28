@@ -3,9 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
-import os
 import re
-import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -372,36 +370,63 @@ def test_parse_decisions_rejects_injection_and_duplicates(tmp_path: Path):
     output = tmp_path / 'output.json'
     write_output(output, ['1; echo pwned'])
     with pytest.raises(ValueError, match='positive decimal'):
-        monitor._parse_decisions(str(output))
+        monitor.agent_items(
+            str(output), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
 
     write_output(output, ['1', '1'])
     with pytest.raises(ValueError, match='duplicate'):
-        monitor._parse_decisions(str(output))
+        monitor.agent_items(
+            str(output), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
 
 
 @pytest.mark.parametrize(
     ('contents', 'message'),
     [
-        ([], 'Snapshot must contain'),
-        ({}, 'Snapshot must contain'),
-        ({'candidates': [None]}, 'candidate must be'),
-        ({'candidates': [{'number': 0, 'updated_at': OLD}]}, 'unique positive'),
+        ([], 'Input should be an object'),
+        ({}, r'candidates\s+Field required'),
+        ({'candidates': [None]}, r'candidates\.0\s+Input should be an object'),
+        ({'candidates': [{'number': 0, 'updated_at': OLD}]}, r'number\s+Input should be greater than or equal to 1'),
+        ({'candidates': [{'number': '7', 'updated_at': OLD}]}, r'number\s+Input should be a valid integer'),
+        ({'candidates': [{'number': 7, 'updated_at': OLD}, {'number': 7, 'updated_at': OLD}]}, 'unique numbers'),
     ],
 )
 def test_snapshot_validation_rejects_invalid_shapes(tmp_path: Path, contents: object, message: str):
     path = tmp_path / 'snapshot.json'
     path.write_text(json.dumps(contents), encoding='utf-8')
     with pytest.raises(ValueError, match=message):
-        monitor._snapshot_candidates(str(path))
+        monitor.snapshot_candidates(str(path), limit=monitor._CANDIDATE_LIMIT)
 
 
 def test_agent_output_requires_items_but_ignores_other_safe_outputs(tmp_path: Path):
     path = tmp_path / 'output.json'
     path.write_text('{}', encoding='utf-8')
-    with pytest.raises(ValueError, match='items list'):
-        monitor._parse_decisions(str(path))
+    with pytest.raises(ValueError, match=r'items\s+Field required'):
+        monitor.agent_items(
+            str(path), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
+    path.write_text(json.dumps({'items': [{'type': 'noop'}]}), encoding='utf-8')
+    assert (
+        monitor.agent_items(
+            str(path), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
+        == []
+    )
+    # A non-object entry means the file is corrupted, not that another tool
+    # wrote it; the strict boundary fails the run instead of guessing.
     path.write_text(json.dumps({'items': [None, {'type': 'noop'}]}), encoding='utf-8')
-    assert monitor._parse_decisions(str(path)) == []
+    with pytest.raises(ValueError, match=r'items\.0\s+Input should be an object'):
+        monitor.agent_items(
+            str(path), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
+
+
+def test_item_labels_skips_malformed_entries_rather_than_failing_the_item():
+    # GitHub labels always carry a string name; if one ever does not, reading
+    # the rest of the item beats failing the whole run. Pinned so the tolerant
+    # posture stays deliberate.
+    assert monitor.item_labels({'labels': [{'name': 'bug'}, {}, {'name': 3}, 'garbage']}) == {'bug'}
 
 
 def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
@@ -750,11 +775,11 @@ def test_apply_rejects_unknown_actor_or_confidence(tmp_path: Path):
     write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
 
     write_output(output, ['7'], next_actor='attacker')
-    with pytest.raises(ValueError, match='Invalid next_actor'):
+    with pytest.raises(ValueError, match=r"next_actor\s+Input should be 'maintainer'"):
         monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot))
 
     write_output(output, ['7'], confidence='certain')
-    with pytest.raises(ValueError, match='Invalid confidence'):
+    with pytest.raises(ValueError, match=r"confidence\s+Input should be 'high'"):
         monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot))
 
 
@@ -883,7 +908,13 @@ def test_reconcile_queues_channel_escalation_without_advancing_before_delivery()
     )
     assert notices[0]['kind'] == 'escalation'
     assert monitor._ESCALATED_LABEL not in {label['name'] for label in client.items[7]['labels']}
-    assert monitor.finalize_notices(client, 'pydantic/pydantic-ai', [notices[0]], now=NOW) == [
+    ref = monitor.NoticeRef(
+        number=notices[0]['number'],
+        expected_stage=notices[0]['expected_stage'],
+        transition_id=notices[0]['transition_id'],
+        recipients=notices[0]['recipients'],
+    )
+    assert monitor.finalize_notices(client, 'pydantic/pydantic-ai', [ref], now=NOW) == [
         '#7: recorded channel escalation'
     ]
     assert monitor._ESCALATED_LABEL in {label['name'] for label in client.items[7]['labels']}
@@ -898,7 +929,13 @@ def test_reconcile_retries_preexisting_pending_escalation():
         [],
     )
     assert notices[0]['expected_stage'] == 2
-    assert monitor.finalize_notices(client, 'r', [notices[0]], now=NOW) == ['#7: recorded channel escalation']
+    ref = monitor.NoticeRef(
+        number=notices[0]['number'],
+        expected_stage=notices[0]['expected_stage'],
+        transition_id=notices[0]['transition_id'],
+        recipients=notices[0]['recipients'],
+    )
+    assert monitor.finalize_notices(client, 'r', [ref], now=NOW) == ['#7: recorded channel escalation']
     assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[7]['labels']}
 
 
@@ -1054,12 +1091,14 @@ def test_snapshot_and_decision_batch_limits_are_enforced(tmp_path: Path):
     snapshot = tmp_path / 'snapshot.json'
     write_snapshot(snapshot, [{'number': n, 'updated_at': OLD} for n in range(1, monitor._CANDIDATE_LIMIT + 2)])
     with pytest.raises(ValueError, match='candidate limit'):
-        monitor._snapshot_candidates(str(snapshot))
+        monitor.snapshot_candidates(str(snapshot), limit=monitor._CANDIDATE_LIMIT)
 
     output = tmp_path / 'output.json'
     write_output(output, [str(n) for n in range(1, monitor._CANDIDATE_LIMIT + 2)])
     with pytest.raises(ValueError, match='too many or duplicate'):
-        monitor._parse_decisions(str(output))
+        monitor.agent_items(
+            str(output), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
 
 
 def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -1101,16 +1140,21 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
 class CensusClient(FakeClient):
     """Search counts only: the whole surface the coverage heartbeat touches."""
 
-    def __init__(self, counts: dict[str, int], *, stalest: dict[str, Any] | None = None) -> None:
+    def __init__(self, counts: dict[str, int], *, stale_page: list[dict[str, Any]] | None = None) -> None:
         super().__init__()
         self.permissions = {owner: 'write' for owner in TRIAGE_OWNERS}
         self.counts = counts
-        self.stalest = stalest
+        self.stale_page = stale_page or []
+        self.gate_first: int | None = None
 
     def get(self, path: str) -> Any:
         if '/collaborators/' in path:
             return super().get(path)
         raise AssertionError(path)
+
+    def last_page(self, path: str) -> list[dict[str, Any]]:
+        self.calls.append(('LAST', path, None))
+        return self.timelines.get(int(path.split('/issues/')[1].split('/')[0]), [])
 
     def post(self, path: str, payload: dict[str, object]) -> Any:
         self.calls.append(('POST', path, payload))
@@ -1121,10 +1165,11 @@ class CensusClient(FakeClient):
         oldest = terms.endswith(' sort:created-asc')
         if oldest:
             terms = terms.removesuffix(' sort:created-asc')
-            assert terms == monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, lane='recent')
+            assert terms == monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS)
         nodes = []
-        if oldest and self.stalest:
-            nodes = [{'number': self.stalest['number'], 'createdAt': self.stalest['created_at']}]
+        if oldest:
+            self.gate_first = int(str(variables['first']))
+            nodes = [{'number': item['number'], 'createdAt': item['created_at']} for item in self.stale_page]
         return {'data': {'search': {'issueCount': self.counts[terms], 'nodes': nodes}}}
 
 
@@ -1199,52 +1244,191 @@ class WeeklyClient(FakeClient):
 CENSUS_COUNTS = {
     f'repo:pydantic/pydantic-ai is:open label:"{monitor._ACTION_LABEL}"': 14,
     f'repo:pydantic/pydantic-ai is:open label:"{monitor._ESCALATED_LABEL}"': 9,
-    monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, lane='recent'): 2,
+    monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 2,
+    monitor._untriaged_query('pydantic/pydantic-ai'): 240,
+    monitor._pull_intake_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 3,
 }
 
 
-def test_census_counts_coverage_without_fetching_or_writing_anything():
-    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-20T00:00:00Z'})
+def test_census_counts_coverage_without_writing_or_reading_prose():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
 
     assert monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>') == (
         '<@UADITYA> :rotating_light: Attention coverage for pydantic/pydantic-ai — '
-        'queue: 14 active, 9 cooling; intake: 2 post-rollout without designated owner; '
-        'oldest #7740 opened 5d ago. The Monday digest covers assigned, legacy, and draft work.'
+        'queue: 14 active, 9 cooling; assignment gate: 2 priority issues unassigned; '
+        'oldest #7740 in the gate 5d; triage pool: 240 unlabeled issues; PR intake: 3 unowned. '
+        'The Monday digest covers assigned, legacy, and draft work.'
     )
-    # Count-only by construction: no writes, no pagination, no per-item reads.
-    assert {method for method, _, _ in client.calls} == {'GET', 'POST'}
+    # Count-only plus one event-page read vetting the oldest candidate: no
+    # writes, no REST search, no item bodies.
+    assert {method for method, _, _ in client.calls} == {'GET', 'POST', 'LAST'}
     assert not any(path.startswith('/search/issues?') for _, path, _ in client.calls)
 
 
 def test_census_reports_a_healthy_empty_intake_lane():
     counts = {
         **CENSUS_COUNTS,
-        monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, lane='recent'): 0,
+        monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 0,
     }
     client = CensusClient(counts)
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
     assert report.startswith(':telescope:')
-    assert 'intake: 0 post-rollout without designated owner' in report
+    assert 'assignment gate: 0 priority issues unassigned' in report
+    assert 'triage pool: 240 unlabeled issues' in report
+    assert 'PR intake: 3 unowned' in report
     assert '<!channel>' not in report
 
 
-def test_census_escalates_when_the_recovery_search_is_saturated():
+def test_census_escalates_when_the_pull_intake_search_is_saturated():
     counts = {
         **CENSUS_COUNTS,
-        monitor._unowned_query('pydantic/pydantic-ai', TRIAGE_OWNERS, lane='recent'): 101,
+        monitor._pull_intake_query('pydantic/pydantic-ai', TRIAGE_OWNERS): 101,
     }
-    client = CensusClient(counts, stalest={'number': 7800, 'created_at': '2026-08-25T00:00:00Z'})
+    client = CensusClient(counts, stale_page=[{'number': 7800, 'created_at': '2026-08-25T00:00:00Z'}])
 
     report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
 
     assert report.startswith('<@UADITYA> :rotating_light:')
-    assert '101 post-rollout without designated owner' in report
-    assert 'recovery search saturated' in report
+    assert 'PR intake: 101 unowned' in report
+    assert 'intake search saturated' in report
+
+
+def test_census_escalates_when_the_assignment_gate_backs_up():
+    counts = {
+        **CENSUS_COUNTS,
+        monitor._gate_query('pydantic/pydantic-ai', TRIAGE_OWNERS): monitor._GATE_BATCH_BREACH + 1,
+    }
+    client = CensusClient(counts, stale_page=[{'number': 7800, 'created_at': '2026-08-25T00:00:00Z'}])
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    assert report.startswith('<@UADITYA> :rotating_light:')
+    assert f'assignment gate: {monitor._GATE_BATCH_BREACH + 1} priority issues unassigned' in report
+
+
+def test_census_oldest_page_skips_a_deliberately_unassigned_issue():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-10T00:00:00Z'}])
+    client.timelines[7740] = [
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'adtyavrdhn'},
+        }
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    # A maintainer took this issue off someone's plate on purpose; paging about
+    # its age every morning would train everyone to ignore the heartbeat.
+    assert report.startswith(':telescope:')
+    assert 'oldest' not in report
+
+
+def test_census_oldest_ignores_bot_and_cleanup_unassignments():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
+    client.timelines[7740] = [
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'github-actions[bot]'},
+        },
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T01:00:00Z',
+            'actor': {'login': 'drive-by'},
+            'assignee': {'login': 'drive-by'},
+            'assigner': {'login': 'DouweM'},
+        },
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    # An automated sweep or stale-contributor cleanup is not a decision to
+    # leave the issue unassigned; the age alarm must keep firing.
+    assert 'oldest #7740' in report
+
+
+def test_census_oldest_looks_past_vetoed_issues_across_the_whole_breach_window():
+    client = CensusClient(
+        CENSUS_COUNTS,
+        stale_page=[
+            {'number': 7740, 'created_at': '2026-08-10T00:00:00Z'},
+            {'number': 7741, 'created_at': '2026-08-24T12:00:00Z'},
+        ],
+    )
+    client.timelines[7740] = [
+        {
+            'event': 'unassigned',
+            'created_at': '2026-08-24T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'adtyavrdhn'},
+        }
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    # Vetoed issues cannot suppress the alarm: the eligible one behind them is
+    # found, and the window spans the count-breach threshold.
+    assert 'oldest #7741' in report
+    assert client.gate_first == monitor._GATE_BATCH_BREACH
+
+
+def test_census_gate_age_runs_from_the_priority_label_not_creation():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-10T00:00:00Z'}])
+    client.timelines[7740] = [{'event': 'labeled', 'created_at': '2026-08-24T18:00:00Z', 'label': {'name': 'p:2-high'}}]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    # Triage labeling an old backlog issue puts it in the gate *now*; its
+    # creation date must not fire the one-day breach.
+    assert report.startswith(':telescope:')
+    assert 'oldest #7740 in the gate 0d' in report
+
+
+def test_census_oldest_is_the_stalest_in_gate_not_the_first_by_creation():
+    # The gate search sorts by creation, but the clock runs from the label: a
+    # just-labeled ancient issue must not mask a five-day-stale younger one.
+    client = CensusClient(
+        CENSUS_COUNTS,
+        stale_page=[
+            {'number': 100, 'created_at': '2023-01-01T00:00:00Z'},
+            {'number': 200, 'created_at': '2026-08-24T00:00:00Z'},
+        ],
+    )
+    client.timelines[100] = [{'event': 'labeled', 'created_at': '2026-08-24T18:00:00Z', 'label': {'name': 'p:2-high'}}]
+    client.timelines[200] = [
+        {'event': 'labeled', 'created_at': '2026-08-20T00:00:00Z', 'label': {'name': 'p:1-highest'}}
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    assert report.startswith('<@UADITYA> :rotating_light:')
+    assert 'oldest #200 in the gate 5d' in report
+
+
+def test_census_gate_clock_survives_a_priority_escalation_swap():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2023-01-01T00:00:00Z'}])
+    client.timelines[7740] = [
+        {'event': 'labeled', 'created_at': '2026-08-20T00:00:00Z', 'label': {'name': 'p:2-high'}},
+        {'event': 'unlabeled', 'created_at': '2026-08-24T12:00:00Z', 'label': {'name': 'p:2-high'}},
+        {'event': 'labeled', 'created_at': '2026-08-24T12:00:30Z', 'label': {'name': 'p:1-highest'}},
+    ]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>')
+
+    # Escalating p:2 → p:1 is more urgency, not a fresh arrival: the clock
+    # keeps running from the original gate entry.
+    assert 'oldest #7740 in the gate 5d' in report
 
 
 def test_census_rejects_an_untrusted_urgent_mention():
-    client = CensusClient(CENSUS_COUNTS, stalest={'number': 7740, 'created_at': '2026-08-20T00:00:00Z'})
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-20T00:00:00Z'}])
 
     with pytest.raises(ValueError, match='valid Aditya Slack mention'):
         monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<!channel>')
@@ -1312,7 +1496,7 @@ def test_weekly_digest_is_bounded_prioritized_and_metadata_only():
     assert '\u202e' not in report
     assert len(report.encode()) <= monitor._WEEKLY_TEXT_LIMIT
     graph_searches = [path for method, path, _ in client.calls if method == 'POST' and path == '/graphql']
-    assert len(graph_searches) <= 2 * len(monitor.MAINTAINER_OWNERS) + 3
+    assert len(graph_searches) <= 2 * len(monitor.MAINTAINER_OWNERS) + 4
     assert len(client.permission_reads()) == len(monitor.MAINTAINER_OWNERS)
 
 
@@ -1329,6 +1513,114 @@ def test_weekly_status_counts_inline_review_comments_as_owner_interaction():
     status = monitor._weekly_status(pull_request, timeline, 'dsfaccini', now=NOW)
 
     assert status == 'pull request · last reply/review @dsfaccini 24h ago · owner replied/reviewed 24h ago'
+
+
+def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
+    client = WeeklyClient(
+        {
+            1: {**item(1), 'created_at': '2026-07-01T00:00:00Z'},
+            2: {**item(2), 'created_at': '2026-07-01T00:00:00Z'},
+        }
+    )
+    client.timelines[1] = [
+        {
+            'event': 'unlabeled',
+            'created_at': '2026-07-19T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'p:2-high'},
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T00:05:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'p:3-mid'},
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T01:00:00Z',
+            'actor': {'login': 'pydanty'},
+            'label': {'name': 'p:1-highest'},
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T02:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'bug'},
+        },
+        {
+            # GitHub's real event shape: `actor` is the removed assignee,
+            # `assigner` is who acted. Out of the window, so excluded.
+            'event': 'unassigned',
+            'created_at': '2026-07-01T00:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+            'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'DouweM'},
+        },
+    ]
+    client.timelines[2] = [
+        {
+            'event': 'unassigned',
+            'created_at': '2026-07-18T00:00:00Z',
+            'actor': {'login': 'dsfaccini'},
+            'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'DouweM'},
+        },
+        {
+            # Removing a non-maintainer assignee is routine cleanup, not a
+            # correction of the routing automation.
+            'event': 'unassigned',
+            'created_at': '2026-07-18T01:00:00Z',
+            'actor': {'login': 'community-contributor'},
+            'assignee': {'login': 'community-contributor'},
+            'assigner': {'login': 'dsfaccini'},
+        },
+        {
+            # An automated unassignment is not a human correction.
+            'event': 'unassigned',
+            'created_at': '2026-07-18T02:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'github-actions[bot]'},
+        },
+    ]
+
+    report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=NOW)
+
+    assert '*Maintainer corrections this week*' in report
+    assert '• #1: @DouweM removed `p:2-high`' in report
+    assert '• #1: @DouweM added `p:3-mid`' in report
+    assert '• #2: @DouweM unassigned @dsfaccini' in report
+    # Bot relabels, bot unassignments, non-priority labels, and events older
+    # than the window stay out.
+    assert report.count('unassigned') == 1
+    assert '@pydanty' not in report
+    assert '`bug`' not in report
+    assert 'community-contributor' not in report
+    assert 'none recorded' not in report
+
+
+def test_weekly_corrections_stay_bounded_so_the_digest_always_ships():
+    client = WeeklyClient({1: {**item(1), 'created_at': '2026-07-01T00:00:00Z'}})
+    client.timelines[1] = [
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T00:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'label': {'name': 'p:3-mid'},
+        }
+        for _ in range(monitor._OVERRIDE_LINE_LIMIT + 5)
+    ]
+
+    report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=NOW)
+
+    assert report.count('added `p:3-mid`') == monitor._OVERRIDE_LINE_LIMIT
+    assert '…and 5 more corrections' in report
+
+
+def test_weekly_digest_records_no_corrections_without_maintainer_events():
+    report = monitor.weekly_digest(WeeklyClient(), 'pydantic/pydantic-ai', now=NOW)
+
+    assert '*Maintainer corrections this week*\n• none recorded' in report
 
 
 def test_weekly_digest_rejects_a_foreign_repository():
@@ -1374,7 +1666,7 @@ def test_weekly_digest_shows_a_bounded_recent_legacy_sample_without_assigning():
     assert 'Ignore policy' not in report
     assert report.count('<!channel>') == 0
     graph_searches = [path for method, path, _ in client.calls if method == 'POST' and path == '/graphql']
-    assert len(graph_searches) <= 2 * len(monitor.MAINTAINER_OWNERS) + 3
+    assert len(graph_searches) <= 2 * len(monitor.MAINTAINER_OWNERS) + 4
     assert len(client.permission_reads()) == len(monitor.MAINTAINER_OWNERS)
 
 
@@ -1437,8 +1729,8 @@ def test_census_mode_writes_the_heartbeat_payload(tmp_path: Path, monkeypatch: p
     values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
     assert json.loads(values['slack_payload']) == {
         'text': ':telescope: Attention coverage for pydantic/pydantic-ai — queue: 14 active, 9 cooling; '
-        'intake: 0 post-rollout without designated owner. '
-        'The Monday digest covers assigned, legacy, and draft work.'
+        'assignment gate: 2 priority issues unassigned; triage pool: 240 unlabeled issues; '
+        'PR intake: 3 unowned. The Monday digest covers assigned, legacy, and draft work.'
     }
 
 
@@ -2086,6 +2378,95 @@ def test_operations_workflow_routes_all_notices_to_the_triage_channel():
         assert checkout['with']['persist-credentials'] is False
 
 
+def _script_sources() -> dict[str, str]:
+    scripts = Path(__file__).parent
+    return {
+        path.name: path.read_text(encoding='utf-8')
+        for path in scripts.glob('*.py')
+        if not path.name.startswith('test_')
+    }
+
+
+def _local_import_closure(name: str, sources: dict[str, str]) -> set[str]:
+    """Every sibling script `name` imports, directly or through another sibling."""
+    closure: set[str] = set()
+    stack = [name]
+    while stack:
+        for module in re.findall(r'^(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)', sources[stack.pop()], flags=re.M):
+            filename = f'{module}.py'
+            if filename in sources and filename not in closure:
+                closure.add(filename)
+                stack.append(filename)
+    return closure
+
+
+def _boundary_script_names(sources: dict[str, str]) -> set[str]:
+    """The triage scripts: everything that imports the typed boundary, plus what those import."""
+    names = {name for name, text in sources.items() if 'from triage_models import' in text}
+    return names | {imported for name in names for imported in _local_import_closure(name, sources)}
+
+
+def _workflow_jobs() -> list[tuple[str, str, list[dict[str, Any]]]]:
+    """(file, job name, steps) for every job in every workflow file, compiled locks included."""
+    entries: list[tuple[str, str, list[dict[str, Any]]]] = []
+    for path in sorted((Path(__file__).parent.parent / 'workflows').glob('*.yml')):
+        jobs = (yaml.safe_load(path.read_text(encoding='utf-8')) or {}).get('jobs') or {}
+        for job_name, job in jobs.items():
+            steps = [step for step in job.get('steps', []) if isinstance(step, dict)]
+            entries.append((path.name, job_name, steps))
+    return entries
+
+
+def test_every_script_running_job_installs_the_same_pinned_boundary_dependency():
+    """pydantic is the scripts' one required package; every job that runs one pins it, to one version."""
+    boundary = _boundary_script_names(_script_sources())
+    pins: set[str] = set()
+    checked: list[tuple[str, str]] = []
+    for file_name, job_name, steps in _workflow_jobs():
+        runs = [str(step.get('run', '')) for step in steps]
+        if not any(f'.github/scripts/{name}' in run for run in runs for name in boundary):
+            continue
+        checked.append((file_name, job_name))
+        installs = re.findall(r"pip install --quiet 'pydantic==([0-9][0-9a-z.]*)'", '\n'.join(runs))
+        assert installs, (file_name, job_name)
+        pins.update(installs)
+    # The discovery itself is under test: if the glob or the import scan break,
+    # this fails instead of silently checking nothing.
+    assert len(checked) >= 4, checked
+    assert len(pins) == 1, pins
+
+
+def test_every_sparse_checkout_fetches_the_whole_import_closure_of_the_scripts_it_runs():
+    """A job that sparse-checks-out a script must also fetch every sibling module it imports."""
+    sources = _script_sources()
+    for file_name, job_name, steps in _workflow_jobs():
+        checkout = '\n'.join(
+            str((step.get('with') or {}).get('sparse-checkout', ''))
+            for step in steps
+            if isinstance(step.get('with'), dict)
+        )
+        if not checkout.strip():
+            continue
+        runs = '\n'.join(str(step.get('run', '')) for step in steps)
+        for name in sources:
+            if f'.github/scripts/{name}' in runs and f'.github/scripts/{name}' in checkout:
+                for imported in _local_import_closure(name, sources):
+                    assert f'.github/scripts/{imported}' in checkout, (file_name, job_name, name, imported)
+
+
+def test_boundary_scripts_import_only_the_stdlib_the_siblings_and_the_pinned_packages():
+    """The workflow jobs install exactly pydantic (and logfire where used); nothing else may creep in."""
+    sources = _script_sources()
+    siblings = {name.removesuffix('.py') for name in sources}
+    for name in sorted(_boundary_script_names(sources)):
+        for module in re.findall(r'^(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)', sources[name], flags=re.M):
+            root = module.split('.')[0]
+            assert root in sys.stdlib_module_names or root in siblings or root in {'pydantic', 'logfire'}, (
+                name,
+                module,
+            )
+
+
 def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
     workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
     text = workflow.read_text()
@@ -2128,7 +2509,8 @@ def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolate
     assert checkout['with']['repository'] == '${{ job.workflow_repository }}'
     assert checkout['with']['ref'] == '${{ job.workflow_sha }}'
     assert checkout['with']['persist-credentials'] is False
-    assert checkout['with']['sparse-checkout'] == '.github/scripts/issue_pr_attention_monitor.py'
+    # The import-closure test asserts the sibling modules ride along.
+    assert '.github/scripts/issue_pr_attention_monitor.py' in checkout['with']['sparse-checkout']
     build_text = json.dumps(jobs['build'])
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in build_text
     assert 'issue_pr_attention_monitor.py weekly' in build_text
@@ -2137,18 +2519,6 @@ def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolate
         action = jobs[job_name]['steps'][0]
         assert action['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
         assert action['with']['webhook'] == '${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}'
-
-
-def test_monitor_imports_with_stdlib_only():
-    # Production invokes the script with the runner's bare `python` (no venv,
-    # no third-party packages); `-S` blocks site-packages to reproduce that.
-    result = subprocess.run(
-        [sys.executable, '-S', '-c', 'import issue_pr_attention_monitor'],
-        env={**os.environ, 'PYTHONPATH': str(Path(__file__).parent)},
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 class StubResponse(io.BytesIO):
