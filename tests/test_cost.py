@@ -196,18 +196,16 @@ def test_run_usage_cost_arithmetic():
 
 
 def test_run_usage_subtraction():
-    """`RunUsage` subtraction includes details and numeric extension fields from either side."""
-    before = RunUsage(requests=1, input_tokens=2, details={'cached': 3}, cost=Decimal('1.5'))
-    before.__dict__['custom_units'] = 2
+    """`RunUsage` subtraction includes custom counters in details from either side."""
+    before = RunUsage(requests=1, input_tokens=2, details={'cached': 3, 'custom_units': 2}, cost=Decimal('1.5'))
     after = RunUsage(
         requests=3,
         tool_calls=1,
         input_tokens=7,
         output_tokens=4,
-        details={'cached': 5, 'reasoning': 2},
+        details={'cached': 5, 'reasoning': 2, 'custom_units': 7},
         cost=Decimal('4'),
     )
-    after.__dict__['custom_units'] = 7
 
     delta = after - before
     expected = RunUsage(
@@ -215,16 +213,13 @@ def test_run_usage_subtraction():
         tool_calls=1,
         input_tokens=5,
         output_tokens=4,
-        details={'cached': 2, 'reasoning': 2},
+        details={'cached': 2, 'reasoning': 2, 'custom_units': 5},
         cost=Decimal('2.5'),
     )
-    expected.__dict__['custom_units'] = 5
     assert delta == expected
-    assert delta.__dict__['custom_units'] == 5
     unchanged = before - before
-    assert unchanged.details == {'cached': 0}
-    assert unchanged.__dict__['custom_units'] == 0
-    assert (RunUsage() - before).__dict__['custom_units'] == -2
+    assert unchanged.details == {'cached': 0, 'custom_units': 0}
+    assert (RunUsage() - before).details['custom_units'] == -2
 
 
 def test_model_response_cost_requires_model_name():

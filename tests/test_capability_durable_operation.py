@@ -329,8 +329,8 @@ class UsageOperation(AbstractCapability[Any]):
         await Agent(TestModel(custom_output_text='summary')).run('summarize', usage=ctx.usage)
         ctx.usage.tool_calls += 2
         ctx.usage.details['summary_tokens'] = ctx.usage.details.get('summary_tokens', 0) + 3
+        ctx.usage.details['custom_units'] = ctx.usage.details.get('custom_units', 0) + 7
         ctx.usage.cost = (ctx.usage.cost or 0) + Decimal('0.25')
-        ctx.usage.__dict__['custom_units'] = ctx.usage.__dict__.get('custom_units', 0) + 7
 
 
 async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
@@ -441,8 +441,8 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.tool_calls,
             usage.details,
             usage.cost,
-            cast(int, usage.__dict__['custom_units']),
-        ) == (2, 2, {'summary_tokens': 3}, Decimal('0.25'), 7)
+            usage.details['custom_units'],
+        ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
 
 
@@ -1106,14 +1106,14 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
     async def workflow() -> tuple[int, int, dict[str, int], Decimal | None, int]:
         result = await agent.run('test')
         usage = result.usage
-        return usage.requests, usage.tool_calls, usage.details, usage.cost, cast(int, usage.__dict__['custom_units'])
+        return usage.requests, usage.tool_calls, usage.details, usage.cost, usage.details['custom_units']
 
     with SetWorkflowID(workflow_id):
         first = await workflow()
     with SetWorkflowID(workflow_id):
         replayed = await workflow()
 
-    assert first == replayed == (2, 2, {'summary_tokens': 3}, Decimal('0.25'), 7)
+    assert first == replayed == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
 
 
