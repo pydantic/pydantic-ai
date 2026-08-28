@@ -75,6 +75,7 @@ from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeResponseInterruptedEvent,
     RealtimeSession as _RealtimeSession,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
@@ -1444,6 +1445,124 @@ async def test_played_audio_bytes_requires_exactly_one_audio_stream() -> None:
     session = RealtimeSession(conn, _noop_runner)
     with pytest.raises(UserError, match=r'`played_audio_bytes` needs exactly one active.*not 0'):
         _ = session.played_audio_bytes
+
+
+async def test_handle_barge_in_interrupts_automatically_on_speech_start() -> None:
+    """With `handle_barge_in=True` the session runs the whole local half of barge-in itself.
+
+    The app writes no handler at all: the session attributes its own tracked playback position,
+    flushes the unheard chunk, truncates, and cancels — and the speech-start event still reaches
+    the app's iterator afterwards, already handled.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK), AudioDelta(b'c' * _CHUNK)],
+        [RealtimeInputSpeechStartEvent()],
+    )
+    session = RealtimeSession(conn, _noop_runner, handle_barge_in=True)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK
+        assert await anext(stream) == b'b' * _CHUNK  # confirms `a`; `b` in flight, `c` buffered
+
+        conn.release.set()
+        events = await drain_events(session)
+
+        assert RealtimeInputSpeechStartEvent() in events
+        assert conn.sent == [TruncateOutput(audio_end_ms=100), CancelResponse()]
+        # `c` was flushed; the stream ends without delivering it.
+        assert [chunk async for chunk in stream] == []
+
+
+async def test_handle_barge_in_without_truncation_flushes_and_cancels() -> None:
+    """On a model without output truncation (xAI), unheard audio still means flush plus a bare cancel."""
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)],
+        [RealtimeInputSpeechStartEvent()],
+    )
+    session = RealtimeSession(
+        conn, _noop_runner, handle_barge_in=True, profile=_profile(supports_output_truncation=False)
+    )
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK  # `a` in flight, `b` buffered and unheard
+
+        conn.release.set()
+        _ = await drain_events(session)
+
+        assert conn.sent == [CancelResponse()]
+        assert [chunk async for chunk in stream] == []
+
+
+async def test_handle_barge_in_does_nothing_on_a_quiet_turn() -> None:
+    """A speech start with no unheard audio must not send anything.
+
+    Here nothing was ever spoken (an ordinary user turn); on a model without truncation this is the
+    guard that prevents cancel-spamming the provider on every user utterance.
+    """
+    conn = _GatedRealtimeConnection([], [RealtimeInputSpeechStartEvent()])
+    session = RealtimeSession(
+        conn, _noop_runner, handle_barge_in=True, profile=_profile(supports_output_truncation=False)
+    )
+
+    async with session:
+        stream = session.stream_audio()
+        pull = asyncio.ensure_future(anext(stream))  # subscribe the single tap
+        await asyncio.sleep(0)
+        conn.release.set()
+        _ = await drain_events(session)
+
+        assert conn.sent == []
+        with pytest.raises(StopAsyncIteration):
+            await pull
+
+
+async def test_handle_barge_in_stands_down_without_a_single_audio_stream() -> None:
+    """Auto barge-in only acts on the single device-paced consumer setup it can reason about.
+
+    With no `stream_audio()` subscriber the session has no playback position and no buffer to
+    flush, so it must leave barge-in to the app rather than guess.
+    """
+    conn = FakeRealtimeConnection([AudioDelta(b'a' * _CHUNK), RealtimeInputSpeechStartEvent()])
+    session = RealtimeSession(conn, _noop_runner, handle_barge_in=True)
+
+    _ = await collect_events(session)
+
+    assert conn.sent == []
+
+
+async def test_handle_barge_in_respects_missing_interruption_support() -> None:
+    conn = _GatedRealtimeConnection([AudioDelta(b'a' * _CHUNK)], [RealtimeInputSpeechStartEvent()])
+    session = RealtimeSession(conn, _noop_runner, handle_barge_in=True, profile=_profile(supports_interruption=False))
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK
+        conn.release.set()
+        _ = await drain_events(session)
+
+        assert conn.sent == []
+
+
+async def test_handle_barge_in_flushes_on_provider_initiated_interruption() -> None:
+    """Gemini reports no speech start; it interrupts itself, leaving only the local flush to do."""
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)],
+        [RealtimeResponseInterruptedEvent()],
+    )
+    session = RealtimeSession(conn, _noop_runner, handle_barge_in=True)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK  # `b` stays buffered, then unheard
+
+        conn.release.set()
+        _ = await drain_events(session)
+
+        # The interruption is provider-side already: nothing to send, only local audio to drop.
+        assert conn.sent == []
+        assert [chunk async for chunk in stream] == []
 
 
 async def test_speech_parts_do_not_persist_provider_item_ids() -> None:

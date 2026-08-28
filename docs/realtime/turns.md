@@ -29,26 +29,50 @@ Their accepted values, defaults, and limitations are documented on the
 ## Barge-in
 
 With server-side turn detection, providers interrupt the model when they detect new user speech.
-Your application still owns audio already queued for playback and must flush that local buffer.
+What remains is the local half of the problem: audio already queued for playback that the user
+will never hear, and a provider-side transcript that would otherwise record unheard words.
 
-Providers whose profile declares
+When playback drains the session's single
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator — writing each
+chunk to the device before pulling the next — the session can handle that half itself. Pass
+`handle_barge_in=True` when opening the session:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def main():
+    realtime = agent.realtime('openai:gpt-realtime')
+    async with realtime.session(handle_barge_in=True) as session:
+        async for chunk in session.stream_audio():
+            ...  # write the chunk to your speaker, waiting until the device consumed it
+```
+
+When the user speaks over the model, the session discards the buffered audio the user will never
+hear, truncates the provider's transcript to what was actually played, and cancels the response —
+doing nothing when the previous reply was heard in full, since the speech-start signal also fires
+on ordinary user turns. Provider differences are absorbed: on a model without output truncation
+(xAI) the response is cancelled without a truncation point, and when the provider interrupts
+itself without reporting speech onset (Gemini) only the local flush is performed. The events still
+reach your iterator, already handled — react to them for UI state or to flush your audio layer's
+own in-flight block, the one buffer the session cannot reach.
+
+As an alternative, handle barge-in yourself. The signals: providers whose profile declares
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
 (OpenAI, Azure OpenAI, and xAI) emit
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] when user speech begins.
 Gemini emits [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] when it
-interrupts model output instead. These are the signals to flush playback; read the flag rather than
-waiting on an event a provider never sends.
+interrupts model output instead. Read the flag rather than waiting on an event a provider never
+sends.
 
-[`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the rest. When playback
-drains the session's single [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
-iterator — writing each chunk to the device before pulling the next — the session tracks the
-playback position itself, as
-[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]: a chunk counts as
-played once the consumer comes back for the next one. Pass it to `played_bytes` and the session
-owns the whole barge-in: it attributes the position to the current turn, discards the buffered
-audio the user will never hear, truncates the provider's transcript to what was really heard, and
-does nothing when the turn was heard in full (the speech-start event also fires on ordinary user
-turns when nothing is playing):
+While playback keeps the single device-paced iterator, staying in control of the trigger costs one
+line: the session still tracks the playback position for you, as
+[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes] (a chunk counts as
+played once the consumer comes back for the next one), and passing it to
+[`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] gets the same
+flush-attribute-truncate-cancel treatment as `handle_barge_in=True`:
 
 ```python
 import asyncio
@@ -68,14 +92,13 @@ async def conversation(session: RealtimeSession) -> None:
     playback.cancel()
 ```
 
-The device's own in-flight block is the one thing the session cannot reach; flush it too when your
-audio layer can. A playback loop that instead buffers ahead of the device makes
-`played_audio_bytes` read too far — count actual device consumption yourself and pass that.
+A playback loop that instead buffers ahead of the device makes `played_audio_bytes` read too far —
+count actual device consumption yourself and pass that.
 
-As an alternative, when playback doesn't drain a single session-long `stream_audio()` iterator —
-several consumers, a model without output truncation, or a transport where the session never
-touches the audio — keep your own accounting and pass `played_ms` (or nothing). `Speaker` here
-stands in for your playback layer — anything that can report and flush buffered audio:
+Finally, when playback doesn't drain a single session-long `stream_audio()` iterator — several
+consumers, a playback layer that buffers ahead of the device, or a transport where the session
+never touches the audio — keep your own accounting and pass `played_ms` (or nothing). `Speaker`
+here stands in for your playback layer — anything that can report and flush buffered audio:
 
 ```python
 from typing import Protocol

@@ -29,7 +29,7 @@ from pydantic_ai import (
     PartEndEvent,
     SpeechPart,
 )
-from pydantic_ai.realtime import RealtimeInputSpeechStartEvent, RealtimeSession
+from pydantic_ai.realtime import RealtimeSession
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -69,8 +69,9 @@ async def conversation(session: RealtimeSession) -> None:
         # speaker pace while the model runs ahead; `stream_audio()`'s own buffer bounds
         # the backlog, dropping its oldest chunks if playback falls too far behind, so a
         # machine that stutters glitches instead of ending the call. Pulling the next
-        # chunk only after the device consumed the previous one is also what lets the
-        # session track the playback position itself, as `session.played_audio_bytes`.
+        # chunk only after the device consumed the previous one also lets the session
+        # track the playback position itself, which is what `handle_barge_in=True` uses
+        # to handle interruptions without any code here.
         async def play_audio() -> None:
             async for chunk in session.stream_audio():
                 await speaker.write(chunk)
@@ -80,13 +81,6 @@ async def conversation(session: RealtimeSession) -> None:
         print('Listening — start talking (Ctrl-C to quit).')
         async for event in session:
             match event:
-                case RealtimeInputSpeechStartEvent():
-                    # The provider stops the model on its own when the user speaks. Given
-                    # the playback position, the session drops the audio the user will
-                    # never hear and truncates the turn's transcript to what was really
-                    # heard — or does nothing when the turn was heard in full, since the
-                    # event also fires when nothing is playing.
-                    await session.interrupt(played_bytes=session.played_audio_bytes)
                 case PartEndEvent(part=SpeechPart() as part) if part.transcript:
                     print(f'{part.speaker}: {part.transcript}')
                 case FunctionToolCallEvent(part=call):
@@ -100,8 +94,12 @@ async def conversation(session: RealtimeSession) -> None:
 
 async def main():
     # The session opens before the microphone starts capturing, so no audio from before
-    # the conversation began is queued up and sent to the model as stale input.
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    # the conversation began is queued up and sent to the model as stale input. With
+    # `handle_barge_in=True`, interrupting the model mid-sentence is handled by the
+    # session itself: it stops playback of the rest of the reply and truncates the
+    # provider's transcript to what was actually heard.
+    realtime = agent.realtime('openai:gpt-realtime')
+    async with realtime.session(handle_barge_in=True) as session:
         await conversation(session)
 
 

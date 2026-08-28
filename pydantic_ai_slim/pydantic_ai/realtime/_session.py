@@ -547,6 +547,7 @@ class RealtimeSession:
         usage: RunUsage | None = None,
         usage_limits: UsageLimits | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         message_history: Sequence[ModelMessage] | None = None,
@@ -610,6 +611,7 @@ class RealtimeSession:
         self._audio_retention = audio_retention
         self._retain_input = audio_retention in ('input_audio', 'all')
         self._retain_output = audio_retention in ('output_audio', 'all')
+        self._handle_barge_in = handle_barge_in
         if retain_images_every_n < 1:
             raise UserError('`retain_images_every_n` must be at least 1.')
         self._retain_images_every_n = retain_images_every_n
@@ -1334,15 +1336,7 @@ class RealtimeSession:
             return False
         # Unheard audio exists: flush what's buffered, and erase the cancelled part's stragglers as
         # they arrive, so the stream carries nothing the barge-in already cut off.
-        while not tap.queue.empty():
-            item = tap.queue.get_nowait()
-            if item is self._tap_finished:  # pragma: no cover - defensive: the sentinel means the
-                # pump ended, and a finished pump has published everything, making `playhead >=
-                # emitted` unreachable only when audio was dropped in the same window.
-                tap.queue.put_nowait(item)
-                break
-            assert isinstance(item, bytes)
-            tap.dropped_bytes += len(item)
+        self._flush_tap(tap)
         self._interrupted_audio_part_index = self._audio_part_index
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
         played_ms = max(0, playhead - self._turn_audio_start_bytes) * 1000 // (self.audio_output_sample_rate * 2)
@@ -1351,6 +1345,44 @@ class RealtimeSession:
         self._pending_interrupted_at_ms = played_ms
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
+
+    def _flush_tap(self, tap: _AudioTap) -> None:
+        """Discard the tap's buffered chunks, counting them as dropped for position mapping."""
+        while not tap.queue.empty():
+            item = tap.queue.get_nowait()
+            if item is self._tap_finished:  # pragma: no cover - defensive: the sentinel is enqueued
+                # once the pump has finished, after which nothing arrives that would need flushing.
+                tap.queue.put_nowait(item)
+                break
+            assert isinstance(item, bytes)
+            tap.dropped_bytes += len(item)
+
+    async def _auto_barge_in(self, event: RealtimeEvent) -> None:
+        """The local half of barge-in, run by the session itself under `handle_barge_in=True`.
+
+        Only acts while exactly one `stream_audio()` iterator is subscribed — the device-paced
+        playback setup whose position the session tracks; any other topology keeps the manual
+        `interrupt()` flow. Provider differences are absorbed here: a speech start on a truncating
+        model gets the full flush-attribute-truncate-cancel treatment; without output truncation
+        (xAI) unheard audio is flushed and the response cancelled untruncated; and a
+        provider-initiated interruption (Gemini, which reports no speech start) leaves only the
+        local flush to do.
+        """
+        if len(self._audio_taps) != 1:
+            return
+        (tap,) = self._audio_taps
+        if isinstance(event, RealtimeInputSpeechStartEvent):
+            if not self._profile.get('supports_interruption', False):
+                return
+            if self._profile.get('supports_output_truncation', False):
+                await self._interrupt_at_playback(tap.played_bytes)
+            elif tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes < self._emitted_audio_bytes:
+                self._flush_tap(tap)
+                self._interrupted_audio_part_index = self._audio_part_index
+                await self.interrupt()
+        elif isinstance(event, RealtimeResponseInterruptedEvent):
+            self._flush_tap(tap)
+            self._interrupted_audio_part_index = self._audio_part_index
 
     async def _send_frame(self, *contents: RealtimeInput) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
@@ -2620,6 +2652,10 @@ class RealtimeSession:
             return False
         for out in self._translate_event(event):
             self._publish_taps(out)
+            if self._handle_barge_in:
+                # Before the event reaches the consumer, so the app observes an already-handled
+                # barge-in rather than racing the session to handle it.
+                await self._auto_barge_in(out)
             await self._queue.put(out)
         if isinstance(event, ResponseDone):
             await self._drain_pending_messages('asap')
