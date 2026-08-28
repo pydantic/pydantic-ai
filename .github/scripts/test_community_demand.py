@@ -169,6 +169,31 @@ def test_apply_rejects_output_that_does_not_cover_every_candidate(tmp_path: Path
     assert client.labeled == []
 
 
+@pytest.mark.parametrize(
+    ('entry', 'message'),
+    [
+        ({'item_number': '7; echo pwned', 'verdict': 'genuine', 'confidence': 'high'}, 'positive decimal'),
+        # The boundary is ASCII-only by design: '７' (a fullwidth digit) passes
+        # str.isdecimal() but is not something the agent is ever asked to write.
+        ({'item_number': '７', 'verdict': 'genuine', 'confidence': 'high'}, 'positive decimal'),
+        ({'item_number': '7', 'verdict': 'attacker', 'confidence': 'high'}, r"verdict\s+Input should be 'genuine'"),
+        ({'item_number': '7', 'verdict': 'genuine', 'confidence': 'certain'}, r"confidence\s+Input should be 'high'"),
+    ],
+)
+def test_apply_rejects_hostile_verdict_values_before_any_label_write(
+    tmp_path: Path, entry: dict[str, str], message: str
+):
+    now = community_demand.dt.datetime.now(community_demand.dt.timezone.utc)
+    client = FakeClient({7: issue(7)}, search=[7])
+    snapshot_path = tmp_path / 's.json'
+    community_demand.write_snapshot(client, REPO, str(snapshot_path), now=now)
+    output = write_verdicts(tmp_path / 'out.json', [entry])
+
+    with pytest.raises(ValueError, match=message):
+        community_demand.apply_verdicts(client, REPO, output, str(snapshot_path))
+    assert client.labeled == []
+
+
 def test_apply_skips_an_issue_that_changed_after_classification(tmp_path: Path):
     now = community_demand.dt.datetime.now(community_demand.dt.timezone.utc)
     client = FakeClient({7: issue(7)}, search=[7])
