@@ -1,0 +1,62 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '104'
+      content-type:
+      - application/json
+      host:
+      - synthorai.io
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: claude-opus-5
+      stream: false
+    uri: https://synthorai.io/v1/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '330'
+      content-security-policy:
+      - 'default-src ''self''; script-src ''self'' ''unsafe-inline'' ''unsafe-eval'' https://www.googletagmanager.com https://js.stripe.com
+        https://unpkg.com; style-src ''self'' ''unsafe-inline'' https://unpkg.com; img-src ''self'' data: https:; font-src
+        ''self'' data:; connect-src ''self'' https: wss:; frame-src ''self'' https://js.stripe.com https://hooks.stripe.com;
+        frame-ancestors ''none''; base-uri ''self''; form-action ''self'''
+      content-type:
+      - application/json
+      permissions-policy:
+      - geolocation=(), microphone=(self), camera=(), payment=()
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: '4'
+          role: assistant
+      created: 1787881745
+      id: chatcmpl-1070e3ecb7c14690b1eba3a3e0fd30f2
+      model: claude-opus-5
+      object: chat.completion
+      usage:
+        completion_tokens: 1
+        cost: 0.0033845
+        prompt_tokens: 6764
+        total_tokens: 6765
+    status:
+      code: 200
+      message: OK
+version: 1
