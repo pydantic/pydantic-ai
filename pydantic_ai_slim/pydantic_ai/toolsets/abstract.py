@@ -165,7 +165,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
         Simple implementations can return a plain `str`; advanced implementations can return
         [`InstructionPart`][pydantic_ai.messages.InstructionPart] objects to indicate whether
-        each instruction block is static or dynamic for caching purposes.
+        each instruction part is static or dynamic for caching purposes.
 
         Args:
             ctx: The run context for this agent run.
@@ -179,7 +179,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     async def _collect_instruction_contributions(
         self, ctx: RunContext[AgentDepsT]
     ) -> list[InstructionContribution[AgentDepsT]]:
-        """Collect contributions once, preserving the toolset that authored every relayed block.
+        """Collect contributions once, preserving the toolset that authored every relayed part.
 
         A toolset that only passes its children along is walked; anything that speaks for itself is
         asked once. That covers a leaf and a container whose subclass took `get_instructions` over
@@ -194,7 +194,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         sources_by_key = self._instruction_sources_by_key()
         contributions: list[InstructionContribution[AgentDepsT]] = []
         for part in normalize_toolset_instruction_parts(result):
-            # A key names the toolset that owns it, so a block arriving under one below this
+            # A key names the toolset that owns it, so a part arriving under one below this
             # container is being relayed and stays attributed there. Everything else this container
             # wrote itself, and is resolved against its own key like any other author's.
             owner = (

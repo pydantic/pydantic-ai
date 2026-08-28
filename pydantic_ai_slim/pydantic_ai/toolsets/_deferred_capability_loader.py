@@ -80,7 +80,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
         # Sourced through `_collect_instructions` rather than `get_instructions` so a loaded
-        # capability's blocks carry the same `capability:<id>` keys they would have had if the
+        # capability's parts carry the same `capability:<id>` keys they would have had if the
         # capability were eager. `InstructionPart.join` below flattens the ids away today, because
         # a load delivers its instructions as tool-return text rather than as request parts — but
         # the identity is assigned in one place for both paths instead of two that can drift.

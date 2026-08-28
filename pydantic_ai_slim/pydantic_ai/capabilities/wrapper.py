@@ -140,7 +140,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
         # Pass through the wrapped capability's own attribution: a wrapper adopts the id of the
         # capability it wraps, but a wrapper over a container has none to adopt and would
-        # otherwise flatten every leaf's contribution into one unaddressable block.
+        # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:

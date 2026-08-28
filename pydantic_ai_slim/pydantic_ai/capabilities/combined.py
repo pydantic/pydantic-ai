@@ -108,7 +108,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             # children, replaced above, or the containers flattening splatted out. Those are not in
             # `capabilities` and so not in `replacements`, and left alone one would keep answering
             # from the children it had before the bind, with its leaves absent from the ordering
-            # positions sorting its block last. Its children *are* in `replacements`, having been
+            # positions sorting its part last. Its children *are* in `replacements`, having been
             # flattened into the very list that was just rebound, so rebuild it from those.
             assert isinstance(source, CombinedCapability)
             return source._rebound([replacements.get(id(child), child) for child in source.capabilities])
@@ -175,8 +175,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _ordered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
         """The composition view, in the order the ordering pass settled the leaves into.
 
-        Instruction blocks have always followed `capabilities`, which `__normalize_capabilities`
-        flattens *and* sorts, so a capability that asks to be `outermost` contributes its block
+        Instruction parts have always followed `capabilities`, which `__normalize_capabilities`
+        flattens *and* sorts, so a capability that asks to be `outermost` contributes its part
         first however late it was registered. `_instruction_sources` is in registration order and
         retains the containers flattening drops, so each source takes the position of its
         earliest-placed leaf. Sorting the sources directly instead would re-run the ordering pass
@@ -189,7 +189,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
         def position(source: AbstractCapability[AgentDepsT]) -> int:
             # A source with no leaf among `capabilities` (nothing does this today) sorts last
-            # rather than first, so an unplaceable block can't displace a placed one.
+            # rather than first, so an unplaceable part can't displace a placed one.
             return min(
                 (positions[id(leaf)] for leaf in collect_leaves(source) if id(leaf) in positions),
                 default=len(positions),
@@ -202,7 +202,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         if type(self).get_instructions is CombinedCapability.get_instructions:
             return relayed
         # `get_instructions` is a public extension point, so a subclass that overrides it decides what
-        # this container says. What it hands back is usually its children's own blocks, and those stay
+        # this container says. What it hands back is usually its children's own parts, and those stay
         # attributed to whoever authored them; anything else it wrote itself.
         return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
 
