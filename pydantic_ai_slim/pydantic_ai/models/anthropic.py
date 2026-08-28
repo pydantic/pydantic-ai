@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -482,7 +482,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically.
+    it will be reused automatically. That automatically-reused id is the one container
+    Pydantic AI may replace on its own: if the API rejects a request that also carries
+    `CodeExecutionTool` uploads, the id is dropped and the request is sent once more so
+    the upload lands in a fresh container. Whatever you set here is never replaced that
+    way — a request pinning a container that the API rejects raises instead.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
@@ -955,14 +959,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container = self._get_container(messages, model_settings)
-        sends_container_uploads = any(
-            is_str_dict(block) and block['type'] == 'container_upload'
-            for message in anthropic_messages
-            for block in (message['content'] if isinstance(message['content'], list) else [])
-        )
+        container, container_from_history = self._get_container(messages, model_settings)
 
-        async def _create(
+        async def create(
             container_param: BetaContainerParams | str | None,
         ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
@@ -991,23 +990,41 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
-                return await _create(container)
+                return await create(container)
             except APIStatusError as e:
-                # Anthropic answers with a 500 — not the 404 it gives for an id that never existed —
-                # when a request asks it to materialize a `container_upload` into a container that has
-                # passed its ~1h TTL (https://github.com/pydantic/pydantic-ai/issues/7833). Resuming a
-                # `CodeExecutionTool(files=...)` conversation the next day hits exactly that, so the id
-                # we resolved from history is worse than no id at all: dropping it lets the server
-                # allocate a fresh container and put the file in it, which is what the caller wanted.
+                # A request that asks Anthropic to materialize a `container_upload` into a container it
+                # will not accept comes back 500, with the same generic `api_error` body any internal
+                # failure produces — not the 404 it gives for an id that never existed. We cannot read a
+                # cause off that response, so this is an inference from the shape that reproduces it:
+                # a `CodeExecutionTool(files=...)` conversation resumed against a days-old id 500s, and
+                # the same request without the id succeeds (https://github.com/pydantic/pydantic-ai/issues/7833).
+                # Anthropic documents containers as living 30 days with a checkpoint after ~5 minutes of
+                # inactivity, so this is deliberately *not* described here as expiry — the `expires_at`
+                # field is a shorter rolling value the docs warn does not report that limit.
                 #
                 # Retrying an opaque 500 is blunt, so the guard is narrow on purpose. It needs both
-                # halves of the shape that 500s — an id we resolved ourselves, and uploads actually on
-                # the wire — so any other 500 raises untouched and costs nobody a second round trip.
-                # Only a bare id is dropped; a user-configured `{'skills': ...}` container is theirs to
-                # keep. One retry, never a loop: if the retry fails, that error is what surfaces.
-                if e.status_code != 500 or not isinstance(container, str) or not sends_container_uploads:
+                # halves of the shape that reproduces — an id *we* resolved from history, and uploads
+                # actually on the wire — so any other 500 raises untouched and costs nobody a second
+                # round trip. A container the caller chose is never rewritten, whether they passed
+                # `{'skills': ...}`, a bare id, or are reconnecting a `pause_turn`: dropping one of
+                # those discards state they asked us to keep, and it would not self-heal, because
+                # `_get_container` prefers their setting over the fresh id the retry earns. The
+                # history-resolved id does self-heal — the next step's reverse scan finds the new
+                # container — which is what makes one retry enough rather than one retry per step.
+                #
+                # One retry, never a loop: if the retry fails, that error is what surfaces.
+                if e.status_code != 500 or not container_from_history:
                     raise
-                return await _create(None)
+                sends_container_uploads = False
+                for message in anthropic_messages:
+                    content = message['content']
+                    assert isinstance(content, list)
+                    if any(is_str_dict(block) and block['type'] == 'container_upload' for block in content):
+                        sends_container_uploads = True
+                        break
+                if not sends_container_uploads:
+                    raise
+                return await create(None)
 
     @staticmethod
     def _add_compaction_params(
@@ -1134,8 +1151,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
-    ) -> BetaContainerParams | str | None:
-        """Resolve the `container` request parameter.
+    ) -> tuple[BetaContainerParams | str | None, bool]:
+        """Resolve the `container` request parameter, and whether we resolved it from history.
+
+        The second element is `True` only for an id recovered by the history scan below. That is the
+        one container the caller never chose, so it is the only one we may drop and re-resolve when
+        the API rejects it. A user-set `anthropic_container` and a `pause_turn` reconnect id are
+        both deliberate and stay on the wire even when they fail.
 
         The Anthropic SDK types `container` as `BetaContainerParams | str`, and the
         live API accepts both forms *except* for one specific shape: a dict carrying
@@ -1152,23 +1174,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
-                return None
+                return None, False
             if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
-                return cid
-            return container
+                return cid, False
+            return container, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
         # (e.g. Sonnet 4-6) even though plain string ID works fine.
         if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
             if messages[-1].provider_details:
-                return messages[-1].provider_details.get('container_id')
-            return None  # pragma: lax no cover
+                return messages[-1].provider_details.get('container_id'), False
+            return None, False  # pragma: lax no cover
 
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
-                    return cid
-        return None
+                    return cid, True
+        return None, False
 
     async def _messages_count_tokens(
         self,
@@ -2221,10 +2243,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _anchor_system_messages(anthropic_messages)
 
         if pending_container_uploads:
-            upload_blocks = [
-                BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
-                for file_id in pending_container_uploads
-            ]
             # Append the uploads to every user message that can carry one. Two constraints pin that
             # down, and no fixed set of positions satisfies both:
             #
@@ -2250,20 +2268,41 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # only `tool_result` blocks, because that is the one shape Anthropic accepts it in. This
             # loop runs after that decision, so adding a block here would retroactively invalidate
             # it and the next request is rejected with `bash_code_execution` tool use ... was found
-            # without ... — reachable whenever a function tool runs alongside this native tool.
+            # without ... — reachable whenever a function tool runs alongside this native tool. Both
+            # sides read that shape through `_is_tool_result_only` so they cannot drift apart.
+            #
+            # A history whose every user message is tool-result-only therefore sends no upload at
+            # all. Attaching one anyway is the rejection above, so this is the boundary rather than
+            # a gap to close.
+            #
+            # Each message gets its own block objects. They are equal, not shared: every later pass
+            # over this list mutates blocks in place (`_limit_cache_points` deletes `cache_control`,
+            # `_add_cache_control_to_last_cacheable_param` writes it), and one shared dict would
+            # smear such a write across every message at once. Nothing writes to an upload block
+            # today — `container_upload` is absent from `_ANTHROPIC_CACHEABLE_PARAM_TYPES`, so the
+            # cache walkers step past it — but that is the only reason, and adding the type to that
+            # set later would make sharing a silent cache bust of exactly the kind this comment
+            # exists to prevent.
             #
             # Cost is ~6 input tokens per block, growing with user turns rather than staying
             # constant, though every block outside the current turn falls inside a prefix an earlier
-            # step already cached. The file still materializes exactly once. The synthetic anchor
-            # turns `_anchor_system_messages` inserts are carried along too, which is harmless and
-            # keeps them prefix-stable.
+            # step already cached. The file still materializes exactly once. A synthetic anchor turn
+            # from `_anchor_system_messages` is a user message like any other and takes a block too,
+            # which keeps it prefix-stable; that only arises under a profile enabling inline system
+            # prompts, which is not the default here.
             for msg in anthropic_messages:
                 if msg['role'] == 'user':
                     existing = msg['content']
-                    assert not isinstance(existing, str)
-                    if existing and all(is_str_dict(b) and b['type'] == 'tool_result' for b in existing):
+                    assert isinstance(existing, list)
+                    if _is_tool_result_only(existing):
                         continue
-                    msg['content'] = [*existing, *upload_blocks]
+                    msg['content'] = [
+                        *existing,
+                        *(
+                            BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
+                            for file_id in pending_container_uploads
+                        ),
+                    ]
 
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -3458,6 +3497,17 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     return content if isinstance(content, list) else []
 
 
+def _is_tool_result_only(content: Sequence[BetaContentBlockParam]) -> bool:
+    """Whether a user message carries nothing but `tool_result` blocks.
+
+    Such a message answers an assistant turn rather than opening one, which is what makes it both
+    the one shape Anthropic accepts an unpaired native call in front of, and a message the
+    `container_upload` injection has to leave alone. Both callers depend on agreeing about that, so
+    they share this rather than each spelling it out.
+    """
+    return bool(content) and all(is_str_dict(block) and block['type'] == 'tool_result' for block in content)
+
+
 def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901
     """Drop native tool calls that Anthropic will reject without a rendered result.
 
@@ -3524,9 +3574,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
             message['content'] = kept
 
         suffix_is_tool_result_only = (
-            suffix_is_tool_result_only
-            and message['role'] == 'user'
-            and all(is_str_dict(block) and block['type'] == 'tool_result' for block in kept)
+            suffix_is_tool_result_only and message['role'] == 'user' and _is_tool_result_only(kept)
         )
 
 

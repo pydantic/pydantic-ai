@@ -1,10 +1,10 @@
 """Feature-central tests for `CodeExecutionTool.files` (uploaded-file support).
 
-The two VCR tests upload a real file via the provider's Files API and then run an
-agent with `CodeExecutionTool(files=[...])`, proving the upload round-trip end to
-end: the file reference reaches the provider (Anthropic `container_upload` block +
-`files-api-2025-04-14` beta; OpenAI Responses `code_interpreter` container
-`file_ids`) and the model reads the uploaded file. Each test also passes a
+The round-trip VCR tests — one per provider — upload a real file via the provider's
+Files API and then run an agent with `CodeExecutionTool(files=[...])`, proving the
+upload round-trip end to end: the file reference reaches the provider (Anthropic
+`container_upload` block + `files-api-2025-04-14` beta; OpenAI Responses
+`code_interpreter` container `file_ids`) and the model reads the uploaded file. Each test also passes a
 foreign-provider `UploadedFile` to show it is filtered out on the wire.
 
 `test_openai_code_execution_files_all_filtered` is the one branch the round-trip
@@ -29,6 +29,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
 from .conftest import RequestCapture, try_import
+from .models.conftest import content_blocks, message_shape
 
 with try_import() as anthropic_imports_successful:
     import anthropic
@@ -88,8 +89,7 @@ async def test_anthropic_code_execution_files(allow_model_requests: None, anthro
     # is filtered out, so only the anthropic file id is sent.
     messages_request = [r for r in vcr.requests if '/v1/messages' in r.uri][0]
     assert 'beta=true' in messages_request.uri
-    user_content = json.loads(messages_request.body)['messages'][0]['content']
-    container_uploads = [block for block in user_content if block['type'] == 'container_upload']
+    container_uploads = content_blocks(json.loads(messages_request.body), 'container_upload')
     assert container_uploads == [{'type': 'container_upload', 'file_id': uploaded.id}]
 
 
@@ -142,27 +142,33 @@ async def test_anthropic_code_execution_files_multi_turn(
 
     first_body, second_body = request_capture.bodies('/v1/messages')
 
-    first_uploads = [
-        block
-        for message in first_body['messages']
-        for block in message['content']
-        if block['type'] == 'container_upload'
-    ]
-    second_uploads = [
-        block
-        for message in second_body['messages']
-        for block in message['content']
-        if block['type'] == 'container_upload'
-    ]
-
     upload_block = {'type': 'container_upload', 'file_id': uploaded.id}
     # Turn 1: fresh container (no `container` param), one user message, so one upload block.
     assert 'container' not in first_body
-    assert first_uploads == [upload_block]
+    assert content_blocks(first_body, 'container_upload') == [upload_block]
     # Turn 2: container reused by id, *and* the upload block re-sent on each of the two user
     # messages — the redundant re-send is accepted by the API.
     assert second_body['container'] == container_id
-    assert second_uploads == [upload_block, upload_block]
+    assert content_blocks(second_body, 'container_upload') == [upload_block, upload_block]
+    # One upload per user message, not two on one: the count alone would not tell them apart.
+    assert message_shape(second_body) == snapshot(
+        [
+            ('user', ['text', 'container_upload']),
+            (
+                'assistant',
+                [
+                    'text',
+                    'server_tool_use',
+                    'bash_code_execution_tool_result',
+                    'text',
+                    'server_tool_use',
+                    'bash_code_execution_tool_result',
+                    'text',
+                ],
+            ),
+            ('user', ['text', 'container_upload']),
+        ]
+    )
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
@@ -214,16 +220,14 @@ async def test_anthropic_code_execution_files_fresh_container_multi_turn(
     second_body = request_capture.body('/v1/messages', index=1)
     assert 'container' not in second_body
 
-    upload_block = {'type': 'container_upload', 'file_id': uploaded.id}
-    user_messages = [m for m in second_body['messages'] if m['role'] == 'user']
-    assert len(user_messages) == 2
     # The block is on every user message, so it is on the last one — the only position the server
     # acts on. Asserting the last one alone would pass for a tail-only injection, which busts the
     # cacheable prefix instead (`test_anthropic_code_execution_files_cache_prefix_stable`).
-    assert [[b for b in m['content'] if b['type'] == 'container_upload'] for m in user_messages] == [
-        [upload_block],
-        [upload_block],
-    ]
+    assert message_shape(second_body) == snapshot(
+        [('user', ['text', 'container_upload']), ('assistant', ['text']), ('user', ['text', 'container_upload'])]
+    )
+    upload_block = {'type': 'container_upload', 'file_id': uploaded.id}
+    assert content_blocks(second_body, 'container_upload') == [upload_block, upload_block]
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
@@ -272,11 +276,13 @@ async def test_anthropic_code_execution_files_with_function_tool(
     # The request that follows the tool return: its last user message is the tool result and carries
     # no upload, while the prompt that opened the turn still does.
     bodies = request_capture.bodies('/v1/messages')
-    user_messages = [m for m in bodies[-1]['messages'] if m['role'] == 'user']
-    assert [[block['type'] for block in m['content']] for m in user_messages] == [
-        ['text', 'container_upload'],
-        ['tool_result'],
-    ]
+    assert message_shape(bodies[-1]) == snapshot(
+        [
+            ('user', ['text', 'container_upload']),
+            ('assistant', ['text', 'tool_use', 'server_tool_use']),
+            ('user', ['tool_result']),
+        ]
+    )
 
 
 # A real container from an earlier recording, dead for days. Anthropic 500s on a `container_upload`
@@ -288,12 +294,16 @@ _EXPIRED_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
 async def test_anthropic_code_execution_files_expired_container_is_dropped_and_retried(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
-    """An expired container id in history is dropped and the request resent once, so the file lands.
+    """A rejected container id resolved from history is dropped and the request resent once.
 
-    Resuming a `CodeExecutionTool(files=...)` conversation past the container's ~1h TTL sends an id
-    that is worse than no id: the upload cannot be materialized into a container that no longer
-    exists, and the API answers 500 rather than 404 (#7833). Two requests go out — the first carrying
-    the dead id, the second carrying no container at all — and the fresh container gets the file.
+    Resuming a `CodeExecutionTool(files=...)` conversation against a days-old id sends an id that is
+    worse than no id: the API refuses to materialize the upload and answers 500 — the same generic
+    `api_error` body any internal failure produces — rather than the 404 it gives for an id that
+    never existed (#7833). The cause is not readable off the response, so this test pins the shape
+    that reproduces rather than a documented rule: Anthropic documents containers as living 30 days
+    with a checkpoint after ~5 minutes of inactivity, and `expires_at` is a shorter rolling value the
+    docs warn does not report that limit. Two requests go out — the first carrying the dead id, the
+    second carrying no container at all — and the fresh container gets the file.
 
     `max_retries=0` keeps the SDK's own retry out of the way, so the two captured requests are ours.
     It also makes playback match live: the real 500 carries `x-should-retry: false` and the SDK stops

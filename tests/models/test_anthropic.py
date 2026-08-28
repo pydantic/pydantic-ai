@@ -90,6 +90,7 @@ from ..conftest import (
     IsInstance,
     IsNow,
     IsStr,
+    RequestCapture,
     TestEnv,
     iter_message_parts,
     message,
@@ -97,7 +98,7 @@ from ..conftest import (
     try_import,
 )
 from ..parts_from_messages import part_types_from_messages
-from .conftest import AnthropicModelFactory, RequestCapture, cache_breakpoints, content_blocks, message_shape
+from .conftest import AnthropicModelFactory, cache_breakpoints, content_blocks, message_shape
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -896,12 +897,113 @@ async def test_anthropic_code_execution_files_with_message_cache(allow_model_req
 
 
 async def test_anthropic_code_execution_files_500_without_uploads_is_not_retried(allow_model_requests: None):
-    """A 500 on a request carrying a container id but no uploads raises as-is, with no second attempt.
+    """A 500 on a request carrying a history-resolved container id but no uploads raises as-is, with no second attempt.
 
     Not a VCR test: an expired container with no `container_upload` in play answers 200 with an
     `unavailable` tool result, so this 500 shape can only be simulated. Pins that the container-drop
-    retry needs *both* halves of the shape that actually 500s, so an unrelated 500 never costs a
-    caller a duplicate request.
+    retry needs *both* halves of the shape that actually 500s — an id we resolved from history *and*
+    uploads on the wire — so an unrelated 500 never costs a caller a duplicate request. The mock
+    would answer a second attempt with another 500, so a retry that fired would show up as a second
+    request.
+    """
+    error = APIStatusError(
+        'server error',
+        response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'server error'},
+    )
+    mock_client = MockAnthropic.create_mock([error, error])
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, capabilities=[NativeTool(CodeExecutionTool())])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier turn.')]),
+        ModelResponse(
+            parts=[TextPart(content='Earlier answer.')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_01EG1LKXFPoQJ9tpbsZ1dh74'},
+        ),
+    ]
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello', message_history=history)
+
+    assert exc_info.value.status_code == 500
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert [kwargs['container'] for kwargs in completion_kwargs] == ['container_01EG1LKXFPoQJ9tpbsZ1dh74']
+
+
+# The cases carry raw container values rather than built `AnthropicModelSettings`: this list is
+# evaluated at import, and the settings type is undefined when anthropic isn't installed.
+_PINNED_CONTAINER_WITH_SKILLS: BetaContainerParams = {
+    'id': 'container_PINNED',
+    'skills': [{'type': 'anthropic', 'skill_id': 'xlsx', 'version': 'latest'}],
+}
+_PAUSED_TURN_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
+    ModelResponse(
+        parts=[TextPart(content='Working on it.')],
+        state='suspended',
+        provider_name='anthropic',
+        provider_details={'container_id': 'container_PAUSED'},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    'container,message_history,expected_container',
+    [
+        pytest.param('container_PINNED', None, 'container_PINNED', id='bare-id'),
+        pytest.param({'id': 'container_PINNED'}, None, 'container_PINNED', id='id-only-dict'),
+        pytest.param(_PINNED_CONTAINER_WITH_SKILLS, None, _PINNED_CONTAINER_WITH_SKILLS, id='dict-with-skills'),
+        pytest.param(None, _PAUSED_TURN_HISTORY, 'container_PAUSED', id='pause-turn-reconnect'),
+    ],
+)
+async def test_anthropic_code_execution_files_500_keeps_caller_container(
+    allow_model_requests: None,
+    container: BetaContainerParams | str | None,
+    message_history: list[ModelMessage] | None,
+    expected_container: BetaContainerParams | str,
+):
+    """A container the caller chose survives the 500 unchanged, uploads on the wire or not.
+
+    Only an id *we* resolved from history may be dropped. Dropping a caller's container discards
+    state they asked us to keep, and it would not self-heal: `_get_container` prefers their setting
+    over the fresh id a retry earns, so the dropped id would come straight back on the next step. A
+    `pause_turn` reconnect id is the caller's too — it is the turn they are resuming. The mock would
+    answer a second attempt with another 500, so a retry that fired would show up as a second
+    request.
+    """
+    error = APIStatusError(
+        'server error',
+        response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'server error'},
+    )
+    mock_client = MockAnthropic.create_mock([error, error])
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    settings: AnthropicModelSettings = {} if container is None else {'anthropic_container': container}
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id='file_x', provider_name='anthropic')]))],
+        model_settings=settings,
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run(None if message_history else 'Use the attached file.', message_history=message_history)
+
+    assert exc_info.value.status_code == 500
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert [kwargs['container'] for kwargs in completion_kwargs] == [expected_container]
+
+
+async def test_anthropic_code_execution_files_500_with_uploads_drops_history_container(allow_model_requests: None):
+    """A 500 on a history-resolved id with uploads on the wire is resent once, carrying no container at all.
+
+    A successful retry is covered live by
+    `test_code_execution_files_vcr.py::test_anthropic_code_execution_files_expired_container_is_dropped_and_retried`;
+    what this adds is the one-shot bound. Every attempt 500s here, so the second request shows the
+    retry drops the container and the third that never comes shows the drop is not a loop — the
+    retry's own error is what surfaces. (`MockAnthropic` cannot answer the retry with a success: it
+    only advances its response index on the way out, so an exception in a sequence is re-raised
+    forever.)
     """
     error = APIStatusError(
         'server error',
@@ -912,24 +1014,32 @@ async def test_anthropic_code_execution_files_500_without_uploads_is_not_retried
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         model,
-        capabilities=[NativeTool(CodeExecutionTool())],
-        model_settings=AnthropicModelSettings(anthropic_container='container_01EG1LKXFPoQJ9tpbsZ1dh74'),
+        capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id='file_x', provider_name='anthropic')]))],
     )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
+        ModelResponse(
+            parts=[TextPart(content='Earlier answer.')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_from_history'},
+        ),
+    ]
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run('hello')
+        await agent.run('And now summarize it.', message_history=history)
 
     assert exc_info.value.status_code == 500
-    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert [kwargs['container'] for kwargs in completion_kwargs] == ['container_from_history', OMIT]
 
 
 async def test_anthropic_code_execution_files_append_to_every_user_message(allow_model_requests: None):
     """Pins the internal `_map_message` placement: uploads attach to *every* user message that can carry one (covering all of them reaches the turn being generated while keeping each byte-identical as history grows), and none are added when history has no user message.
 
-    Not a VCR test: the cassette matchers ignore the request body, so a placement regression replays
-    green against the recordings in `test_code_execution_files_vcr.py` — asserting the mapped
-    messages directly is what catches it. The no-user-message branch is also unreachable through an
-    agent run, which needs a prompt.
+    Not a VCR test: the recordings in `test_code_execution_files_vcr.py` do catch a placement
+    regression — they read the outbound request through the `request_capture` hook — but the
+    no-user-message branch is unreachable through an agent run, which needs a prompt, so asserting
+    the mapped messages directly is what covers it.
     """
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
