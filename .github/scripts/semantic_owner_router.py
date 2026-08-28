@@ -427,7 +427,7 @@ def decision_for(
     participant = _participant_decision(client, repo, number, participant_login)
     if participant is not None:
         return Selection(number=number, decision=participant, status='route')
-    if participant_login is not None:
+    if participant_login:
         return Selection(number=number, decision=None, status='superseded-maintainer-response')
     filenames: list[str] | None = None
     if is_pull_request:

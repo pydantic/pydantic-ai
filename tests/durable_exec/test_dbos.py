@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import time
@@ -78,7 +79,7 @@ from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from .conftest import IsDatetime, IsNow, IsStr
+from ..conftest import IsDatetime, IsNow, IsStr
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -121,8 +122,8 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._inline_snapshot import snapshot
-from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from .._inline_snapshot import snapshot
+from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -182,6 +183,21 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         yield dbos
     finally:
         DBOS.destroy()
+        # `enable_otlp=True` makes DBOS attach an OTel `LoggingHandler` and a `DBOSLogTransformer`
+        # filter to the root logger and every registered logger, and `DBOS.destroy()` does not detach
+        # them. A leaked handler/filter's emit path imports `dbos._context`, which imports
+        # `http.server` - fatal inside the Temporal workflow sandbox when an xdist worker later runs
+        # the temporal suite. Detach them here.
+        # TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
+        # https://github.com/dbos-inc/dbos-transact-py/issues/821
+        from dbos import _logger as dbos_logger_module
+        from opentelemetry.sdk._logs import LoggingHandler
+
+        for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
+            for handler in [h for h in logger.handlers if isinstance(h, LoggingHandler)]:
+                logger.removeHandler(handler)
+            for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
+                logger.removeFilter(log_filter)
 
 
 model = OpenAIChatModel(
@@ -1359,7 +1375,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            'MCPToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            "MCPToolset 'runtime_mcp' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
             'execute their own tools or resolve dynamically must be registered for durable execution when the '
             'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
             '`ExternalToolset` can be passed at runtime.'
@@ -1375,7 +1391,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
     with workflow_raises(
         UserError,
         snapshot(
-            'DynamicToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            "DynamicToolset 'runtime_dynamic' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
             'execute their own tools or resolve dynamically must be registered for durable execution when the '
             'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
             '`ExternalToolset` can be passed at runtime.'
@@ -4026,7 +4042,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
         )
 
     with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError, match=r"MCPToolset 'runtime_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
     ):
         await run_agent()
 
@@ -4040,7 +4056,8 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
         agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
 
     with pytest.raises(
-        UserError, match=r'DynamicToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError,
+        match=r"DynamicToolset 'runtime_dynamic' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS",
     ):
         run_agent()
 
@@ -4063,7 +4080,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             pass  # pragma: no cover
 
     with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+        UserError, match=r"MCPToolset 'iter_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
     ):
         await run_agent()
 
@@ -4087,7 +4104,7 @@ async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) ->
     async def run_agent() -> None:
         await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
 
-    with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
+    with pytest.raises(UserError, match="DynamicToolset 'per_run_dynamic' cannot be passed"):
         await run_agent()
 
 
