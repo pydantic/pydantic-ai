@@ -276,6 +276,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     @property
+    def model_id(self) -> str | None:
+        """The identifier from which the run's active `model` was resolved.
+
+        This is `None` when the model was passed as an instance instead of being resolved from an
+        identifier. The property is read-only; Pydantic AI manages the selection token internally.
+        """
+        return self._model_id
+
+    @property
     @deprecated(
         '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
         'always-on capability that was never loaded.',

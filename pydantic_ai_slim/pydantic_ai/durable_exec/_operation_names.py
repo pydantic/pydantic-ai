@@ -6,17 +6,17 @@ from typing import Protocol, runtime_checkable
 from typing_extensions import assert_never
 
 from ._operation import (
-    CallToolId,
-    CancelSuspendedResponseId,
     CapabilityOperationId,
-    CompactMessagesId,
     DurableOperationId,
     EventStreamHandlerId,
-    GetInstructionsId,
-    GetToolsId,
+    ModelCancelSuspendedResponseId,
+    ModelCompactMessagesId,
     ModelRequestId,
+    ToolsetCallToolId,
+    ToolsetGetInstructionsId,
+    ToolsetGetToolsId,
     ToolsetKind,
-    ValidateToolArgumentsId,
+    ToolsetValidateToolArgumentsId,
 )
 
 
@@ -80,24 +80,24 @@ class JournalOperationNamer:
             case ModelRequestId(model_id=model_id, streaming=streaming):
                 operation = 'model.request_stream' if streaming else 'model.request'
                 return f'{self._agent_name}__{operation}{self._model_suffix(model_id)}'
-            case CancelSuspendedResponseId(model_id=model_id):
+            case ModelCancelSuspendedResponseId(model_id=model_id):
                 return f'{self._agent_name}__model.cancel_suspended_response{self._model_suffix(model_id)}'
-            case CompactMessagesId(model_id=model_id):
+            case ModelCompactMessagesId(model_id=model_id):
                 return f'{self._agent_name}__model.compact_messages{self._model_suffix(model_id)}'
             case EventStreamHandlerId():
                 return f'{self._agent_name}__event_stream_handler'
-            case GetToolsId(toolset_kind=kind, toolset_id=toolset_id):
+            case ToolsetGetToolsId(toolset_kind=kind, toolset_id=toolset_id):
                 return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.get_tools'
-            case GetInstructionsId(toolset_id=toolset_id):
+            case ToolsetGetInstructionsId(toolset_id=toolset_id):
                 return f'{self._agent_name}__mcp_server__{toolset_id}.get_instructions'
-            case ValidateToolArgumentsId(toolset_kind=kind, toolset_id=toolset_id):
+            case ToolsetValidateToolArgumentsId(toolset_kind=kind, toolset_id=toolset_id):
                 return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.validate_args'
-            case CallToolId(toolset_kind=kind, toolset_id=toolset_id):
+            case ToolsetCallToolId(toolset_kind=kind, toolset_id=toolset_id):
                 return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.call_tool'
         assert_never(operation_id)
 
     def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
         name = self.operation_name(operation_id)
-        if isinstance(operation_id, CallToolId) and operation_id.toolset_kind != 'mcp':
+        if isinstance(operation_id, ToolsetCallToolId) and operation_id.toolset_kind != 'mcp':
             name = f'{name}:{_tool_name(params)}'
         return DurableInvocationName(name)

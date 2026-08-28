@@ -61,8 +61,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     }
     _tool_call_result_upgrade_lenient = True
     _journal_discovery = True
-    _allow_inline_mcp_in_durable_context = True
-
     _durable_unit_noun = 'step'
     _durable_container_noun = 'workflow'
     # No `_tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was

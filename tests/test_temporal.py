@@ -90,7 +90,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.durable_exec._operation import CallToolId
+from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -8931,18 +8931,18 @@ async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs
 
     assert (
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            CallToolId('function', 'opt_out_tools'), tools['async_tool'], 'async_tool'
+            ToolsetCallToolId('function', 'opt_out_tools'), tools['async_tool'], 'async_tool'
         )
         is False
     )
     with pytest.raises(UserError, match='non-async tools are run in threads'):
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            CallToolId('function', 'opt_out_tools'), tools['sync_tool'], 'sync_tool'
+            ToolsetCallToolId('function', 'opt_out_tools'), tools['sync_tool'], 'sync_tool'
         )
 
     with pytest.raises(UserError, match='dynamic-toolset tools cannot run inside the workflow'):
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            CallToolId('dynamic', 'dynamic_opt_out'), tools['async_tool'], 'async_tool'
+            ToolsetCallToolId('dynamic', 'dynamic_opt_out'), tools['async_tool'], 'async_tool'
         )
 
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_opt_out')
@@ -8954,7 +8954,7 @@ async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs
     )
     with pytest.raises(UserError, match='MCP tools require the use of IO'):
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            CallToolId('mcp', 'mcp_opt_out'), mcp_tool, 'mcp_tool'
+            ToolsetCallToolId('mcp', 'mcp_opt_out'), mcp_tool, 'mcp_tool'
         )
 
 

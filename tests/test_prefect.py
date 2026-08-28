@@ -66,14 +66,13 @@ from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
     ToolsetKind,
     _DynamicCallToolCacheIdentity,  # pyright: ignore[reportPrivateUsage]
-    _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
-    CallToolId,
     CapabilityOperationId,
+    DynamicToolsetCallToolParams,
     ModelRequestId,
-    OperationConfigRole,
+    ToolsetCallToolId,
 )
 from pydantic_ai.durable_exec._toolset import (
     DurableDynamicToolset,
@@ -230,9 +229,6 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
     class FunctionOnlyDurability(PrefectDurability):
         _wrapped_toolset_kinds = frozenset({'function'})
 
-    class MCPRejectingDurability(PrefectDurability):
-        _allow_inline_mcp_in_durable_context = False
-
     durability = PrefectDurability(name='base-defaults')
     base = cast(BaseDurabilityCapability[Any], durability)
     function_only = FunctionOnlyDurability()
@@ -271,20 +267,6 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
         args_validator=TOOL_SCHEMA_VALIDATOR,
     )
     assert resolve_tool_config(inline_tool, 'inline') is False
-
-    mcp_tool = ToolsetTool(
-        toolset=MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),
-        tool_def=ToolDefinition(name='mcp_inline', metadata={'prefect': False}),
-        max_retries=0,
-        args_validator=TOOL_SCHEMA_VALIDATOR,
-    )
-    assert resolve_tool_config(mcp_tool, 'mcp_inline') is False
-    rejecting_base = cast(BaseDurabilityCapability[Any], MCPRejectingDurability())
-    rejecting_resolve = BaseDurabilityCapability._build_resolve_tool_config(  # pyright: ignore[reportPrivateUsage]
-        rejecting_base, {}
-    )
-    with pytest.raises(UserError, match='MCP tools perform I/O'):
-        rejecting_resolve(mcp_tool, 'mcp_inline')
 
     assert BaseDurabilityCapability._stamp_response(base, ModelResponse(parts=[]), []) is None  # pyright: ignore[reportPrivateUsage]
 
@@ -363,15 +345,13 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
         tool=tool_config,
     )
     model_id = ModelRequestId(None, False, 'test')
-    call_id = CallToolId('function', 'tools')
-    assert config.base(OperationConfigRole.MODEL, model_id) == {'timeout_seconds': 1}
-    assert config.base(OperationConfigRole.EVENT, model_id) == {'timeout_seconds': 2}
-    assert config.base(OperationConfigRole.CAPABILITY, CapabilityOperationId('capability', 'operation')) == {
-        'timeout_seconds': 4
-    }
-    assert config.base(OperationConfigRole.TOOL_CALL, call_id) == {'timeout_seconds': 3}
+    call_id = ToolsetCallToolId('function', 'tools')
+    assert config.base('model', model_id) == {'timeout_seconds': 1}
+    assert config.base('event', model_id) == {'timeout_seconds': 2}
+    assert config.base('capability', CapabilityOperationId('capability', 'operation')) == {'timeout_seconds': 4}
+    assert config.base('tool', call_id) == {'timeout_seconds': 3}
     marker = object()
-    assert config.for_tool(OperationConfigRole.TOOL_CALL, call_id, marker, 'tool') == {'timeout_seconds': 3}
+    assert config.for_tool('tool', call_id, marker, 'tool') == {'timeout_seconds': 3}
     assert calls == [('function', None, ''), ('function', marker, 'tool')]
 
 
@@ -2070,7 +2050,7 @@ def test_dynamic_tool_cache_identity_includes_prepared_definition() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
     def key_for(tool_def: ToolDefinition) -> str | None:
-        params = _DynamicCallToolParams('search', {'query': 'x'}, ctx, tool_def)
+        params = DynamicToolsetCallToolParams('search', {'query': 'x'}, ctx, tool_def)
         return cache_policy.compute_key(
             task_ctx=mock_task_ctx,
             inputs={'logical_inputs': identity.project(params)},
@@ -3711,22 +3691,10 @@ async def test_prefect_mcp_tool_metadata_configures_task(monkeypatch: pytest.Mon
     assert calls == 2
 
 
-async def test_prefect_mcp_tool_metadata_false_runs_inline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`metadata={'prefect': False}` opts an MCP tool out of task wrapping.
-
-    Unlike Temporal, where MCP tools can't leave the activity because workflow code can't do I/O,
-    a Prefect flow can call the server itself, so the opt-out runs the call inline in flow code.
-    """
-    ran_in_task: list[bool] = []
+async def test_prefect_mcp_tool_metadata_false_is_rejected() -> None:
+    """MCP tools perform I/O and cannot opt out of their durable task."""
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='opt_out_mcp')
 
-    async def recording_call_tool(
-        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
-    ) -> Any:
-        ran_in_task.append(TaskRunContext.get() is not None)
-        return 'done'
-
-    monkeypatch.setattr(mcp_toolset, 'call_tool', recording_call_tool)
     durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     tool = ToolsetTool(
@@ -3740,17 +3708,16 @@ async def test_prefect_mcp_tool_metadata_false_runs_inline(monkeypatch: pytest.M
     async def run_tool() -> Any:
         return await durable.call_tool('inline', {}, ctx, tool)
 
-    assert await run_tool() == 'done'
-    assert ran_in_task == [False]
+    with pytest.raises(UserError, match='MCP tools perform I/O'):
+        await run_tool()
 
 
 @pytest.mark.parametrize('blockbuster_enabled', [False])
-async def test_prefect_durability_mcp_tool_metadata_false_runs_inline(
+async def test_prefect_durability_mcp_tool_metadata_false_is_rejected(
     monkeypatch: pytest.MonkeyPatch, blockbuster_enabled: bool
 ) -> None:
-    """The capability path preserves Prefect's documented MCP task opt-out behavior."""
+    """The capability path rejects disabling the durable unit for an MCP tool."""
     assert blockbuster_enabled is False
-    ran_in_task: list[bool] = []
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='cap_opt_out_mcp')
 
     tool = ToolsetTool(
@@ -3763,14 +3730,7 @@ async def test_prefect_durability_mcp_tool_metadata_false_runs_inline(
     async def get_tools(ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
         return {'inline': tool}
 
-    async def recording_call_tool(
-        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], resolved_tool: ToolsetTool[None]
-    ) -> Any:
-        ran_in_task.append(TaskRunContext.get() is not None)
-        return 'done'
-
     monkeypatch.setattr(mcp_toolset, 'get_tools', get_tools)
-    monkeypatch.setattr(mcp_toolset, 'call_tool', recording_call_tool)
     agent = Agent(
         TestModel(call_tools='all'),
         name='capability_mcp_opt_out',
@@ -3782,8 +3742,8 @@ async def test_prefect_durability_mcp_tool_metadata_false_runs_inline(
     async def run_agent() -> str:
         return (await agent.run('Hello')).output
 
-    assert await run_agent() == '{"inline":"done"}'
-    assert ran_in_task == [False]
+    with pytest.raises(UserError, match='MCP tools perform I/O'):
+        await run_agent()
 
 
 async def test_prefect_model_request_task_rejects_enqueue() -> None:

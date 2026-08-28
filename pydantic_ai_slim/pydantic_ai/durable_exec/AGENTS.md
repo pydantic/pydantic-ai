@@ -19,18 +19,17 @@ collection machinery into the integration.
 Choose the backend tier from the engine SDK's execution model:
 
 - Subclass `CallableOperationBackend` when the SDK accepts an async callback at invocation time.
-  Implement `_execute` to run that callback in one named durable unit. The base owns parameter and
+  Implement `execute` to run that callback in one named durable unit. The base owns parameter and
   result transport, cache identity, naming, and config resolution.
 - Subclass `RegisteredOperationBackend` when handlers must be registered before a worker starts.
-  Implement `_register` to return the bound caller and all SDK registration handles. Expose those
+  Implement `register` to return the bound caller and all SDK registration handles. Expose those
   registrations from the engine capability without rebuilding or reordering them. The base binds
   the four model operations during agent assembly, so `registrations()` is complete before worker
   start; pass the collected registrations to the engine SDK when creating the worker.
 
 Set every declarative field deliberately: `_codec`, `_unsupported_runtime_toolset_kinds`,
 `_wrapped_toolset_kinds`, `_toolset_lifecycles`, `_tool_call_result_upgrade_lenient`,
-`_journal_discovery`, `_force_sequential_tools_in_durable_context`, and
-`_allow_inline_mcp_in_durable_context`. Also define the durable unit and container nouns used in
+`_journal_discovery` and `_force_sequential_tools_in_durable_context`. Also define the durable unit and container nouns used in
 errors. Use `IDENTITY_CODEC` when the engine SDK serializes Python values itself. Use `JSON_CODEC`
 when the integration must reduce values to JSON-compatible payloads before journaling them.
 

@@ -6,19 +6,19 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from pydantic import ConfigDict, with_config
 
 from pydantic_ai import messages as _messages
-from pydantic_ai.durable_exec._base import (
-    CancelSuspendedResponseOperationParams,
-    CompactMessagesOperationParams,
-    EventStreamHandlerOperationParams as _SemanticEventStreamHandlerParams,
-    ModelRequestOperationParams,
-    _CallToolParams,  # pyright: ignore[reportPrivateUsage]
-    _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
-    _GetToolsParams,  # pyright: ignore[reportPrivateUsage]
-)
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
     CapabilityOperationParams,
-    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
+    capability_operation_result_type,
+)
+from pydantic_ai.durable_exec._operation import (
+    DynamicToolsetCallToolParams,
+    EventStreamHandlerParams as _SemanticEventStreamHandlerParams,
+    ModelCancelSuspendedResponseParams,
+    ModelCompactMessagesParams,
+    ModelRequestParams,
+    ToolsetCallToolParams,
+    ToolsetGetToolsParams,
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
@@ -62,7 +62,7 @@ class _FunctionCallTransport:
         self._durability = durability
         self._toolset = toolset
 
-    def dump(self, params: _CallToolParams) -> tuple[CallToolParams, Any]:
+    def dump(self, params: ToolsetCallToolParams) -> tuple[CallToolParams, Any]:
         assert params.tool is not None
         tool = params.tool
         return (
@@ -76,7 +76,7 @@ class _FunctionCallTransport:
             params.ctx.deps,
         )
 
-    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> _CallToolParams:
+    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> ToolsetCallToolParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         try:
@@ -90,7 +90,7 @@ class _FunctionCallTransport:
                 f'Tool {params.name!r} not found in toolset {self._toolset.id!r}. '
                 'Removing or renaming tools during an agent run is not supported with Temporal.'
             ) from exc
-        return _CallToolParams(params.name, params.tool_args, ctx, tool)
+        return ToolsetCallToolParams(params.name, params.tool_args, ctx, tool)
 
 
 class _GetToolsTransport:
@@ -100,15 +100,17 @@ class _GetToolsTransport:
     def __init__(self, durability: TemporalDurability[Any]) -> None:
         self._durability = durability
 
-    def dump(self, params: _GetToolsParams) -> tuple[GetToolsParams, Any]:
+    def dump(self, params: ToolsetGetToolsParams) -> tuple[GetToolsParams, Any]:
         return (
             GetToolsParams(serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx)),
             params.ctx.deps,
         )
 
-    def load(self, payload: tuple[GetToolsParams, Any], *, runtime: object) -> _GetToolsParams:
+    def load(self, payload: tuple[GetToolsParams, Any], *, runtime: object) -> ToolsetGetToolsParams:
         params, deps = payload
-        return _GetToolsParams(self._durability.deserialize_operation_run_context(params.serialized_run_context, deps))
+        return ToolsetGetToolsParams(
+            self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+        )
 
 
 class _MCPCallTransport:
@@ -119,7 +121,7 @@ class _MCPCallTransport:
         self._durability = durability
         self._toolset = toolset
 
-    def dump(self, params: _CallToolParams) -> tuple[CallToolParams, Any]:
+    def dump(self, params: ToolsetCallToolParams) -> tuple[CallToolParams, Any]:
         assert params.tool is not None
         return (
             CallToolParams(
@@ -131,11 +133,11 @@ class _MCPCallTransport:
             params.ctx.deps,
         )
 
-    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> _CallToolParams:
+    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> ToolsetCallToolParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         assert params.tool_def is not None
-        return _CallToolParams(
+        return ToolsetCallToolParams(
             params.name,
             params.tool_args,
             ctx,
@@ -150,7 +152,7 @@ class _DynamicCallTransport:
     def __init__(self, durability: TemporalDurability[Any]) -> None:
         self._durability = durability
 
-    def dump(self, params: _DynamicCallToolParams) -> tuple[CallToolParams, Any]:
+    def dump(self, params: DynamicToolsetCallToolParams) -> tuple[CallToolParams, Any]:
         return (
             CallToolParams(
                 name=params.name,
@@ -161,10 +163,10 @@ class _DynamicCallTransport:
             params.ctx.deps,
         )
 
-    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> _DynamicCallToolParams:
+    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> DynamicToolsetCallToolParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
-        return _DynamicCallToolParams(params.name, params.tool_args, ctx, tool_def=params.tool_def)
+        return DynamicToolsetCallToolParams(params.name, params.tool_args, ctx, tool_def=params.tool_def)
 
 
 class _DynamicGetToolsTransport(_GetToolsTransport):
@@ -196,7 +198,7 @@ class _CapabilityOperationTransport:
 
     def __init__(self, durability: TemporalDurability[Any], declaration: CapabilityMethodDeclaration) -> None:
         self._durability = durability
-        self.result_type = _operation_result_type(declaration.result_type)
+        self.result_type = capability_operation_result_type(declaration.result_type)
 
     def dump(self, params: CapabilityOperationParams) -> tuple[_CapabilityOperationParams, Any]:
         return (
@@ -253,7 +255,7 @@ class _ModelRequestTransport:
         self._durability = durability
         self.result_type = result_type
 
-    def dump(self, params: ModelRequestOperationParams) -> tuple[_RequestParams, Any]:
+    def dump(self, params: ModelRequestParams) -> tuple[_RequestParams, Any]:
         ctx = params.run_context
         return (
             _RequestParams(
@@ -266,10 +268,10 @@ class _ModelRequestTransport:
             ctx.deps,
         )
 
-    def load(self, payload: tuple[_RequestParams, Any], *, runtime: object) -> ModelRequestOperationParams:
+    def load(self, payload: tuple[_RequestParams, Any], *, runtime: object) -> ModelRequestParams:
         request, deps = payload
         ctx = self._durability.deserialize_operation_run_context(request.serialized_run_context, deps)
-        return ModelRequestOperationParams(
+        return ModelRequestParams(
             request.model_id,
             request.messages,
             cast(ModelSettings | None, request.model_settings),
@@ -285,7 +287,7 @@ class _CompactMessagesTransport:
     def __init__(self, durability: TemporalDurability[Any]) -> None:
         self._durability = durability
 
-    def dump(self, params: CompactMessagesOperationParams) -> tuple[_CompactMessagesParams, Any]:
+    def dump(self, params: ModelCompactMessagesParams) -> tuple[_CompactMessagesParams, Any]:
         ctx = params.run_context
         return (
             _CompactMessagesParams(
@@ -300,7 +302,7 @@ class _CompactMessagesTransport:
             ctx.deps,
         )
 
-    def load(self, payload: tuple[_CompactMessagesParams, Any], *, runtime: object) -> CompactMessagesOperationParams:
+    def load(self, payload: tuple[_CompactMessagesParams, Any], *, runtime: object) -> ModelCompactMessagesParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         request_context = ModelRequestContext(
@@ -311,7 +313,7 @@ class _CompactMessagesTransport:
         )
         request_context.model_id = params.model_id
         request_context.streaming = params.streaming
-        return CompactMessagesOperationParams(params.model_id, request_context, params.instructions, ctx)
+        return ModelCompactMessagesParams(params.model_id, request_context, params.instructions, ctx)
 
 
 class _CancelTransport:
@@ -321,7 +323,7 @@ class _CancelTransport:
     def __init__(self, durability: TemporalDurability[Any]) -> None:
         self._durability = durability
 
-    def dump(self, params: CancelSuspendedResponseOperationParams) -> tuple[_CancelParams, Any]:
+    def dump(self, params: ModelCancelSuspendedResponseParams) -> tuple[_CancelParams, Any]:
         ctx = params.run_context
         return (
             _CancelParams(
@@ -334,14 +336,14 @@ class _CancelTransport:
             ctx.deps if ctx is not None else None,
         )
 
-    def load(self, payload: tuple[_CancelParams, Any], *, runtime: object) -> CancelSuspendedResponseOperationParams:
+    def load(self, payload: tuple[_CancelParams, Any], *, runtime: object) -> ModelCancelSuspendedResponseParams:
         params, deps = payload
         ctx = (
             self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
             if params.serialized_run_context is not None
             else None
         )
-        return CancelSuspendedResponseOperationParams(params.model_id, params.response, ctx)
+        return ModelCancelSuspendedResponseParams(params.model_id, params.response, ctx)
 
 
 class _EventStreamHandlerTransport:

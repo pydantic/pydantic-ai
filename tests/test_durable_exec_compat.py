@@ -22,24 +22,24 @@ from pydantic_ai.durable_exec import (
     JSON_CODEC,
     BaseDurabilityCapability,
     CallableOperationBackend,
-    CallToolId,
-    CancelSuspendedResponseId,
     CapabilityOperationId,
-    CompactMessagesId,
     DurableOperationId,
     EventStreamHandlerId,
-    GetInstructionsId,
-    GetToolsId,
     JournalOperationNamer,
+    ModelCancelSuspendedResponseId,
+    ModelCompactMessagesId,
     ModelRequestId,
     OperationConfigRole,
+    ToolsetCallToolId,
+    ToolsetGetInstructionsId,
+    ToolsetGetToolsId,
     ToolsetKind,
-    ValidateToolArgumentsId,
+    ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._capability_operation import (
+    CapabilityOperationResult,
     ModelRequestContextProjection,
-    _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
-    _operation_result_type,  # pyright: ignore[reportPrivateUsage]
+    capability_operation_result_type,
 )
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
@@ -69,18 +69,18 @@ from pydantic_ai.usage import RunUsage
 def test_public_engine_builder_exports() -> None:
     assert durable_exec.__all__ == [
         'BaseDurabilityCapability',
-        'CallToolId',
+        'ToolsetCallToolId',
         'CallableOperationBackend',
-        'CancelSuspendedResponseId',
+        'ModelCancelSuspendedResponseId',
         'CapabilityOperationId',
-        'CompactMessagesId',
+        'ModelCompactMessagesId',
         'DurabilityCodec',
         'DurableOperationBackend',
         'DurableOperationId',
         'DurableOperationNamer',
         'EventStreamHandlerId',
-        'GetInstructionsId',
-        'GetToolsId',
+        'ToolsetGetInstructionsId',
+        'ToolsetGetToolsId',
         'IDENTITY_CODEC',
         'JSON_CODEC',
         'JournalOperationNamer',
@@ -88,7 +88,7 @@ def test_public_engine_builder_exports() -> None:
         'OperationConfigRole',
         'RegisteredOperationBackend',
         'ToolsetKind',
-        'ValidateToolArgumentsId',
+        'ToolsetValidateToolArgumentsId',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -174,25 +174,25 @@ def _operation_ids() -> list[DurableOperationId]:
         ModelRequestId('registered', False, 'test'),
         ModelRequestId(None, True, 'test'),
         ModelRequestId('registered', True, 'test'),
-        CancelSuspendedResponseId(None, 'test'),
-        CancelSuspendedResponseId('registered', 'test'),
-        CompactMessagesId(None, 'test'),
-        CompactMessagesId('registered', 'test'),
+        ModelCancelSuspendedResponseId(None, 'test'),
+        ModelCancelSuspendedResponseId('registered', 'test'),
+        ModelCompactMessagesId(None, 'test'),
+        ModelCompactMessagesId('registered', 'test'),
         EventStreamHandlerId(),
-        CallToolId('function', 'functions'),
-        ValidateToolArgumentsId('function', 'functions'),
-        GetToolsId('mcp', 'mcp'),
-        GetInstructionsId('mcp'),
-        CallToolId('mcp', 'mcp'),
-        GetToolsId('dynamic', 'dynamic'),
-        CallToolId('dynamic', 'dynamic'),
-        ValidateToolArgumentsId('dynamic', 'dynamic'),
+        ToolsetCallToolId('function', 'functions'),
+        ToolsetValidateToolArgumentsId('function', 'functions'),
+        ToolsetGetToolsId('mcp', 'mcp'),
+        ToolsetGetInstructionsId('mcp'),
+        ToolsetCallToolId('mcp', 'mcp'),
+        ToolsetGetToolsId('dynamic', 'dynamic'),
+        ToolsetCallToolId('dynamic', 'dynamic'),
+        ToolsetValidateToolArgumentsId('dynamic', 'dynamic'),
         CapabilityOperationId('compat', 'operation'),
     ]
 
 
 def _operation_params(operation_id: DurableOperationId) -> object:
-    if isinstance(operation_id, (CallToolId, ValidateToolArgumentsId)):
+    if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
         return _ToolParams(
             {'function': 'function_tool', 'mcp': 'mcp_tool', 'dynamic': 'dynamic_tool'}[operation_id.toolset_kind]
         )
@@ -222,7 +222,7 @@ class _JournalBackend(CallableOperationBackend[ToolConfig]):
         super().__init__(namer=JournalOperationNamer(durability.name), config=_JournalConfig())
         self._durability = durability
 
-    async def _execute(
+    async def execute(
         self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
     ) -> object:
         self._durability.recorded_names.append(name)
@@ -303,7 +303,7 @@ def test_prefect_operation_name_matrix() -> None:
     operation_ids = [
         operation_id
         for operation_id in _operation_ids()
-        if not isinstance(operation_id, (GetToolsId, GetInstructionsId))
+        if not isinstance(operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
     ]
     namer = PrefectOperationNamer()
     names = {
@@ -334,7 +334,7 @@ def test_prefect_operation_name_assembly_completeness() -> None:
     operation_ids = [
         operation_id
         for operation_id in _operation_ids()
-        if not isinstance(operation_id, (GetToolsId, GetInstructionsId))
+        if not isinstance(operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
     ]
     namer = PrefectOperationNamer()
     assembled_names = {
@@ -514,8 +514,8 @@ def test_json_and_identity_codec_payload_goldens(tp: Any, value: Any, expected: 
 
 def test_capability_operation_result_payload_golden() -> None:
     delta = RunUsage(requests=1, tool_calls=2, input_tokens=3, details={'cached': 4})
-    result = _CapabilityOperationResult(5, delta)
-    result_type = _operation_result_type(int)
+    result = CapabilityOperationResult(5, delta)
+    result_type = capability_operation_result_type(int)
 
     assert JSON_CODEC.dump(result_type, result) == {
         'value': 5,

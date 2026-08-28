@@ -6,29 +6,27 @@ from typing import Any, Generic, Literal, TypeVar, cast
 from dbos import DBOS
 
 from pydantic_ai import ToolsetTool, messages as _messages
-from pydantic_ai.durable_exec._base import (
-    CancelSuspendedResponseOperationParams,
-    CompactMessagesOperationParams,
-    EventStreamHandlerOperationParams,
-    ModelRequestOperationParams,
-    _CallToolParams,  # pyright: ignore[reportPrivateUsage]
-    _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
-    _GetToolsParams,  # pyright: ignore[reportPrivateUsage]
-)
 from pydantic_ai.durable_exec._capability_operation import CapabilityOperationParams
 from pydantic_ai.durable_exec._operation import (
-    CallToolId,
-    CancelSuspendedResponseId,
     CapabilityOperationId,
-    CompactMessagesId,
     DurableOperation,
     DurableOperationId,
+    DynamicToolsetCallToolParams,
     EventStreamHandlerId,
-    GetInstructionsId,
-    GetToolsId,
+    EventStreamHandlerParams,
+    ModelCancelSuspendedResponseId,
+    ModelCancelSuspendedResponseParams,
+    ModelCompactMessagesId,
+    ModelCompactMessagesParams,
     ModelRequestId,
+    ModelRequestParams,
     OperationConfigRole,
-    ValidateToolArgumentsId,
+    ToolsetCallToolId,
+    ToolsetCallToolParams,
+    ToolsetGetInstructionsId,
+    ToolsetGetToolsId,
+    ToolsetGetToolsParams,
+    ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.messages import ModelResponse
@@ -51,9 +49,9 @@ class DBOSOperationConfig:
         self._tool = tool
 
     def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> StepConfig:
-        if role is OperationConfigRole.MODEL:
+        if role == 'model':
             return self._model
-        if role is OperationConfigRole.EVENT:
+        if role == 'event':
             return self._event
         return self._tool
 
@@ -96,7 +94,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
     def __init__(self, *, agent_name: str, config: DBOSOperationConfig) -> None:
         super().__init__(namer=DBOSOperationNamer(agent_name), config=config)
 
-    def _register(
+    def register(
         self,
         operation: DurableOperation[P, W, R],
         *,
@@ -106,7 +104,8 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
         if isinstance(operation.operation_id, CapabilityOperationId):
             step, dispatch = self._bind_capability(operation, name, config)
         elif isinstance(
-            operation.operation_id, (ModelRequestId, CompactMessagesId, CancelSuspendedResponseId, EventStreamHandlerId)
+            operation.operation_id,
+            (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId, EventStreamHandlerId),
         ):
             step, dispatch = self._bind_model_or_event(operation, name, config)
         else:
@@ -142,7 +141,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     model_request_parameters: ModelRequestParameters,
                     run_context: RunContext[Any],
                 ) -> object:
-                    params = ModelRequestOperationParams(
+                    params = ModelRequestParams(
                         model_id, messages, model_settings, model_request_parameters, run_context
                     )
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
@@ -150,7 +149,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                 step = DBOS.step(name=name, **step_config)(model_step)
 
                 async def dispatch_model(step: Callable[..., Any], params: P) -> R:
-                    model_params = cast(ModelRequestOperationParams, params)
+                    model_params = cast(ModelRequestParams, params)
                     payload = await step(
                         model_params.model_id,
                         model_params.messages,
@@ -162,24 +161,24 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
 
                 dispatch: Callable[[Callable[..., Any], P], Any] = dispatch_model
 
-            case CancelSuspendedResponseId():
+            case ModelCancelSuspendedResponseId():
 
                 async def cancel_step(
                     model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
                 ) -> object:
-                    params = CancelSuspendedResponseOperationParams(model_id, response, run_context)
+                    params = ModelCancelSuspendedResponseParams(model_id, response, run_context)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(cancel_step)
 
                 async def dispatch_cancel(step: Callable[..., Any], params: P) -> R:
-                    cancel_params = cast(CancelSuspendedResponseOperationParams, params)
+                    cancel_params = cast(ModelCancelSuspendedResponseParams, params)
                     payload = await step(cancel_params.model_id, cancel_params.response, cancel_params.run_context)
                     return operation.result_codec.load(payload)
 
                 dispatch = dispatch_cancel
 
-            case CompactMessagesId():
+            case ModelCompactMessagesId():
 
                 async def compact_step(
                     model_id: str | None,
@@ -187,13 +186,13 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     instructions: str | None,
                     run_context: RunContext[Any],
                 ) -> object:
-                    params = CompactMessagesOperationParams(model_id, request_context, instructions, run_context)
+                    params = ModelCompactMessagesParams(model_id, request_context, instructions, run_context)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(compact_step)
 
                 async def dispatch_compact(step: Callable[..., Any], params: P) -> R:
-                    compact_params = cast(CompactMessagesOperationParams, params)
+                    compact_params = cast(ModelCompactMessagesParams, params)
                     payload = await step(
                         compact_params.model_id,
                         compact_params.request_context,
@@ -207,13 +206,13 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
             case EventStreamHandlerId():
 
                 async def event_step(event: _messages.AgentStreamEvent, run_context: RunContext[Any]) -> object:
-                    params = EventStreamHandlerOperationParams(event, run_context)
+                    params = EventStreamHandlerParams(event, run_context)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(event_step)
 
                 async def dispatch_event(step: Callable[..., Any], params: P) -> R:
-                    event_params = cast(EventStreamHandlerOperationParams, params)
+                    event_params = cast(EventStreamHandlerParams, params)
                     payload = await step(event_params.event, event_params.run_context)
                     return operation.result_codec.load(payload)
 
@@ -228,22 +227,22 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
         self, operation: DurableOperation[P, W, R], name: str, step_config: StepConfig
     ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], P], Any]]:
         match operation.operation_id:
-            case GetToolsId() | GetInstructionsId():
+            case ToolsetGetToolsId() | ToolsetGetInstructionsId():
 
                 async def discovery_step(run_context: RunContext[Any]) -> object:
-                    params = _GetToolsParams(run_context)
+                    params = ToolsetGetToolsParams(run_context)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(discovery_step)
 
                 async def dispatch_discovery(step: Callable[..., Any], params: P) -> R:
-                    discovery_params = cast(_GetToolsParams, params)
+                    discovery_params = cast(ToolsetGetToolsParams, params)
                     payload = await step(discovery_params.ctx)
                     return operation.result_codec.load(payload)
 
                 dispatch = dispatch_discovery
 
-            case CallToolId(toolset_kind='mcp'):
+            case ToolsetCallToolId(toolset_kind='mcp'):
 
                 async def mcp_call_step(
                     tool_name: str,
@@ -251,19 +250,19 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     run_context: RunContext[Any],
                     tool: ToolsetTool[Any],
                 ) -> object:
-                    params = _CallToolParams(tool_name, tool_args, run_context, tool)
+                    params = ToolsetCallToolParams(tool_name, tool_args, run_context, tool)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(mcp_call_step)
 
                 async def dispatch_mcp_call(step: Callable[..., Any], params: P) -> R:
-                    call_params = cast(_CallToolParams, params)
+                    call_params = cast(ToolsetCallToolParams, params)
                     payload = await step(call_params.name, call_params.tool_args, call_params.ctx, call_params.tool)
                     return operation.result_codec.load(payload)
 
                 dispatch = dispatch_mcp_call
 
-            case CallToolId(toolset_kind='dynamic') | ValidateToolArgumentsId(toolset_kind='dynamic'):
+            case ToolsetCallToolId(toolset_kind='dynamic') | ToolsetValidateToolArgumentsId(toolset_kind='dynamic'):
 
                 async def dynamic_call_step(
                     tool_name: str,
@@ -271,13 +270,13 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     run_context: RunContext[Any],
                     tool_def: ToolDefinition | None,
                 ) -> object:
-                    params = _DynamicCallToolParams(tool_name, tool_args, run_context, tool_def)
+                    params = DynamicToolsetCallToolParams(tool_name, tool_args, run_context, tool_def)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(dynamic_call_step)
 
                 async def dispatch_dynamic_call(step: Callable[..., Any], params: P) -> R:
-                    call_params = cast(_DynamicCallToolParams, params)
+                    call_params = cast(DynamicToolsetCallToolParams, params)
                     payload = await step(call_params.name, call_params.tool_args, call_params.ctx, call_params.tool_def)
                     return operation.result_codec.load(payload)
 

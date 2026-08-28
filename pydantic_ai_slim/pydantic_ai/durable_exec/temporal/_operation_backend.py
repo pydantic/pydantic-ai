@@ -8,18 +8,18 @@ from temporalio import activity
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
-    CallToolId,
-    CancelSuspendedResponseId,
     CapabilityOperationId,
-    CompactMessagesId,
     DurableOperation,
     DurableOperationId,
     EventStreamHandlerId,
-    GetInstructionsId,
-    GetToolsId,
+    ModelCancelSuspendedResponseId,
+    ModelCompactMessagesId,
     ModelRequestId,
     OperationConfigRole,
-    ValidateToolArgumentsId,
+    ToolsetCallToolId,
+    ToolsetGetInstructionsId,
+    ToolsetGetToolsId,
+    ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 
@@ -66,9 +66,9 @@ class TemporalOperationConfig:
         self._resolve_tool = resolve_tool
 
     def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ActivityConfig:
-        if role is OperationConfigRole.MODEL:
+        if role == 'model':
             return self._model
-        if role is OperationConfigRole.EVENT:
+        if role == 'event':
             return self._event
         return self._tool
 
@@ -106,21 +106,21 @@ class TemporalBoundOperation(Generic[P, W, R]):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
             suffix = ' (stream)' if operation_id.streaming else ''
             activity_config['summary'] = f'request model: {model_name}{suffix}'
-        elif isinstance(operation_id, CancelSuspendedResponseId):
+        elif isinstance(operation_id, ModelCancelSuspendedResponseId):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
             activity_config['summary'] = f'cancel suspended response: {model_name}'
-        elif isinstance(operation_id, CompactMessagesId):
+        elif isinstance(operation_id, ModelCompactMessagesId):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
             activity_config['summary'] = f'compact messages: {model_name}'
-        elif isinstance(operation_id, CallToolId):
+        elif isinstance(operation_id, ToolsetCallToolId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'call tool: {operation_id.toolset_id}:{tool_name}'
-        elif isinstance(operation_id, ValidateToolArgumentsId):
+        elif isinstance(operation_id, ToolsetValidateToolArgumentsId):
             tool_name = cast(Any, params).name
             activity_config['summary'] = f'validate tool args: {operation_id.toolset_id}:{tool_name}'
-        elif isinstance(operation_id, GetToolsId):
+        elif isinstance(operation_id, ToolsetGetToolsId):
             activity_config['summary'] = f'get tools: {operation_id.toolset_id}'
-        elif isinstance(operation_id, GetInstructionsId):
+        elif isinstance(operation_id, ToolsetGetInstructionsId):
             activity_config['summary'] = f'get instructions: {operation_id.toolset_id}'
         elif isinstance(operation_id, CapabilityOperationId):
             activity_config['summary'] = f'capability: {operation_id.capability_id}.{operation_id.operation}'
@@ -129,7 +129,7 @@ class TemporalBoundOperation(Generic[P, W, R]):
             event = cast(_EventParams, params).event
             activity_config['summary'] = f'handle event: {event.event_kind}'
 
-        if isinstance(operation_id, ModelRequestId | CompactMessagesId):
+        if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
             with model_response_payload_errors(model_name):
                 return await execute_activity(
                     activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
@@ -164,7 +164,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         self._registrations.remove(registration)
         self._registrations.append(registration)
 
-    def _register(
+    def register(
         self,
         operation: DurableOperation[P, W, R],
         *,

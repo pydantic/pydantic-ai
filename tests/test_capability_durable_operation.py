@@ -13,14 +13,13 @@ from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, dura
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
+    CapabilityOperationResult,
     ModelRequestContextProjection,
-    _CapabilityOperationResult,  # pyright: ignore[reportPrivateUsage]
     _model_request_schema,  # pyright: ignore[reportPrivateUsage]
-    _usage_delta,  # pyright: ignore[reportPrivateUsage]
+    base_hook_durable_operation,
     call_declaration,
     collect_capability_operations,
     recover_capability,
-    tier_one_durable_operation,
 )
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import DurableOperationId, OperationConfigRole, ToolsetKind
@@ -107,7 +106,7 @@ class _RecordingBackend(CallableOperationBackend[ToolConfig]):
         super().__init__(namer=JournalOperationNamer(durability.name), config=_RecordingConfig())
         self._durability = durability
 
-    async def _execute(
+    async def execute(
         self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
     ) -> object:
         durability = self._durability
@@ -499,35 +498,35 @@ def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
         Agent(TestModel(), name='invalid', capabilities=[capability_type(), RecordingDurability()])
 
 
-def test_tier_one_override_is_automatically_registered() -> None:
+def test_base_hook_override_is_automatically_registered() -> None:
     class TierOneBase(AbstractCapability[Any]):
         # Registration, not execution, is the behavior under test.
-        @tier_one_durable_operation
+        @base_hook_durable_operation
         async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
     class TierOne(TierOneBase):
-        id = 'tier_one'
+        id = 'base_hook'
 
         # Automatic registration inspects this override without dispatching it.
         async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
-    agent = Agent(TestModel(), name='tier_one', capabilities=[TierOne(), RecordingDurability()])
+    agent = Agent(TestModel(), name='base_hook', capabilities=[TierOne(), RecordingDurability()])
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
-    assert ('tier_one', 'provision') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
+    assert ('base_hook', 'provision') in durability._bound_capability_operations  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_inherited_tier_one_hook_is_not_registered_or_dispatched() -> None:
+async def test_inherited_base_hook_hook_is_not_registered_or_dispatched() -> None:
     class TierOneBase(AbstractCapability[Any]):
         def __init__(self) -> None:
             self.provisioned = False
 
-        @tier_one_durable_operation
+        @base_hook_durable_operation
         async def provision(self, ctx: RunContext[Any]) -> None:
             self.provisioned = True
 
     class TierOne(TierOneBase):
-        id = 'tier_one'
+        id = 'base_hook'
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
             await self.provision(ctx)
@@ -535,7 +534,7 @@ async def test_inherited_tier_one_hook_is_not_registered_or_dispatched() -> None
     capability = TierOne()
     assert collect_capability_operations(capability) == {}
 
-    agent = Agent(TestModel(), name='tier_one', capabilities=[capability, RecordingDurability()])
+    agent = Agent(TestModel(), name='base_hook', capabilities=[capability, RecordingDurability()])
     await agent.run('test')
 
     durability = RecordingDurability.from_agent(agent)
@@ -558,7 +557,7 @@ def test_temporal_registration_has_stable_name_and_types() -> None:
     definition = ActivityDefinition.must_from_callable(registration)  # pyright: ignore[reportUnknownMemberType]
     assert definition.arg_types is not None
     assert definition.arg_types[0] is _CapabilityOperationParams
-    assert definition.ret_type == _CapabilityOperationResult[int]
+    assert definition.ret_type == CapabilityOperationResult[int]
 
 
 def test_unannotated_parameter_is_rejected_at_bind() -> None:
@@ -694,10 +693,10 @@ def test_sync_non_hook_operation_is_rejected_by_decorator() -> None:
         durable_operation(operation)  # pyright: ignore[reportArgumentType]
 
 
-def test_tier_one_base_and_duplicate_override_paths() -> None:
+def test_base_hook_base_and_duplicate_override_paths() -> None:
     class Base(AbstractCapability[Any]):
         # Collection behavior is tested without dispatching any of these declarations.
-        @tier_one_durable_operation
+        @base_hook_durable_operation
         async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
         sentinel = True
@@ -842,30 +841,6 @@ async def test_capability_operation_rejects_unregistered_context_model() -> None
         )
 
 
-def test_usage_delta_ignores_non_numeric_extension_values() -> None:
-    before = RunUsage()
-    after = RunUsage()
-    before.__dict__['opaque'] = 'before'
-    after.__dict__['opaque'] = 'after'
-    after.details['opaque'] = cast(Any, 'after')
-
-    delta = _usage_delta(before, after)
-
-    assert 'opaque' not in delta.__dict__
-    assert 'opaque' not in delta.details
-
-
-def test_usage_delta_preserves_numeric_extension_fields() -> None:
-    before = RunUsage()
-    after = RunUsage()
-    before.__dict__['custom_units'] = 2
-    after.__dict__['custom_units'] = 9
-
-    delta = _usage_delta(before, after)
-
-    assert delta.__dict__['custom_units'] == 7
-
-
 async def test_usage_snapshot_copies_details_before_in_place_handler_mutation() -> None:
     """`RunUsage.__copy__` isolates its only mutable field before worker-side accounting."""
     usage = RunUsage(details={'existing': 2})
@@ -879,7 +854,7 @@ async def test_usage_snapshot_copies_details_before_in_place_handler_mutation() 
 
     assert before.details == {'existing': 2}
     assert before.details is not usage.details
-    assert _usage_delta(before, usage).details == {'existing': 3}
+    assert (usage - before).details == {'existing': 3}
 
 
 @requires_temporal

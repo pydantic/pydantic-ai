@@ -16,11 +16,11 @@ integrations show the same public builder with JSON journals.
 ## Choose a backend tier
 
 Subclass [`CallableOperationBackend`][pydantic_ai.durable_exec.CallableOperationBackend] when the
-engine SDK accepts a callback each time a durable unit is invoked. Implement `_execute` to pass the
+engine SDK accepts a callback each time a durable unit is invoked. Implement `execute` to pass the
 name, callback, cache identity, and resolved config to the SDK.
 
 Use [`RegisteredOperationBackend`][pydantic_ai.durable_exec.RegisteredOperationBackend] when the
-engine requires handlers to be registered before the worker starts. Implement `_register` to
+engine requires handlers to be registered before the worker starts. Implement `register` to
 create a bound caller and return its registration handles. Its `registrations()` method returns
 the collected SDK registration handles in binding order. During agent assembly, the base binds the
 four model operations before a worker can start, so these registrations are present without first
@@ -34,7 +34,7 @@ primitive.
 ## Minimal callable backend
 
 This complete in-process example runs each operation immediately. A real integration replaces
-`ImmediateBackend._execute` with its SDK's activity, step, or task call and changes
+`ImmediateBackend.execute` with its SDK's activity, step, or task call and changes
 `in_durable_context` to query the engine runtime.
 
 ```python
@@ -72,7 +72,7 @@ class ImmediateBackend(CallableOperationBackend[None]):
     def __init__(self, agent_name: str) -> None:
         super().__init__(namer=JournalOperationNamer(agent_name), config=ImmediateConfig())
 
-    async def _execute(
+    async def execute(
         self,
         *,
         name: str,
@@ -127,9 +127,17 @@ signals, and decorated capability operations all cross the selected codec bounda
 The backend config object receives an
 [`OperationConfigRole`][pydantic_ai.durable_exec.OperationConfigRole] and a
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId]. Match the concrete ID variants
-when config differs by model, toolset, or operation. The union is closed, so exhaustive matching
-will make a newly added operation visible to your type checker. Per-tool config can return `False`
-to opt that tool out of a durable unit.
+when config differs by model, toolset, or operation. The role is a coarse config bucket: `'model'`,
+`'event'`, `'tool'`, or `'capability'`. The operation ID carries the fine-grained identity. The ID
+union is closed, so exhaustive matching will make a newly added operation visible to your type
+checker. Per-tool config can return `False` to opt a function or dynamic tool out of a durable unit.
+MCP tools perform I/O and always run in their durable unit, so returning `False` for one raises a
+[`UserError`][pydantic_ai.exceptions.UserError].
+
+The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
+`ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
+`ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
+`CapabilityOperationId`. Their Python class names do not determine persisted operation names.
 
 ## Persisted names and recovery
 

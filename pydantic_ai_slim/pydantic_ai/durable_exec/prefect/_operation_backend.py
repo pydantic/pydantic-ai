@@ -7,13 +7,13 @@ from prefect import task
 from prefect.context import FlowRunContext
 
 from pydantic_ai.durable_exec._operation import (
-    CallToolId,
     CapabilityOperationId,
     DurableOperationId,
     EventStreamHandlerId,
     OperationConfigRole,
+    ToolsetCallToolId,
     ToolsetKind,
-    ValidateToolArgumentsId,
+    ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 
@@ -36,14 +36,14 @@ class PrefectOperationConfig:
         self._tool = tool
 
     def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> TaskConfig:
-        if role is OperationConfigRole.MODEL:
+        if role == 'model':
             return self._model
-        if role is OperationConfigRole.EVENT:
+        if role == 'event':
             return self._event
-        if role is OperationConfigRole.CAPABILITY:
+        if role == 'capability':
             assert isinstance(operation_id, CapabilityOperationId)
             return self._capability
-        assert isinstance(operation_id, CallToolId | ValidateToolArgumentsId)
+        assert isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
         config = self._tool(operation_id.toolset_kind, None, '')
         assert config is not False
         return config
@@ -55,8 +55,8 @@ class PrefectOperationConfig:
         tool: object | None,
         tool_name: str,
     ) -> TaskConfig | Literal[False]:
-        assert role in (OperationConfigRole.TOOL_CALL, OperationConfigRole.TOOL_VALIDATION)
-        assert isinstance(operation_id, CallToolId | ValidateToolArgumentsId)
+        assert role == 'tool'
+        assert isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
         return self._tool(operation_id.toolset_kind, tool, tool_name)
 
 
@@ -65,7 +65,7 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         super().__init__(namer=PrefectOperationNamer(), config=config)
         self._event_sequence_key = event_sequence_key
 
-    async def _execute(
+    async def execute(
         self,
         *,
         name: str,

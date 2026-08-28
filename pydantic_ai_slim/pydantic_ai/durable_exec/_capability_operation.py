@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -37,44 +36,18 @@ class CapabilityOperationParams:
 
 
 @dataclass(frozen=True)
-class _CapabilityOperationResult(Generic[R]):
+class CapabilityOperationResult(Generic[R]):
     value: R
     usage_delta: RunUsage
 
 
-def _operation_result_type(result_type: object) -> object:  # pyright: ignore[reportUnusedFunction]
-    return cast(Any, _CapabilityOperationResult)[result_type]
+def capability_operation_result_type(result_type: object) -> type[CapabilityOperationResult[Any]]:
+    """Build `CapabilityOperationResult[R]` for the operation's declared result type.
 
-
-def _usage_delta(before: RunUsage, after: RunUsage) -> RunUsage:  # pyright: ignore[reportUnusedFunction]
-    details: dict[str, int] = {}
-    for name in before.details.keys() | after.details.keys():
-        before_value = before.details.get(name, 0)
-        after_value = after.details.get(name, 0)
-        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
-            details[name] = after_value - before_value
-
-    delta = RunUsage(
-        requests=after.requests - before.requests,
-        tool_calls=after.tool_calls - before.tool_calls,
-        input_tokens=after.input_tokens - before.input_tokens,
-        cache_write_tokens=after.cache_write_tokens - before.cache_write_tokens,
-        cache_read_tokens=after.cache_read_tokens - before.cache_read_tokens,
-        output_tokens=after.output_tokens - before.output_tokens,
-        input_audio_tokens=after.input_audio_tokens - before.input_audio_tokens,
-        cache_audio_read_tokens=after.cache_audio_read_tokens - before.cache_audio_read_tokens,
-        output_audio_tokens=after.output_audio_tokens - before.output_audio_tokens,
-        details=details,
-        cost=after.cost - (before.cost or 0) if after.cost is not None and after.cost != before.cost else None,
-    )
-
-    field_names = {field.name for field in dataclasses.fields(RunUsage)}
-    for name in (before.__dict__.keys() | after.__dict__.keys()) - field_names:
-        before_value = before.__dict__.get(name, 0)
-        after_value = after.__dict__.get(name, 0)
-        if isinstance(before_value, (int, float)) and isinstance(after_value, (int, float)):
-            delta.__dict__[name] = after_value - before_value
-    return delta
+    Codecs use the parametrized wrapper to validate both the operation value and its usage delta
+    when serializing and reconstructing `CapabilityOperationResult[R]` across a durable boundary.
+    """
+    return cast(type[CapabilityOperationResult[Any]], cast(Any, CapabilityOperationResult)[result_type])
 
 
 @dataclass
@@ -132,7 +105,7 @@ class CapabilityCacheIdentity:
 class _DurableOperationMarker:
     name: str
     function: Callable[..., Awaitable[Any]]
-    tier_one: bool = False
+    base_hook: bool = False
 
 
 def _operation_name(function: Callable[..., Any], name: str | None) -> str:
@@ -248,8 +221,8 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
     return decorate(function) if function is not None else decorate
 
 
-def tier_one_durable_operation(function: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
-    """Mark a base hook whose overrides are inherently durable."""
+def base_hook_durable_operation(function: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
+    """Mark a base hook so every override inherits durable execution automatically."""
     setattr(
         function,
         '__pydantic_ai_durable_operation__',
@@ -281,7 +254,7 @@ def collect_capability_operations(
             marker = cast(
                 _DurableOperationMarker | None, getattr(base_member, '__pydantic_ai_durable_operation__', None)
             )
-            if marker is None or not marker.tier_one:
+            if marker is None or not marker.base_hook:
                 continue
             member = getattr(type(capability), method_name)
             if member is not base_member:
@@ -291,7 +264,7 @@ def collect_capability_operations(
         marker = cast(_DurableOperationMarker | None, getattr(member, '__pydantic_ai_durable_operation__', None))
         if marker is None:
             continue
-        if marker.tier_one and member is marker.function:
+        if marker.base_hook and member is marker.function:
             continue
         if reason := _NEVER_DURABLE_HOOKS.get(method_name):
             raise UserError(reason)

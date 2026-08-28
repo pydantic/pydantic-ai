@@ -11,7 +11,6 @@ P = TypeVar('P')
 W = TypeVar('W')
 R = TypeVar('R')
 ConfigT = TypeVar('ConfigT')
-ConfigT_co = TypeVar('ConfigT_co', covariant=True)
 P_bound = TypeVar('P_bound')
 W_bound = TypeVar('W_bound')
 R_bound = TypeVar('R_bound')
@@ -26,7 +25,7 @@ class BoundDurableOperation(Generic[P_bound, W_bound, R_bound], Protocol):
     async def __call__(self, params: P_bound, *, config: object | None = None) -> R_bound: ...
 
 
-class DurableOperationBackend(Protocol[ConfigT_co]):
+class DurableOperationBackend(ABC, Generic[ConfigT]):
     """Contract between `BaseDurabilityCapability` and an engine's durable primitive.
 
     Engine authors normally implement this by subclassing `CallableOperationBackend` or
@@ -43,7 +42,7 @@ class DurableOperationBackend(Protocol[ConfigT_co]):
         operation: DurableOperation[P, W, R],
         tool: object | None,
         tool_name: str,
-    ) -> ConfigT_co | Literal[False]: ...
+    ) -> ConfigT | Literal[False]: ...
 
     @abstractmethod
     def registrations(self) -> Sequence[Callable[..., object]]: ...
@@ -64,10 +63,10 @@ class _CallableBoundOperation(Generic[P, W, R]):
         return await self._dispatch(params, config)
 
 
-class CallableOperationBackend(ABC, Generic[ConfigT]):
+class CallableOperationBackend(DurableOperationBackend[ConfigT]):
     """Base for engines that execute an async callback in a named durable unit.
 
-    Subclasses implement `_execute`; this base owns naming, configuration, cache identity, and
+    Subclasses implement `execute`; this base owns naming, configuration, cache identity, and
     result encoding. See the
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
@@ -89,7 +88,7 @@ class CallableOperationBackend(ABC, Generic[ConfigT]):
             async def body() -> object:
                 return operation.result_codec.dump(await operation.handler(params))
 
-            payload = await self._execute(
+            payload = await self.execute(
                 name=invocation_name.operation_name,
                 body=body,
                 cache_key=cache_key,
@@ -111,7 +110,7 @@ class CallableOperationBackend(ABC, Generic[ConfigT]):
         return ()
 
     @abstractmethod
-    async def _execute(
+    async def execute(
         self,
         *,
         name: str,
@@ -121,10 +120,10 @@ class CallableOperationBackend(ABC, Generic[ConfigT]):
     ) -> object: ...
 
 
-class RegisteredOperationBackend(ABC, Generic[ConfigT]):
+class RegisteredOperationBackend(DurableOperationBackend[ConfigT]):
     """Base for engines that register named SDK handlers while binding operations.
 
-    Subclasses implement `_register`; this base collects the returned worker registrations and
+    Subclasses implement `register`; this base collects the returned worker registrations and
     owns naming and configuration. See
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
@@ -137,7 +136,7 @@ class RegisteredOperationBackend(ABC, Generic[ConfigT]):
     def bind(self, operation: DurableOperation[P, W, R]) -> BoundDurableOperation[P, W, R]:
         name = self._namer.operation_name(operation.operation_id)
         config = self._config.base(operation.config_role, operation.operation_id)
-        bound_operation, registrations = self._register(operation, name=name, config=config)
+        bound_operation, registrations = self.register(operation, name=name, config=config)
         self._registrations.extend(registrations)
         return bound_operation
 
@@ -153,7 +152,7 @@ class RegisteredOperationBackend(ABC, Generic[ConfigT]):
         return self._registrations
 
     @abstractmethod
-    def _register(
+    def register(
         self,
         operation: DurableOperation[P, W, R],
         *,

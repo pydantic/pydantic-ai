@@ -20,11 +20,15 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
     ToolsetKind,
-    _CallToolParams,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import CallToolId, DurableOperationId, ValidateToolArgumentsId
+from pydantic_ai.durable_exec._operation import (
+    DurableOperationId,
+    ToolsetCallToolId,
+    ToolsetCallToolParams,
+    ToolsetValidateToolArgumentsId,
+)
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
@@ -133,7 +137,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         'dynamic': 'enter-never',
     }
     _tool_call_result_upgrade_lenient = False
-    _allow_inline_mcp_in_durable_context = False
     _journal_discovery = True
 
     _durable_unit_noun = 'activity'
@@ -375,7 +378,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             from pydantic_ai.mcp import MCPToolset
 
             if (
-                isinstance(operation_id, (CallToolId, ValidateToolArgumentsId))
+                isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId))
                 and operation_id.toolset_kind == 'dynamic'
             ):
                 raise UserError(
@@ -423,8 +426,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         return [cast(Any, operation).registration for operation in operations]
 
     async def _prepare_function_call_params(
-        self, toolset: FunctionToolset[AgentDepsT], params: _CallToolParams
-    ) -> _CallToolParams:
+        self, toolset: FunctionToolset[AgentDepsT], params: ToolsetCallToolParams
+    ) -> ToolsetCallToolParams:
         tool = params.tool
         if tool is None:
             try:
@@ -435,7 +438,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from exc
         args = tool.args_validator.validate_python(params.tool_args, context=self._validation_context(params.ctx))
-        return _CallToolParams(params.name, args, params.ctx, tool)
+        return ToolsetCallToolParams(params.name, args, params.ctx, tool)
 
     def _tool_call_payload_errors(self, tool_name: str):
         return tool_result_payload_errors(tool_name)
