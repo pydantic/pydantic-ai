@@ -7,7 +7,7 @@ from typing import Generic
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionId, InstructionPart
+from pydantic_ai.messages import InstructionId, InstructionPart, InstructionSource
 from pydantic_ai.template import TemplateStr
 
 from . import _system_prompt
@@ -26,7 +26,17 @@ def validate_instruction_id_segment(id: str, *, kind: str) -> None:
     """Reject values that cannot be represented unambiguously in an instruction id."""
     if ':' in id:
         raise UserError(f'{kind} {id!r} cannot contain a colon because `:` is reserved as an instruction ID delimiter.')
-    if kind == 'Declared instruction id' and id == 'agent':
+
+
+def validate_instruction_name(name: str) -> None:
+    """Reject names an author cannot declare on a block.
+
+    A name resolved against no source is written to the wire exactly as the author wrote it, so it
+    must not be able to spell a key the framework issues. `'agent'` is the only one it could reach:
+    every other key is namespaced, and a colon is rejected above.
+    """
+    validate_instruction_id_segment(name, kind='Declared instruction id')
+    if name == 'agent':
         raise UserError(
             "Declared instruction id 'agent' is reserved for the agent's own instructions; choose a different name."
         )
@@ -44,6 +54,28 @@ class SourcedInstruction(Generic[AgentDepsT]):
     dynamic: bool = False
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+def sourced_instruction(
+    instruction: AgentInstruction[AgentDepsT], source: InstructionSource | None
+) -> SourcedInstruction[AgentDepsT]:
+    """Attribute one instruction recipe to the source that authored it.
+
+    The single place a declared name meets its source, so every author applies the same rule: with a
+    source the name becomes an [`InstructionId`][pydantic_ai.messages.InstructionId] beneath it, and
+    without one it stays the plain string the author wrote, which is what marks it unresolved.
+
+    A caller passes `None` for a recipe its source does not speak for -- a callable the agent was
+    built with, or instructions belonging to a single run rather than to the agent.
+    """
+    name = instruction.id if isinstance(instruction, InstructionPart) and isinstance(instruction.id, str) else None
+    if name is not None:
+        validate_instruction_name(name)
+    return SourcedInstruction(
+        instruction,
+        id=InstructionId(source, name=name) if source is not None else name,
+        dynamic=not isinstance(instruction, (str, InstructionPart)),
+    )
 
 
 async def resolve_sourced_instructions(

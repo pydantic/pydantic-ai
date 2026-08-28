@@ -351,6 +351,16 @@ def _is_model(value: object) -> TypeIs[models.Model[Any]]:
     return isinstance(value, models.Model)
 
 
+def _agent_instruction_source(instruction: _instructions.AgentInstruction[Any]) -> _messages.InstructionSource | None:
+    """The source to attribute one of the agent's configured instructions to.
+
+    Only the literal instructions the agent was built with are addressed by the agent's own key: an
+    instruction function becomes addressable when `@agent.instructions(id=...)` names it, so a bare
+    callable speaks for nobody and stays unidentified.
+    """
+    return _messages.AgentInstructionSource() if isinstance(instruction, (str, _messages.InstructionPart)) else None
+
+
 def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
     """Resolve normalized retry overrides into concrete retry budgets.
 
@@ -654,25 +664,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The agent's own literal instructions are one addressable block; instruction functions are
         # only addressable if `@agent.instructions(id=...)` declares an id for them.
-        self._instructions: list[_instructions.SourcedInstruction[AgentDepsT]] = []
-        agent_source = _messages.AgentInstructionSource()
-        for instruction in _instructions.normalize_instructions(instructions):
-            name = (
-                instruction.id
-                if isinstance(instruction, _messages.InstructionPart) and isinstance(instruction.id, str)
-                else None
-            )
-            if name is not None:
-                _instructions.validate_instruction_id_segment(name, kind='Declared instruction id')
-            self._instructions.append(
-                _instructions.SourcedInstruction(
-                    instruction,
-                    id=_messages.InstructionId(agent_source, name=name)
-                    if isinstance(instruction, (str, _messages.InstructionPart))
-                    else None,
-                    dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
-                )
-            )
+        self._instructions = [
+            _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
+            for instruction in _instructions.normalize_instructions(instructions)
+        ]
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -2221,7 +2216,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 the agent's literal instructions. See [instruction blocks](../agent.md#instruction-blocks).
         """
         if id is not None:
-            _instructions.validate_instruction_id_segment(id, kind='Declared instruction id')
+            _instructions.validate_instruction_name(id)
         instruction_id = (
             _messages.InstructionId(_messages.AgentInstructionSource(), name=id) if id is not None else None
         )
@@ -3040,46 +3035,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if override_instructions:
             # Override replaces all instructions, including capability contributions, so what it
             # provides takes the place of (and the id of) the agent's own instructions.
-            instructions = []
-            agent_source = _messages.AgentInstructionSource()
-            for instruction in override_instructions.value:
-                name = (
-                    instruction.id
-                    if isinstance(instruction, _messages.InstructionPart) and isinstance(instruction.id, str)
-                    else None
-                )
-                if name is not None:
-                    _instructions.validate_instruction_id_segment(name, kind='Declared instruction id')
-                instructions.append(
-                    _instructions.SourcedInstruction(
-                        instruction,
-                        id=_messages.InstructionId(agent_source, name=name)
-                        if isinstance(instruction, (str, _messages.InstructionPart))
-                        else None,
-                        dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
-                    )
-                )
+            instructions = [
+                _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
+                for instruction in override_instructions.value
+            ]
         else:
             instructions = [*self._instructions]
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
                 # Instructions passed to a specific run are already the caller's to change, and
                 # aren't part of the agent's own configured block.
-                for instruction in _instructions.normalize_instructions(additional_instructions):
-                    name = (
-                        instruction.id
-                        if isinstance(instruction, _messages.InstructionPart) and isinstance(instruction.id, str)
-                        else None
-                    )
-                    if name is not None:
-                        _instructions.validate_instruction_id_segment(name, kind='Declared instruction id')
-                    instructions.append(
-                        _instructions.SourcedInstruction(
-                            instruction,
-                            id=name,
-                            dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
-                        )
-                    )
+                instructions.extend(
+                    _instructions.sourced_instruction(instruction, None)
+                    for instruction in _instructions.normalize_instructions(additional_instructions)
+                )
 
         return instructions
 

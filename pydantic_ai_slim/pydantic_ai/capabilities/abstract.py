@@ -15,15 +15,13 @@ from pydantic_ai._instructions import (
     AgentInstructions,
     SourcedInstruction,
     normalize_instructions,
-    validate_instruction_id_segment,
+    sourced_instruction,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityInstructionSource,
-    InstructionId,
-    InstructionPart,
     ModelResponse,
     ToolCallPart,
 )
@@ -374,15 +372,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     def _attribute_instruction(self, instruction: AgentInstruction[AgentDepsT]) -> SourcedInstruction[AgentDepsT]:
         """Attribute one instruction recipe to this capability."""
-        source = CapabilityInstructionSource(self.id) if self.id is not None else None
-        name = instruction.id if isinstance(instruction, InstructionPart) and isinstance(instruction.id, str) else None
-        if name is not None:
-            validate_instruction_id_segment(name, kind='Declared instruction id')
-        return SourcedInstruction(
-            instruction,
-            id=InstructionId(source, name=name) if source is not None else name,
-            dynamic=not isinstance(instruction, (str, InstructionPart)),
-        )
+        return sourced_instruction(instruction, CapabilityInstructionSource(self.id) if self.id is not None else None)
 
     def _attribute_container_instructions(
         self,

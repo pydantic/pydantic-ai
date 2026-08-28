@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Generic
 
-from pydantic_ai._instructions import validate_instruction_id_segment
+from pydantic_ai._instructions import validate_instruction_id_segment, validate_instruction_name
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionId, InstructionPart, ToolsetInstructionSource
@@ -33,7 +33,7 @@ def make_contribution(
     source_id = None
     resolved_part = part
     if isinstance(part.id, str):
-        validate_instruction_id_segment(part.id, kind='Declared instruction id')
+        validate_instruction_name(part.id)
     if source.id is not None:
         validate_instruction_id_segment(source.id, kind='Toolset id')
         source_id = ToolsetInstructionSource(source.id)

@@ -11,6 +11,7 @@ from pydantic_ai._instructions import (
     SourcedInstruction,
     normalize_instructions,
     validate_instruction_id_segment,
+    validate_instruction_name,
 )
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
@@ -344,11 +345,11 @@ class Capability(AbstractCapability[AgentDepsT]):
                 address this block specifically, where the capability's own key addresses everything it
                 contributes. Requires the capability to have an
                 [`id`][pydantic_ai.capabilities.AbstractCapability.id] — without one there is no source
-                key to qualify, and the block stays unidentified. See
+                key to qualify, so the name stays an unresolved string. See
                 [instruction blocks](../agent.md#instruction-blocks).
         """
         if id is not None:
-            validate_instruction_id_segment(id, kind='Declared instruction id')
+            validate_instruction_name(id)
 
         def decorator(
             func_: SystemPromptFunc[AgentDepsT],
