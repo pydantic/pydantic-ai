@@ -593,7 +593,7 @@ async def test_chat_keeps_toolsets_open_after_failed_turn(mocker: MockerFixture,
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            raise RuntimeError('first turn failed')
+            raise RuntimeError('first turn failed') from ValueError('underlying failure')
         return ModelResponse(parts=[TextPart('second turn succeeded')])
 
     with create_pipe_input() as inp:
@@ -610,6 +610,7 @@ async def test_chat_keeps_toolsets_open_after_failed_turn(mocker: MockerFixture,
 
     rendered = output.getvalue()
     assert 'RuntimeError: first turn failed' in rendered
+    assert 'Caused by: underlying failure' in rendered
     assert 'second turn succeeded' in rendered
     assert attempts == snapshot(2)
     assert toolset.full_releases == snapshot(1)

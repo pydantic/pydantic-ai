@@ -1780,11 +1780,11 @@ class TestLoadMCPToolsets:
             stderr=subprocess.PIPE,
         )
 
-        async def read_stderr() -> str:
+        async def read_stderr() -> str:  # pragma: no cover
             assert process.stderr is not None
             try:
                 return (await process.stderr.receive()).decode()
-            except anyio.EndOfStream:
+            except anyio.EndOfStream:  # pragma: no cover
                 return '<no stderr>'
 
         try:
@@ -1814,20 +1814,20 @@ class TestLoadMCPToolsets:
                 with anyio.fail_after(10):
                     agent = Agent(TestModel(call_tools=['beta_get_weather_forecast']), toolsets=toolsets)
                     result = await agent.run('weather')
-            except BaseException:
+            except BaseException:  # pragma: no cover
                 if process.returncode is not None:
                     raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
                 raise
         finally:
             with anyio.CancelScope(shield=True):
-                if process.returncode is None:
+                if process.returncode is None:  # pragma: no branch
                     process.terminate()
                     with anyio.move_on_after(5) as graceful_shutdown:
                         await process.wait()
-                    if graceful_shutdown.cancel_called:
+                    if graceful_shutdown.cancel_called:  # pragma: lax no cover
                         process.kill()
-                if process.returncode is None:
-                    await process.wait()
+                if process.returncode is None:  # pragma: no branch
+                    await process.wait()  # pragma: lax no cover
 
         assert result.output == snapshot(
             '{"beta_get_weather_forecast":"The weather in a is sunny and 26 degrees Celsius."}'
