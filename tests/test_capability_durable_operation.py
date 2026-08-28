@@ -24,7 +24,7 @@ from pydantic_ai.durable_exec._capability_operation import (
     recover_capability,
 )
 from pydantic_ai.durable_exec._codec import JSON_CODEC
-from pydantic_ai.durable_exec._operation import DurableOperationId, OperationConfigRole
+from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, OperationConfigRole
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
@@ -786,6 +786,17 @@ def test_before_model_request_context_parameter_can_have_any_name() -> None:
     declaration = collect_capability_operations(RenamedContextBeforeModelRequest())['before_model_request']
 
     assert declaration.ctx_parameter == 'run_context'
+    assert declaration.model_request_hook
+    assert not collect_capability_operations(Operations())['calculate'].model_request_hook
+
+
+def test_recording_config_has_no_per_tool_override() -> None:
+    assert (
+        _RecordingConfig().for_tool(
+            'tool', CapabilityOperationId('capability', operation='operation'), None, 'operation'
+        )
+        == {}
+    )
 
 
 def test_two_run_context_parameters_are_rejected_at_bind() -> None:
@@ -803,13 +814,19 @@ def test_two_run_context_parameters_are_rejected_at_bind() -> None:
         Agent(TestModel(), name='duplicate_context', capabilities=[DuplicateContext(), RecordingDurability()])
 
 
-def test_two_model_request_context_parameters_are_rejected_at_bind() -> None:
+async def test_two_model_request_context_parameters_are_rejected_at_bind() -> None:
     class DuplicateModelRequestContext(AbstractCapability[Any]):
         id = 'duplicate_model_request_context'
 
         @durable_operation
         async def operation(self, first: ModelRequestContext, second: ModelRequestContext) -> ModelRequestContext:
             return first
+
+    capability = DuplicateModelRequestContext()
+    request_context = ModelRequestContext(
+        model=TestModel(), messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    assert await capability.operation(request_context, request_context) is request_context
 
     with pytest.raises(
         UserError,
@@ -818,7 +835,7 @@ def test_two_model_request_context_parameters_are_rejected_at_bind() -> None:
         Agent(
             TestModel(),
             name='duplicate_model_request_context',
-            capabilities=[DuplicateModelRequestContext(), RecordingDurability()],
+            capabilities=[capability, RecordingDurability()],
         )
 
 
@@ -832,6 +849,28 @@ def test_variadic_run_context_is_rejected_for_durable_operation() -> None:
 
     with pytest.raises(UserError, match=r'RunContext cannot be used as a variadic positional parameter'):
         Agent(TestModel(), name='variadic_context', capabilities=[VariadicContext(), RecordingDurability()])
+
+
+async def test_variadic_model_request_context_is_rejected_for_durable_operation() -> None:
+    class VariadicModelRequestContext(AbstractCapability[Any]):
+        id = 'variadic_model_request_context'
+
+        @durable_operation
+        async def operation(self, *request_context: ModelRequestContext) -> ModelRequestContext:
+            return request_context[0]
+
+    capability = VariadicModelRequestContext()
+    request_context = ModelRequestContext(
+        model=TestModel(), messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    assert await capability.operation(request_context) is request_context
+
+    with pytest.raises(UserError, match=r'ModelRequestContext cannot be used as a variadic positional parameter'):
+        Agent(
+            TestModel(),
+            name='variadic_model_request_context',
+            capabilities=[capability, RecordingDurability()],
+        )
 
 
 async def test_defensive_capability_operation_paths() -> None:

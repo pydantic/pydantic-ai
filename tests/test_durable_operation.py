@@ -4,6 +4,7 @@ import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import TypeAdapter
@@ -54,6 +55,7 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableDynamicToolset,
     DurableFunctionToolset,
+    DurableMCPToolset,
     DynamicToolInfo,
     DynamicToolsResult,
     ToolConfig,
@@ -209,6 +211,61 @@ def test_prepare_run_context_without_agent() -> None:
     durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
 
     assert ctx._durable_operations == {}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
+    durability = JournalDurability()
+    tool = ToolsetTool(
+        toolset=FunctionToolset(),
+        tool_def=ToolDefinition(name='configured', metadata={'': False}),
+        max_retries=0,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    resolve = durability._build_resolve_tool_config({'base': 1})  # pyright: ignore[reportPrivateUsage]
+
+    assert resolve(tool, 'configured') == {'base': 1}
+
+
+async def test_mcp_tool_config_dispatches_durable_and_inline_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip('mcp')
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPToolset
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp')
+    tool = ToolsetTool(
+        toolset=mcp_toolset,
+        tool_def=ToolDefinition(name='configured'),
+        max_retries=0,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    inline_call = AsyncMock(return_value='inline')
+    monkeypatch.setattr(mcp_toolset, 'call_tool', inline_call)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    durability = JournalDurability(name='agent')
+    durable = durability._build_mcp_toolset_after_discovery(  # pyright: ignore[reportPrivateUsage]
+        mcp_toolset,
+        base_config={},
+        get_tools_operation=AsyncMock(return_value={}),
+        get_instructions_operation=AsyncMock(return_value=None),
+        discovery_registrations=[],
+    )
+
+    assert await durable.call_tool('configured', {}, ctx, tool) == 'inline'
+    assert durability.calls[-1][0] == 'agent__mcp_server__mcp.call_tool'
+
+    durable_inline = DurableMCPToolset(
+        mcp_toolset,
+        in_durable_context=lambda: True,
+        get_tools_operation=None,
+        get_instructions_operation=None,
+        call_tool_operation=AsyncMock(return_value='durable'),
+        resolve_tool_config=lambda tool, name: False,
+        lifecycle='enter-never',
+    )
+    assert await durable_inline.call_tool('configured', {}, ctx, tool) == 'inline'
+    assert inline_call.await_count == 2
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
@@ -940,21 +997,6 @@ class _DispatchParams:
     name: str = ''
 
 
-class _LogicalInputs(CacheIdentity[_DispatchParams]):
-    def project(self, params: _DispatchParams) -> tuple[object, ...]:
-        return params.inputs
-
-
-class _NoneConfig:
-    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> None:
-        return None
-
-    def for_tool(
-        self, role: OperationConfigRole, operation_id: DurableOperationId, tool: object | None, tool_name: str
-    ) -> Literal[False]:
-        return False
-
-
 async def test_callable_operation_backend_resolves_and_round_trips() -> None:
     async def handler(params: int) -> int:
         return params + 1
@@ -1024,7 +1066,6 @@ def test_trivial_transport_cache_and_invocation_helpers() -> None:
     assert transport.dump(value) is value
     assert transport.load(value, runtime=object()) is value
     assert NoCacheIdentity[object]().project(value) == ()
-    assert _NoneConfig().for_tool('tool', ToolsetCallToolId('function', toolset_id='tools'), None, 'tool') is False
 
 
 def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported_ids() -> None:
@@ -1042,7 +1083,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
         operation_id=ModelRequestId(None, streaming=False, model_name='test'),
         handler=handler,
         parameter_transport=IdentityParameterTransport[_DispatchParams](),
-        cache_identity=_LogicalInputs(),
+        cache_identity=NoCacheIdentity(),
         result_codec=TypedResultCodec[None](type(None), mode='identity'),
         config_role='model',
     )
@@ -1052,7 +1093,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
         operation_id=ToolsetValidateToolArgumentsId('dynamic', toolset_id='tools'),
         handler=handler,
         parameter_transport=IdentityParameterTransport[_DispatchParams](),
-        cache_identity=_LogicalInputs(),
+        cache_identity=NoCacheIdentity(),
         result_codec=TypedResultCodec[None](type(None), mode='identity'),
         config_role='tool',
     )
