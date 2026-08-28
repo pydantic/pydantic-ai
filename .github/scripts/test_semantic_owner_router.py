@@ -58,9 +58,7 @@ class FakeClient(router.attention.GitHubClient):
     def __init__(self, values: dict[int, dict[str, Any]]) -> None:
         super().__init__('token')
         self.items = values
-        self.files: dict[int, list[str]] = {}
         self.drafts: set[int] = set()
-        self.changed_counts: dict[int, int] = {}
         self.search_results: list[list[int]] = []
         self.permissions = {login: 'write' for login in ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')}
         self.calls: list[tuple[str, str, object | None]] = []
@@ -109,18 +107,7 @@ class FakeClient(router.attention.GitHubClient):
                     ]
                 }
                 if 'pull_request' in source:
-                    filenames = self.files.get(number, [])
-                    value.update(
-                        {
-                            'isDraft': number in self.drafts,
-                            'author': source['author'],
-                            'changedFiles': self.changed_counts.get(number, len(filenames)),
-                            'files': {
-                                'nodes': [{'path': filename} for filename in filenames],
-                                'pageInfo': {'hasNextPage': False},
-                            },
-                        }
-                    )
+                    value.update({'isDraft': number in self.drafts, 'author': source['author']})
             return {'data': {'repository': {'issueOrPullRequest': value}}}
         number = int(path.split('/issues/')[1].split('/')[0])
         requested = payload['assignees']
@@ -199,7 +186,6 @@ def test_every_harness_issue_routes_to_the_default_owner_without_a_priority_labe
 
 def test_every_harness_pull_request_routes_to_the_default_owner():
     client = FakeClient({7: item(7, pull_request=True)})
-    client.files[7] = ['pydantic_ai_harness/code_mode/_runtime.py']
 
     decision = router.decision_for(client, HARNESS, 7)['decision']
 
@@ -208,7 +194,6 @@ def test_every_harness_pull_request_routes_to_the_default_owner():
 
 def test_harness_maintainer_authored_pull_request_is_not_assigned_to_the_default_owner():
     client = FakeClient({7: item(7, pull_request=True, author='DouweM')})
-    client.files[7] = ['pydantic_ai_harness/code_mode/_runtime.py']
 
     selected = router.decision_for(client, HARNESS, 7)
 
