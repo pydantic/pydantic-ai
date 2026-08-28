@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from pydantic import BaseModel
-
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 
@@ -58,7 +56,3 @@ def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
         return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{}', tool_call_id='call-1')])
 
     return make_text_response('no tools available')  # pragma: no cover
-
-
-class MyOutput(BaseModel):
-    value: int
