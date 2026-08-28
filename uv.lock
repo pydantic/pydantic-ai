@@ -22,6 +22,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+listentome = false
 logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
@@ -3207,6 +3208,20 @@ wheels = [
 ]
 
 [[package]]
+name = "listentome"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "cffi" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/af/50/b7041034d6c6af1e1373f1ea3505ddfa500b62dc63f147fed8dfcbb0970b/listentome-0.1.0.tar.gz", hash = "sha256:0dfb5db8da7d1999c019785c0c3b81d3ad4949d925214772c6601f3a167acb7c", size = 67471, upload-time = "2026-08-27T19:40:45.425Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/f9/8cf1fd057313335d946e7755dd29b2c22bc98df5c3313652c443b4886149/listentome-0.1.0-py3-none-any.whl", hash = "sha256:b656247c13c408d05db8051e8dcea4ba4caf96cb11f392aab5fda0fe186c0619", size = 10638, upload-time = "2026-08-27T19:40:46.155Z" },
+]
+
+[[package]]
 name = "logfire"
 version = "4.40.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4364,6 +4379,20 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-logging"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ed/0a/b70a9cddbc7b314a783e62739dbb1184f8538c1f85e8ded6d340142b9b54/opentelemetry_instrumentation_logging-0.65b0.tar.gz", hash = "sha256:c0a50cade5d54db6c6af12e2c69227ecd26f2b3b779e99ff850561d3d8dd77e3", size = 19783, upload-time = "2026-07-16T15:26:09.853Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e2/8e/7577914681d77b180f8d6dcbac435be8e4ca6add6315da2d01ac4289eaa3/opentelemetry_instrumentation_logging-0.65b0-py3-none-any.whl", hash = "sha256:68365b31755c844f1e85f07dcd217839ff92f2d278a214bdf02d4dc806f9d915", size = 15727, upload-time = "2026-07-16T15:25:18.774Z" },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-sqlite3"
 version = "0.65b0"
 source = { registry = "https://pypi.org/simple" }
@@ -5334,6 +5363,7 @@ dev = [
     { name = "inline-snapshot" },
     { name = "markdownify" },
     { name = "mcp-types" },
+    { name = "opentelemetry-instrumentation-logging" },
     { name = "pip" },
     { name = "pydocket", version = "0.22.0", source = { registry = "https://pypi.org/simple" } },
     { name = "pytest" },
@@ -5404,6 +5434,7 @@ dev = [
     { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
     { name = "mcp-types", specifier = ">=2.0.0" },
+    { name = "opentelemetry-instrumentation-logging", specifier = ">=0.63b0" },
     { name = "pip", specifier = ">=26.1" },
     { name = "pydocket", specifier = ">=0.20.2" },
     { name = "pytest", specifier = ">=9.0.3" },
@@ -5412,7 +5443,7 @@ dev = [
     { name = "pytest-pretty", specifier = ">=1.3.0" },
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
-    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
+    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1" },
     { name = "tavily-python", specifier = ">=0.5.0" },
 ]
 lint = [
@@ -5432,6 +5463,7 @@ dependencies = [
     { name = "duckdb" },
     { name = "fastapi" },
     { name = "gradio" },
+    { name = "listentome" },
     { name = "logfire", extra = ["asyncpg", "fastapi", "httpx", "sqlite3"] },
     { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'group-11-pydantic-ai-dev'" },
     { name = "mcp", version = "2.0.0", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra != 'group-11-pydantic-ai-dev'" },
@@ -5443,7 +5475,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "rich" },
-    { name = "sounddevice" },
     { name = "twelvelabs" },
     { name = "uvicorn" },
 ]
@@ -5456,6 +5487,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.4.2" },
     { name = "fastapi", specifier = ">=0.117.0" },
     { name = "gradio", specifier = ">=6.7.0" },
+    { name = "listentome", specifier = ">=0.1.0" },
     { name = "logfire", extras = ["asyncpg", "fastapi", "httpx", "sqlite3"], specifier = ">=3.14.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.28.1" },
     { name = "modal", specifier = ">=1.0.4" },
@@ -5466,7 +5498,6 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
-    { name = "sounddevice", specifier = ">=0.5.0" },
     { name = "twelvelabs", specifier = ">=1.2.8" },
     { name = "uvicorn", specifier = ">=0.32.0" },
 ]
@@ -7133,22 +7164,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sounddevice"
-version = "0.5.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cffi" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/f9/2592608737553638fca98e21e54bfec40bf577bb98a61b2770c912aab25e/sounddevice-0.5.5.tar.gz", hash = "sha256:22487b65198cb5bf2208755105b524f78ad173e5ab6b445bdab1c989f6698df3", size = 143191, upload-time = "2026-01-23T18:36:43.529Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/0a/478e441fd049002cf308520c0d62dd8333e7c6cc8d997f0dda07b9fbcc46/sounddevice-0.5.5-py3-none-any.whl", hash = "sha256:30ff99f6c107f49d25ad16a45cacd8d91c25a1bcdd3e81a206b921a3a6405b1f", size = 32807, upload-time = "2026-01-23T18:36:35.649Z" },
-    { url = "https://files.pythonhosted.org/packages/56/f9/c037c35f6d0b6bc3bc7bfb314f1d6f1f9a341328ef47cd63fc4f850a7b27/sounddevice-0.5.5-py3-none-macosx_10_6_x86_64.macosx_10_6_universal2.whl", hash = "sha256:05eb9fd6c54c38d67741441c19164c0dae8ce80453af2d8c4ad2e7823d15b722", size = 108557, upload-time = "2026-01-23T18:36:37.41Z" },
-    { url = "https://files.pythonhosted.org/packages/88/a1/d19dd9889cd4bce2e233c4fac007cd8daaf5b9fe6e6a5d432cf17be0b807/sounddevice-0.5.5-py3-none-win32.whl", hash = "sha256:1234cc9b4c9df97b6cbe748146ae0ec64dd7d6e44739e8e42eaa5b595313a103", size = 317765, upload-time = "2026-01-23T18:36:39.047Z" },
-    { url = "https://files.pythonhosted.org/packages/c3/0e/002ed7c4c1c2ab69031f78989d3b789fee3a7fba9e586eb2b81688bf4961/sounddevice-0.5.5-py3-none-win_amd64.whl", hash = "sha256:cfc6b2c49fb7f555591c78cb8ecf48d6a637fd5b6e1db5fec6ed9365d64b3519", size = 365324, upload-time = "2026-01-23T18:36:40.496Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/39/a61d4b83a7746b70d23d9173be688c0c6bfc7173772344b7442c2c155497/sounddevice-0.5.5-py3-none-win_arm64.whl", hash = "sha256:3861901ddd8230d2e0e8ae62ac320cdd4c688d81df89da036dcb812f757bb3e6", size = 317115, upload-time = "2026-01-23T18:36:42.235Z" },
-]
-
-[[package]]
 name = "soupsieve"
 version = "2.8.4"
 source = { registry = "https://pypi.org/simple" }
@@ -7240,9 +7255,9 @@ wheels = [
 [[package]]
 name = "strict-no-cover"
 version = "0.1.1"
-source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d#7fc59da2c4dff919db2095a0f0e47101b657131d" }
+source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1#6c644106e03138abae01d8d60105d4a7ad4916a1" }
 dependencies = [
-    { name = "pydantic" },
+    { name = "coverage" },
 ]
 
 [[package]]

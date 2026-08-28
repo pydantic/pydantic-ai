@@ -21,6 +21,7 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     capture_current_context,
     get_instructions as _get_history_instructions,
+    get_instructions_source as _get_history_instructions_source,
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._tool_execution import process_tool_calls
@@ -49,7 +50,6 @@ from ._deferred_capabilities import (
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
-from ._instructions import normalize_toolset_instructions
 from ._run_context import AnchoredEvidence, set_current_run_context
 from .exceptions import ToolRetryError
 
@@ -74,6 +74,7 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
+from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -756,10 +757,25 @@ async def _get_instructions(
     if base:
         parts.extend(base)
 
-    toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
-    parts.extend(normalize_toolset_instructions(toolset_result))
+    parts.extend(await collect_toolset_instructions(ctx.deps.tool_manager.toolset, run_context))
 
     return parts or None
+
+
+def _apply_instruction_parts(
+    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+) -> None:
+    """Render the instruction parts being sent onto the request that records them.
+
+    `ModelRequestParameters.instruction_parts` is what the model reads, so a `before_model_request`
+    hook that rewrites the parts would otherwise leave message history and OTel reporting
+    instructions the model never received.
+
+    `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
+    fall back to the request's own `instructions` — so it leaves the request alone.
+    """
+    if instruction_parts is not None:
+        request.instructions = _messages.InstructionPart.join(instruction_parts)
 
 
 async def _prepare_request_parameters(
@@ -1531,6 +1547,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
+        # The hook may have rewritten the instruction parts the model will actually be sent, so bring
+        # the request that records them back in step. It's the request this step created and set
+        # instructions on above, which is not necessarily the last message anymore: a hook can append
+        # further messages (e.g. `ToolSearch`'s auto-load synthesizes a call/return pair).
+        _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+
         if self.is_resuming_without_prompt:
             # No separate user-prompt request this run: the trailing request that arrived via
             # `message_history` *is* the request being sent, so it's prior context, not new. Track it
@@ -1706,6 +1728,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx.deps.resumed_request = message
                 ctx.deps.resumed_request_index = index
                 break
+
+        # A hook's rewrite has to land on the message that records the instructions this
+        # continuation echoes back, which is the one they were read from — not necessarily the
+        # resumed request. A trailing tool-return-only request carries none of its own (which is
+        # why `_get_history_instructions` looks past it), so stamping that one would put
+        # instructions on a message that was sent without any. Falling back to the resumed request
+        # covers a hook adding instructions where the history had none to source.
+        instructions_target = _get_history_instructions_source(base_messages) or ctx.deps.resumed_request
+        if instructions_target is not None:
+            _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
 
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so
         # replace its contents (dropping the suspended response) rather than the reference;
@@ -2341,6 +2373,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         deps=ctx.deps.user_deps,
         agent=ctx.deps.agent,
         model=ctx.deps.model,
+        _model_id=ctx.deps.model_id,
         usage=ctx.state.usage,
         usage_limits=ctx.deps.usage_limits,
         prompt=ctx.deps.prompt,

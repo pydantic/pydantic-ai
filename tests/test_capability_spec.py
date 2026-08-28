@@ -336,13 +336,13 @@ def test_agent_from_spec_description_override():
 
 def test_agent_from_spec_instructions():
     agent = Agent.from_spec({'model': 'test', 'instructions': 'Be helpful.'})
-    assert 'Be helpful.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'Be helpful.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_instructions_list():
     agent = Agent.from_spec({'model': 'test', 'instructions': ['First.', 'Second.']})
-    assert 'First.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
-    assert 'Second.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'First.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
+    assert 'Second.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_instructions_merged():
@@ -350,8 +350,8 @@ def test_agent_from_spec_instructions_merged():
         {'model': 'test', 'instructions': 'From spec.'},
         instructions='From arg.',
     )
-    assert 'From spec.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
-    assert 'From arg.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'From spec.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
+    assert 'From arg.' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_model_settings():
@@ -2368,7 +2368,7 @@ def test_agent_from_file_yaml(tmp_path: str):
     spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
     agent = Agent.from_file(spec_path)
     assert agent.name == 'my-agent'
-    assert 'Be helpful' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'Be helpful' in [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_file_json(tmp_path: str):

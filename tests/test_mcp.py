@@ -13,6 +13,8 @@ import asyncio
 import base64
 import json
 import re
+import subprocess
+import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -25,7 +27,7 @@ import anyio
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
@@ -42,6 +44,7 @@ with try_import() as imports_successful:
     from fastmcp.client.client import CallToolResult
     from fastmcp.client.transports import (
         SSETransport,
+        StdioTransport,
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import McpError, ToolError
@@ -92,6 +95,7 @@ with try_import() as imports_successful:
         load_mcp_toolsets,
     )
     from pydantic_ai.messages import TextContent
+    from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 
 pytestmark = [
@@ -1492,7 +1496,7 @@ class TestMCPToolsetIntegration:
 
         A unit rather than an agent-run test because `ToolsetTool.max_retries` is only observable
         end-to-end as a retry *count*; the durable end-to-end proof lives in
-        `tests/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
+        `tests/durable_exec/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
         """
         toolset = MCPToolset('https://example.com/mcp', max_retries=toolset_max_retries)
         tool = toolset.tool_for_tool_def(
@@ -1747,8 +1751,6 @@ class TestLoadMCPToolsets:
         # Single server entry, wrapped with `.prefixed('alpha')`.
         assert len(toolsets) == 1
         # The wrapped toolset is a `PrefixedToolset`, not an `MCPToolset` directly.
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
-
         assert isinstance(toolsets[0], PrefixedToolset)
         assert isinstance(toolsets[0].wrapped, MCPToolset)
 
@@ -1757,24 +1759,106 @@ class TestLoadMCPToolsets:
             load_mcp_toolsets('/nonexistent/path/to/config.json')
 
     async def test_load_mcp_toolsets_http_entry(self):
+        """A URL-configured toolset completes a real Streamable HTTP tool call."""
+        process = await anyio.open_process(
+            [
+                sys.executable,
+                '-c',
+                (
+                    'import socket\n'
+                    'import uvicorn\n'
+                    'from fastmcp import FastMCP\n'
+                    "mcp = FastMCP('test_server')\n"
+                    "mcp.tool(name='get_weather_forecast')"
+                    "(lambda location: f'The weather in {location} is sunny and 26 degrees Celsius.')\n"
+                    "server_socket = socket.create_server(('127.0.0.1', 0))\n"
+                    'print(server_socket.getsockname()[1], flush=True)\n'
+                    "uvicorn.run(mcp.http_app(), fd=server_socket.fileno(), lifespan='on', log_level='warning')"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        async def read_stderr() -> str:  # pragma: no cover
+            assert process.stderr is not None
+            try:
+                return (await process.stderr.receive()).decode()
+            except anyio.EndOfStream:  # pragma: no cover
+                return '<no stderr>'
+
+        try:
+            assert process.stdout is not None
+            try:
+                port = int((await process.stdout.receive()).decode().strip())
+            except anyio.EndOfStream:  # pragma: no cover
+                raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
+            config = {
+                'mcpServers': {
+                    'beta': {'url': f'http://127.0.0.1:{port}/mcp', 'headers': {'X-Key': 'foo'}},
+                }
+            }
+            with TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / 'mcp.json'
+                config_path.write_text(json.dumps(config), encoding='utf-8')
+                toolsets = load_mcp_toolsets(config_path)
+
+            assert len(toolsets) == 1
+            assert isinstance(toolsets[0], PrefixedToolset)
+            wrapped = toolsets[0].wrapped
+            assert isinstance(wrapped, MCPToolset)
+            assert isinstance(wrapped.client.transport, StreamableHttpTransport)
+            assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+
+            try:
+                with anyio.fail_after(10):
+                    agent = Agent(TestModel(call_tools=['beta_get_weather_forecast']), toolsets=toolsets)
+                    result = await agent.run('weather')
+            except BaseException:  # pragma: no cover
+                if process.returncode is not None:
+                    raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
+                raise
+        finally:
+            with anyio.CancelScope(shield=True):
+                if process.returncode is None:  # pragma: no branch
+                    process.terminate()
+                    with anyio.move_on_after(5) as graceful_shutdown:
+                        await process.wait()
+                    if graceful_shutdown.cancel_called:  # pragma: lax no cover
+                        process.kill()
+                if process.returncode is None:  # pragma: no branch
+                    await process.wait()  # pragma: lax no cover
+
+        assert result.output == snapshot(
+            '{"beta_get_weather_forecast":"The weather in a is sunny and 26 degrees Celsius."}'
+        )
+
+    async def test_load_mcp_toolsets_accepts_explicit_null_optional_values(self):
+        """Explicit JSON `null` keeps working for optional values used by shared MCP configs."""
         config = {
             'mcpServers': {
-                'beta': {'url': 'http://localhost:8000/mcp', 'headers': {'X-Key': 'foo'}},
+                'stdio': {'command': 'python', 'args': None, 'env': None, 'cwd': None},
+                'http': {'url': 'https://example.com/mcp', 'headers': None},
             }
         }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
-        assert len(toolsets) == 1
+        assert len(toolsets) == snapshot(2)
         assert isinstance(toolsets[0], PrefixedToolset)
-        wrapped = toolsets[0].wrapped
-        assert isinstance(wrapped, MCPToolset)
-        # Headers flowed through to the FastMCP transport.
-        assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+        stdio = toolsets[0].wrapped
+        assert isinstance(stdio, MCPToolset)
+        assert isinstance(stdio.client.transport, StdioTransport)
+        assert stdio.client.transport.args == []
+        assert stdio.client.transport.env is None
+        assert stdio.client.transport.cwd is None
+        assert isinstance(toolsets[1], PrefixedToolset)
+        http = toolsets[1].wrapped
+        assert isinstance(http, MCPToolset)
+        assert isinstance(http.client.transport, StreamableHttpTransport)
+        assert http.client.transport.headers == {}
 
     async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
         """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax
@@ -1784,8 +1868,10 @@ class TestLoadMCPToolsets:
             'mcpServers': {
                 'alpha': {
                     'url': 'https://${MCP_TEST_HOST:-localhost:8000}/mcp',
-                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}', 'X-Extras': ['${MCP_TEST_TOKEN}']},
+                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}'},
                 },
+                # `args` is the list-valued field, so it covers expansion inside a list.
+                'beta': {'command': 'python', 'args': ['-m', '${MCP_TEST_TOKEN}']},
             }
         }
         with TemporaryDirectory() as tmp:
@@ -1796,11 +1882,13 @@ class TestLoadMCPToolsets:
         wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
         assert isinstance(wrapped, MCPToolset)
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {
-            'Authorization': 'Bearer secret-value',
-            'X-Extras': ['secret-value'],
-        }
+        assert wrapped.client.transport.headers == {'Authorization': 'Bearer secret-value'}
         assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
+
+        stdio = toolsets[1].wrapped  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        assert isinstance(stdio, MCPToolset)
+        assert isinstance(stdio.client.transport, StdioTransport)
+        assert stdio.client.transport.args == ['-m', 'secret-value']
 
     async def test_load_mcp_toolsets_undefined_env_var_raises(self):
         """A `${VAR}` reference without a default and not set in the environment raises a clear `ValueError`."""
@@ -1811,24 +1899,88 @@ class TestLoadMCPToolsets:
             with pytest.raises(ValueError, match=r'\$\{MCP_TEST_UNDEFINED\} is not defined'):
                 load_mcp_toolsets(config_path)
 
-    async def test_load_mcp_toolsets_rejects_non_object_root(self):
-        """The config root must be a JSON object; a list / scalar at the root raises a descriptive error."""
+    @pytest.mark.parametrize(
+        'config,loc',
+        [
+            pytest.param(['not an object'], (), id='root-not-an-object'),
+            pytest.param({'someOtherKey': {}}, ('mcpServers',), id='missing-mcp-servers-key'),
+            pytest.param({'mcpServers': {'alpha': None}}, ('mcpServers', 'alpha'), id='entry-not-an-object'),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 123}}}, ('mcpServers', 'alpha', 'command'), id='command-not-a-str'
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'args': 'not-a-list'}}},
+                ('mcpServers', 'alpha', 'args'),
+                id='args-not-a-list',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'env': 'not-a-mapping'}}},
+                ('mcpServers', 'alpha', 'env'),
+                id='env-not-a-mapping',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'url': 'http://localhost:8000/sse', 'headers': 'not-a-mapping'}}},
+                ('mcpServers', 'alpha', 'headers'),
+                id='headers-not-a-mapping',
+            ),
+            # The `Raises:` block and the PR body name these inner types specifically: each used to
+            # load without complaint and only misbehave once the server was contacted.
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'args': ['-p', 8080]}}},
+                ('mcpServers', 'alpha', 'args', 1),
+                id='args-item-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'cwd': 123}}},
+                ('mcpServers', 'alpha', 'cwd'),
+                id='cwd-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'env': {'PORT': 8080}}}},
+                ('mcpServers', 'alpha', 'env', 'PORT'),
+                id='env-value-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'url': 'http://localhost:8000/mcp', 'headers': {'X-Count': 5}}}},
+                ('mcpServers', 'alpha', 'headers', 'X-Count'),
+                id='headers-value-not-a-str',
+            ),
+        ],
+    )
+    async def test_load_mcp_toolsets_rejects_config_not_matching_the_schema(
+        self, config: object, loc: tuple[str | int, ...]
+    ):
+        """A config that doesn't match the `mcpServers` shape raises `ValidationError`, pointing at the field.
+
+        Covers the inner types as well as the fields themselves — an item inside `args`, a `cwd`, and
+        the values inside `env` and `headers`. Those are the shapes that used to load without
+        complaint and only misbehave later, once the server was contacted, so `loc` is asserted down
+        to the offending index or key.
+        """
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps(['not an object']), encoding='utf-8')
-            with pytest.raises(ValueError, match='Expected JSON object at root'):
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            with pytest.raises(ValidationError) as exc_info:
                 load_mcp_toolsets(config_path)
 
-    async def test_load_mcp_toolsets_rejects_missing_mcp_servers_key(self):
-        """The config must have an `mcpServers` object."""
+        assert [error['loc'] for error in exc_info.value.errors()] == [loc]
+        # `ValidationError` subclasses `ValueError`, so callers catching `ValueError` still work.
+        assert isinstance(exc_info.value, ValueError)
+
+    async def test_load_mcp_toolsets_ignores_keys_other_mcp_clients_write(self):
+        """A config shared with another MCP client still loads; its extra keys are ignored."""
+        config = {
+            'mcpServers': {
+                'alpha': {'command': 'python', 'args': ['-m', 'x'], 'type': 'stdio', 'disabled': False, 'timeout': 30}
+            }
+        }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
-            config_path.write_text(json.dumps({'someOtherKey': {}}), encoding='utf-8')
-            with pytest.raises(ValueError, match='Expected `mcpServers` object'):
-                load_mcp_toolsets(config_path)
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            assert len(load_mcp_toolsets(config_path)) == 1
 
     async def test_load_mcp_toolsets_rejects_invalid_server_entry(self):
-        """A server entry missing both `command` and `url` raises a clear `ValueError`."""
+        """A server entry with neither `command` nor `url` is a `ValueError`, not a schema problem."""
         config = {'mcpServers': {'alpha': {'something': 'else'}}}
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'

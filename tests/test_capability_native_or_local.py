@@ -1626,6 +1626,7 @@ class TestRunWithSpec:
                     timestamp=IsDatetime(),
                     instructions="""\
 original
+
 also from spec\
 """,
                     run_id=IsStr(),
@@ -1636,6 +1637,7 @@ also from spec\
                         TextPart(
                             content="""\
 instructions: original
+
 also from spec\
 """
                         )
@@ -1789,6 +1791,7 @@ also from spec\
                     timestamp=IsDatetime(),
                     instructions="""\
 agent-level
+
 from-spec\
 """,
                     run_id=IsStr(),
@@ -1799,6 +1802,7 @@ from-spec\
                         TextPart(
                             content="""\
 instructions: agent-level
+
 from-spec\
 """
                         )
