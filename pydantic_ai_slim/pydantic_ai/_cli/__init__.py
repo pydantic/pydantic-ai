@@ -138,19 +138,35 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
+def _clai_heading(prog_name: str) -> str:
+    return f'{prog_name} - Pydantic AI CLI v{__version__} • Python {platform.python_version()}'
+
+
 def _print_intro(
-    console: Console, agent: Agent[Any, Any], prog_name: str, model_name: str, agent_path: str | None
+    console: Console,
+    agent: Agent[Any, Any],
+    model_name: str,
+    *,
+    heading: str | None = None,
+    agent_path: str | None = None,
 ) -> None:
-    """Print the intro a chat session opens with, and claim the banner so no run prints another one.
+    """Print the intro a chat session opens with.
 
     Left to itself, the first run would print the banner into the middle of the answer to the first
-    prompt. clai knows what the agent is before then, so it shows the same banner up front instead.
+    prompt. A chat session knows what the agent is before then, so it shows the same banner up front.
+
+    Args:
+        console: Console to print to.
+        agent: The agent the session will run.
+        model_name: ID of the model the agent will use.
+        heading: First line, naming the program. Defaults to the library version, as a script gets.
+        agent_path: How the user asked for the agent, for one that doesn't name itself.
     """
     from ..agent import _registered_counts  # pyright: ignore[reportPrivateUsage]
 
     registered = _registered_counts(agent, agent.root_capability)
     banner = _display.render_banner(
-        heading=f'{prog_name} - Pydantic AI CLI v{__version__} • Python {platform.python_version()}',
+        heading=heading,
         # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
         name=agent.name or agent_path,
         model=model_name,
@@ -341,10 +357,10 @@ def _run_chat_command(
             return 1
 
     model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
-    # Claiming the banner here is what stops the first run from printing a second one, so it has to
-    # happen whether or not this session is one that shows it.
-    if _display.claim_banner() and not _display.banner_suppressed() and console.is_terminal:
-        _print_intro(console, agent, prog_name, model_name, args.agent)
+    # Claimed last, so the banner is only spent when it's actually about to be printed. Nothing can
+    # print a second one later: `ask_agent` claims it before every run.
+    if not _display.banner_suppressed() and console.is_terminal and _display.claim_banner():
+        _print_intro(console, agent, model_name, heading=_clai_heading(prog_name), agent_path=args.agent)
     elif args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
@@ -389,6 +405,18 @@ async def run_chat(
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
 ) -> int:
+    # `Agent.to_cli()` arrives here with nothing printed yet, so this is where its session gets the
+    # banner. `clai` printed its own intro and claimed the banner already, so it doesn't get a second.
+    chat_model = model or agent.model
+    if (
+        isinstance(agent, Agent)
+        and chat_model is not None
+        and not _display.banner_suppressed()
+        and console.is_terminal
+        and _display.claim_banner()
+    ):
+        _print_intro(console, agent, chat_model if isinstance(chat_model, str) else chat_model.model_id)
+
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_history_path.touch(exist_ok=True)

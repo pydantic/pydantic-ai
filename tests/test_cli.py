@@ -2,15 +2,18 @@ import sys
 import types
 from collections.abc import Callable, Iterator
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 import sniffio
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart, _display
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart, __version__, _display
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -24,7 +27,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command
+    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command, run_chat
     from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -1175,3 +1178,67 @@ def test_clai_web_does_not_print_a_banner(mocker: MockerFixture, env: TestEnv, t
 
     # A server's first chat request would otherwise print the banner into its log, long after start.
     assert _display.claim_banner() is False
+
+
+def _exit_immediately(mocker: MockerFixture, inp: Any) -> None:
+    inp.send_text('/exit\n')
+    mocker.patch('pydantic_ai._cli.PromptSession', return_value=PromptSession[Any](input=inp, output=DummyOutput()))
+
+
+def _chat_console() -> tuple[Console, StringIO]:
+    io = StringIO()
+    return Console(file=io, force_terminal=True), io
+
+
+def test_run_chat_shows_banner_for_a_users_own_agent(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
+    """`Agent.to_cli()` prints no header of its own, so without this its session announces nothing."""
+    console, io = _chat_console()
+    agent = Agent(TestModel(), name='support_agent')
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    output = io.getvalue()
+    assert '·.______|______.·' in output
+    # A user's own agent gets the same heading a script does, not clai's.
+    assert 'Pydantic AI CLI' not in output
+    assert f'pydantic-ai v{__version__}' in output
+    assert 'agent: support_agent • model: test:test • tools: 0' in output
+
+
+def test_run_chat_without_a_model_shows_no_banner(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
+    """There is nothing to say about the model yet, and the first prompt will fail on it anyway."""
+    console, io = _chat_console()
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        anyio.run(run_chat, True, Agent(), console, 'monokai', 'pydantic-ai', tmp_path)
+
+    assert '·.______|______.·' not in io.getvalue()
+
+
+def test_run_chat_on_a_wrapped_agent_shows_no_banner(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
+    """The counts the banner reports come off `Agent`; a wrapper keeps the silence it has today."""
+    console, io = _chat_console()
+    agent = WrapperAgent(Agent(TestModel(), name='support_agent'))
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    assert '·.______|______.·' not in io.getvalue()
+
+
+def test_clai_chat_session_does_not_print_a_second_banner(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None
+):
+    """`_run_chat_command` prints the intro, so `run_chat` must find the banner already claimed."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        with cli_agent.override(model=TestModel(custom_output_text='hi')):
+            assert cli([]) == 0
+
+    assert capfd.readouterr().out.count('·.______|______.·') == 1
