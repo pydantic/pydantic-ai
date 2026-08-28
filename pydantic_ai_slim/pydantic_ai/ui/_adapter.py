@@ -174,7 +174,7 @@ def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
     continuity claims (Vercel AI's `providerMetadata`, AG-UI's `encrypted_value`), and that is what
     `load_messages` reconstructs from.
 
-    Each error's `ctx` and `input` are emptied here, matching the `include_input='none'` rendering
+    Each error's `ctx` is dropped here and its `input` emptied, matching the `include_input='none'` rendering
     [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] is
     fixed at, so this channel discloses no more than the text beside it. `ctx` can hold whatever a
     `field_validator` was given as context and `input` is the value the model sent, and the client
