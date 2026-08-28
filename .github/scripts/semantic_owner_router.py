@@ -403,18 +403,22 @@ def _pull_request_precedence(
         key = author_login.casefold()
         owner = next((candidate for candidate in _OWNERS if candidate.casefold() == key), None)
         if owner is not None and client.maintainer_login(repo, owner, refresh=True) is not None:
-            return Selection(
-                number=number,
-                decision=Decision(number=number, owner=owner, evidence=f'author:{owner}'),
-                status='route',
-            )
+            # A maintainer's own pull request is already their responsibility:
+            # no assignment and no ping, not even to the author.
+            return Selection(number=number, decision=None, status='maintainer-author')
     return None
 
 
-def _issue_gate(repo: str, item: Mapping[str, Any], normalized: Mapping[str, Any], number: int) -> Selection | None:
-    """Decide whether an issue may be routed at all; None means proceed."""
+def _intake_gate(repo: str, normalized: Mapping[str, Any], number: int) -> Selection | None:
+    """Decide whether an item may be routed at all; None means proceed.
+
+    The gate covers pull requests exactly like issues: no `p:1-highest`,
+    `p:2-high`, or `community-backed` label means no assignment and no ping.
+    pydanty never labels pull requests, so on gated repositories PR intake is
+    off until a human applies a gate label.
+    """
     # A gate label missing from a truncated first page counts as absent, which
-    # fails toward leaving the issue unassigned. `community-backed` (a judged
+    # fails toward leaving the item unassigned. `community-backed` (a judged
     # community-demand verdict, see `community_demand.py`) opens the gate too.
     if repo in _GATED_REPOS and not _labels(normalized) & (_PRIORITY_LABELS | {_COMMUNITY_LABEL}):
         return Selection(number=number, decision=None, status='awaiting-triage')
@@ -444,7 +448,9 @@ def decision_for(client: attention.GitHubClient, repo: str, number: int) -> Sele
     if _recently_unassigned(item):
         return Selection(number=number, decision=None, status='recently-unassigned')
     is_pull_request = item.get('__typename') == 'PullRequest'
-    if not is_pull_request and (gated := _issue_gate(repo, item, normalized, number)) is not None:
+    # The gate outranks every routing precedence, author precedence included:
+    # a maintainer's own ungated pull request stays unassigned too.
+    if (gated := _intake_gate(repo, normalized, number)) is not None:
         return gated
     if _maintainer_assignees(client, repo, normalized):
         return Selection(number=number, decision=None, status='maintainer-present')
@@ -527,11 +533,14 @@ def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequenc
     """List candidates, priority-labeled issues before pull requests."""
     negatives = ' '.join(f'-assignee:{owner}' for owner in qualified)
     if repo in _GATED_REPOS:
+        # Pull requests carry the same gate as issues, so the sweep only
+        # fetches labeled ones; `decision_for` re-checks the label either way.
         priorities = ','.join(f'"{label}"' for label in sorted(_PRIORITY_LABELS))
         issues = f'repo:{repo} is:open is:issue label:{priorities} {negatives} sort:created-asc'
+        pulls = f'repo:{repo} is:open is:pr -draft:true label:{priorities} created:>={_RECOVERY_EPOCH} {negatives} sort:created-asc'
     else:
         issues = f'repo:{repo} is:open is:issue {negatives} sort:created-asc'
-    pulls = f'repo:{repo} is:open is:pr -draft:true created:>={_RECOVERY_EPOCH} {negatives} sort:created-asc'
+        pulls = f'repo:{repo} is:open is:pr -draft:true created:>={_RECOVERY_EPOCH} {negatives} sort:created-asc'
     return list(dict.fromkeys(_search_numbers(client, issues) + _search_numbers(client, pulls)))
 
 
