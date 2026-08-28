@@ -450,6 +450,21 @@ class ModelSettings(TypedDict, total=False):
       `gpt-oss-safeguard` models, which take no thinking parameter)
     """
 
+    include_citations: bool
+    """Whether to request provider-native citations when the provider requires an explicit opt-in.
+
+    Citation responses are normalized onto [`TextPart.citations`][pydantic_ai.messages.TextPart.citations].
+    This setting does not retain raw provider annotation payloads; use the relevant provider-specific setting
+    when those are also needed.
+
+    Supported by:
+
+    * Anthropic (inline documents and Web Fetch)
+
+    Providers that return citations without an explicit request setting ignore this field; their citations are
+    still normalized when present.
+    """
+
     service_tier: ServiceTier
     """The cross-provider service tier to use for the model request.
 

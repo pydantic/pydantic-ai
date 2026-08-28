@@ -1504,6 +1504,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Thinking',
                         },
+                        'include_citations': {'title': 'Include Citations', 'type': 'boolean'},
                         'service_tier': {
                             'enum': ['auto', 'default', 'flex', 'priority'],
                             'title': 'Service Tier',
