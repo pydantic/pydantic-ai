@@ -81,7 +81,7 @@ def _sanitize_reason(value: str) -> str:
         for word in value.split()
         if '://' not in word
         and not word.casefold().startswith('www.')
-        and word.casefold() not in ('@channel', '@here', '@everyone')
+        and not any(mention in word.casefold() for mention in ('@channel', '@here', '@everyone'))
     ]
     text = _slack_escape(' '.join(words)[:_REASON_LIMIT]).strip()
     return text or 'selected by the weekly review'
@@ -111,7 +111,8 @@ def _search(client: attention.GitHubClient, query: str, *, sort: str, per_page: 
 
 
 def _model_request_count(client: attention.GitHubClient, *, now: dt.datetime) -> int:
-    since = (now - dt.timedelta(days=_MODEL_REQUEST_WINDOW_DAYS)).date().isoformat()
+    # Full timestamp: truncating to a date widens the window and double-counts across consecutive runs.
+    since = (now - dt.timedelta(days=_MODEL_REQUEST_WINDOW_DAYS)).replace(microsecond=0).isoformat()
     query = f'repo:{REPO} is:issue label:"{MODEL_REQUEST_LABEL}" created:>={since}'
     count = _search(client, query, sort='created', per_page=1).get('total_count')
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
@@ -322,18 +323,28 @@ def apply_picks(
     return lines, '\n'.join(text_lines), surfaced
 
 
-def finalize_picks(client: attention.GitHubClient, numbers: list[int]) -> list[str]:
-    """Mark delivered picks `digest:considered`; runs only after the Slack post succeeded."""
+def finalize_picks(client: attention.GitHubClient, numbers: list[int]) -> tuple[list[str], list[int]]:
+    """Mark delivered picks `digest:considered`; runs only after the Slack post succeeded.
+
+    One pick failing must not leave the rest unlabeled (they were all posted), so
+    failures are collected per item and the caller turns them into a red run.
+    """
     ensure_considered_label(client)
     lines: list[str] = []
+    failed: list[int] = []
     for number in numbers:
-        current = cast(dict[str, Any], client.get(f'/repos/{REPO}/issues/{number}'))
-        if str(current.get('state') or '').casefold() != 'open' or CONSIDERED_LABEL in _labels(current):
-            lines.append(f'#{number}: already settled, not relabeled')
-            continue
-        client.post(f'/repos/{REPO}/issues/{number}/labels', {'labels': [CONSIDERED_LABEL]})
-        lines.append(f'#{number}: marked considered')
-    return lines
+        try:
+            current = cast(dict[str, Any], client.get(f'/repos/{REPO}/issues/{number}'))
+            if str(current.get('state') or '').casefold() != 'open' or CONSIDERED_LABEL in _labels(current):
+                lines.append(f'#{number}: already settled, not relabeled')
+                continue
+            client.post(f'/repos/{REPO}/issues/{number}/labels', {'labels': [CONSIDERED_LABEL]})
+            lines.append(f'#{number}: marked considered')
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            failed.append(number)
+            lines.append(f'#{number}: not relabeled (HTTPError {exc.code}); it may be surfaced again')
+    return lines, failed
 
 
 def _picked_numbers(value: str) -> list[int]:
@@ -362,6 +373,7 @@ def main() -> int:
     parser.add_argument('--snapshot-path', default=SNAPSHOT_PATH)
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
+    failed: list[int] = []
     try:
         token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
         if not token:
@@ -375,7 +387,7 @@ def main() -> int:
             picked = os.environ.get('DIGEST_PICKED')
             if picked is None:
                 raise ValueError('DIGEST_PICKED is required')
-            lines = finalize_picks(client, _picked_numbers(picked))
+            lines, failed = finalize_picks(client, _picked_numbers(picked))
         else:
             if not args.agent_output:
                 parser.error('--agent-output is required')
@@ -389,6 +401,9 @@ def main() -> int:
         return 1
     for line in lines:
         print(line)
+    if failed:
+        print(f'feature digest failed: {len(failed)} delivered pick(s) not relabeled', file=sys.stderr)
+        return 1
     return 0
 
 
