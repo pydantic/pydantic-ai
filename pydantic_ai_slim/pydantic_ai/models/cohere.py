@@ -48,6 +48,7 @@ from . import (
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
+from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -381,7 +382,7 @@ class CohereModel(Model[AsyncClientV2]):
                         if isinstance(c, str | TextContent):
                             cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
                         elif isinstance(c, CachePoint):
-                            continue
+                            warn_cache_point_ignored('Cohere')
                         else:
                             raise RuntimeError('Cohere does not yet support multi-modal inputs.')
                     yield UserChatMessageV2(role='user', content=cohere_content)

@@ -129,7 +129,11 @@ To request Bedrock's `'reserved'` tier (which requires a pre-purchased capacity 
 
 ### Prompt Caching
 
-Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:
+Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests.
+
+The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting: on supporting Bedrock models, `cache=True` places cache points at the end of the tool definitions and static instructions, equivalent to `bedrock_cache_instructions` plus `bedrock_cache_tool_definitions` below. Requested retentions snap to the default tier, since AWS grants the extended TTL to only a subset of Claude models; use the `bedrock_cache_*='1h'` settings directly on models that support it. The provider-specific `bedrock_cache_*` settings take precedence when set.
+
+Beyond that, Pydantic AI provides four provider-specific ways to use prompt caching:
 
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. A `CachePoint` at the start of a user prompt part has nothing before it in that message, so it caches everything up to the end of the previous user message instead. Pass `CachePoint(ttl='1h')` to opt into the extended cache duration.
 2. **Cache System Instructions**: Set [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.

@@ -29,6 +29,9 @@ that records only path, body and headers on a live transport, while `timeout` is
   when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
   Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
   evidence of non-support, which is exactly what this harness reads it as.
+- `cache` is excluded for the same reason as `thinking`: it is gated per model name via
+  `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
+  which warns instead) supports it while sending nothing at all.
 
 That per-model-name gating bounds this file generally: each class is probed at ONE representative
 model, chosen to exercise the class's full capability, so an entry whose support varies by model
@@ -129,7 +132,7 @@ with try_import() as mcp_available:
 pytestmark = pytest.mark.anyio
 
 
-HAND_MAINTAINED = frozenset({'tool_choice', 'thinking'})
+HAND_MAINTAINED = frozenset({'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 PROBE_VALUES: dict[str, tuple[object, ...]] = {

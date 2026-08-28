@@ -65,6 +65,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -755,7 +756,7 @@ class MistralModel(Model[Mistral]):
                 elif isinstance(item, UploadedFile):
                     raise NotImplementedError('UploadedFile is not supported in Mistral user prompts')
                 elif isinstance(item, CachePoint):
-                    pass
+                    warn_cache_point_ignored('Mistral')
                 else:
                     assert_never(item)
         return MistralUserMessage(content=content)

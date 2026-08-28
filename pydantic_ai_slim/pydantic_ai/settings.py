@@ -29,6 +29,21 @@ it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
 that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
+CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
+"""The retention tiers for prompt-cache configuration.
+
+Not all providers support all tiers. A requested retention snaps down to the
+nearest tier the provider supports (e.g. `'1h'` -> `'5m'` on a provider whose
+longest tier is 5 minutes); a retention below every supported tier snaps up to
+the shortest one.
+"""
+
+CacheSetting: TypeAlias = bool | CacheRetention
+"""Type alias for prompt-cache configuration values.
+
+See [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] for the value semantics.
+"""
+
 ToolChoiceScalar = Literal['none', 'required', 'auto']
 
 
@@ -448,6 +463,34 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI (as `extra_body['thinking']`)
     * Bedrock Mantle (the Responses interface only; the Chat Completions interface serves only the
       `gpt-oss-safeguard` models, which take no thinking parameter)
+    """
+
+    cache: CacheSetting
+    """Enable or configure prompt caching for the model request.
+
+    - `True`: Enable prompt caching with the provider's default retention. Uses the provider's
+      automatic caching mode where one exists; elsewhere the library places cache breakpoints
+      at the stable prompt boundaries (end of tool definitions, end of static instructions).
+    - `False`: No library-managed caching (overrides a `cache` value in the model's default
+      settings). Providers that cache implicitly (e.g. OpenAI) still do.
+    - `'5m'`/`'30m'`/`'1h'`: Enable prompt caching with a specific retention, snapped to the
+      nearest tier the provider supports (down where a shorter tier exists).
+
+    Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] markers in the message history are
+    unaffected and can be combined with this setting. Provider-specific cache settings
+    (e.g. `anthropic_cache`, `bedrock_cache_instructions`) take precedence: if any is set, this
+    unified field is ignored entirely.
+
+    Silently ignored by model classes not listed below.
+
+    Supported by:
+
+    * Anthropic (as `anthropic_cache`; via breakpoint settings on Bedrock and Vertex clients)
+    * Bedrock (as `bedrock_cache_instructions` + `bedrock_cache_tool_definitions`)
+    * OpenRouter (as `openrouter_cache_instructions` + `openrouter_cache_tool_definitions`)
+    * OpenAI (no request effect: OpenAI caches prompts implicitly)
+    * Google (no request effect: Gemini caches prompts implicitly; warns unless
+      `google_cached_content` is set)
     """
 
     service_tier: ServiceTier

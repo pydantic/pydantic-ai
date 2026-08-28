@@ -207,6 +207,8 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 # `OpenRouterModel.supported_native_tools()` caps the effective set via the
                 # intersection in `Model.profile`.
                 supported_native_tools=SUPPORTED_NATIVE_TOOLS,
+                supports_cache=supports_cache_control,
+                supported_cache_retentions=('5m', '1h') if supports_anthropic_cache else ('5m',),
                 openrouter_supports_cache_control=supports_cache_control,
                 openrouter_supports_cache_ttl=supports_anthropic_cache,
                 openrouter_supports_tool_cache=supports_anthropic_cache,

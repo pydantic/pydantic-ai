@@ -202,11 +202,12 @@ async def test_openrouter_cache_point_image_e2e(
 async def test_openrouter_cache_point_unsupported_provider_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
-    """`CachePoint` is silently dropped for downstream providers without cache support (OpenAI)."""
+    """`CachePoint` is dropped, with a warning, for downstream providers without cache support (OpenAI)."""
     model = openrouter_model('openai/gpt-5-mini')
     agent = Agent(model)
 
-    result = await agent.run(['Some context. ' * 20, CachePoint(), 'Summarize in one sentence.'])
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by the downstream provider on OpenRouter'):
+        result = await agent.run(['Some context. ' * 20, CachePoint(), 'Summarize in one sentence.'])
 
     assert isinstance(result.output, str)
     content = single_request_body(vcr)['messages'][0]['content']

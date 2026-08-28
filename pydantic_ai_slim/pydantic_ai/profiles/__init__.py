@@ -11,6 +11,7 @@ from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransforme
 from ..exceptions import PydanticAIDeprecationWarning
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
+from ..settings import CacheRetention
 
 __all__ = [
     'ModelProfile',
@@ -126,6 +127,26 @@ class ModelProfile(TypedDict, total=False):
     json_schema_transformer: type[JsonSchemaTransformer] | None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model. Default: `None`."""
 
+    supports_cache: bool
+    """Whether the model supports prompt caching configuration. Default: `False`.
+
+    When False, the unified `cache` setting in `ModelSettings` is silently ignored.
+    Set by providers rather than shared profile functions, since cache behavior is a
+    fact about the provider's API, not the model family.
+    """
+
+    supported_cache_retentions: tuple[CacheRetention, ...]
+    """The prompt-cache retention tiers the provider supports, shortest first. Default: `('5m',)`.
+
+    A retention requested via the unified `cache` setting snaps down to the nearest supported tier.
+    """
+
+    supports_auto_cache: bool
+    """Whether the provider has a server-managed automatic prompt-caching mode. Default: `False`.
+
+    When True, `cache=True` uses that mode instead of library-placed cache breakpoints.
+    """
+
     supports_thinking: bool
     """Whether the model supports thinking/reasoning configuration. Default: `False`.
 
@@ -225,6 +246,9 @@ DEFAULT_PROFILE: ModelProfile = {
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
     'json_schema_transformer': None,
+    'supports_cache': False,
+    'supported_cache_retentions': ('5m',),
+    'supports_auto_cache': False,
     'supports_thinking': False,
     'thinking_always_enabled': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,

@@ -5413,8 +5413,9 @@ async def test_cache_point_filtering():
     # Create a minimal GoogleModel instance to test _map_user_prompt
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
-    # CachePoint mixed into a content list is filtered out by _map_user_prompt
-    content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
+    # CachePoint mixed into a content list is filtered out by _map_user_prompt, with a warning
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by Google'):
+        content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out, only text content should remain
     assert len(content) == 2

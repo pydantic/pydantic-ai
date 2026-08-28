@@ -54,6 +54,7 @@ from . import (
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
+from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -533,8 +534,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 elif isinstance(item, UploadedFile):
                     raise NotImplementedError('UploadedFile is not supported for Hugging Face')
                 elif isinstance(item, CachePoint):
-                    # Hugging Face doesn't support prompt caching via CachePoint
-                    pass
+                    warn_cache_point_ignored('Hugging Face')
                 else:
                     assert_never(item)
         return ChatCompletionInputMessage(role='user', content=content)

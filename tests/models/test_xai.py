@@ -5213,8 +5213,9 @@ async def test_xai_cache_point_filtered(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    # Run with a user prompt that includes a CachePoint (which should be filtered)
-    result = await agent.run(['Hello', CachePoint(), ' world'])
+    # Run with a user prompt that includes a CachePoint (which should be filtered, with a warning)
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by xAI'):
+        result = await agent.run(['Hello', CachePoint(), ' world'])
     assert result.output == 'Hello'
 
     # Verify message was sent (CachePoint filtered out - only text items remain)
@@ -5246,7 +5247,8 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
 
     # Create a message history where we manually insert a UserPromptPart with only CachePoint
     # The next run should handle this gracefully
-    result2 = await agent.run([CachePoint()], message_history=result1.new_messages())
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by xAI'):
+        result2 = await agent.run([CachePoint()], message_history=result1.new_messages())
 
     # Verify kwargs - the second request should have the history but the CachePoint-only prompt is skipped
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(

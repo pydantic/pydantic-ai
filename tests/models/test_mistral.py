@@ -18,6 +18,7 @@ from vcr.cassette import Cassette
 
 from pydantic_ai import (
     BinaryContent,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelRequest,
@@ -86,6 +87,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral or openai not installed'),
     pytest.mark.anyio,
 ]
+
+
+async def test_cache_point_ignored_with_warning():
+    model = MistralModel('mistral-small-latest', provider=MistralProvider(api_key='foobar'))
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by Mistral'):
+        await model._map_user_prompt(UserPromptPart(content=['text', CachePoint()]))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_mistral_hidden_tools_stay_off_the_wire():
