@@ -1749,6 +1749,94 @@ class RetryPromptPart:
 # `from __future__ import annotations` at the top of this module.
 
 
+@dataclass(frozen=True, repr=False)
+class AgentInstructionSource:
+    """The agent's own instructions.
+
+    There is exactly one agent in scope, so it carries no id.
+    """
+
+    def __str__(self) -> str:
+        return 'agent'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(frozen=True, repr=False)
+class ToolsetInstructionSource:
+    """A toolset with an `id`."""
+
+    id: str
+
+    def __str__(self) -> str:
+        return f'toolset:{self.id}'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(frozen=True, repr=False)
+class CapabilityInstructionSource:
+    """A capability with an `id`."""
+
+    id: str
+
+    def __str__(self) -> str:
+        return f'capability:{self.id}'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+InstructionSource: TypeAlias = AgentInstructionSource | ToolsetInstructionSource | CapabilityInstructionSource
+"""The source that authored an instruction block."""
+
+
+@dataclass(frozen=True, repr=False)
+class InstructionId:
+    """A resolved instruction key: its authoring source and optional block name."""
+
+    source: InstructionSource
+
+    _: KW_ONLY
+
+    name: str | None = None
+
+    def __str__(self) -> str:
+        return f'{self.source}:{self.name}' if self.name is not None else str(self.source)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _deserialize_instruction_part_id(value: str | InstructionId | None) -> str | InstructionId | None:
+    """Restore structured framework keys while leaving unresolved author names untouched."""
+    if not isinstance(value, str):
+        return value
+    if value == 'agent':
+        return InstructionId(AgentInstructionSource())
+    if value.startswith('agent:'):
+        return InstructionId(AgentInstructionSource(), name=value.removeprefix('agent:'))
+    for namespace, source_type in (
+        ('toolset', ToolsetInstructionSource),
+        ('capability', CapabilityInstructionSource),
+    ):
+        prefix = f'{namespace}:'
+        if value.startswith(prefix):
+            source_id, separator, name = value.removeprefix(prefix).partition(':')
+            return InstructionId(source_type(source_id), name=name if separator else None)
+    return value
+
+
+def _serialize_instruction_part_id(value: str | InstructionId | None) -> str | None:
+    return str(value) if isinstance(value, InstructionId) else value
+
+
+InstructionPartId: TypeAlias = Annotated[
+    str | InstructionId | None,
+    pydantic.BeforeValidator(_deserialize_instruction_part_id),
+    pydantic.PlainSerializer(_serialize_instruction_part_id, return_type=str | None, when_used='json'),
+]
+"""An unresolved author name, a resolved framework key, or no key."""
+
+
 @dataclass(repr=False)
 class InstructionPart:
     """A single instruction block with metadata about its origin.
@@ -1772,39 +1860,28 @@ class InstructionPart:
     or toolset `get_instructions()` methods.
     """
 
-    id: str | None = None
-    """A stable key identifying the source of this instruction block, or `None` if it has none.
+    id: InstructionPartId = None
+    """The block's unresolved author name, resolved framework key, or `None`.
 
-    The framework assigns one to each block it can name, so that a consumer reading
+    An author supplies a plain `str` name such as `'limits'`. Collection resolves it to an
+    [`InstructionId`][pydantic_ai.messages.InstructionId] when the authoring source has an identity,
+    so consumers can distinguish framework-issued keys from unresolved names without parsing strings.
+    A resolved id lets a consumer reading
     [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts]
-    can persist configuration (e.g. replacement text) against a key that survives reordering and rewording:
+    persist configuration against a key that survives reordering and rewording.
 
-    There is one rule, in two halves. A **source key** addresses everything that source contributes:
+    The structured source identifies everything that source contributes:
 
-    - `'agent'` — the agent's own literal instructions
-    - `'toolset:<toolset id>'` — a toolset with an [`id`][pydantic_ai.toolsets.AbstractToolset.id]
-    - `'capability:<capability id>'` — a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id]
+    - [`AgentInstructionSource`][pydantic_ai.messages.AgentInstructionSource] — the agent's literal instructions
+    - [`ToolsetInstructionSource`][pydantic_ai.messages.ToolsetInstructionSource] — a toolset with an `id`
+    - [`CapabilityInstructionSource`][pydantic_ai.messages.CapabilityInstructionSource] — a capability with an `id`
 
-    Appending a segment addresses **one declared block** within that source:
+    [`InstructionId.name`][pydantic_ai.messages.InstructionId.name] optionally identifies one declared
+    block within that source. Resolved ids serialize to the existing concatenated string form, such as
+    `'agent'`, `'toolset:weather'`, or `'capability:budget:remaining'`.
 
-    - `'agent:<declared id>'` — an [`@agent.instructions`][pydantic_ai.agent.Agent.instructions] function
-      that declares an `id`
-    - `'capability:<capability id>:<declared id>'` — a
-      [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] function that declares one
-
-    A source key is what everything else is built from, so it keeps its meaning permanently: adding
-    declared ids to more sources later can only add keys, never change what an existing one addresses.
-
-    Where a source contributes several blocks and none of them declare an id, they all carry the source
-    key, so addressing it covers all of them — computed blocks included. `'agent'` is the deliberate
-    exception: it covers only the literal instructions the agent was built with, so taking over the base
-    prompt doesn't silently swallow an `@agent.instructions` function that injects the date or the user's
-    name.
-
-    Blocks with no key at all are left unidentified — they take part in the prompt as usual, but there is
-    nothing to address them by: an `@agent.instructions` function that declares no `id`, a callable passed
-    to `Agent(instructions=...)`, anything from `agent.run(instructions=...)`, and anything from a toolset
-    or capability that has no `id` of its own.
+    A declared name remains a plain `str` when its source has no identity. `None` means neither the author
+    nor the framework supplied any identity.
     """
 
     part_kind: Literal['instruction'] = 'instruction'

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Generic
 
-from pydantic_ai._instructions import qualify_toolset_instruction_parts
+from pydantic_ai._instructions import validate_instruction_id_segment
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionPart
+from pydantic_ai.messages import InstructionId, InstructionPart, ToolsetInstructionSource
 
 if TYPE_CHECKING:
     from .abstract import AbstractToolset
@@ -17,7 +17,7 @@ class InstructionContribution(Generic[AgentDepsT]):
     """One source's instruction blocks, with the key they are addressed by."""
 
     source: AbstractToolset[AgentDepsT]
-    source_id: str | None
+    source_id: ToolsetInstructionSource | None
     parts: tuple[InstructionPart, ...]
 
 
@@ -30,8 +30,20 @@ def make_contribution(
     `id`, and a source that says nothing to the model must never be the reason that fails. Callers
     normalize first and never reach here with nothing, so there is no empty case to mint for.
     """
-    source_id, parts = qualify_toolset_instruction_parts([part], source.id)
-    return InstructionContribution(source=source, source_id=source_id, parts=tuple(parts))
+    source_id = None
+    resolved_part = part
+    if isinstance(part.id, str):
+        validate_instruction_id_segment(part.id, kind='Declared instruction id')
+    if source.id is not None:
+        validate_instruction_id_segment(source.id, kind='Toolset id')
+        source_id = ToolsetInstructionSource(source.id)
+        if not isinstance(part.id, InstructionId):
+            resolved_part = replace(part, id=InstructionId(source_id, name=part.id))
+        elif part.id.source != source_id:
+            resolved_part = replace(part, id=InstructionId(source_id))
+    elif isinstance(part.id, InstructionId):
+        resolved_part = replace(part, id=None)
+    return InstructionContribution(source=source, source_id=source_id, parts=(resolved_part,))
 
 
 async def collect_toolset_instructions(
@@ -50,15 +62,15 @@ def flatten_instruction_contributions(
     Separate from the collection itself so a toolset that has already gathered its children can
     apply the rule without re-entering the walk that produced them.
     """
-    owners: dict[str, AbstractToolset[AgentDepsT]] = {}
+    owners: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
     parts: list[InstructionPart] = []
     for contribution in contributions:
         if contribution.source_id is not None:
             source_id = contribution.source_id
             if owners.setdefault(source_id, contribution.source) is not contribution.source:
                 raise UserError(
-                    f'Two toolsets have the same `id` {source_id.partition(":")[2]!r} and both contribute '
-                    f'instructions, so {source_id!r} would address blocks from each. '
+                    f'Two toolsets have the same `id` {source_id.id!r} and both contribute '
+                    f'instructions, so {str(source_id)!r} would address blocks from each. '
                     'Toolset `id`s must be unique among all toolsets registered with the same agent.'
                 )
         parts.extend(contribution.parts)

@@ -7,7 +7,7 @@ from typing import Generic
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionPart
+from pydantic_ai.messages import InstructionId, InstructionPart
 from pydantic_ai.template import TemplateStr
 
 from . import _system_prompt
@@ -22,82 +22,14 @@ against the key of whatever source contributes it) and whether it counts as
 AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
 
 
-AGENT_INSTRUCTION_ID = 'agent'
-"""The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] source key for the agent itself.
-
-Bare rather than namespaced: the agent is the one source there can only be one of, and every other
-source key is prefixed, so none of them can claim it.
-"""
-
-
 def validate_instruction_id_segment(id: str, *, kind: str) -> None:
     """Reject values that cannot be represented unambiguously in an instruction id."""
     if ':' in id:
         raise UserError(f'{kind} {id!r} cannot contain a colon because `:` is reserved as an instruction ID delimiter.')
-
-
-TOOLSET_INSTRUCTION_NAMESPACE = 'toolset'
-"""The segment every toolset's source key starts with.
-
-The one namespace `normalize_toolset_instructions` can see, which is what lets it tell a key it
-already issued from a raw value an author wrote.
-"""
-
-
-def toolset_instruction_id(toolset_id: str) -> str:
-    """The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] source key for a toolset."""
-    validate_instruction_id_segment(toolset_id, kind='Toolset id')
-    return f'{TOOLSET_INSTRUCTION_NAMESPACE}:{toolset_id}'
-
-
-def capability_instruction_id(capability_id: str) -> str:
-    """The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] source key for a capability."""
-    validate_instruction_id_segment(capability_id, kind='Capability id')
-    return f'capability:{capability_id}'
-
-
-def declared_instruction_id(source_id: str, declared_id: str) -> str:
-    """The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] for one declared block of a source.
-
-    One rule, applied uniformly: a source key addresses everything that source contributes, and
-    appending a segment addresses a single block the author declared within it — `'agent:local_time'`,
-    `'capability:budget:note'`. A declared segment can therefore never collide with a source key.
-    """
-    validate_instruction_id_segment(declared_id, kind='Declared instruction id')
-    return f'{source_id}:{declared_id}'
-
-
-def instruction_source_key(id: str) -> str:
-    """The source key a block's [`id`][pydantic_ai.messages.InstructionPart.id] belongs to.
-
-    Everything up to the declared segment, so `'toolset:weather:limits'` and `'toolset:weather'` both
-    answer `'toolset:weather'`. Ownership is a property of the source key rather than of the whole
-    id: two sources sharing one key is what makes it ambiguous, whatever they declare beneath it.
-    """
-    return ':'.join(id.split(':')[:2])
-
-
-def resolve_declared_id(source_id: str | None, declared_id: str | None) -> str | None:
-    """Resolve one block's declared id against the key of the source that contributed it.
-
-    The single place the rule lives, so every source applies it the same way: an author writing a
-    block declares a bare name for it (`'limits'`) and the framework qualifies that against the
-    source key it belongs to (`'toolset:weather:limits'`). Authors don't repeat their own identity,
-    and can't accidentally claim a top-level key — including one that already means something, like
-    the agent's own `'agent'`.
-
-    Without a source key there is nothing for a declared segment to hang off, so the block stays
-    unidentified rather than claiming a top-level key of its own. An id that already carries the
-    source key is passed through, so writing the qualified form yields what the author meant rather
-    than `'toolset:weather:toolset:weather:limits'`.
-    """
-    if source_id is None:
-        return None
-    if declared_id is None:
-        return source_id
-    if declared_id == source_id or declared_id.startswith(f'{source_id}:'):
-        return declared_id
-    return declared_instruction_id(source_id, declared_id)
+    if kind == 'Declared instruction id' and id == 'agent':
+        raise UserError(
+            "Declared instruction id 'agent' is reserved for the agent's own instructions; choose a different name."
+        )
 
 
 @dataclass(frozen=True, repr=False)
@@ -108,7 +40,7 @@ class SourcedInstruction(Generic[AgentDepsT]):
 
     _: KW_ONLY
 
-    id: str | None = None
+    id: str | InstructionId | None = None
     dynamic: bool = False
 
     __repr__ = dataclasses_no_defaults_repr
@@ -127,7 +59,7 @@ async def resolve_sourced_instructions(
     parts: list[InstructionPart] = []
     group: list[InstructionPart] = []
     pending_parts: list[InstructionPart] = []
-    group_key: str | None = None
+    group_key: str | InstructionId | None = None
 
     def flush_group() -> None:
         if content := InstructionPart.join(group):
@@ -171,33 +103,6 @@ def normalize_instructions(
     if isinstance(instructions, (str, InstructionPart)) or callable(instructions):
         return [instructions]
     return list(instructions)
-
-
-def qualify_toolset_instruction_parts(
-    parts: list[InstructionPart], toolset_id: str | None
-) -> tuple[str | None, list[InstructionPart]]:
-    """Mint a toolset's source key and resolve each block's declared id against it.
-
-    Returns the key alongside the blocks so a caller never has to ask for it a second time: one
-    answer, minted once, is what stops a reader and a minter drifting apart.
-
-    Each part's [`id`][pydantic_ai.messages.InstructionPart.id] is resolved by `resolve_declared_id`,
-    so a part without one is addressed by `'toolset:<id>'` and a part declaring `'limits'` by
-    `'toolset:<id>:limits'`. Without a key every declared id is dropped: an author writing on a
-    toolset with no `id` has nothing to hang a segment off, and letting the raw value stand would
-    let it claim a key belonging to somebody else — `'agent'`, or a `'toolset:<id>'` naming a
-    toolset it isn't.
-
-    Call this only once blocks have survived normalization. Minting validates the toolset's `id`,
-    and an id that cannot become a key is harmless until the toolset actually says something.
-    """
-    if toolset_id is None:
-        return None, [replace(part, id=None) if part.id is not None else part for part in parts]
-    source_id = toolset_instruction_id(toolset_id)
-    return source_id, [
-        replace(part, id=resolved) if (resolved := resolve_declared_id(source_id, part.id)) != part.id else part
-        for part in parts
-    ]
 
 
 def normalize_toolset_instruction_parts(

@@ -1409,7 +1409,7 @@ Instructions can also come from [capabilities](capabilities/overview.md) via [`g
 
 Each source contributes its own instruction block. Blocks are sent to the model as one string, separated by a blank line, and are also available individually as [`InstructionPart`][pydantic_ai.messages.InstructionPart]s on [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts].
 
-A block whose source the framework can name carries a stable [`id`][pydantic_ai.messages.InstructionPart.id]. There is one rule, in two halves: a **source key** addresses everything that source contributes, and appending a segment addresses **one declared block** within it.
+A block whose source the framework can name carries a stable [`InstructionId`][pydantic_ai.messages.InstructionId]. Its [`source`][pydantic_ai.messages.InstructionId.source] identifies who contributed the block, and its optional [`name`][pydantic_ai.messages.InstructionId.name] identifies one author-declared block within that source. The id renders and serializes as the string shown below, preserving the persisted wire format.
 
 | `id` | Addresses |
 |---|---|
@@ -1430,7 +1430,7 @@ There are two ways to declare one, depending on what the block is:
 Because a block's id is stable across runs, an application that stores instruction configuration elsewhere (say, a UI where a user edits the instructions an MCP server contributes) can key that configuration on the id instead of on the block's position or wording, both of which change as the agent evolves.
 
 A source key is what everything else is built from, so it keeps its meaning permanently: giving more sources declared ids later can only add keys, never change what an existing key addresses.
-Capability IDs, toolset IDs, and declared instruction IDs cannot contain `:`, because the character is reserved as the delimiter between these segments.
+Capability IDs, toolset IDs, and declared instruction names cannot contain `:`, because the character is reserved as the delimiter between these segments. The name `'agent'` is also reserved because its serialized form identifies the agent's own instructions.
 
 ```python {title="instruction_blocks.py"}
 from pydantic_ai import Agent, RunContext
@@ -1458,7 +1458,7 @@ def user_name(ctx: RunContext[None]) -> str:
 agent.run_sync('What is the capital of Italy?')
 
 parts = model.last_model_request_parameters.instruction_parts or []
-print([(part.id, part.content) for part in parts])
+print([(str(part.id) if part.id is not None else None, part.content) for part in parts])
 """
 [
     ('agent', 'Be concise.'),
@@ -1476,7 +1476,7 @@ Two consequences worth knowing before you key configuration on an id:
 - **A key covers everything under it.** Where a source contributes several blocks and none of them declare an id, they all carry the source key, so replacing that key's text replaces all of them — computed blocks included. That is the honest meaning of "I control what this capability tells the model", but it means blocks a source didn't declare ids for can't be addressed one by one. `'agent'` is the deliberate exception: it covers only the literal instructions the agent was built with, so taking over the base prompt doesn't silently swallow an `@agent.instructions` function that injects the date or the user's name.
 - **Unidentified blocks can't be addressed at all.** They take part in the prompt like any other block, but nothing keys them: an instructions function that declares no `id` (a function's name isn't unique, and a lambda or [template string](agent-spec.md#template-strings) has none), a callable passed to `Agent(instructions=...)`, anything passed as runtime instructions to a specific run, and anything from a toolset or capability without an `id`. If you need one of your own callables to be overridable, register it with `@agent.instructions(id=...)` or [`@capability.instructions(id=...)`][pydantic_ai.capabilities.Capability.instructions] instead of passing it to the constructor.
 
-    A declared id needs a source key to hang off, so a source without an `id` of its own gets nothing from declaring one — the blocks stay unidentified rather than claiming top-level keys the application never got to place. The same goes for instructions passed to a single run: they belong to that call rather than to the agent, so they stay unidentified even when passed as an `InstructionPart` with an `id`.
+    A declared name on a source without an `id`, or on instructions passed to a single run, remains a plain unresolved string in memory and on the wire. It is not an [`InstructionId`][pydantic_ai.messages.InstructionId], so consumers can distinguish it from a key resolved by the framework.
 
 ## Reflection and self-correction
 

@@ -654,19 +654,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The agent's own literal instructions are one addressable block; instruction functions are
         # only addressable if `@agent.instructions(id=...)` declares an id for them.
-        self._instructions = [
-            _instructions.SourcedInstruction(
-                instruction,
-                id=_instructions.resolve_declared_id(
-                    _instructions.AGENT_INSTRUCTION_ID,
-                    instruction.id if isinstance(instruction, _messages.InstructionPart) else None,
-                )
-                if isinstance(instruction, (str, _messages.InstructionPart))
-                else None,
-                dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
+        self._instructions: list[_instructions.SourcedInstruction[AgentDepsT]] = []
+        agent_source = _messages.AgentInstructionSource()
+        for instruction in _instructions.normalize_instructions(instructions):
+            name = (
+                instruction.id
+                if isinstance(instruction, _messages.InstructionPart) and isinstance(instruction.id, str)
+                else None
             )
-            for instruction in _instructions.normalize_instructions(instructions)
-        ]
+            if name is not None:
+                _instructions.validate_instruction_id_segment(name, kind='Declared instruction id')
+            self._instructions.append(
+                _instructions.SourcedInstruction(
+                    instruction,
+                    id=_messages.InstructionId(agent_source, name=name)
+                    if isinstance(instruction, (str, _messages.InstructionPart))
+                    else None,
+                    dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
+                )
+            )
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -2214,8 +2220,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 application can address this block specifically, where the bare `'agent'` key addresses
                 the agent's literal instructions. See [instruction blocks](../agent.md#instruction-blocks).
         """
+        if id is not None:
+            _instructions.validate_instruction_id_segment(id, kind='Declared instruction id')
         instruction_id = (
-            _instructions.declared_instruction_id(_instructions.AGENT_INSTRUCTION_ID, id) if id is not None else None
+            _messages.InstructionId(_messages.AgentInstructionSource(), name=id) if id is not None else None
         )
 
         def decorator(
@@ -3032,31 +3040,46 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if override_instructions:
             # Override replaces all instructions, including capability contributions, so what it
             # provides takes the place of (and the id of) the agent's own instructions.
-            instructions = [
-                _instructions.SourcedInstruction(
-                    instruction,
-                    id=_instructions.resolve_declared_id(
-                        _instructions.AGENT_INSTRUCTION_ID,
-                        instruction.id if isinstance(instruction, _messages.InstructionPart) else None,
-                    )
-                    if isinstance(instruction, (str, _messages.InstructionPart))
-                    else None,
-                    dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
+            instructions = []
+            agent_source = _messages.AgentInstructionSource()
+            for instruction in override_instructions.value:
+                name = (
+                    instruction.id
+                    if isinstance(instruction, _messages.InstructionPart) and isinstance(instruction.id, str)
+                    else None
                 )
-                for instruction in override_instructions.value
-            ]
+                if name is not None:
+                    _instructions.validate_instruction_id_segment(name, kind='Declared instruction id')
+                instructions.append(
+                    _instructions.SourcedInstruction(
+                        instruction,
+                        id=_messages.InstructionId(agent_source, name=name)
+                        if isinstance(instruction, (str, _messages.InstructionPart))
+                        else None,
+                        dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
+                    )
+                )
         else:
             instructions = [*self._instructions]
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
                 # Instructions passed to a specific run are already the caller's to change, and
                 # aren't part of the agent's own configured block.
-                instructions.extend(
-                    _instructions.SourcedInstruction(
-                        instruction, dynamic=not isinstance(instruction, (str, _messages.InstructionPart))
+                for instruction in _instructions.normalize_instructions(additional_instructions):
+                    name = (
+                        instruction.id
+                        if isinstance(instruction, _messages.InstructionPart) and isinstance(instruction.id, str)
+                        else None
                     )
-                    for instruction in _instructions.normalize_instructions(additional_instructions)
-                )
+                    if name is not None:
+                        _instructions.validate_instruction_id_segment(name, kind='Declared instruction id')
+                    instructions.append(
+                        _instructions.SourcedInstruction(
+                            instruction,
+                            id=name,
+                            dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
+                        )
+                    )
 
         return instructions
 

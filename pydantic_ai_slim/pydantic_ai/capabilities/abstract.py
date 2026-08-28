@@ -14,13 +14,19 @@ from pydantic_ai._instructions import (
     AgentInstruction,
     AgentInstructions,
     SourcedInstruction,
-    capability_instruction_id,
     normalize_instructions,
-    resolve_declared_id,
+    validate_instruction_id_segment,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, InstructionPart, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    CapabilityInstructionSource,
+    InstructionId,
+    InstructionPart,
+    ModelResponse,
+    ToolCallPart,
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -368,12 +374,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     def _attribute_instruction(self, instruction: AgentInstruction[AgentDepsT]) -> SourcedInstruction[AgentDepsT]:
         """Attribute one instruction recipe to this capability."""
-        instruction_id = capability_instruction_id(self.id) if self.id is not None else None
+        source = CapabilityInstructionSource(self.id) if self.id is not None else None
+        name = instruction.id if isinstance(instruction, InstructionPart) and isinstance(instruction.id, str) else None
+        if name is not None:
+            validate_instruction_id_segment(name, kind='Declared instruction id')
         return SourcedInstruction(
             instruction,
-            id=resolve_declared_id(
-                instruction_id, instruction.id if isinstance(instruction, InstructionPart) else None
-            ),
+            id=InstructionId(source, name=name) if source is not None else name,
             dynamic=not isinstance(instruction, (str, InstructionPart)),
         )
 

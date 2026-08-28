@@ -42,12 +42,14 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    InstructionId,
     InstructionPart,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolReturnPart,
+    ToolsetInstructionSource,
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
@@ -1700,7 +1702,7 @@ async def test_wrapper_toolsets_delegate_instructions():
     # A wrapper has no id of its own, so it stamps the wrapped toolset's onto what it passes along.
     identified_toolset = MockToolsetWithInstructions(instructions=base_instructions, id='base')
     assert await identified_toolset.prefixed('test').get_instructions(ctx) == [
-        InstructionPart(content=base_instructions, dynamic=True, id='toolset:base')
+        InstructionPart(content=base_instructions, dynamic=True, id=InstructionId(ToolsetInstructionSource('base')))
     ]
 
     # Nothing to delegate: no parts rather than an empty list.
@@ -1755,8 +1757,8 @@ async def test_combined_toolset_instructions():
     # each identified by the toolset that contributed it.
     instructions = await combined.get_instructions(ctx)
     assert instructions == [
-        InstructionPart(content=instructions1, dynamic=True, id='toolset:toolset1'),
-        InstructionPart(content=instructions2, dynamic=True, id='toolset:toolset2'),
+        InstructionPart(content=instructions1, dynamic=True, id=InstructionId(ToolsetInstructionSource('toolset1'))),
+        InstructionPart(content=instructions2, dynamic=True, id=InstructionId(ToolsetInstructionSource('toolset2'))),
     ]
 
 
@@ -1803,8 +1805,8 @@ async def test_combined_toolset_collects_instructions_concurrently_in_child_orde
         instructions = await combined.get_instructions(build_run_context(None))
 
     assert instructions == [
-        InstructionPart(content='First.', dynamic=True, id='toolset:first'),
-        InstructionPart(content='Second.', dynamic=True, id='toolset:second'),
+        InstructionPart(content='First.', dynamic=True, id=InstructionId(ToolsetInstructionSource('first'))),
+        InstructionPart(content='Second.', dynamic=True, id=InstructionId(ToolsetInstructionSource('second'))),
     ]
 
 

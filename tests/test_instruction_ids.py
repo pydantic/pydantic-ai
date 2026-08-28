@@ -28,6 +28,9 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AgentInstructionSource,
+    CapabilityInstructionSource,
+    InstructionId,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -35,6 +38,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolsetInstructionSource,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -56,6 +60,18 @@ with try_import() as mcp_imports_successful:
 pytestmark = pytest.mark.anyio
 
 instruction_part_ta = TypeAdapter(InstructionPart)
+
+
+def agent_instruction_id(name: str | None = None) -> InstructionId:
+    return InstructionId(AgentInstructionSource(), name=name)
+
+
+def toolset_instruction_id(id: str, name: str | None = None) -> InstructionId:
+    return InstructionId(ToolsetInstructionSource(id), name=name)
+
+
+def capability_instruction_id(id: str, name: str | None = None) -> InstructionId:
+    return InstructionId(CapabilityInstructionSource(id), name=name)
 
 
 class InstructionsToolset(AbstractToolset[Any]):
@@ -122,9 +138,9 @@ async def test_toolset_instructions_are_identified_by_toolset_id():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Agent instructions.', id='agent'),
-        InstructionPart(content='Weather instructions.', dynamic=True, id='toolset:weather'),
-        InstructionPart(content='Calendar instructions.', dynamic=True, id='toolset:calendar'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
+        InstructionPart(content='Weather instructions.', dynamic=True, id=toolset_instruction_id('weather')),
+        InstructionPart(content='Calendar instructions.', dynamic=True, id=toolset_instruction_id('calendar')),
         InstructionPart(content='Anonymous instructions.', dynamic=True),
     ]
 
@@ -145,7 +161,7 @@ async def test_every_toolset_instructions_shape_is_identified(
     agent = Agent(toolsets=[InstructionsToolset(instructions, id='weather')])
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Weather instructions.', dynamic=True, id='toolset:weather')
+        InstructionPart(content='Weather instructions.', dynamic=True, id=toolset_instruction_id('weather'))
     ]
 
 
@@ -158,7 +174,7 @@ async def test_toolset_can_declare_ids_for_its_own_blocks():
         toolsets=[
             InstructionsToolset(
                 [
-                    InstructionPart(content='Tool usage.', id='toolset:weather:limits'),
+                    InstructionPart(content='Tool usage.', id=toolset_instruction_id('weather', 'limits')),
                     InstructionPart(content='General.'),
                 ],
                 id='weather',
@@ -167,35 +183,18 @@ async def test_toolset_can_declare_ids_for_its_own_blocks():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Tool usage.', id='toolset:weather:limits'),
-        InstructionPart(content='General.', id='toolset:weather'),
+        InstructionPart(content='Tool usage.', id=toolset_instruction_id('weather', 'limits')),
+        InstructionPart(content='General.', id=toolset_instruction_id('weather')),
     ]
 
 
-async def test_an_unidentified_toolset_cannot_mint_a_toolset_key():
-    """A toolset with no `id` has no source key, so it cannot claim one by writing it itself.
+@pytest.mark.parametrize('declared_id', ['toolset:ghost', 'agent'])
+async def test_an_unidentified_toolset_cannot_mint_a_toolset_key(declared_id: str):
+    """Names that flatten like framework keys are rejected at their authoring boundary."""
+    agent = Agent(toolsets=[InstructionsToolset(InstructionPart(content='Minted.', id=declared_id))])
 
-    `toolset:<id>` is the framework's promise that a toolset registered under `<id>` said this. A
-    source with no id of its own writing that shape would break the promise — nobody owns the key,
-    so the collision check has nothing to catch, and an application addressing it would be talking
-    to a source that isn't the toolset the key names. Claiming `'agent'` or another namespace was
-    already dropped; a `'toolset:'` prefix was passing through.
-    """
-    agent = Agent(
-        toolsets=[
-            InstructionsToolset(
-                [
-                    InstructionPart(content='Minted.', id='toolset:ghost'),
-                    InstructionPart(content='Borrowed.', id='agent'),
-                ]
-            )
-        ]
-    )
-
-    assert await run_and_capture(agent) == [
-        InstructionPart(content='Minted.'),
-        InstructionPart(content='Borrowed.'),
-    ]
+    with pytest.raises(UserError, match=r'cannot contain a colon|is reserved'):
+        await run_and_capture(agent)
 
 
 async def test_wrapped_toolset_instructions_keep_their_id():
@@ -209,7 +208,7 @@ async def test_wrapped_toolset_instructions_keep_their_id():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Weather instructions.', dynamic=True, id='toolset:weather')
+        InstructionPart(content='Weather instructions.', dynamic=True, id=toolset_instruction_id('weather'))
     ]
 
 
@@ -261,7 +260,7 @@ async def test_a_named_wrapper_relays_the_wrapped_key_rather_than_nesting_it():
     agent = Agent(toolsets=[RelayingWrapper(InstructionsToolset('Leaf instructions.', id='leaf'), id='wrapper')])
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Leaf instructions.', dynamic=True, id='toolset:leaf')
+        InstructionPart(content='Leaf instructions.', dynamic=True, id=toolset_instruction_id('leaf'))
     ]
 
 
@@ -275,7 +274,9 @@ async def test_a_wrapper_relays_a_key_from_under_a_wrapper_it_wraps():
     inner = RelayingWrapper(InstructionsToolset('Leaf.', id='leaf'), id='inner')
     agent = Agent(toolsets=[RelayingWrapper(inner, id='outer')])
 
-    assert await run_and_capture(agent) == [InstructionPart(content='Leaf.', dynamic=True, id='toolset:leaf')]
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Leaf.', dynamic=True, id=toolset_instruction_id('leaf'))
+    ]
 
 
 async def test_a_wrapper_relays_keys_from_every_toolset_it_wraps_at_once():
@@ -288,8 +289,8 @@ async def test_a_wrapper_relays_keys_from_every_toolset_it_wraps_at_once():
     agent = Agent(toolsets=[RelayingWrapper(grouped, id='outer')])
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='First.', dynamic=True, id='toolset:first'),
-        InstructionPart(content='Second.', dynamic=True, id='toolset:second'),
+        InstructionPart(content='First.', dynamic=True, id=toolset_instruction_id('first')),
+        InstructionPart(content='Second.', dynamic=True, id=toolset_instruction_id('second')),
     ]
 
 
@@ -303,7 +304,9 @@ async def test_a_wrapper_relays_a_declared_segment_under_a_child_key():
     leaf = InstructionsToolset([InstructionPart(content='Limits.', id='limits')], id='weather')
     agent = Agent(toolsets=[RelayingWrapper(leaf, id='outer')])
 
-    assert await run_and_capture(agent) == [InstructionPart(content='Limits.', id='toolset:weather:limits')]
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Limits.', id=toolset_instruction_id('weather', 'limits'))
+    ]
 
 
 async def test_a_wrapper_relays_a_key_a_wrapper_it_wraps_issued_itself():
@@ -315,7 +318,7 @@ async def test_a_wrapper_relays_a_key_a_wrapper_it_wraps_issued_itself():
     inner = RelayingWrapperReturning(InstructionsToolset(id='leaf'), [InstructionPart(content='Inner.')], id='inner')
     agent = Agent(toolsets=[RelayingWrapper(inner, id='outer')])
 
-    assert await run_and_capture(agent) == [InstructionPart(content='Inner.', id='toolset:inner')]
+    assert await run_and_capture(agent) == [InstructionPart(content='Inner.', id=toolset_instruction_id('inner'))]
 
 
 async def test_wrapping_a_toolset_whose_id_cannot_be_a_key_leaves_it_working():
@@ -332,7 +335,9 @@ async def test_wrapping_a_toolset_whose_id_cannot_be_a_key_leaves_it_working():
         ]
     )
 
-    assert await run_and_capture(agent) == [InstructionPart(content='Calendar.', dynamic=True, id='toolset:calendar')]
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Calendar.', dynamic=True, id=toolset_instruction_id('calendar'))
+    ]
 
 
 async def test_a_wrapper_cannot_relay_a_key_for_a_toolset_it_does_not_wrap():
@@ -347,15 +352,16 @@ async def test_a_wrapper_cannot_relay_a_key_for_a_toolset_it_does_not_wrap():
         toolsets=[
             RelayingWrapperReturning(
                 InstructionsToolset(id='wrapped'),
-                [InstructionPart(content='Forged.', id='toolset:victim:limits')],
+                [InstructionPart(content='Forged.', id=toolset_instruction_id('victim', 'limits'))],
+                id='attacker',
             ),
             InstructionsToolset('Genuine.', id='victim'),
         ]
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Forged.'),
-        InstructionPart(content='Genuine.', dynamic=True, id='toolset:victim'),
+        InstructionPart(content='Forged.', id=toolset_instruction_id('attacker')),
+        InstructionPart(content='Genuine.', dynamic=True, id=toolset_instruction_id('victim')),
     ]
 
 
@@ -367,7 +373,7 @@ async def test_mcp_server_instructions_are_identified():
 
     async with agent:
         assert await run_and_capture(agent) == [
-            InstructionPart(content='You are an MCP test server.', id='toolset:test-server')
+            InstructionPart(content='You are an MCP test server.', id=toolset_instruction_id('test-server'))
         ]
 
 
@@ -381,8 +387,8 @@ async def test_capability_instructions_are_identified_by_capability_id():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Agent instructions.', id='agent'),
-        InstructionPart(content='Memory instructions.', id='capability:memory'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
+        InstructionPart(content='Memory instructions.', id=capability_instruction_id('memory')),
         InstructionPart(content='Anonymous instructions.'),
     ]
 
@@ -400,8 +406,8 @@ async def test_instructions_decorator_can_declare_an_id():
         return 'The user is Frank.'
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Agent instructions.', id='agent'),
-        InstructionPart(content='The time is 10:00.', dynamic=True, id='agent:local_time'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
+        InstructionPart(content='The time is 10:00.', dynamic=True, id=agent_instruction_id('local_time')),
         InstructionPart(content='The user is Frank.', dynamic=True),
     ]
 
@@ -421,14 +427,16 @@ async def test_capability_instructions_decorator_can_declare_an_id():
     agent = Agent(capabilities=[budget])
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Stay within budget.', id='capability:budget'),
-        InstructionPart(content='Remaining budget: $10.', dynamic=True, id='capability:budget:remaining'),
-        InstructionPart(content='Report overruns.', dynamic=True, id='capability:budget'),
+        InstructionPart(content='Stay within budget.', id=capability_instruction_id('budget')),
+        InstructionPart(
+            content='Remaining budget: $10.', dynamic=True, id=capability_instruction_id('budget', 'remaining')
+        ),
+        InstructionPart(content='Report overruns.', dynamic=True, id=capability_instruction_id('budget')),
     ]
 
 
-async def test_declared_id_without_a_source_key_stays_unidentified():
-    """A capability with no `id` has no source key for a declared id to qualify."""
+async def test_declared_id_without_a_source_key_stays_unresolved():
+    """A bare author name survives when its capability has no source to resolve it against."""
     anonymous = Capability[Any](instructions='Stay within budget.')
 
     @anonymous.instructions(id='remaining')
@@ -439,7 +447,7 @@ async def test_declared_id_without_a_source_key_stays_unidentified():
 
     assert await run_and_capture(agent) == [
         InstructionPart(content='Stay within budget.'),
-        InstructionPart(content='Remaining budget: $10.', dynamic=True),
+        InstructionPart(content='Remaining budget: $10.', dynamic=True, id='remaining'),
     ]
 
 
@@ -453,7 +461,7 @@ async def test_a_capability_subclass_keeps_computing_its_own_instructions():
     agent = Agent(capabilities=[Computed(instructions='Ignored.', id='computed')])
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Computed by the subclass.', id='capability:computed')
+        InstructionPart(content='Computed by the subclass.', id=capability_instruction_id('computed'))
     ]
 
 
@@ -470,7 +478,7 @@ async def test_combined_capability_subclass_get_instructions_override_is_authori
         capabilities=[OverriddenCombined(capabilities=[Capability[Any](instructions='Child.', id='child')], id='group')]
     )
 
-    assert await run_and_capture(agent) == [InstructionPart(content='Override.', id='capability:group')]
+    assert await run_and_capture(agent) == [InstructionPart(content='Override.', id=capability_instruction_id('group'))]
 
 
 async def test_two_toolsets_sharing_an_id_collide_even_under_different_declared_segments():
@@ -510,7 +518,9 @@ async def test_a_combined_toolset_subclass_can_delegate_get_instructions_to_supe
 
     agent = Agent(toolsets=[Relaying([InstructionsToolset('Child.', id='child')])])
 
-    assert await run_and_capture(agent) == [InstructionPart(content='Child.', dynamic=True, id='toolset:child')]
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Child.', dynamic=True, id=toolset_instruction_id('child'))
+    ]
 
 
 async def test_a_combined_toolset_subclass_get_instructions_override_is_authoritative():
@@ -587,7 +597,9 @@ async def test_every_toolset_container_relays_through_a_delegating_subclass(
     """
     agent = Agent(toolsets=[container(InstructionsToolset('Leaf.', id='leaf'))])
 
-    assert await run_and_capture(agent) == [InstructionPart(content='Leaf.', dynamic=True, id='toolset:leaf')]
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Leaf.', dynamic=True, id=toolset_instruction_id('leaf'))
+    ]
 
 
 def test_get_instructions_returns_declared_blocks():
@@ -658,18 +670,18 @@ async def test_declared_instruction_ids_qualify_rather_than_collide():
     """
     agent = Agent(instructions='Agent instructions.')
 
-    @agent.instructions(id='agent')
+    @agent.instructions(id='same')
     def first() -> str:
         return 'First.'
 
-    @agent.instructions(id='agent')
+    @agent.instructions(id='same')
     def second() -> str:
         return 'Second.'
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Agent instructions.', id='agent'),
-        InstructionPart(content='First.', dynamic=True, id='agent:agent'),
-        InstructionPart(content='Second.', dynamic=True, id='agent:agent'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
+        InstructionPart(content='First.', dynamic=True, id=agent_instruction_id('same')),
+        InstructionPart(content='Second.', dynamic=True, id=agent_instruction_id('same')),
     ]
 
 
@@ -691,10 +703,10 @@ async def test_a_source_gives_all_of_its_blocks_the_same_id():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Memory instructions.', id='capability:memory'),
-        InstructionPart(content='Remembered.', dynamic=True, id='capability:memory'),
-        InstructionPart(content='Weather usage.', dynamic=True, id='toolset:weather'),
-        InstructionPart(content='Weather limits.', dynamic=True, id='toolset:weather'),
+        InstructionPart(content='Memory instructions.', id=capability_instruction_id('memory')),
+        InstructionPart(content='Remembered.', dynamic=True, id=capability_instruction_id('memory')),
+        InstructionPart(content='Weather usage.', dynamic=True, id=toolset_instruction_id('weather')),
+        InstructionPart(content='Weather limits.', dynamic=True, id=toolset_instruction_id('weather')),
     ]
 
 
@@ -711,7 +723,7 @@ async def test_agent_instruction_functions_stay_unidentified():
         return 'The user is Frank.'
 
     assert await run_and_capture(agent, instructions=lambda: 'From a run callable.') == [
-        InstructionPart(content='Agent instructions.', id='agent'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
         InstructionPart(content='From a constructor callable.', dynamic=True),
         InstructionPart(content='The user is Frank.', dynamic=True),
         InstructionPart(content='From a run callable.', dynamic=True),
@@ -729,7 +741,7 @@ async def test_capability_toolset_instructions_are_identified_by_toolset_id():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Weather instructions.', dynamic=True, id='toolset:weather')
+        InstructionPart(content='Weather instructions.', dynamic=True, id=toolset_instruction_id('weather'))
     ]
 
 
@@ -743,7 +755,7 @@ async def test_capability_without_id_gets_an_unidentified_part_of_its_own():
     result = await agent.run('Hello', model=model)
 
     assert captured == [
-        InstructionPart(content='Agent instructions.', id='agent'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
         InstructionPart(content='Extra instructions.'),
     ]
     assert rendered_instructions(result.all_messages()) == 'Agent instructions.\n\nExtra instructions.'
@@ -765,8 +777,8 @@ async def test_wrapper_capability_passes_through_leaf_ids():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Memory instructions.', id='capability:memory'),
-        InstructionPart(content='Wrapper instructions.', id='capability:search'),
+        InstructionPart(content='Memory instructions.', id=capability_instruction_id('memory')),
+        InstructionPart(content='Wrapper instructions.', id=capability_instruction_id('search')),
     ]
 
 
@@ -785,8 +797,8 @@ async def test_an_overriding_wrapper_relays_a_combined_capabilitys_instruction_k
     )
 
     assert await run_and_capture(Agent(capabilities=[Relaying(combined)])) == [
-        InstructionPart(content='First.', id='capability:first'),
-        InstructionPart(content='Second.', id='capability:second'),
+        InstructionPart(content='First.', id=capability_instruction_id('first')),
+        InstructionPart(content='Second.', id=capability_instruction_id('second')),
     ]
 
 
@@ -805,8 +817,8 @@ async def test_an_overriding_combined_capability_relays_its_childrens_instructio
     )
 
     assert await run_and_capture(Agent(capabilities=[combined])) == [
-        InstructionPart(content='First.', id='capability:first'),
-        InstructionPart(content='Second.', id='capability:second'),
+        InstructionPart(content='First.', id=capability_instruction_id('first')),
+        InstructionPart(content='Second.', id=capability_instruction_id('second')),
     ]
 
 
@@ -826,8 +838,8 @@ async def test_an_overriding_wrapper_relays_static_and_callable_instruction_keys
     combined = CombinedCapability[Any]([dynamic, Capability[Any](instructions='Lit.', id='lit')])
 
     assert await run_and_capture(Agent(capabilities=[Relaying(combined)])) == [
-        InstructionPart(content='Lit.', id='capability:lit'),
-        InstructionPart(content='Time is 10:00.', id='capability:dyn:now', dynamic=True),
+        InstructionPart(content='Lit.', id=capability_instruction_id('lit')),
+        InstructionPart(content='Time is 10:00.', id=capability_instruction_id('dyn', 'now'), dynamic=True),
     ]
 
 
@@ -846,8 +858,8 @@ async def test_an_overriding_wrapper_attributes_only_the_instructions_it_adds():
     )
 
     assert await run_and_capture(Agent(capabilities=[Extending(combined)])) == [
-        InstructionPart(content='First.', id='capability:first'),
-        InstructionPart(content='Second.', id='capability:second'),
+        InstructionPart(content='First.', id=capability_instruction_id('first')),
+        InstructionPart(content='Second.', id=capability_instruction_id('second')),
         InstructionPart(content='Wrapper extra.'),
     ]
 
@@ -893,8 +905,8 @@ async def test_run_instructions_are_not_identified_but_override_replaces_the_age
     )
 
     assert await run_and_capture(agent, instructions='Run instructions.') == [
-        InstructionPart(content='Agent instructions.', id='agent'),
-        InstructionPart(content='Memory.', id='capability:memory'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
+        InstructionPart(content='Memory.', id=capability_instruction_id('memory')),
         InstructionPart(content='Run instructions.'),
     ]
 
@@ -906,8 +918,13 @@ One.
 
 Two.\
 """,
-                id='agent',
+                id=agent_instruction_id(),
             )
+        ]
+
+    with agent.override(instructions=InstructionPart(content='Named override.', id='override')):
+        assert await run_and_capture(agent) == [
+            InstructionPart(content='Named override.', id=agent_instruction_id('override'))
         ]
 
 
@@ -933,10 +950,10 @@ First.
 
 Second.\
 """,
-            id='agent',
+            id=agent_instruction_id(),
         ),
-        InstructionPart(content='Third.', id='capability:memory'),
-        InstructionPart(content='Fourth.', dynamic=True, id='toolset:weather'),
+        InstructionPart(content='Third.', id=capability_instruction_id('memory')),
+        InstructionPart(content='Fourth.', dynamic=True, id=toolset_instruction_id('weather')),
     ]
     assert rendered_instructions(result.all_messages()) == 'First.\n\nSecond.\n\nThird.\n\nFourth.'
 
@@ -947,7 +964,9 @@ async def test_before_model_request_can_rewrite_a_block_by_id():
     def override_weather(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
         parts = request_context.model_request_parameters.instruction_parts or []
         request_context.model_request_parameters.instruction_parts = [
-            replace(part, content='Managed weather instructions.') if part.id == 'toolset:weather' else part
+            replace(part, content='Managed weather instructions.')
+            if part.id == toolset_instruction_id('weather')
+            else part
             for part in parts
         ]
         return request_context
@@ -962,8 +981,8 @@ async def test_before_model_request_can_rewrite_a_block_by_id():
     result = await agent.run('Hello', model=model)
 
     assert captured == [
-        InstructionPart(content='Agent instructions.', id='agent'),
-        InstructionPart(content='Managed weather instructions.', dynamic=True, id='toolset:weather'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
+        InstructionPart(content='Managed weather instructions.', dynamic=True, id=toolset_instruction_id('weather')),
     ]
     assert rendered_instructions(result.all_messages()) == 'Agent instructions.\n\nManaged weather instructions.'
 
@@ -982,7 +1001,7 @@ async def test_before_model_request_instructions_edit_does_not_reach_the_model()
     model, captured = capture_instruction_parts()
     result = await agent.run('Hello', model=model)
 
-    assert captured == [InstructionPart(content='Agent instructions.', id='agent')]
+    assert captured == [InstructionPart(content='Agent instructions.', id=agent_instruction_id())]
     assert rendered_instructions(result.all_messages()) == 'Agent instructions.'
 
 
@@ -1037,28 +1056,51 @@ async def test_before_model_request_can_rewrite_a_resumed_requests_instructions(
 
 def test_id_does_not_affect_joining_or_sorting():
     parts = [
-        InstructionPart(content='Dynamic.', dynamic=True, id='toolset:weather'),
+        InstructionPart(content='Dynamic.', dynamic=True, id=toolset_instruction_id('weather')),
         InstructionPart(content='Static.'),
-        InstructionPart(content='Identified.', id='capability:memory'),
+        InstructionPart(content='Identified.', id=capability_instruction_id('memory')),
     ]
 
     assert InstructionPart.join(parts) == 'Dynamic.\n\nStatic.\n\nIdentified.'
     assert InstructionPart.sorted(parts) == [
         InstructionPart(content='Static.'),
-        InstructionPart(content='Identified.', id='capability:memory'),
-        InstructionPart(content='Dynamic.', dynamic=True, id='toolset:weather'),
+        InstructionPart(content='Identified.', id=capability_instruction_id('memory')),
+        InstructionPart(content='Dynamic.', dynamic=True, id=toolset_instruction_id('weather')),
     ]
 
 
-def test_serialization_round_trip():
-    identified = InstructionPart(content='Weather.', dynamic=True, id='toolset:weather')
-    assert instruction_part_ta.dump_python(identified, mode='json') == {
-        'content': 'Weather.',
+@pytest.mark.parametrize(
+    ('id', 'serialized'),
+    [
+        (agent_instruction_id(), 'agent'),
+        (agent_instruction_id('persona'), 'agent:persona'),
+        (toolset_instruction_id('weather'), 'toolset:weather'),
+        (toolset_instruction_id('weather', 'limits'), 'toolset:weather:limits'),
+        (capability_instruction_id('memory'), 'capability:memory'),
+        (capability_instruction_id('memory', 'style'), 'capability:memory:style'),
+    ],
+)
+def test_resolved_id_serialization_round_trip(id: InstructionId, serialized: str):
+    part = InstructionPart(content='Instructions.', dynamic=True, id=id)
+    payload = instruction_part_ta.dump_python(part, mode='json')
+
+    assert payload == {
+        'content': 'Instructions.',
         'dynamic': True,
-        'id': 'toolset:weather',
+        'id': serialized,
         'part_kind': 'instruction',
     }
-    assert instruction_part_ta.validate_python(instruction_part_ta.dump_python(identified)) == identified
+    assert instruction_part_ta.validate_python(payload) == part
+
+
+def test_unresolved_and_missing_id_serialization_round_trip():
+    unresolved = InstructionPart(content='Instructions.', id='limits')
+    payload = instruction_part_ta.dump_python(unresolved, mode='json')
+    assert payload['id'] == 'limits'
+    assert instruction_part_ta.validate_python(payload) == unresolved
+    assert instruction_part_ta.validate_python({**payload, 'id': toolset_instruction_id('weather')}).id == (
+        toolset_instruction_id('weather')
+    )
 
     # Payloads recorded before the field existed still validate, and stay unidentified.
     assert instruction_part_ta.validate_python(
@@ -1069,8 +1111,8 @@ def test_serialization_round_trip():
 def test_repr_omits_unset_id():
     assert repr(InstructionPart(content='Weather.')) == "InstructionPart(content='Weather.')"
     assert (
-        repr(InstructionPart(content='Weather.', id='toolset:weather'))
-        == "InstructionPart(content='Weather.', id='toolset:weather')"
+        repr(InstructionPart(content='Weather.', id=toolset_instruction_id('weather')))
+        == "InstructionPart(content='Weather.', id=InstructionId(source=ToolsetInstructionSource(id='weather')))"
     )
 
 
@@ -1083,7 +1125,7 @@ async def test_deferred_capability_instructions_stay_hidden():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Agent instructions.', id='agent'),
+        InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
         InstructionPart(
             content="""\
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
@@ -1114,8 +1156,8 @@ async def test_combined_capability_override_survives_re_composition():
     )
 
     assert await run_and_capture(agent, capabilities=[Capability[Any](instructions='Per run.', id='per_run')]) == [
-        InstructionPart(content='Override.', id='capability:group'),
-        InstructionPart(content='Per run.', id='capability:per_run'),
+        InstructionPart(content='Override.', id=capability_instruction_id('group')),
+        InstructionPart(content='Per run.', id=capability_instruction_id('per_run')),
     ]
 
 
@@ -1139,8 +1181,8 @@ async def test_instruction_blocks_follow_the_capability_ordering():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Registered last.', id='capability:last'),
-        InstructionPart(content='Registered first.', id='capability:first'),
+        InstructionPart(content='Registered last.', id=capability_instruction_id('last')),
+        InstructionPart(content='Registered first.', id=capability_instruction_id('first')),
     ]
 
 
@@ -1203,7 +1245,7 @@ async def test_a_callable_between_literals_does_not_split_the_agent_block():
     agent = Agent(instructions=['Literal one.', dynamic_instruction, 'Literal two.'])
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Literal one.\n\nLiteral two.', id='agent'),
+        InstructionPart(content='Literal one.\n\nLiteral two.', id=agent_instruction_id()),
         InstructionPart(content='From a function.', dynamic=True),
     ]
 
@@ -1214,9 +1256,9 @@ async def test_an_instruction_part_between_literals_keeps_each_block_independent
     agent = Agent(instructions=['Literal one.', InstructionPart(content='Authored part.'), 'Literal two.'])
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Literal one.', id='agent'),
-        InstructionPart(content='Authored part.', id='agent'),
-        InstructionPart(content='Literal two.', id='agent'),
+        InstructionPart(content='Literal one.', id=agent_instruction_id()),
+        InstructionPart(content='Authored part.', id=agent_instruction_id()),
+        InstructionPart(content='Literal two.', id=agent_instruction_id()),
     ]
 
 
@@ -1320,8 +1362,7 @@ async def test_a_declared_id_is_resolved_against_its_source_key():
 
     An author names a block relative to what they own — `'persona'`, `'limits'` — and the framework
     qualifies it against the key of the source contributing it. Nobody repeats their own identity,
-    and nobody can claim a top-level key: the toolset block below asks for `'agent'` and gets
-    `'toolset:weather:agent'` rather than colliding with the agent's own.
+        and nobody can claim a top-level key.
     """
 
     class Coder(AbstractCapability[Any]):
@@ -1333,16 +1374,16 @@ async def test_a_declared_id_is_resolved_against_its_source_key():
     agent = Agent(
         instructions=[InstructionPart(content='Persona.', id='persona'), 'Unnamed.'],
         capabilities=[Coder(), Capability[Any](id='budget', instructions=[InstructionPart(content='Cap.', id='cap')])],
-        toolsets=[InstructionsToolset([InstructionPart(content='Tool.', id='agent')], id='weather')],
+        toolsets=[InstructionsToolset([InstructionPart(content='Tool.', id='usage')], id='weather')],
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Persona.', id='agent:persona'),
-        InstructionPart(content='Unnamed.', id='agent'),
-        InstructionPart(content='Style.', id='capability:coder:style'),
-        InstructionPart(content='Scope.', id='capability:coder'),
-        InstructionPart(content='Cap.', id='capability:budget:cap'),
-        InstructionPart(content='Tool.', id='toolset:weather:agent'),
+        InstructionPart(content='Persona.', id=agent_instruction_id('persona')),
+        InstructionPart(content='Unnamed.', id=agent_instruction_id()),
+        InstructionPart(content='Style.', id=capability_instruction_id('coder', 'style')),
+        InstructionPart(content='Scope.', id=capability_instruction_id('coder')),
+        InstructionPart(content='Cap.', id=capability_instruction_id('budget', 'cap')),
+        InstructionPart(content='Tool.', id=toolset_instruction_id('weather', 'usage')),
     ]
 
 
@@ -1352,8 +1393,8 @@ async def test_a_declared_id_already_carrying_its_source_key_is_left_alone():
         toolsets=[
             InstructionsToolset(
                 [
-                    InstructionPart(content='Limits.', id='toolset:weather:limits'),
-                    InstructionPart(content='All.', id='toolset:weather'),
+                    InstructionPart(content='Limits.', id=toolset_instruction_id('weather', 'limits')),
+                    InstructionPart(content='All.', id=toolset_instruction_id('weather')),
                 ],
                 id='weather',
             )
@@ -1361,8 +1402,8 @@ async def test_a_declared_id_already_carrying_its_source_key_is_left_alone():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Limits.', id='toolset:weather:limits'),
-        InstructionPart(content='All.', id='toolset:weather'),
+        InstructionPart(content='Limits.', id=toolset_instruction_id('weather', 'limits')),
+        InstructionPart(content='All.', id=toolset_instruction_id('weather')),
     ]
 
 
@@ -1396,22 +1437,18 @@ async def test_an_instruction_part_keeps_its_own_dynamic_flag_and_block():
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Stable.', id='capability:budget:stable'),
-        InstructionPart(content='Varies.', dynamic=True, id='capability:budget:varies'),
+        InstructionPart(content='Stable.', id=capability_instruction_id('budget', 'stable')),
+        InstructionPart(content='Varies.', dynamic=True, id=capability_instruction_id('budget', 'varies')),
     ]
 
 
-async def test_a_run_level_part_stays_unidentified_even_if_it_declares_an_id():
-    """Per-run instructions have no source key, so a declared segment has nothing to hang off.
-
-    Same rule as an anonymous capability's blocks: staying unidentified is better than claiming a
-    top-level key the caller never got to place among the agent's own.
-    """
+async def test_a_run_level_part_keeps_its_unresolved_name():
+    """Per-run instructions preserve a bare author name because they have no source to resolve it against."""
     agent = Agent(instructions='Agent block.')
 
     assert await run_and_capture(agent, instructions=[InstructionPart(content='Per run.', id='urgent')]) == [
-        InstructionPart(content='Agent block.', id='agent'),
-        InstructionPart(content='Per run.'),
+        InstructionPart(content='Agent block.', id=agent_instruction_id()),
+        InstructionPart(content='Per run.', id='urgent'),
     ]
 
 
@@ -1466,7 +1503,7 @@ async def test_a_blank_instruction_part_contributes_nothing():
         ]
     )
 
-    assert await run_and_capture(agent) == [InstructionPart(content='Real.', id='agent:real')]
+    assert await run_and_capture(agent) == [InstructionPart(content='Real.', id=agent_instruction_id('real'))]
 
 
 async def test_a_source_without_a_key_cannot_claim_someone_elses():
@@ -1477,12 +1514,14 @@ async def test_a_source_without_a_key_cannot_claim_someone_elses():
     """
     agent = Agent(
         instructions='The agent block.',
-        toolsets=[InstructionsToolset([InstructionPart(content='From a nameless toolset.', id='agent')])],
+        toolsets=[
+            InstructionsToolset([InstructionPart(content='From a nameless toolset.', id=agent_instruction_id())])
+        ],
     )
 
     # Only the id it could not qualify is dropped; the part keeps everything else it declared.
     assert await run_and_capture(agent) == [
-        InstructionPart(content='The agent block.', id='agent'),
+        InstructionPart(content='The agent block.', id=agent_instruction_id()),
         InstructionPart(content='From a nameless toolset.'),
     ]
 
@@ -1515,8 +1554,8 @@ async def test_a_retained_override_survives_a_rebind_that_replaces_its_children(
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Override.', id='capability:group'),
-        InstructionPart(content='Plain.', id='capability:plain'),
+        InstructionPart(content='Override.', id=capability_instruction_id('group')),
+        InstructionPart(content='Plain.', id=capability_instruction_id('plain')),
     ]
 
     # The other side of the rebind: a sibling returns a fresh instance while the container's own
@@ -1529,8 +1568,8 @@ async def test_a_retained_override_survives_a_rebind_that_replaces_its_children(
     )
 
     assert await run_and_capture(unchanged) == [
-        InstructionPart(content='Override.', id='capability:group'),
-        InstructionPart(content='Sibling.', id='capability:sibling'),
+        InstructionPart(content='Override.', id=capability_instruction_id('group')),
+        InstructionPart(content='Sibling.', id=capability_instruction_id('sibling')),
     ]
 
 
@@ -1552,7 +1591,7 @@ async def test_a_function_toolsets_instructions_can_declare_a_part():
     # The declared block keeps its id, and the part that declared itself dynamic sorts after the
     # static ones -- which is the flag being honoured, since it decides the cache boundary.
     assert await run_and_capture(Agent(toolsets=[toolset])) == [
-        InstructionPart(content='Static and named.', id='toolset:weather:limits'),
-        InstructionPart(content='A plain string.', id='toolset:weather'),
-        InstructionPart(content='Recomputed elsewhere.', dynamic=True, id='toolset:weather'),
+        InstructionPart(content='Static and named.', id=toolset_instruction_id('weather', 'limits')),
+        InstructionPart(content='A plain string.', id=toolset_instruction_id('weather')),
+        InstructionPart(content='Recomputed elsewhere.', dynamic=True, id=toolset_instruction_id('weather')),
     ]

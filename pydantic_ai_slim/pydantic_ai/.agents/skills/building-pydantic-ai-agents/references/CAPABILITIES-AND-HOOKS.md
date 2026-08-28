@@ -118,7 +118,7 @@ Reach for a custom capability when:
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
 
-Give a capability an `id` when its instructions should be addressable. `InstructionPart.id` follows one rule: a source key addresses everything that source contributes (`agent` for the agent's own literal instructions, `toolset:<id>`, `capability:<id>`), and appending a segment addresses one declared block within it (`@agent.instructions(id='x')` → `agent:x`, `@capability.instructions(id='x')` → `capability:<cap id>:x`). An application reading `ModelRequestParameters.instruction_parts` keys its configuration on those. Blocks from `run(instructions=...)`, from a constructor callable, from a bare `@agent.instructions` function, or from a source without an `id` stay unidentified and can't be overridden.
+Give a capability an `id` when its instructions should be addressable. A resolved `InstructionPart.id` is an `InstructionId`: its source identifies the agent, toolset, or capability, and its optional name identifies one declared block. It renders and serializes as `agent`, `toolset:<id>`, `capability:<id>`, or one of those followed by `:<name>`. Compare the structured source and name in Python; use `str(part.id)` only when a persisted string key is required. An author-declared name on a source without its own id stays a plain unresolved string, while blocks with no declared name remain `None`.
 
 ### Isolate Mutable State Per Run
 
