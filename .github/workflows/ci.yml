@@ -321,8 +321,8 @@ jobs:
       # on ubuntu-latest (already 4). See PR benchmark.
       # The durable-execution suites are ignored here and run in `test-durable-exec` instead:
       # each pins a single xdist group around a real server, so their serial chain would
-      # otherwise be the critical-path floor of the all-extras jobs. `test-lowest-versions`
-      # still runs them, proving the minimum `temporalio`/`dbos`/`prefect` bounds.
+      # otherwise be the critical-path floor of the all-extras jobs. Its `lowest` leg
+      # proves the minimum `temporalio`/`dbos`/`prefect` bounds.
       - run: >-
           uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
           --ignore=tests/test_temporal.py
@@ -343,8 +343,10 @@ jobs:
   # chain that dominates the all-extras critical path. Running them in their own job takes
   # them off that path entirely; serial execution is fine here because nothing waits on it.
   # New durable-exec tests land in these three files and are picked up automatically.
+  # The `lowest` resolution leg is the only place the declared minimum bounds
+  # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips these files.
   test-durable-exec:
-    name: test durable-exec on ${{ matrix.python-version }}
+    name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     # See the note on the `test` job for the runner selection logic.
     runs-on: >-
       ${{
@@ -362,6 +364,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        resolution: [locked, lowest]
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
@@ -384,36 +387,47 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-          cache-suffix: durable-exec
+          cache-suffix: durable-exec-${{ matrix.resolution }}
 
       - run: mkdir .coverage
 
       # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
       # tests/test_temporal.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
+      # Separate key per resolution: the lowest leg may resolve a different temporalio version
+      # wanting a different binary. A stale restored dir is safe because the SDK names the
+      # binary by its own version and re-downloads on a miss.
       - name: cache Temporal dev-server binary
         if: matrix.python-version != '3.14'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/temporal-dev-server
-          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-${{ hashFiles('**/uv.lock') }}
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ matrix.resolution }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
-            temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ matrix.resolution }}-
+
+      - name: install lowest resolution
+        if: matrix.resolution == 'lowest'
+        run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
+        env:
+          UV_FROZEN: "0"
 
       # `--all-extras` matches the all-extras matrix cell these tests used to run in, so
       # the module-level `try_import` skip-gating (logfire, mcp, openai, anthropic, ...)
-      # behaves identically and coverage combination stays complete.
+      # behaves identically and coverage combination stays complete. The lowest leg was
+      # synced above, so `--no-sync` there keeps its resolution.
       - run: >-
-          uv run --all-extras --no-extra mcp-tasks coverage run -m pytest --durations=20 -n logical --dist=loadgroup
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
+          coverage run -m pytest --durations=20 -n logical --dist=loadgroup
           tests/test_temporal.py
           tests/test_dbos.py
           tests/test_prefect.py
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-${{ matrix.python-version }}-durable-exec
+          name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
           path: .coverage
           include-hidden-files: true
 
@@ -444,8 +458,6 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
-      # See the note on the `test` job: same runner shape, same deadlock-detector false positives.
-      TEMPORAL_DEBUG: '1'
       # See the note on the `test` job: sysmon can only measure branches on 3.14+.
       COVERAGE_CORE: ${{ matrix.python-version == '3.14' && 'sysmon' || '' }}
     steps:
@@ -468,18 +480,6 @@ jobs:
         with:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
-
-      # See the matching step in the `test` job. Separate `lowest-` key: this job may resolve a
-      # different temporalio version than the frozen lockfile, wanting a different binary. A stale
-      # restored dir is safe because the SDK names the binary by its own version and re-downloads on a miss.
-      - name: cache Temporal dev-server binary
-        if: matrix.python-version != '3.14'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/temporal-dev-server
-          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-
 
       - run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
         env:
@@ -515,7 +515,13 @@ jobs:
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
       # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
-      - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+      # The durable-execution suites run in `test-durable-exec` (its `lowest` leg covers
+      # this resolution), keeping their serial xdist chains off this job's critical path.
+      - run: >-
+          uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+          --ignore=tests/test_temporal.py
+          --ignore=tests/test_dbos.py
+          --ignore=tests/test_prefect.py
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
