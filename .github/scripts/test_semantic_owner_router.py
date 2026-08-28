@@ -40,6 +40,7 @@ def item(
     created_at: str = '2026-08-20T00:00:00Z',
     comments: int = 0,
     reactions: int = 0,
+    unassigned_at: list[str] | None = None,
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
         'number': number,
@@ -49,6 +50,7 @@ def item(
         'created_at': created_at,
         'comments': comments,
         'reactions': reactions,
+        'unassigned_at': unassigned_at or [],
         'updated_at': '2026-08-25T00:00:00Z',
         'labels': [{'name': label} for label in labels or []],
         'assignees': [{'login': login} for login in assignees or []],
@@ -127,6 +129,7 @@ class FakeClient(router.attention.GitHubClient):
                             'createdAt': source['created_at'],
                             'comments': {'totalCount': source['comments']},
                             'reactions': {'totalCount': source['reactions']},
+                            'timelineItems': {'nodes': [{'createdAt': value} for value in source['unassigned_at']]},
                         }
                     )
             return {'data': {'repository': {'issueOrPullRequest': value}}}
@@ -700,6 +703,26 @@ def test_community_recovery_is_opt_in_second_choice_and_bounded():
             r'no:assignee interactions:>3 sort:updated-desc',
             query,
         )
+
+
+def test_community_recovery_backs_off_after_a_recent_unassignment():
+    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
+    stale = {
+        8: item(
+            8, labels=['MCP'], created_at='2020-01-01T00:00:00Z', comments=3, reactions=1, unassigned_at=[old, recent]
+        ),
+        9: item(9, labels=['MCP'], created_at='2020-01-01T00:00:00Z', comments=3, reactions=1, unassigned_at=[old]),
+    }
+    client = FakeClient(stale)
+    client.search_results = [[], [], [8, 9]]
+
+    selected = router.select_batch(client, CORE, community_recovery=True)
+
+    # A maintainer just took #8 off someone's plate; re-assigning it the next
+    # morning would fight that correction. #9's unassignment is outside the
+    # two-week window, so its neglect clock has run out again.
+    assert [selection['number'] for selection in selected] == [9]
 
 
 @pytest.mark.parametrize(

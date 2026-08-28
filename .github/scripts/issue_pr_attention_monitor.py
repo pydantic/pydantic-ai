@@ -59,6 +59,7 @@ _PRIORITY_LABELS_ALL = (*PRIORITY_GATE_LABELS, 'p:3-mid', 'p:4-low')
 _GATE_BATCH_BREACH = 15
 _OVERRIDE_SCAN_LIMIT = 30
 _OVERRIDE_WINDOW_DAYS = 7
+_OVERRIDE_LINE_LIMIT = 30
 _MAINTAINER_NAMES = {
     'adtyavrdhn': 'Aditya',
     'dsfaccini': 'David SF',
@@ -1483,7 +1484,12 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
             if actor.casefold() not in owner_keys:
                 continue
             if kind == 'unassigned':
-                target = _nested_field(event, 'assignee', 'login') or 'unknown'
+                target = _nested_field(event, 'assignee', 'login')
+                # Routing only ever assigns maintainer owners, so only those
+                # unassignments correct the automation; removing a stale
+                # contributor or bot assignee is routine cleanup.
+                if target.casefold() not in owner_keys:
+                    continue
                 lines.append(f'• #{number}: @{_slack_escape(actor)} unassigned @{_slack_escape(target)}')
             else:
                 name = _nested_field(event, 'label', 'name')
@@ -1491,6 +1497,12 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
                     continue
                 verb = 'added' if kind == 'labeled' else 'removed'
                 lines.append(f'• #{number}: @{_slack_escape(actor)} {verb} `{_slack_escape(name)}`')
+    # Bound the section so a relabel-heavy week cannot push the digest past the
+    # Slack payload limit and suppress the whole Monday report.
+    if len(lines) > _OVERRIDE_LINE_LIMIT:
+        omitted = len(lines) - _OVERRIDE_LINE_LIMIT
+        del lines[_OVERRIDE_LINE_LIMIT:]
+        lines.append(f'…and {omitted} more corrections')
     if total > len(matches):
         lines.append(f'…covering the {len(matches)} most recently updated of {total} changed items')
     return lines
