@@ -36,7 +36,7 @@ def item(
     pull_request: bool = False,
     author: str = 'contributor',
     state: str = 'open',
-    unassigned_at: list[str] | None = None,
+    unassigned_at: list[str | dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
         'number': number,
@@ -103,7 +103,12 @@ class FakeClient(router.attention.GitHubClient):
                         'pageInfo': {'hasNextPage': False},
                     },
                 }
-                value['timelineItems'] = {'nodes': [{'createdAt': stamp} for stamp in source['unassigned_at']]}
+                value['timelineItems'] = {
+                    'nodes': [
+                        {'createdAt': stamp} if isinstance(stamp, str) else stamp
+                        for stamp in source['unassigned_at']
+                    ]
+                }
                 if 'pull_request' in source:
                     filenames = self.files.get(number, [])
                     value.update(
@@ -748,6 +753,25 @@ def test_gated_routing_backs_off_after_a_recent_unassignment():
         'decision': None,
         'status': 'recently-unassigned',
     }
+
+
+def test_bot_unassignments_do_not_suppress_gated_routing():
+    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    client = FakeClient(
+        {
+            7: item(
+                7,
+                labels=['MCP', 'p:1-highest'],
+                unassigned_at=[{'createdAt': recent, 'actor': {'__typename': 'Bot'}}],
+            )
+        }
+    )
+
+    selection = router.decision_for(client, CORE, 7)
+
+    # The monitor's own sweeps and placeholder swaps unassign as cleanup;
+    # only a person's removal means "leave this alone".
+    assert selection['decision'] is not None
 
 
 def test_community_recovery_backs_off_after_a_recent_unassignment():

@@ -42,7 +42,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
       ... on Issue {
         number state
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
-          nodes { ... on UnassignedEvent { createdAt } }
+          nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
@@ -51,7 +51,7 @@ query RoutingItem($owner: String!, $name: String!, $number: Int!) {
         number state isDraft changedFiles
         author { login }
         timelineItems(itemTypes: [UNASSIGNED_EVENT], last: 10) {
-          nodes { ... on UnassignedEvent { createdAt } }
+          nodes { ... on UnassignedEvent { createdAt actor { __typename } } }
         }
         labels(first: 50) { nodes { name } pageInfo { hasNextPage } }
         assignees(first: 10) { nodes { login } pageInfo { hasNextPage } }
@@ -212,9 +212,15 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     if not isinstance(timeline, Mapping) or not isinstance(cast(Mapping[str, object], timeline).get('nodes'), list):
         return True
     for node in _connection_nodes(cast(Mapping[str, object], timeline)):
-        removed_at = (
-            _graphql_time(cast(Mapping[str, object], node).get('createdAt')) if isinstance(node, Mapping) else None
-        )
+        if not isinstance(node, Mapping):
+            return True
+        # A bot removing an assignee (sweeps, placeholder swaps) is cleanup,
+        # not a decision. GitHub types app principals as `Bot`; a missing
+        # actor (deleted account) counts as human.
+        actor = cast(Mapping[str, object], node).get('actor')
+        if isinstance(actor, Mapping) and cast(Mapping[str, object], actor).get('__typename') == 'Bot':
+            continue
+        removed_at = _graphql_time(cast(Mapping[str, object], node).get('createdAt'))
         if removed_at is None or now - removed_at < window:
             return True
     return False
