@@ -12,6 +12,8 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
+  # Ubuntu's system interpreters are older and slower than uv's optimized managed builds.
+  UV_PYTHON_PREFERENCE: only-managed
 
 permissions:
   contents: read
