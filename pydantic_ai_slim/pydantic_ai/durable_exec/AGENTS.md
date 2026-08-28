@@ -42,7 +42,8 @@ part of an implementation rename unless the migration of in-flight executions is
 reviewed.
 
 Resolve base and per-tool configuration with `OperationConfigRole` and `DurableOperationId`.
-Exhaustively handle every ID variant; the union includes model requests, suspended-response
+Handle known ID variants and retain a default branch because the public union grows in minor
+releases. The union includes model requests, suspended-response
 cancellation, message compaction, event handling, discovery, validation, calls, and
 `CapabilityOperationId`. Capability methods marked with `@durable_operation` arrive through the
 same backend and config resolver as framework operations, so do not maintain a second registration

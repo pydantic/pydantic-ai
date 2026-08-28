@@ -3,8 +3,8 @@ from __future__ import annotations
 import copy
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
+from dataclasses import KW_ONLY, dataclass, replace
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeAlias, cast
 
 from pydantic import Discriminator, Tag, ValidationError
 from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
@@ -30,9 +30,20 @@ DurableConfig: TypeAlias = Mapping[str, Any]
 ToolConfig: TypeAlias = DurableConfig | Literal[False]
 Lifecycle: TypeAlias = Literal['enter-outside-durable', 'enter-always', 'enter-never']
 Instructions: TypeAlias = str | InstructionPart | Sequence[str | InstructionPart] | None
-CallToolOperation: TypeAlias = Callable[
-    [str, dict[str, Any], RunContext[Any], ToolsetTool[Any], DurableConfig], Awaitable[Any]
-]
+
+
+class CallToolOperation(Protocol):
+    async def __call__(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        *,
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+        config: DurableConfig,
+    ) -> Any: ...
+
+
 """Runs one tool call inside the engine's durable unit (activity/step/task)."""
 ResolveToolConfig: TypeAlias = Callable[[ToolsetTool[Any] | None, str], ToolConfig]
 """Resolve a tool's per-tool durable config: a config mapping to merge, or `False` to run the tool inline.
@@ -69,7 +80,7 @@ def validation_context_from_agent(agent: AbstractAgent[Any, Any] | None) -> Vali
     return resolve
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DynamicToolInfo:
     """Serializable tool information returned from dynamic tool discovery."""
 
@@ -79,7 +90,7 @@ class DynamicToolInfo:
     """Whether the tool's validator needs its own unit; false decodes older recorded payloads."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DynamicToolsResult:
     """Serializable result of the dynamic toolset's tool discovery operation.
 
@@ -207,24 +218,28 @@ async def run_args_validator(tool: ToolsetTool[AgentDepsT], args: dict[str, Any]
 @dataclass
 class _ApprovalRequired:
     metadata: dict[str, Any] | None = None
+    _: KW_ONLY
     kind: Literal['approval_required'] = 'approval_required'
 
 
 @dataclass
 class _CallDeferred:
     metadata: dict[str, Any] | None = None
+    _: KW_ONLY
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
 @dataclass
 class _ModelRetry:
     message: str
+    _: KW_ONLY
     kind: Literal['model_retry'] = 'model_retry'
 
 
 @dataclass
 class _ValidationErrorDetail:
     type: str
+    _: KW_ONLY
     loc: list[str | int]
     msg: str
     input: Any
@@ -233,6 +248,7 @@ class _ValidationErrorDetail:
 @dataclass
 class _ValidationError:
     title: str
+    _: KW_ONLY
     errors: list[_ValidationErrorDetail]
     kind: Literal['validation_error'] = 'validation_error'
 
@@ -240,6 +256,7 @@ class _ValidationError:
 @dataclass
 class _ToolFailed:
     message: str
+    _: KW_ONLY
     kind: Literal['tool_failed'] = 'tool_failed'
 
 
@@ -260,6 +277,7 @@ class _ToolReturn:
     """Legacy wire shape retained for decoding in-flight durable executions."""
 
     result: _ToolReturnResult
+    _: KW_ONLY
     kind: Literal['tool_return'] = 'tool_return'
 
 
@@ -269,6 +287,7 @@ class _ToolContentResult:
     # variant cannot decode it, but those payloads already failed to round-trip there; ordinary
     # results deliberately retain the legacy `tool_return` shape for rolling upgrades.
     result: ToolReturnContent
+    _: KW_ONLY
     kind: Literal['tool_content_result'] = 'tool_content_result'
 
 
@@ -457,7 +476,7 @@ def _dispatch_args_validator(
     operation: CallToolOperation, name: str, tool: ToolsetTool[Any], config: DurableConfig
 ) -> Callable[..., Awaitable[None]]:
     async def args_validator_func(ctx: RunContext[Any], **args: Any) -> None:
-        await operation(name, args, ctx, tool, config)
+        await operation(name, args, ctx=ctx, tool=tool, config=config)
 
     return args_validator_func
 
@@ -571,7 +590,7 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         config = self._resolve_tool_config(tool, name)
         if config is False:
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
-        return await self._call_tool_operation(name, tool_args, ctx, tool, config)
+        return await self._call_tool_operation(name, tool_args, ctx=ctx, tool=tool, config=config)
 
 
 class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
@@ -668,7 +687,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # per-run resolved copy used for discovery has already exited. Resolve a
             # fresh copy in flow code for an explicitly inline call.
             return await call_dynamic_tool(self.wrapped, name, tool_args, ctx, tool_def=tool.tool_def)
-        return await self._call_tool_operation(name, tool_args, ctx, tool, config)
+        return await self._call_tool_operation(name, tool_args, ctx=ctx, tool=tool, config=config)
 
 
 class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
@@ -727,4 +746,4 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         config = self._resolve_tool_config(tool, name)
         if config is False:
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
-        return await self._call_tool_operation(name, tool_args, ctx, tool, config)
+        return await self._call_tool_operation(name, tool_args, ctx=ctx, tool=tool, config=config)

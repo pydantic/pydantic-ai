@@ -29,20 +29,20 @@ from ._activity_execution import execute_activity
 from ._operation_names import TemporalOperationNamer
 from ._toolset import heartbeating, model_response_payload_errors
 
-P = TypeVar('P')
-W = TypeVar('W')
-R = TypeVar('R')
+ParamsT = TypeVar('ParamsT')
+WireT = TypeVar('WireT')
+ResultT = TypeVar('ResultT')
 
 
-class TemporalParameterTransport(ParameterTransport[P, W], Protocol[P, W]):
+class TemporalParameterTransport(ParameterTransport[ParamsT, WireT], Protocol[ParamsT, WireT]):
     wire_type: object
     result_type: object
 
     @abstractmethod
-    def dump(self, params: P) -> W: ...
+    def dump(self, params: ParamsT) -> WireT: ...
 
     @abstractmethod
-    def load(self, payload: W, *, runtime: object) -> P: ...
+    def load(self, payload: WireT, *, runtime: object) -> ParamsT: ...
 
 
 class _ModelParams(Protocol):
@@ -67,7 +67,7 @@ class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
         self._tool = tool
         self._resolve_tool = resolve_tool
 
-    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ActivityConfig:
+    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> ActivityConfig:
         if role == 'model':
             return self._model
         if role == 'event':
@@ -77,6 +77,7 @@ class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
     def for_tool(
         self,
         role: OperationConfigRole,
+        *,
         operation_id: DurableOperationId,
         tool: object | None,
         tool_name: str,
@@ -84,11 +85,12 @@ class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
-class TemporalBoundOperation(BoundDurableOperation[P, W, R], Generic[P, W, R]):
+class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
     def __init__(
         self,
-        operation: DurableOperation[P, W, R],
-        registration: Callable[..., Awaitable[R]],
+        operation: DurableOperation[ParamsT, WireT, ResultT],
+        *,
+        registration: Callable[..., Awaitable[ResultT]],
         config: ActivityConfig,
     ) -> None:
         self._operation = operation
@@ -96,10 +98,10 @@ class TemporalBoundOperation(BoundDurableOperation[P, W, R], Generic[P, W, R]):
         self._config = config
 
     @property
-    def operation(self) -> DurableOperation[P, W, R]:
+    def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
         return self._operation
 
-    async def __call__(self, params: P, *, config: object | None = None) -> R:
+    async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
         activity_config = cast(ActivityConfig, config or self._config).copy()
         operation_id = self._operation.operation_id
@@ -172,15 +174,15 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
 
     def register(
         self,
-        operation: DurableOperation[P, W, R],
+        operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
         name: str,
         config: ActivityConfig,
-    ) -> tuple[BoundDurableOperation[P, W, R], Sequence[Callable[..., object]]]:
-        transport = cast(TemporalParameterTransport[P, W], operation.parameter_transport)
+    ) -> tuple[BoundDurableOperation[ParamsT, WireT, ResultT], Sequence[Callable[..., object]]]:
+        transport = cast(TemporalParameterTransport[ParamsT, WireT], operation.parameter_transport)
 
-        async def activity_handler(params: Any, deps: Any = None) -> R:
-            semantic_params = transport.load(cast(W, (params, deps)), runtime=self._runtime)
+        async def activity_handler(params: Any, deps: Any = None) -> ResultT:
+            semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
                 return await operation.handler(semantic_params)
 
@@ -195,5 +197,9 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
             'return': transport.result_type,
         }
         registration = activity.defn(name=name)(activity_handler)
-        bound = TemporalBoundOperation(operation, cast(Callable[..., Awaitable[R]], registration), config)
+        bound = TemporalBoundOperation(
+            operation,
+            registration=cast(Callable[..., Awaitable[ResultT]], registration),
+            config=config,
+        )
         return bound, (registration,)

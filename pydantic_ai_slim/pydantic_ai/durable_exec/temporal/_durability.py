@@ -39,7 +39,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, 
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
-from ._operation_backend import TemporalOperationBackend
+from ._operation_backend import TemporalBoundOperation, TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
@@ -101,7 +101,7 @@ IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
 """Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
 
 
-@dataclass(init=False)
+@dataclass(init=False, kw_only=True)
 class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
 
@@ -307,13 +307,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         default_model = self._models_by_id.get('default')
         model_name = self._default_model_id or (default_model.model_id if default_model is not None else 'default')
         self._bound_model_operations = self._bind_model_operations(backend, model_id=None, model_name=model_name)
-        self.request_activity = self._bound_model_operations[0].registration
-        self.request_stream_activity = self._bound_model_operations[1].registration
-        self.compact_messages_activity = self._bound_model_operations[2].registration
-        self.cancel_suspended_response_activity = self._bound_model_operations[3].registration
+        request = self._bound_model_operations.request
+        request_stream = self._bound_model_operations.request_stream
+        compact_messages = self._bound_model_operations.compact_messages
+        cancel_suspended_response = self._bound_model_operations.cancel_suspended_response
+        assert isinstance(request, TemporalBoundOperation)
+        assert isinstance(request_stream, TemporalBoundOperation)
+        assert isinstance(compact_messages, TemporalBoundOperation)
+        assert isinstance(cancel_suspended_response, TemporalBoundOperation)
+        self.request_activity = request.registration
+        self.request_stream_activity = request_stream.registration
+        self.compact_messages_activity = compact_messages.registration
+        self.cancel_suspended_response_activity = cancel_suspended_response.registration
 
         if self._event_stream_handler is not None:
             self._bound_event_operation = self._bind_event_operation(backend)
+            assert isinstance(self._bound_event_operation, TemporalBoundOperation)
             self.event_stream_handler_activity = self._bound_event_operation.registration
             backend.move_registration_to_end(self.cancel_suspended_response_activity)
 
@@ -425,7 +434,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from exc
         args = tool.args_validator.validate_python(params.tool_args, context=self._validation_context(params.ctx))
-        return ToolsetCallToolParams(params.name, args, params.ctx, tool)
+        return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
     def _tool_call_payload_errors(self, tool_name: str):
         return tool_result_payload_errors(tool_name)

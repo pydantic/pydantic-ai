@@ -55,12 +55,13 @@ from pydantic_ai.models.test import TestModel
 
 
 class ImmediateConfig:
-    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> None:
+    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> None:
         return None
 
     def for_tool(
         self,
         role: OperationConfigRole,
+        *,
         operation_id: DurableOperationId,
         tool: object | None,
         tool_name: str,
@@ -78,7 +79,7 @@ class ImmediateBackend(CallableOperationBackend[None]):
         name: str,
         body: Callable[[], Awaitable[object]],
         cache_key: tuple[object, ...],
-        config: object,
+        config: None,
     ) -> object:
         return await body()
 
@@ -124,13 +125,14 @@ writes JSON-compatible journal payloads itself. Both implement
 [`DurabilityCodec`][pydantic_ai.durable_exec.DurabilityCodec]. Arguments, results, tool control-flow
 signals, and decorated capability operations all cross the selected codec boundary.
 
-The backend config object receives an
+The backend config object implements the backend configuration protocol. Its public `base` and
+`for_tool` methods receive an
 [`OperationConfigRole`][pydantic_ai.durable_exec.OperationConfigRole] and a
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId]. Match the concrete ID variants
 when config differs by model, toolset, or operation. The role is a coarse config bucket: `'model'`,
 `'event'`, `'tool'`, or `'capability'`. The operation ID carries the fine-grained identity. The ID
-union is closed, so exhaustive matching will make a newly added operation visible to your type
-checker. Per-tool config can return `False` to opt a function or dynamic tool out of a durable unit.
+union represents the IDs available in the installed Pydantic AI version. Per-tool config can return
+`False` to opt a function or dynamic tool out of a durable unit.
 MCP tools perform I/O and always run in their durable unit, so returning `False` for one raises a
 [`UserError`][pydantic_ai.exceptions.UserError].
 
@@ -138,6 +140,14 @@ The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
 `ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
 `ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
 `CapabilityOperationId`. Their Python class names do not determine persisted operation names.
+
+### API evolution
+
+[`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId] grows in minor releases as
+Pydantic AI adds durable units. Sandbox operations are one planned example. Engine configuration
+must therefore include a default branch when matching IDs. Use that branch to apply a safe base
+configuration or raise an actionable unsupported-operation error. Do not rely on an exhaustive
+match that assumes the current union will never gain another arm.
 
 ## Persisted names and recovery
 

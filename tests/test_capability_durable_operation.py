@@ -840,14 +840,18 @@ async def test_defensive_capability_operation_paths() -> None:
     projection_declaration = collect_capability_operations(DurableBeforeModelRequest())['before_model_request']
     ctx = capability.calls[0][0] if capability.calls else RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
-    with pytest.raises(RuntimeError, match='require the durability model scope'):
-        await call_declaration(projection_declaration, capability, CapabilityOperationParams(ctx, {}))
+    with pytest.raises(AssertionError, match='called without its model scope'):
+        await call_declaration(
+            projection_declaration,
+            capability,
+            params=CapabilityOperationParams(ctx, arguments={}),
+        )
     with pytest.raises(RuntimeError, match='requires the worker agent'):
-        await recover_capability(ctx, 'missing')
+        await recover_capability(ctx, capability_id='missing')
     plain_agent = Agent(TestModel())
     ctx.agent = plain_agent
     with pytest.raises(RuntimeError, match='found 0'):
-        await recover_capability(ctx, 'missing')
+        await recover_capability(ctx, capability_id='missing')
 
     assert (
         await capability._calculate(  # pyright: ignore[reportPrivateUsage]
@@ -867,7 +871,7 @@ async def test_bound_dispatch_defensively_rejects_missing_capability_id() -> Non
     ctx.agent = agent
     with pytest.raises(RuntimeError, match='must have an explicit `id`'):
         await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
-            AbstractCapability(), 'missing', ctx, (), {}
+            AbstractCapability(), 'missing', ctx=ctx, args=(), kwargs={}
         )
 
 
@@ -880,7 +884,7 @@ async def test_capability_operation_rejects_realtime_context_model() -> None:
 
     with pytest.raises(UserError, match='require a non-realtime `Model` on `RunContext`'):
         await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
-            capability, 'calculate', ctx, (ctx,), {}
+            capability, 'calculate', ctx=ctx, args=(ctx,), kwargs={}
         )
 
 
@@ -896,7 +900,7 @@ async def test_capability_operation_rejects_unregistered_context_model() -> None
         match=r'was not registered with `RecordingDurability`.*cannot be used inside a journal',
     ):
         await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
-            capability, 'calculate', ctx, (ctx,), {}
+            capability, 'calculate', ctx=ctx, args=(ctx,), kwargs={}
         )
 
 
@@ -926,7 +930,7 @@ async def test_temporal_capability_transport_and_summary(monkeypatch: pytest.Mon
     transport = _CapabilityOperationTransport(durability, declaration)
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     ctx.agent = agent
-    params = CapabilityOperationParams(ctx, {'value': 2, 'extra': [], 'scale': 1})
+    params = CapabilityOperationParams(ctx, arguments={'value': 2, 'extra': [], 'scale': 1})
     wire, deps = transport.dump(params)
     assert isinstance(wire, _CapabilityOperationParams)
     loaded = transport.load((wire, deps), runtime=durability)
@@ -954,7 +958,7 @@ async def test_temporal_capability_operation_resolves_ctx_model_worker_side() ->
     declaration = durability._capability_declarations[('model_reader', 'read_model')]  # pyright: ignore[reportPrivateUsage]
     transport = _CapabilityOperationTransport(durability, declaration)
     ctx = RunContext(deps=None, agent=agent, model=model, usage=RunUsage())
-    wire, deps = transport.dump(CapabilityOperationParams(ctx, {}, None))
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, arguments={}, model_id=None))
     registration = next(
         activity
         for activity in durability.temporal_activities
@@ -981,7 +985,7 @@ async def test_temporal_capability_operation_rederives_for_run_instance_worker_s
     ]
     transport = _CapabilityOperationTransport(durability, declaration)
     ctx = RunContext(deps='tenant-a', agent=agent, model=TestModel(), usage=RunUsage())
-    wire, deps = transport.dump(CapabilityOperationParams(ctx, {}))
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, arguments={}))
     registration = next(
         activity
         for activity in durability.temporal_activities
@@ -1012,8 +1016,14 @@ async def test_temporal_capability_operation_projects_registered_model_replaceme
     ]
     transport = _CapabilityOperationTransport(durability, declaration)
     ctx = RunContext(deps=None, agent=agent, model=original, usage=RunUsage())
-    projection = ModelRequestContextProjection([], None, ModelRequestParameters(), None, False)
-    wire, deps = transport.dump(CapabilityOperationParams(ctx, {'request_context': projection}))
+    projection = ModelRequestContextProjection(
+        [],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        model_id=None,
+        streaming=False,
+    )
+    wire, deps = transport.dump(CapabilityOperationParams(ctx, arguments={'request_context': projection}))
     registration = next(
         activity
         for activity in durability.temporal_activities

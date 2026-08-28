@@ -326,14 +326,16 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
         capability=TaskConfig(timeout_seconds=4),
         tool=tool_config,
     )
-    model_id = ModelRequestId(None, False, 'test')
-    call_id = ToolsetCallToolId('function', 'tools')
-    assert config.base('model', model_id) == {'timeout_seconds': 1}
-    assert config.base('event', model_id) == {'timeout_seconds': 2}
-    assert config.base('capability', CapabilityOperationId('capability', 'operation')) == {'timeout_seconds': 4}
-    assert config.base('tool', call_id) == {'timeout_seconds': 3}
+    model_id = ModelRequestId(None, streaming=False, model_name='test')
+    call_id = ToolsetCallToolId('function', toolset_id='tools')
+    assert config.base('model', operation_id=model_id) == {'timeout_seconds': 1}
+    assert config.base('event', operation_id=model_id) == {'timeout_seconds': 2}
+    assert config.base('capability', operation_id=CapabilityOperationId('capability', operation='operation')) == {
+        'timeout_seconds': 4
+    }
+    assert config.base('tool', operation_id=call_id) == {'timeout_seconds': 3}
     marker = object()
-    assert config.for_tool('tool', call_id, marker, 'tool') == {'timeout_seconds': 3}
+    assert config.for_tool('tool', operation_id=call_id, tool=marker, tool_name='tool') == {'timeout_seconds': 3}
     assert calls == [('function', None, ''), ('function', marker, 'tool')]
 
 
@@ -2032,7 +2034,7 @@ def test_dynamic_tool_cache_identity_includes_prepared_definition() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
     def key_for(tool_def: ToolDefinition) -> str | None:
-        params = DynamicToolsetCallToolParams('search', {'query': 'x'}, ctx, tool_def)
+        params = DynamicToolsetCallToolParams('search', tool_args={'query': 'x'}, ctx=ctx, tool_def=tool_def)
         return cache_policy.compute_key(
             task_ctx=mock_task_ctx,
             inputs={'logical_inputs': identity.project(params)},

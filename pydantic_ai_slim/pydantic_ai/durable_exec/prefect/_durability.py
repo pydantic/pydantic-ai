@@ -23,7 +23,7 @@ from ._toolset import with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 
-@dataclass(init=False)
+@dataclass(init=False, kw_only=True)
 class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
 

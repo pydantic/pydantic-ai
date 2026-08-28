@@ -51,6 +51,7 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],

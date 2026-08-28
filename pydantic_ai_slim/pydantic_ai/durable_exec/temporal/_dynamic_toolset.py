@@ -98,6 +98,7 @@ def temporalize_dynamic_toolset(
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
@@ -129,6 +130,7 @@ def temporalize_dynamic_toolset(
     async def validate_args_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],

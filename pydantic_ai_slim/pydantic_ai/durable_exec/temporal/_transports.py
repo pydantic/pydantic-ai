@@ -91,7 +91,7 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
                 f'Tool {params.name!r} not found in toolset {self._toolset.id!r}. '
                 'Removing or renaming tools during an agent run is not supported with Temporal.'
             ) from exc
-        return ToolsetCallToolParams(params.name, params.tool_args, ctx, tool)
+        return ToolsetCallToolParams(params.name, tool_args=params.tool_args, ctx=ctx, tool=tool)
 
 
 class _GetToolsTransport(TemporalParameterTransport[ToolsetGetToolsParams, tuple[GetToolsParams, Any]]):
@@ -140,9 +140,9 @@ class _MCPCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[
         assert params.tool_def is not None
         return ToolsetCallToolParams(
             params.name,
-            params.tool_args,
-            ctx,
-            self._toolset.tool_for_tool_def(params.tool_def, ctx=ctx),
+            tool_args=params.tool_args,
+            ctx=ctx,
+            tool=self._toolset.tool_for_tool_def(params.tool_def, ctx=ctx),
         )
 
 
@@ -167,14 +167,14 @@ class _DynamicCallTransport(TemporalParameterTransport[DynamicToolsetCallToolPar
     def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> DynamicToolsetCallToolParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
-        return DynamicToolsetCallToolParams(params.name, params.tool_args, ctx, tool_def=params.tool_def)
+        return DynamicToolsetCallToolParams(params.name, tool_args=params.tool_args, ctx=ctx, tool_def=params.tool_def)
 
 
 class _DynamicGetToolsTransport(_GetToolsTransport):
     result_type = DynamicToolsResult
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _RequestParams:
     """Serializable arguments for the model-request Temporal activity."""
@@ -187,7 +187,7 @@ class _RequestParams:
     model_id: str | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _CapabilityOperationParams:
     arguments: dict[str, Any]
     serialized_run_context: Any
@@ -216,17 +216,17 @@ class _CapabilityOperationTransport(
     def load(self, payload: tuple[_CapabilityOperationParams, Any], *, runtime: object) -> CapabilityOperationParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
-        return CapabilityOperationParams(ctx, params.arguments, params.model_id)
+        return CapabilityOperationParams(ctx, arguments=params.arguments, model_id=params.model_id)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _CancelParams:
     response: ModelResponse
     model_id: str | None = None
     serialized_run_context: Any = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _CompactMessagesParams:
     messages: list[ModelMessage]
@@ -238,7 +238,7 @@ class _CompactMessagesParams:
     model_id: str | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
     event: AgentStreamEvent
@@ -276,10 +276,10 @@ class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tupl
         ctx = self._durability.deserialize_operation_run_context(request.serialized_run_context, deps)
         return ModelRequestParams(
             request.model_id,
-            request.messages,
-            cast(ModelSettings | None, request.model_settings),
-            request.model_request_parameters,
-            ctx,
+            messages=request.messages,
+            model_settings=cast(ModelSettings | None, request.model_settings),
+            model_request_parameters=request.model_request_parameters,
+            run_context=ctx,
         )
 
 
@@ -318,7 +318,12 @@ class _CompactMessagesTransport(
         )
         request_context.model_id = params.model_id
         request_context.streaming = params.streaming
-        return ModelCompactMessagesParams(params.model_id, request_context, params.instructions, ctx)
+        return ModelCompactMessagesParams(
+            params.model_id,
+            request_context=request_context,
+            instructions=params.instructions,
+            run_context=ctx,
+        )
 
 
 class _CancelTransport(TemporalParameterTransport[ModelCancelSuspendedResponseParams, tuple[_CancelParams, Any]]):
@@ -348,7 +353,7 @@ class _CancelTransport(TemporalParameterTransport[ModelCancelSuspendedResponsePa
             if params.serialized_run_context is not None
             else None
         )
-        return ModelCancelSuspendedResponseParams(params.model_id, params.response, ctx)
+        return ModelCancelSuspendedResponseParams(params.model_id, response=params.response, run_context=ctx)
 
 
 class _EventStreamHandlerTransport(
@@ -375,4 +380,4 @@ class _EventStreamHandlerTransport(
     ) -> _SemanticEventStreamHandlerParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
-        return _SemanticEventStreamHandlerParams(params.event, ctx)
+        return _SemanticEventStreamHandlerParams(params.event, run_context=ctx)

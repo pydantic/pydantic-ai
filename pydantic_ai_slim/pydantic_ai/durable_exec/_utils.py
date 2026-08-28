@@ -53,7 +53,7 @@ def unwrap_model(model: Model) -> Model:
     return model
 
 
-@dataclass
+@dataclass(kw_only=True)
 class StreamedActivityResult:
     """Bundle returned across an activity/step/task boundary in durable-execution flows.
 

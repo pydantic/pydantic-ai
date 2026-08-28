@@ -165,24 +165,24 @@ DBOS_OPERATION_NAMES = {
 
 def _operation_ids() -> list[DurableOperationId]:
     return [
-        ModelRequestId(None, False, 'test'),
-        ModelRequestId('registered', False, 'test'),
-        ModelRequestId(None, True, 'test'),
-        ModelRequestId('registered', True, 'test'),
-        ModelCancelSuspendedResponseId(None, 'test'),
-        ModelCancelSuspendedResponseId('registered', 'test'),
-        ModelCompactMessagesId(None, 'test'),
-        ModelCompactMessagesId('registered', 'test'),
+        ModelRequestId(None, streaming=False, model_name='test'),
+        ModelRequestId('registered', streaming=False, model_name='test'),
+        ModelRequestId(None, streaming=True, model_name='test'),
+        ModelRequestId('registered', streaming=True, model_name='test'),
+        ModelCancelSuspendedResponseId(None, model_name='test'),
+        ModelCancelSuspendedResponseId('registered', model_name='test'),
+        ModelCompactMessagesId(None, model_name='test'),
+        ModelCompactMessagesId('registered', model_name='test'),
         EventStreamHandlerId(),
-        ToolsetCallToolId('function', 'functions'),
-        ToolsetValidateToolArgumentsId('function', 'functions'),
-        ToolsetGetToolsId('mcp', 'mcp'),
+        ToolsetCallToolId('function', toolset_id='functions'),
+        ToolsetValidateToolArgumentsId('function', toolset_id='functions'),
+        ToolsetGetToolsId('mcp', toolset_id='mcp'),
         ToolsetGetInstructionsId('mcp'),
-        ToolsetCallToolId('mcp', 'mcp'),
-        ToolsetGetToolsId('dynamic', 'dynamic'),
-        ToolsetCallToolId('dynamic', 'dynamic'),
-        ToolsetValidateToolArgumentsId('dynamic', 'dynamic'),
-        CapabilityOperationId('compat', 'operation'),
+        ToolsetCallToolId('mcp', toolset_id='mcp'),
+        ToolsetGetToolsId('dynamic', toolset_id='dynamic'),
+        ToolsetCallToolId('dynamic', toolset_id='dynamic'),
+        ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
+        CapabilityOperationId('compat', operation='operation'),
     ]
 
 
@@ -405,7 +405,10 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         (_CallDeferred({'ticket': 7}), {'metadata': {'ticket': 7}, 'kind': 'call_deferred'}),
         (_ModelRetry('retry me'), {'message': 'retry me', 'kind': 'model_retry'}),
         (
-            _ValidationError('int', [_ValidationErrorDetail('int_parsing', ['value'], 'bad integer', 'x')]),
+            _ValidationError(
+                'int',
+                errors=[_ValidationErrorDetail('int_parsing', loc=['value'], msg='bad integer', input='x')],
+            ),
             {
                 'title': 'int',
                 'errors': [{'type': 'int_parsing', 'loc': ['value'], 'msg': 'bad integer', 'input': 'x'}],
@@ -502,7 +505,7 @@ def test_json_and_identity_codec_payload_goldens(tp: Any, value: Any, expected: 
 
 def test_capability_operation_result_payload_golden() -> None:
     delta = RunUsage(requests=1, tool_calls=2, input_tokens=3, details={'cached': 4})
-    result = CapabilityOperationResult(5, delta)
+    result = CapabilityOperationResult(5, usage_delta=delta)
     result_type = capability_operation_result_type(int)
 
     assert JSON_CODEC.dump(result_type, result) == {
@@ -525,7 +528,13 @@ def test_capability_operation_result_payload_golden() -> None:
 
 
 def test_model_request_context_projection_payload_golden() -> None:
-    projection = ModelRequestContextProjection([], None, ModelRequestParameters(), 'restricted', False)
+    projection = ModelRequestContextProjection(
+        [],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        model_id='restricted',
+        streaming=False,
+    )
 
     assert JSON_CODEC.dump(ModelRequestContextProjection, projection) == {
         'messages': [],

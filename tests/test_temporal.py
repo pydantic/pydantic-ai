@@ -906,9 +906,9 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
     signature = inspect.signature(durability.cancel_suspended_response_activity)
     assert signature.parameters['deps'].default is None
 
-    await durability.cancel_suspended_response_activity(_CancelParams(response, model_id='registered'))
+    await durability.cancel_suspended_response_activity(_CancelParams(response=response, model_id='registered'))
     with patch('pydantic_ai.durable_exec.temporal._durability.infer_model', return_value=inferred_model):
-        await durability.cancel_suspended_response_activity(_CancelParams(response, model_id='unregistered'))
+        await durability.cancel_suspended_response_activity(_CancelParams(response=response, model_id='unregistered'))
 
     assert cancelled == [('registered', response), ('inferred', response)]
 
@@ -8998,18 +8998,18 @@ async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs
 
     assert (
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            ToolsetCallToolId('function', 'opt_out_tools'), tools['async_tool'], 'async_tool'
+            ToolsetCallToolId('function', toolset_id='opt_out_tools'), tools['async_tool'], 'async_tool'
         )
         is False
     )
     with pytest.raises(UserError, match='non-async tools are run in threads'):
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            ToolsetCallToolId('function', 'opt_out_tools'), tools['sync_tool'], 'sync_tool'
+            ToolsetCallToolId('function', toolset_id='opt_out_tools'), tools['sync_tool'], 'sync_tool'
         )
 
     with pytest.raises(UserError, match='dynamic-toolset tools cannot run inside the workflow'):
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            ToolsetCallToolId('dynamic', 'dynamic_opt_out'), tools['async_tool'], 'async_tool'
+            ToolsetCallToolId('dynamic', toolset_id='dynamic_opt_out'), tools['async_tool'], 'async_tool'
         )
 
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_opt_out')
@@ -9021,7 +9021,7 @@ async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs
     )
     with pytest.raises(UserError, match='MCP tools require the use of IO'):
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            ToolsetCallToolId('mcp', 'mcp_opt_out'), mcp_tool, 'mcp_tool'
+            ToolsetCallToolId('mcp', toolset_id='mcp_opt_out'), mcp_tool, 'mcp_tool'
         )
 
 

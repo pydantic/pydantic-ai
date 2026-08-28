@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from functools import wraps
+from dataclasses import KW_ONLY, dataclass
+from functools import update_wrapper, wraps
 from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints, overload
 
 from pydantic_ai._function_schema import (
@@ -26,29 +26,56 @@ from pydantic_ai.usage import RunUsage
 from ._operation import CacheIdentity
 from ._operation_backend import BoundDurableOperation
 
-R = TypeVar('R')
+ResultT = TypeVar('ResultT')
 P = ParamSpec('P')
 A = TypeVar('A', bound=Awaitable[Any])
+
+_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset'})
+"""Sync hooks marked so collection can report why they cannot be durable.
+
+The decorator still attaches a marker to these sync hooks so binding raises the specific
+never-durable error instead of the generic sync-method error.
+"""
+_WRAP_NEVER_DURABLE_HOOKS = (
+    'wrap_run',
+    'wrap_node_run',
+    'wrap_model_request',
+    'wrap_tool_validate',
+    'wrap_tool_execute',
+    'wrap_output_validate',
+    'wrap_output_process',
+)
+_NEVER_DURABLE_HOOKS = {
+    **{
+        name: f'`{name}` receives a handler callable, which cannot cross a durable boundary.'
+        for name in _WRAP_NEVER_DURABLE_HOOKS
+    },
+    'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
+    'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
+    'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
+}
 
 
 @dataclass(frozen=True)
 class CapabilityOperationParams:
     run_context: RunContext[Any]
+    _: KW_ONLY
     arguments: dict[str, Any]
     model_id: str | None = None
 
 
 @dataclass(frozen=True)
-class CapabilityOperationResult(Generic[R]):
-    value: R
+class CapabilityOperationResult(Generic[ResultT]):
+    value: ResultT
+    _: KW_ONLY
     usage_delta: RunUsage
 
 
 def capability_operation_result_type(result_type: object) -> type[CapabilityOperationResult[Any]]:
-    """Build `CapabilityOperationResult[R]` for the operation's declared result type.
+    """Build `CapabilityOperationResult[ResultT]` for the operation's declared result type.
 
     Codecs use the parametrized wrapper to validate both the operation value and its usage delta
-    when serializing and reconstructing `CapabilityOperationResult[R]` across a durable boundary.
+    when serializing and reconstructing `CapabilityOperationResult[ResultT]` across a durable boundary.
     """
     return cast(type[CapabilityOperationResult[Any]], cast(Any, CapabilityOperationResult)[result_type])
 
@@ -63,6 +90,7 @@ class ModelRequestContextProjection:
     """
 
     messages: list[ModelMessage]
+    _: KW_ONLY
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
     model_id: str | None
@@ -71,11 +99,11 @@ class ModelRequestContextProjection:
     @classmethod
     def from_context(cls, context: ModelRequestContext) -> ModelRequestContextProjection:
         return cls(
-            context.messages,
-            cast(dict[str, Any] | None, context.model_settings),
-            context.model_request_parameters,
-            context.model_id,
-            context.streaming,
+            messages=context.messages,
+            model_settings=cast(dict[str, Any] | None, context.model_settings),
+            model_request_parameters=context.model_request_parameters,
+            model_id=context.model_id,
+            streaming=context.streaming,
         )
 
     def build_context(self, model: Model) -> ModelRequestContext:
@@ -103,12 +131,14 @@ class ModelRequestContextProjection:
 @dataclass(frozen=True)
 class _ResolvedModelRequestContext:
     projection: ModelRequestContextProjection
+    _: KW_ONLY
     model: Model | None = None
 
 
 @dataclass(frozen=True)
 class CapabilityMethodDeclaration:
     name: str
+    _: KW_ONLY
     function: Callable[..., Awaitable[Any]]
     signature: inspect.Signature
     schema: FunctionSchema
@@ -122,10 +152,11 @@ class CapabilityMethodDeclaration:
 
 
 class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
-    """Project the model, validated arguments, and run context into Prefect's cache identity.
+    """Project the model, validated arguments, and run context into the cache identity.
 
-    The model separates registered model targets, the arguments identify the operation input,
-    and the run context contributes durable run and step identity through Prefect's policy.
+    Hash-keyed engines consult this projection, while sequence-keyed engines ignore it. The model
+    separates registered targets, the arguments identify the input, and the run context contributes
+    durable run and step identity where the engine's cache policy supports it.
     """
 
     def project(self, params: CapabilityOperationParams) -> tuple[object, ...]:
@@ -135,8 +166,23 @@ class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
 @dataclass(frozen=True)
 class _DurableOperationMarker:
     name: str
+    _: KW_ONLY
     function: Callable[..., Awaitable[Any]]
     base_hook: bool = False
+
+
+Marker = _DurableOperationMarker
+_MARKER_ATTRIBUTE = '__pydantic_ai_durable_operation__'
+
+
+def get_durable_operation_marker(obj: object) -> Marker | None:
+    """Return the durable-operation marker attached to `obj`, if present."""
+    return cast(Marker | None, getattr(obj, _MARKER_ATTRIBUTE, None))
+
+
+def set_durable_operation_marker(obj: object, marker: Marker) -> None:
+    """Attach a durable-operation `marker` to `obj`."""
+    setattr(obj, _MARKER_ATTRIBUTE, marker)
 
 
 def _operation_name(function: Callable[..., Any], name: str | None) -> str:
@@ -183,28 +229,37 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
         TypeError: If the decorated method is synchronous.
     """
 
-    def decorate(target: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
+    def decorate(target: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
         if not inspect.iscoroutinefunction(target):
-            if target.__name__ in ('get_toolset', 'get_wrapper_toolset'):
-                setattr(
+            if target.__name__ in _SYNC_NEVER_DURABLE_HOOKS:
+                set_durable_operation_marker(
                     target,
-                    '__pydantic_ai_durable_operation__',
-                    _DurableOperationMarker(_operation_name(target, name), cast(Callable[..., Awaitable[Any]], target)),
+                    Marker(
+                        name=_operation_name(target, name),
+                        function=cast(Callable[..., Awaitable[Any]], target),
+                    ),
                 )
                 return target
             raise TypeError('`durable_operation` can only decorate async methods')
-        marker = _DurableOperationMarker(_operation_name(target, name), target)
+        marker = Marker(name=_operation_name(target, name), function=target)
 
         @wraps(target)
-        async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> R:
+        async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> ResultT:
+            # Bind the call so context parameters are visible regardless of calling style.
             bound = inspect.signature(target).bind(self, *args, **kwargs)
+
+            # Find the explicit or ambient run context that selects durable dispatch.
             ctx: RunContext[Any] | None = get_current_run_context()
             for value in bound.arguments.values():
                 if isinstance(value, RunContext):
                     ctx = cast(RunContext[Any], value)
                     break
             if ctx is None:
+                # Agent runs and durable scopes set the ambient context. Calls outside either scope
+                # deliberately pass through to the undecorated method.
                 return await target(self, *args, **kwargs)
+
+            # Project live model-request context before it crosses a durable boundary.
             request_context = next(
                 (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
             )
@@ -217,6 +272,8 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
             else:
                 dispatch_args = args
                 dispatch_kwargs = kwargs
+
+            # Resolve the per-run operation first, then the agent-bound fallback.
             handler = target.__get__(self, type(self))
             operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
             operation = (
@@ -238,50 +295,44 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
                         cast(tuple[object, ...], dispatch_args),
                         cast(dict[str, object], dispatch_kwargs),
                     )
+
+            # Apply worker-side model-request mutations back to the live context.
             if request_context is not None and isinstance(result, _ResolvedModelRequestContext):
                 result.projection.apply(request_context, result.model)
-                return cast(R, request_context)
-            return cast(R, result)
+                return cast(ResultT, request_context)
+            return cast(ResultT, result)
 
-        setattr(decorated, '__pydantic_ai_durable_operation__', marker)
+        set_durable_operation_marker(decorated, marker)
         return decorated
 
     return decorate(function) if function is not None else decorate
 
 
-def base_hook_durable_operation(function: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
+def base_hook_durable_operation(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
     """Mark a base hook so every override inherits durable execution automatically."""
-    setattr(
+    set_durable_operation_marker(
         function,
-        '__pydantic_ai_durable_operation__',
-        _DurableOperationMarker(_operation_name(function, None), cast(Callable[..., Awaitable[Any]], function), True),
+        Marker(
+            name=_operation_name(function, None),
+            function=cast(Callable[..., Awaitable[Any]], function),
+            base_hook=True,
+        ),
     )
     return function
-
-
-_NEVER_DURABLE_HOOKS = {
-    'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
-    'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
-    'wrap_run': '`wrap_run` receives a handler callable, which cannot cross a durable boundary.',
-    'wrap_node_run': '`wrap_node_run` receives a handler callable, which cannot cross a durable boundary.',
-    'wrap_model_request': '`wrap_model_request` receives a handler callable, which cannot cross a durable boundary.',
-    'wrap_tool_validate': '`wrap_tool_validate` receives a handler callable, which cannot cross a durable boundary.',
-    'wrap_tool_execute': '`wrap_tool_execute` receives a handler callable, which cannot cross a durable boundary.',
-    'wrap_output_validate': '`wrap_output_validate` receives a handler callable, which cannot cross a durable boundary.',
-    'wrap_output_process': '`wrap_output_process` receives a handler callable, which cannot cross a durable boundary.',
-    'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
-}
 
 
 def collect_capability_operations(
     capability: AbstractCapability[Any],
 ) -> dict[str, CapabilityMethodDeclaration]:
+    """Collect durable declarations with a two-phase MRO scan.
+
+    The first phase finds overridden base hooks marked durable. The second finds directly marked
+    methods, validates never-durable hooks and duplicate names, then builds typed declarations.
+    """
     handlers: dict[str, Callable[..., Awaitable[Any]]] = {}
     for base in type(capability).__mro__[1:]:
         for method_name, base_member in vars(base).items():
-            marker = cast(
-                _DurableOperationMarker | None, getattr(base_member, '__pydantic_ai_durable_operation__', None)
-            )
+            marker = get_durable_operation_marker(base_member)
             if marker is None or not marker.base_hook:
                 continue
             member = getattr(type(capability), method_name)
@@ -289,7 +340,7 @@ def collect_capability_operations(
                 handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
 
     for method_name, member in inspect.getmembers(type(capability)):
-        marker = cast(_DurableOperationMarker | None, getattr(member, '__pydantic_ai_durable_operation__', None))
+        marker = get_durable_operation_marker(member)
         if marker is None:
             continue
         if marker.base_hook and member is marker.function:
@@ -305,7 +356,7 @@ def collect_capability_operations(
 
     declarations: dict[str, CapabilityMethodDeclaration] = {}
     for operation_name, handler in handlers.items():
-        original = cast(_DurableOperationMarker | None, getattr(handler, '__pydantic_ai_durable_operation__', None))
+        original = get_durable_operation_marker(handler)
         function = original.function if original is not None else handler
         bound = function.__get__(capability, type(capability))
         signature = inspect.signature(bound)
@@ -331,17 +382,22 @@ def collect_capability_operations(
             if model_request_parameter is not None
             else {}
         )
-        schema = _capability_operation_schema(bound, signature, ctx_parameter, type_hints, replacements)
-        declarations[operation_name] = CapabilityMethodDeclaration(
-            operation_name,
-            function,
-            signature,
-            schema,
+        schema = _capability_operation_schema(
+            bound, signature, ctx_parameter, type_hints, annotation_replacements=replacements
+        )
+        result_type = (
             ModelRequestContextProjection
             if model_request_parameter is not None
-            else _extract_return_schema_type(get_type_hints(bound, include_extras=True).get('return'), bound),
-            ctx_parameter,
-            model_request_parameter,
+            else _extract_return_schema_type(type_hints.get('return'), bound)
+        )
+        declarations[operation_name] = CapabilityMethodDeclaration(
+            name=operation_name,
+            function=function,
+            signature=signature,
+            schema=schema,
+            result_type=result_type,
+            ctx_parameter=ctx_parameter,
+            model_request_parameter=model_request_parameter,
         )
     return declarations
 
@@ -351,17 +407,13 @@ def _capability_operation_schema(
     signature: inspect.Signature,
     ctx_parameter: str | None,
     type_hints: dict[str, Any],
+    *,
     annotation_replacements: dict[str, Any],
 ) -> FunctionSchema:
     if ctx_parameter is None and not annotation_replacements:
         return function_schema(function, GenerateToolJsonSchema)
 
-    async def schema_target(**kwargs: Any) -> Any:  # pragma: no cover
-        return kwargs
-
-    schema_target.__name__ = function.__name__
-    schema_target.__qualname__ = function.__qualname__
-    schema_target.__doc__ = function.__doc__
+    schema_target = _schema_target(function)
     schema_target.__annotations__ = {
         name: annotation_replacements.get(name, annotation)
         for name, annotation in type_hints.items()
@@ -374,8 +426,18 @@ def _capability_operation_schema(
     return function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False)
 
 
+def _schema_target(function: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """Create a metadata-preserving callable whose signature can be adapted for schema generation."""
+
+    async def target(**kwargs: Any) -> Any:  # pragma: no cover
+        return kwargs
+
+    return update_wrapper(target, function)
+
+
 def bind_arguments(
     declaration: CapabilityMethodDeclaration,
+    *,
     ctx: RunContext[Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
@@ -385,7 +447,7 @@ def bind_arguments(
     arguments = dict(bound.arguments)
     if declaration.ctx_parameter is not None:
         arguments.pop(declaration.ctx_parameter)
-    for name, parameter in declaration.signature.parameters.items():
+    for name, parameter in _signature_arguments(declaration.signature, arguments):
         if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             arguments.update(arguments.pop(name))
         elif parameter.kind is inspect.Parameter.VAR_POSITIONAL:
@@ -393,9 +455,22 @@ def bind_arguments(
     return cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
 
 
+def _signature_arguments(
+    signature: inspect.Signature,
+    arguments: dict[str, Any],
+    *,
+    include: str | None = None,
+) -> list[tuple[str, inspect.Parameter]]:
+    """Return signature-ordered parameters used to normalize and rebuild argument calls."""
+    return [
+        (name, parameter) for name, parameter in signature.parameters.items() if name in arguments or name == include
+    ]
+
+
 async def call_declaration(
     declaration: CapabilityMethodDeclaration,
     capability: AbstractCapability[Any],
+    *,
     params: CapabilityOperationParams,
     model_request_context: ModelRequestContext | None = None,
 ) -> Any:
@@ -403,7 +478,7 @@ async def call_declaration(
     arguments = dict(params.arguments)
     args: list[Any] = []
     kwargs: dict[str, Any] = {}
-    for name, parameter in declaration.signature.parameters.items():
+    for name, parameter in _signature_arguments(declaration.signature, arguments, include=declaration.ctx_parameter):
         if name == declaration.ctx_parameter:
             if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
                 kwargs[name] = params.run_context
@@ -418,7 +493,10 @@ async def call_declaration(
             continue
         if name == declaration.model_request_parameter:
             if model_request_context is None:
-                raise RuntimeError('Model-request declarations require the durability model scope')
+                raise AssertionError(
+                    'A model-request durable declaration was called without its model scope. '
+                    'This is an internal Pydantic AI bug; please report it.'
+                )
             value = model_request_context
         else:
             value = arguments.pop(name)
@@ -430,7 +508,7 @@ async def call_declaration(
     return await bound(*args, **kwargs)
 
 
-async def recover_capability(ctx: RunContext[Any], capability_id: str) -> AbstractCapability[Any]:
+async def recover_capability(ctx: RunContext[Any], *, capability_id: str) -> AbstractCapability[Any]:
     run_capabilities = ctx._run_capabilities_by_id or {}  # pyright: ignore[reportPrivateUsage]
     if capability := run_capabilities.get(capability_id):
         return capability

@@ -242,23 +242,23 @@ class _ToolParams:
 
 def _ids() -> list[DurableOperationId]:
     return [
-        ModelRequestId(None, False, 'test'),
-        ModelRequestId('registered', False, 'test'),
-        ModelRequestId(None, True, 'test'),
-        ModelRequestId('registered', True, 'test'),
-        ModelCancelSuspendedResponseId(None, 'test'),
-        ModelCancelSuspendedResponseId('registered', 'test'),
+        ModelRequestId(None, streaming=False, model_name='test'),
+        ModelRequestId('registered', streaming=False, model_name='test'),
+        ModelRequestId(None, streaming=True, model_name='test'),
+        ModelRequestId('registered', streaming=True, model_name='test'),
+        ModelCancelSuspendedResponseId(None, model_name='test'),
+        ModelCancelSuspendedResponseId('registered', model_name='test'),
         EventStreamHandlerId(),
-        ToolsetGetToolsId('mcp', 'mcp'),
+        ToolsetGetToolsId('mcp', toolset_id='mcp'),
         ToolsetGetInstructionsId('mcp'),
-        ToolsetCallToolId('function', 'functions'),
-        ToolsetValidateToolArgumentsId('function', 'functions'),
-        ToolsetCallToolId('mcp', 'mcp'),
-        ToolsetGetToolsId('dynamic', 'dynamic'),
-        ToolsetCallToolId('dynamic', 'dynamic'),
-        ToolsetValidateToolArgumentsId('dynamic', 'dynamic'),
-        ModelCompactMessagesId(None, 'test'),
-        ModelCompactMessagesId('registered', 'test'),
+        ToolsetCallToolId('function', toolset_id='functions'),
+        ToolsetValidateToolArgumentsId('function', toolset_id='functions'),
+        ToolsetCallToolId('mcp', toolset_id='mcp'),
+        ToolsetGetToolsId('dynamic', toolset_id='dynamic'),
+        ToolsetCallToolId('dynamic', toolset_id='dynamic'),
+        ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
+        ModelCompactMessagesId(None, model_name='test'),
+        ModelCompactMessagesId('registered', model_name='test'),
     ]
 
 
@@ -325,7 +325,7 @@ def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
     actual = [namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids]
     assert set(actual) == live
     assert set(actual) == DBOS_OPERATION_NAMES
-    assert namer.operation_name(ModelRequestId('registered', False, 'test')) in live
+    assert namer.operation_name(ModelRequestId('registered', streaming=False, model_name='test')) in live
 
 
 def test_temporal_name_parity_with_live_registered_activities_and_table() -> None:
@@ -347,21 +347,21 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
         for activity in old.temporal_activities
     }
     ids: list[DurableOperationId] = [
-        ModelRequestId(None, False, 'test'),
-        ModelRequestId(None, True, 'test'),
-        ModelCancelSuspendedResponseId(None, 'test'),
-        ModelCompactMessagesId(None, 'test'),
+        ModelRequestId(None, streaming=False, model_name='test'),
+        ModelRequestId(None, streaming=True, model_name='test'),
+        ModelCancelSuspendedResponseId(None, model_name='test'),
+        ModelCompactMessagesId(None, model_name='test'),
         EventStreamHandlerId(),
-        ToolsetCallToolId('function', '<agent>'),
-        ToolsetValidateToolArgumentsId('function', '<agent>'),
-        ToolsetCallToolId('function', 'functions'),
-        ToolsetValidateToolArgumentsId('function', 'functions'),
-        ToolsetGetToolsId('mcp', 'mcp'),
+        ToolsetCallToolId('function', toolset_id='<agent>'),
+        ToolsetValidateToolArgumentsId('function', toolset_id='<agent>'),
+        ToolsetCallToolId('function', toolset_id='functions'),
+        ToolsetValidateToolArgumentsId('function', toolset_id='functions'),
+        ToolsetGetToolsId('mcp', toolset_id='mcp'),
         ToolsetGetInstructionsId('mcp'),
-        ToolsetCallToolId('mcp', 'mcp'),
-        ToolsetGetToolsId('dynamic', 'dynamic'),
-        ToolsetCallToolId('dynamic', 'dynamic'),
-        ToolsetValidateToolArgumentsId('dynamic', 'dynamic'),
+        ToolsetCallToolId('mcp', toolset_id='mcp'),
+        ToolsetGetToolsId('dynamic', toolset_id='dynamic'),
+        ToolsetCallToolId('dynamic', toolset_id='dynamic'),
+        ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
     ]
     namer = TemporalOperationNamer('compat')
     actual = {namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids}
@@ -456,9 +456,9 @@ async def test_temporal_backend_dispatches_cancel_with_legacy_contextless_payloa
     operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
     assert operations is not None
     cancel_operation = operations[3]
-    assert cancel_operation.operation.operation_id == ModelCancelSuspendedResponseId(None, 'test:test')
+    assert cancel_operation.operation.operation_id == ModelCancelSuspendedResponseId(None, model_name='test:test')
     response = ModelResponse(parts=[TextPart('cancel')])
-    await cancel_operation(ModelCancelSuspendedResponseParams(None, response, None))
+    await cancel_operation(ModelCancelSuspendedResponseParams(None, response=response, run_context=None))
 
     assert dispatched == [
         (
@@ -470,7 +470,7 @@ async def test_temporal_backend_dispatches_cancel_with_legacy_contextless_payloa
 
     with pytest.raises(RuntimeError, match='requires a serialized run context'):
         await JournalDurability()._cancel_suspended_response_operation(  # pyright: ignore[reportPrivateUsage]
-            ModelCancelSuspendedResponseParams(None, response, None)
+            ModelCancelSuspendedResponseParams(None, response=response, run_context=None)
         )
 
 
@@ -504,10 +504,11 @@ async def test_temporal_backend_dispatches_compact_messages(monkeypatch: pytest.
     )
     operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
     assert operations is not None
-    operation = operations[2]
-    result = cast(
-        ModelResponse,
-        await operation(ModelCompactMessagesParams(None, request_context, 'Keep decisions', ctx)),
+    operation = operations.compact_messages
+    result = await operation(
+        ModelCompactMessagesParams(
+            None, request_context=request_context, instructions='Keep decisions', run_context=ctx
+        )
     )
 
     assert result == expected
@@ -556,7 +557,9 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
         model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
     )
     transport = _CompactMessagesTransport(durability)
-    wire = transport.dump(ModelCompactMessagesParams(None, request_context, None, ctx))
+    wire = transport.dump(
+        ModelCompactMessagesParams(None, request_context=request_context, instructions=None, run_context=ctx)
+    )
 
     payloads = await pydantic_data_converter.encode([wire])
     [decoded] = await pydantic_data_converter.decode(payloads, [tuple[_CompactMessagesParams, type(None)]])
@@ -577,7 +580,7 @@ async def test_temporal_backend_labels_validation_activity(
     async def registration(params: _ToolParams) -> None: ...  # pragma: no branch
 
     operation = DurableOperation(
-        operation_id=ToolsetValidateToolArgumentsId('dynamic', 'tools'),
+        operation_id=ToolsetValidateToolArgumentsId('dynamic', toolset_id='tools'),
         handler=handler,
         parameter_transport=IdentityParameterTransport[_ToolParams](),
         cache_identity=NoCacheIdentity(),
@@ -593,7 +596,7 @@ async def test_temporal_backend_labels_validation_activity(
         'pydantic_ai.durable_exec.temporal._operation_backend.execute_activity',
         execute_activity,
     )
-    bound = TemporalBoundOperation(operation, registration, {})
+    bound = TemporalBoundOperation(operation, registration=registration, config={})
     params = _ToolParams('guarded')
     await bound(params)
 
@@ -625,15 +628,15 @@ def _exhaustive_identity(operation_id: DurableOperationId) -> str:
 
 def test_operation_identity_union_is_exhaustively_constructible() -> None:
     identities: list[DurableOperationId] = [
-        ModelRequestId(None, False, 'model'),
-        ModelCancelSuspendedResponseId(None, 'model'),
-        ModelCompactMessagesId(None, 'model'),
-        CapabilityOperationId('capability', 'operation'),
+        ModelRequestId(None, streaming=False, model_name='model'),
+        ModelCancelSuspendedResponseId(None, model_name='model'),
+        ModelCompactMessagesId(None, model_name='model'),
+        CapabilityOperationId('capability', operation='operation'),
         EventStreamHandlerId(),
-        ToolsetGetToolsId('function', 'tools'),
+        ToolsetGetToolsId('function', toolset_id='tools'),
         ToolsetGetInstructionsId('mcp'),
-        ToolsetValidateToolArgumentsId('dynamic', 'dynamic'),
-        ToolsetCallToolId('mcp', 'mcp'),
+        ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
+        ToolsetCallToolId('mcp', toolset_id='mcp'),
     ]
     assert [_exhaustive_identity(operation_id) for operation_id in identities] == [
         'model',
@@ -658,7 +661,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
     ],
 )
 def test_validation_operation_names(namer: DurableOperationNamer, expected: str) -> None:
-    assert namer.operation_name(ToolsetValidateToolArgumentsId('function', 'tools')) == expected
+    assert namer.operation_name(ToolsetValidateToolArgumentsId('function', toolset_id='tools')) == expected
 
 
 @pytest.mark.parametrize(
@@ -682,7 +685,7 @@ async def test_durable_model_compact_messages_dispatches_operation(
 
     operation = backend.bind(
         DurableOperation(
-            operation_id=ModelCompactMessagesId(None, 'test'),
+            operation_id=ModelCompactMessagesId(None, model_name='test'),
             handler=handler,
             parameter_transport=IdentityParameterTransport[ModelCompactMessagesParams](),
             cache_identity=NoCacheIdentity(),
@@ -693,7 +696,11 @@ async def test_durable_model_compact_messages_dispatches_operation(
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
     async def compact_messages_segment(request_context: ModelRequestContext, instructions: str | None) -> ModelResponse:
-        return await operation(ModelCompactMessagesParams(None, request_context, instructions, ctx))
+        return await operation(
+            ModelCompactMessagesParams(
+                None, request_context=request_context, instructions=instructions, run_context=ctx
+            )
+        )
 
     # Compact-message dispatch must not enter the other model segment callables.
     async def unused_request(request_context: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
@@ -785,23 +792,24 @@ async def test_dbos_compact_messages_operation_dispatches_step() -> None:
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
     )
-    result = cast(
-        ModelResponse,
-        await operation(ModelCompactMessagesParams(None, request_context, 'Keep decisions', ctx)),
+    result = await operation(
+        ModelCompactMessagesParams(
+            None, request_context=request_context, instructions='Keep decisions', run_context=ctx
+        )
     )
     assert result == expected
 
 
 def test_namer_error_paths_and_unrepresented_formats() -> None:
     with pytest.raises(AssertionError):
-        JournalOperationNamer('agent').invocation_name(ToolsetCallToolId('function', 'tools'), label=None)
+        JournalOperationNamer('agent').invocation_name(ToolsetCallToolId('function', toolset_id='tools'), label=None)
     prefect = PrefectOperationNamer()
     with pytest.raises(RuntimeError, match='bug in the durability integration; please report it'):
-        prefect.operation_name(ToolsetGetToolsId('dynamic', 'tools'))
+        prefect.operation_name(ToolsetGetToolsId('dynamic', toolset_id='tools'))
     with pytest.raises(RuntimeError, match='bug in the durability integration; please report it'):
         prefect.operation_name(ToolsetGetInstructionsId('mcp'))
     assert (
-        JournalOperationNamer('agent').operation_name(ToolsetGetToolsId('function', 'tools'))
+        JournalOperationNamer('agent').operation_name(ToolsetGetToolsId('function', toolset_id='tools'))
         == 'agent__function_toolset__tools.get_tools'
     )
 
@@ -926,7 +934,7 @@ async def test_callable_operation_backend_resolves_and_round_trips() -> None:
     config = _Config()
     backend = _RecordingBackend(config)
     operation = DurableOperation(
-        operation_id=ModelRequestId('registered', False, 'model'),
+        operation_id=ModelRequestId('registered', streaming=False, model_name='model'),
         handler=handler,
         parameter_transport=IdentityParameterTransport[int](),
         cache_identity=_CacheIdentity(),
@@ -942,8 +950,10 @@ async def test_callable_operation_backend_resolves_and_round_trips() -> None:
     assert backend.calls[-1] == ('agent__model.request.registered', ('cache', 8), {'source': 'explicit'})
     assert len(config.base_calls) == 1
     assert backend.registrations() == ()
-    assert config.for_tool('tool', ToolsetCallToolId('function', 'tools'), None, 'tool') is False
-    assert config.for_tool('tool', ToolsetCallToolId('function', 'tools'), object(), 'tool') == {'tool': 'tool'}
+    assert config.for_tool('tool', ToolsetCallToolId('function', toolset_id='tools'), None, 'tool') is False
+    assert config.for_tool('tool', ToolsetCallToolId('function', toolset_id='tools'), object(), 'tool') == {
+        'tool': 'tool'
+    }
 
 
 async def test_registered_backend_binds_model_operations_during_agent_assembly() -> None:
@@ -959,17 +969,17 @@ async def test_registered_backend_binds_model_operations_during_agent_assembly()
         if isinstance(operation.operation_id, (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId))
     ]
     assert model_operation_ids == [
-        ModelRequestId(None, False, 'default'),
-        ModelRequestId(None, True, 'default'),
-        ModelCompactMessagesId(None, 'default'),
-        ModelCancelSuspendedResponseId(None, 'default'),
+        ModelRequestId(None, streaming=False, model_name='default'),
+        ModelRequestId(None, streaming=True, model_name='default'),
+        ModelCompactMessagesId(None, model_name='default'),
+        ModelCancelSuspendedResponseId(None, model_name='default'),
     ]
 
     async def handler(params: int) -> int:
         return params + 1
 
     operation = DurableOperation(
-        operation_id=ModelRequestId('registered', False, 'model'),
+        operation_id=ModelRequestId('registered', streaming=False, model_name='model'),
         handler=handler,
         parameter_transport=IdentityParameterTransport[int](),
         cache_identity=_CacheIdentity(),
@@ -986,7 +996,7 @@ def test_trivial_transport_cache_and_invocation_helpers() -> None:
     assert transport.dump(value) is value
     assert transport.load(value, runtime=object()) is value
     assert NoCacheIdentity[object]().project(value) == ()
-    assert _NoneConfig().for_tool('tool', ToolsetCallToolId('function', 'tools'), None, 'tool') is False
+    assert _NoneConfig().for_tool('tool', ToolsetCallToolId('function', toolset_id='tools'), None, 'tool') is False
 
 
 def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported_ids() -> None:
@@ -1001,7 +1011,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
         config=DBOSOperationConfig(model={}, event={}, tool={}),
     )
     operation = DurableOperation(
-        operation_id=ModelRequestId(None, False, 'test'),
+        operation_id=ModelRequestId(None, streaming=False, model_name='test'),
         handler=handler,
         parameter_transport=IdentityParameterTransport[_DispatchParams](),
         cache_identity=_LogicalInputs(),
@@ -1011,7 +1021,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
     assert backend.bind(operation).operation is operation
 
     unsupported = DurableOperation(
-        operation_id=ToolsetValidateToolArgumentsId('dynamic', 'tools'),
+        operation_id=ToolsetValidateToolArgumentsId('dynamic', toolset_id='tools'),
         handler=handler,
         parameter_transport=IdentityParameterTransport[_DispatchParams](),
         cache_identity=_LogicalInputs(),
@@ -1023,7 +1033,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
     with pytest.raises(TypeError, match='not a model or event operation'):
         backend._bind_model_or_event(unsupported, 'unsupported', {})  # pyright: ignore[reportPrivateUsage]
 
-    unsupported_call = replace(unsupported, operation_id=ToolsetCallToolId('function', 'tools'))
+    unsupported_call = replace(unsupported, operation_id=ToolsetCallToolId('function', toolset_id='tools'))
     with pytest.raises(TypeError, match='not registered'):
         backend.bind(unsupported_call)
 
@@ -1214,7 +1224,14 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
         )
 
     # Missing validation is rejected before tool execution can be dispatched.
-    async def never_called(*args: Any) -> Any: ...  # pragma: no branch
+    async def never_called(
+        name: str,
+        tool_args: dict[str, Any],
+        *,
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+        config: Mapping[str, Any],
+    ) -> Any: ...  # pragma: no branch
 
     durable = DurableDynamicToolset(
         DynamicToolset(lambda _: None, id='missing_validation'),

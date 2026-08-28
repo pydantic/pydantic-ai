@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import Protocol
 
 from typing_extensions import assert_never
@@ -23,6 +23,7 @@ from ._operation import (
 @dataclass(frozen=True)
 class DurableInvocationName:
     operation_name: str
+    _: KW_ONLY
     display_name: str | None = None
 
 

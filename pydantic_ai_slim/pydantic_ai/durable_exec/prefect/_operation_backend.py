@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Literal, cast
+from typing import Literal
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -36,7 +36,7 @@ class PrefectOperationConfig(DurableOperationConfig[TaskConfig]):
         self._capability = capability
         self._tool = tool
 
-    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> TaskConfig:
+    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> TaskConfig:
         if role == 'model':
             return self._model
         if role == 'event':
@@ -52,6 +52,7 @@ class PrefectOperationConfig(DurableOperationConfig[TaskConfig]):
     def for_tool(
         self,
         role: OperationConfigRole,
+        *,
         operation_id: DurableOperationId,
         tool: object | None,
         tool_name: str,
@@ -72,7 +73,7 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         name: str,
         body: Callable[[], Awaitable[object]],
         cache_key: tuple[object, ...],
-        config: object,
+        config: TaskConfig,
     ) -> object:
         if name == PrefectOperationNamer().operation_name(EventStreamHandlerId()):
             flow_context = FlowRunContext.get()
@@ -86,5 +87,5 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         async def operation(operation_name: str, *logical_inputs: object) -> object:
             return await body()
 
-        options = cast(TaskConfig, config or {})
+        options = config or {}
         return await operation.with_options(name=name, **options)(name, *cache_key)

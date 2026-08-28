@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     pass
 
 
-@dataclass(init=False)
+@dataclass(init=False, kw_only=True)
 class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through DBOS steps.
 
