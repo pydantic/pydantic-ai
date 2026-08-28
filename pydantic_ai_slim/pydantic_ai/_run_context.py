@@ -315,6 +315,39 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
+    @property
+    def context_window_used(self) -> float | None:
+        """Fraction of the model's context window occupied as of the most recent model response.
+
+        Computed as the response's [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens]
+        (input — cached tokens included — plus output: everything the next request will resend) over
+        the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]. Useful to
+        trigger history compaction, e.g. in a
+        [history processor](https://pydantic.dev/docs/ai/message-history#processing-message-history).
+
+        Returns `None` — never a misleading `0.0` — whenever the ratio is unknown: the model's
+        context window isn't known, no model response has been received yet, or the provider didn't
+        report usage.
+        """
+        from .models import Model  # imported here because `models` imports `RunContext` at module level
+
+        ctx_model = self.model
+        if not isinstance(ctx_model, Model):
+            # e.g. a realtime model, whose profile has no `context_window`
+            return None
+        try:
+            context_window = ctx_model.profile.get('context_window')
+        except NotImplementedError:
+            # `FallbackModel.profile` raises it: which inner model serves the next request isn't known.
+            return None
+        if not context_window:
+            return None
+        for message in reversed(self.messages):
+            if isinstance(message, _messages.ModelResponse):
+                tokens = message.usage.total_tokens
+                return tokens / context_window if tokens else None
+        return None
+
     def _emit_event(self, event: _messages.AgentStreamEvent) -> None:
         """Append an event to the run's event buffer for the agent graph to drain into the event stream.
 

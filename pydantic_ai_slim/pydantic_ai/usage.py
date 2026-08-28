@@ -13,6 +13,7 @@ from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,
 from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
+from ._genai_prices import iter_provider_references
 from ._warnings import CostNotFoundWarning
 from .exceptions import UsageLimitExceeded
 
@@ -324,7 +325,9 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
-        for provider_id, provider_api_url in [(None, provider_url), (provider, None), (provider_fallback, None)]:
+        for provider_id, provider_api_url in iter_provider_references(
+            provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
+        ):
             try:
                 provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)

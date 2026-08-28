@@ -26,7 +26,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
-from .._cost import preload_pricing_data
+from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
@@ -871,6 +871,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           3. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
+        When no layer sets `context_window`, it is filled in (best effort) from
+        [genai-prices](https://github.com/pydantic/genai-prices) data.
+
         After resolution we compute the intersection of the profile's `supported_native_tools`
         and the model class's implemented tools, ensuring `model.profile['supported_native_tools']`
         is the single source of truth for what's actually usable.
@@ -893,7 +896,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
 
-        # Step 4: native tools intersection — profile's allowed tools & model's implemented tools
+        # Step 4: fill `context_window` from genai-prices when no profile layer set it
+        if resolved.get('context_window') is None:
+            try:
+                base_url = self.base_url
+            except (AttributeError, UserError):
+                # `base_url` may raise `UserError` (e.g. HuggingFace without one) or not be available
+                # yet when `profile` is first resolved inside a subclass `__init__` (e.g. Bedrock Mantle,
+                # whose client — which `base_url` reads — is only set after the profile is consulted).
+                base_url = None
+            try:
+                model_name, system = self.model_name, self.system
+            except AttributeError:
+                # Similarly unavailable on a partially initialized model (e.g. built via `__new__` in tests).
+                model_name = system = None
+            if model_name is not None:
+                context_window = lookup_context_window(model_name, provider_api_url=base_url, provider_name=system)
+                if context_window is not None:
+                    resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
+
+        # Step 5: native tools intersection — profile's allowed tools & model's implemented tools
         model_supported = self.__class__.supported_native_tools()
         profile_supported = resolved.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         effective_tools = profile_supported & model_supported

@@ -557,3 +557,60 @@ def test_prepare_messages_system_prompt_wrapping(
 async def test_model_default_async_context_returns_model() -> None:
     model = TestModel()
     assert await AbstractModel.__aenter__(model) is model
+
+
+def test_profile_context_window_from_genai_prices():
+    """`Model.profile` fills `context_window` from genai-prices when no profile layer sets it."""
+    from genai_prices.data_snapshot import get_snapshot
+
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        context_window = infer_model('openai:gpt-5').profile.get('context_window')
+
+    assert context_window is not None
+    # Compare against a direct genai-prices query so the test doesn't pin a data value.
+    _, model_info = get_snapshot().find_provider_model(
+        'gpt-5', provider=None, provider_id='openai', provider_api_url=None
+    )
+    assert context_window == model_info.context_window
+
+
+def test_profile_context_window_unknown_model():
+    """A model genai-prices doesn't know keeps `context_window` as `None`."""
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        assert infer_model('openai:potato-gpt').profile.get('context_window') is None
+
+
+def test_profile_context_window_explicit_override():
+    """An explicit `profile=` value wins over the genai-prices lookup."""
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        model = OpenAIChatModel('gpt-5', profile=ModelProfile(context_window=1234))
+    assert model.profile.get('context_window') == 1234
+
+
+@pytest.mark.parametrize('base_url_error', [UserError, AttributeError])
+def test_profile_context_window_base_url_unavailable(base_url_error: type[Exception]):
+    """A model whose `base_url` raises still resolves its profile.
+
+    `UserError` happens for e.g. HuggingFace without a base URL; `AttributeError` when `profile` is
+    first resolved inside a subclass `__init__` before the client attribute `base_url` reads exists
+    (e.g. Bedrock Mantle).
+    """
+
+    class NoBaseURLModel(TestModel):
+        @property
+        def base_url(self) -> str | None:
+            raise base_url_error('no base URL')
+
+    assert NoBaseURLModel().profile.get('context_window') is None
+
+
+def test_profile_context_window_partially_initialized_model():
+    """`profile` still resolves on a model built via `__new__`, before `__init__` sets any attributes.
+
+    Some tests construct models this way to exercise a method in isolation (e.g. the Cerebras
+    thinking-translation tests), so `model_name` and `system` raise `AttributeError` and the
+    genai-prices lookup must be skipped rather than propagate.
+    """
+    model = OpenAIChatModel.__new__(OpenAIChatModel)
+    model._profile = ModelProfile(supports_tools=True)  # pyright: ignore[reportPrivateUsage]
+    assert model.profile.get('context_window') is None

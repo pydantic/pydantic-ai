@@ -1,8 +1,9 @@
-"""Best-effort response cost calculation with [genai-prices](https://github.com/pydantic/genai-prices)."""
+"""All interaction with [genai-prices](https://github.com/pydantic/genai-prices): best-effort response cost calculation, usage extraction support, and model metadata lookups (context window)."""
 
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,49 @@ def preload_pricing_data() -> None:
     See https://github.com/pydantic/pydantic-ai/issues/7405.
     """
     get_snapshot()
+
+
+def iter_provider_references(
+    *,
+    provider_api_url: str | None = None,
+    provider_id: str | None = None,
+    provider_fallback: str | None = None,
+) -> Iterator[tuple[str | None, str | None]]:
+    """Yield `(provider_id, provider_api_url)` genai-prices lookup references, most specific first.
+
+    The API URL identifies a provider more precisely than a name (e.g. several providers reselling the
+    same models), so it's tried first, then the provider ID, then the fallback ID; references with
+    nothing to match on are skipped. Shared by `RequestUsage.extract` and `lookup_context_window` so
+    the lookup order is defined once.
+    """
+    for candidate_id, candidate_url in ((None, provider_api_url), (provider_id, None), (provider_fallback, None)):
+        if candidate_id or candidate_url:
+            yield candidate_id, candidate_url
+
+
+def lookup_context_window(
+    model_name: str,
+    *,
+    provider_api_url: str | None = None,
+    provider_name: str | None = None,
+) -> int | None:
+    """Look up a model's context window in [genai-prices](https://github.com/pydantic/genai-prices) data.
+
+    Returns the context window recorded for the model under the first provider reference that knows the
+    model, or `None` if none does or no context window is recorded.
+    """
+    snapshot = get_snapshot()
+    for candidate_id, candidate_url in iter_provider_references(
+        provider_api_url=provider_api_url, provider_id=provider_name
+    ):
+        try:
+            _, model_info = snapshot.find_provider_model(
+                model_name, provider=None, provider_id=candidate_id, provider_api_url=candidate_url
+            )
+        except LookupError:
+            continue
+        return model_info.context_window
+    return None
 
 
 def calculate_price_for_usage(

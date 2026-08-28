@@ -18,7 +18,7 @@ from pydantic_ai._instrumentation import model_attributes, model_request_paramet
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe, get_first_param_type
 
-from .._cost import fill_response_cost
+from .._genai_prices import fill_response_cost
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile

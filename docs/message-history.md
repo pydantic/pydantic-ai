@@ -862,6 +862,30 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messa
 !!! warning "Be careful when summarizing the message history"
     When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
 
+#### Compact When the Context Window Fills
+
+The processors above rewrite history on every run. To only compact once the conversation actually approaches the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window], check [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]: the fraction of the window occupied as of the last response, or `None` when the window or the usage is unknown.
+
+```python {title="compact_when_window_fills.py"}
+from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai.capabilities import ProcessHistory
+
+
+def compact_when_window_fills(
+    ctx: RunContext,
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    used = ctx.context_window_used
+    if used is not None and used > 0.8:
+        return messages[-3:]  # Keep only the most recent turns
+    return messages
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(compact_when_window_fills)])
+```
+
+The window size is filled in from [genai-prices](https://github.com/pydantic/genai-prices) data when the model is known there; for custom or local models, set it explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
+
 ### Testing History Processors
 
 You can test what messages are actually sent to the model provider using

@@ -91,6 +91,8 @@ print(WebSearchTool in profile['supported_native_tools'])
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so direct key access like `profile['supports_tools']` works. If you supply `profile=` as a callable (or otherwise have a partial profile dict), use `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`) to tolerate missing keys.
 Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
+The profile also carries the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]: the maximum number of tokens it can handle in a single request, or `None` when unknown. Inside a run, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] tells you what fraction of it is occupied (again `None` when unknown) — useful to decide when to [compact the message history](../message-history.md#processing-message-history).
+
 ## HTTP Client Lifecycle
 
 When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager ensures the HTTP client is closed cleanly on exit:
