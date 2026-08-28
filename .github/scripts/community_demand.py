@@ -36,7 +36,10 @@ _COMMENT_LIMIT = 20
 _COMMENT_TEXT_LIMIT = 700
 _BODY_TEXT_LIMIT = 2_000
 _SNAPSHOT_LIMIT = 120_000
-# A human already made a call on these; community demand does not override it.
+# p:1/p:2 are already in the assignment lane, and `unplanned`/`duplicate` are
+# human decisions demand must not override. p:3/p:4 stay eligible on purpose:
+# they are the triage agent's pre-demand scores, and genuine demand is exactly
+# the evidence that should promote one.
 _EXCLUDED_LABELS = (attention.COMMUNITY_LABEL, *attention.PRIORITY_GATE_LABELS, 'unplanned', 'duplicate')
 
 
@@ -119,8 +122,10 @@ def build_snapshot(client: attention.GitHubClient, repo: str, *, now: dt.datetim
         if len(candidates) == _CANDIDATE_LIMIT:
             break
     snapshot: dict[str, object] = {'generated_at': now.isoformat(), 'candidates': candidates}
-    if len(json.dumps(snapshot, indent=2, ensure_ascii=False).encode()) > _SNAPSHOT_LIMIT:
-        raise RuntimeError(f'Community snapshot exceeds {_SNAPSHOT_LIMIT} bytes')
+    # Longest threads sort first, so shedding from the end keeps the sweep
+    # alive on a fat backlog instead of failing every week on the same limit.
+    while candidates and len(json.dumps(snapshot, indent=2, ensure_ascii=False).encode()) > _SNAPSHOT_LIMIT:
+        candidates.pop()
     return snapshot
 
 

@@ -767,9 +767,6 @@ def test_community_recovery_backs_off_after_a_recent_unassignment():
 
 @pytest.mark.parametrize(('labels', 'routed'), [(['MCP', 'community-backed'], True), (['MCP'], False)])
 def test_community_backed_label_opens_the_priority_gate(labels: list[str], routed: bool):
-    # The triage agent applies `community-backed` only after reading the
-    # thread and finding real people asking; the router trusts the label and
-    # never counts raw interactions, which AI pile-ons can inflate.
     client = FakeClient({7: item(7, labels=labels)})
 
     selected = router.decision_for(client, CORE, 7)

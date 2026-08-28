@@ -834,7 +834,9 @@ def test_reconcile_queues_channel_reminder_for_assigned_maintainers():
 
 
 def test_reconcile_hands_a_placeholder_assignment_to_the_first_maintainer_participant():
-    issue = item(4261, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=[monitor._FALLBACK_OWNER])
+    # Only the agent-marked lane uses the placeholder heuristic; its stage-0
+    # notice stays gated, so the handoff is bookkeeping without a ping.
+    issue = item(4261, labels=[monitor._ACTION_LABEL], assignees=[monitor._FALLBACK_OWNER])
     issue['comments'] = 2
     client = FakeClient({4261: issue})
     client.permissions = {'DouweM': 'admin', 'dsfaccini': 'write'}
@@ -844,13 +846,38 @@ def test_reconcile_hands_a_placeholder_assignment_to_the_first_maintainer_partic
     ]
     notices: list[monitor.Notice] = []
 
-    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
-        ['#4261: queued channel reminder'],
-        [],
-    )
-    assert notices[0]['recipients'] == ['DouweM']
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == ([], [])
+    assert notices == []
     assert ('POST', '/repos/r/issues/4261/assignees', {'assignees': ['DouweM']}) in client.calls
     assert [assignee['login'] for assignee in client.items[4261]['assignees']] == ['DouweM']
+
+
+def test_reminder_lane_pings_the_real_owner_without_reassigning():
+    # A sole-fallback assignment on a priority issue is a routing decision,
+    # not the monitor's placeholder: nobody gets swapped in.
+    issue = item(4262, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=[monitor._FALLBACK_OWNER])
+    client = FakeClient({4262: issue})
+    client.permissions = {monitor._FALLBACK_OWNER: 'admin', 'DouweM': 'admin'}
+    client.comments[4262] = [{'user': {'login': 'DouweM'}, 'created_at': '2026-02-09T16:48:57Z'}]
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#4262: queued channel reminder'],
+        [],
+    )
+    assert notices[0]['recipients'] == [monitor._FALLBACK_OWNER]
+    assert not any(call[0] == 'POST' and call[1].endswith('/assignees') for call in client.calls)
+
+
+def test_reminder_lane_stands_down_once_its_owner_is_unassigned():
+    client = FakeClient({4263: item(4263, labels=[monitor._ACTION_LABEL, 'p:1-highest'])})
+    notices: list[monitor.Notice] = []
+
+    lines, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    assert lines == ['#4263: stood down after its owner was unassigned']
+    assert failures == [] and notices == []
+    assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[4263]['labels']}
 
 
 def test_reconcile_drops_a_notice_if_the_owner_changes_before_queueing():
@@ -874,7 +901,10 @@ def test_reconcile_drops_a_notice_if_the_owner_changes_before_queueing():
 
 
 def test_reconcile_queues_channel_escalation_without_advancing_before_delivery():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, 'p:1-highest'])})
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, 'p:1-highest'], assignees=['alice'])}
+    )
+    client.permissions['alice'] = 'write'
     notices: list[monitor.Notice] = []
 
     assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW, notices=notices) == (
@@ -916,7 +946,10 @@ def test_reconcile_finishes_a_delivered_escalation_receipt_without_reposting():
 
 
 def test_reconcile_ignores_a_foreign_delivery_receipt():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._DELIVERED_LABEL, 'p:1-highest'])})
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, monitor._DELIVERED_LABEL, 'p:1-highest'], assignees=['alice'])}
+    )
+    client.permissions['alice'] = 'write'
     client.timelines[7] = [
         label_event(monitor._ACTION_LABEL),
         label_event(monitor._DELIVERED_LABEL, actor='maintainer'),
@@ -1091,6 +1124,16 @@ def test_notice_output_pings_the_owner_directly(tmp_path: Path, monkeypatch: pyt
     assert '<!channel>' not in text
 
 
+def test_invalid_mention_map_degrades_to_plain_names_and_records_a_failure(monkeypatch: pytest.MonkeyPatch):
+    # A typo in the mentions variable would otherwise disable every owner ping
+    # while runs stay green; recording a failure trips the alert instead.
+    monkeypatch.setenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', 'not json')
+    failures: list[str] = []
+
+    assert monitor._notice_mentions(failures) == {}
+    assert failures and failures[0].startswith('mention map:')
+
+
 def test_reconcile_marks_assigned_priority_issues_for_attention():
     client = FakeClient(
         {
@@ -1130,19 +1173,17 @@ def test_priority_reminder_windows_follow_the_label():
         client.timelines[number] = [label_event(monitor._ACTION_LABEL, created_at=marked_at)]
         return client
 
+    def queued(number: int, reminder_label: str, quiet_days: int) -> list[int]:
+        notices: list[monitor.Notice] = []
+        monitor.reconcile(build(number, reminder_label, quiet_days), 'r', now=NOW, notices=notices)
+        return [notice['number'] for notice in notices]
+
     # Four quiet days: past the 3-day p:1 window, inside the 5-day p:2 window
     # and the 7-day community window.
-    lines, _ = monitor.reconcile(build(7, 'p:1-highest', 4), 'r', now=NOW, notices=[])
-    assert '#7: queued channel reminder' in lines
-
-    lines, _ = monitor.reconcile(build(9, 'p:2-high', 4), 'r', now=NOW, notices=[])
-    assert all('reminder' not in line for line in lines)
-
-    lines, _ = monitor.reconcile(build(11, monitor.COMMUNITY_LABEL, 4), 'r', now=NOW, notices=[])
-    assert all('reminder' not in line for line in lines)
-
-    lines, _ = monitor.reconcile(build(11, monitor.COMMUNITY_LABEL, 8), 'r', now=NOW, notices=[])
-    assert '#11: queued channel reminder' in lines
+    assert queued(7, 'p:1-highest', 4) == [7]
+    assert queued(9, 'p:2-high', 4) == []
+    assert queued(11, monitor.COMMUNITY_LABEL, 4) == []
+    assert queued(11, monitor.COMMUNITY_LABEL, 8) == [11]
 
 
 def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -1860,9 +1901,10 @@ def test_status_line_reports_the_last_reply_and_its_role():
 
 
 def test_status_line_does_not_count_a_bot_reply_as_engagement():
-    issue = item(7, labels=[monitor._ACTION_LABEL, 'p:1-highest'])
+    issue = item(7, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice'])
     issue['created_at'] = '2026-07-01T00:00:00Z'
     client = FakeClient({7: issue})
+    client.permissions['alice'] = 'write'
     notices: list[monitor.Notice] = []
     client.timelines[7] = [
         label_event(monitor._ACTION_LABEL, created_at='2026-07-02T00:00:00Z'),
@@ -1940,10 +1982,11 @@ def test_reopened_item_without_action_label_fires_no_reminder():
 def test_full_page_processes_a_bounded_batch_instead_of_aborting():
     client = FakeClient(
         {
-            number: item(number, labels=[monitor._ACTION_LABEL, 'p:1-highest'])
+            number: item(number, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice'])
             for number in range(1, monitor._RECONCILE_LIMIT + 1)
         }
     )
+    client.permissions['alice'] = 'write'
 
     lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
 
@@ -1975,26 +2018,28 @@ def test_active_attention_pages_rotate_between_runs():
 def test_one_item_failure_does_not_block_later_items():
     client = FakeClient(
         {
-            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest']),
-            2: item(2, labels=[monitor._ACTION_LABEL, 'p:1-highest']),
+            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
+            2: item(2, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
         }
     )
+    client.permissions['alice'] = 'write'
     client.fail_get.add(1)
 
     lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
 
     assert lines == ['#2: queued channel reminder']
-    assert failures and failures[0].startswith('#1: HTTPError')
+    assert any(failure.startswith('#1: HTTPError') for failure in failures)
     assert not any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
 
 
 def test_network_failure_on_dormant_item_does_not_abort_the_run():
     client = FakeClient(
         {
-            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest']),
+            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
             7: item(7, labels=[monitor._ESCALATED_LABEL]),
         }
     )
+    client.permissions['alice'] = 'write'
     client.fail_get_network.add(7)
 
     lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
@@ -2006,10 +2051,11 @@ def test_network_failure_on_dormant_item_does_not_abort_the_run():
 def test_invalid_event_timestamp_does_not_block_later_items():
     client = FakeClient(
         {
-            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest']),
-            2: item(2, labels=[monitor._ACTION_LABEL, 'p:1-highest']),
+            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
+            2: item(2, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
         }
     )
+    client.permissions['alice'] = 'write'
     client.timelines[1] = [
         {
             'event': 'labeled',
@@ -2029,10 +2075,11 @@ def test_invalid_event_timestamp_does_not_block_later_items():
 def test_one_item_failure_still_queues_other_notices():
     client = FakeClient(
         {
-            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest']),
-            2: item(2, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, 'p:1-highest']),
+            1: item(1, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice']),
+            2: item(2, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, 'p:1-highest'], assignees=['alice']),
         }
     )
+    client.permissions['alice'] = 'write'
     client.fail_get.add(1)
     notices: list[monitor.Notice] = []
 
@@ -2040,11 +2087,12 @@ def test_one_item_failure_still_queues_other_notices():
 
     assert lines == ['#2: queued channel escalation']
     assert [notice['number'] for notice in notices] == [2]
-    assert failures and failures[0].startswith('#1: HTTPError')
+    assert any(failure.startswith('#1: HTTPError') for failure in failures)
 
 
 def test_bot_triggered_mention_event_is_not_an_acknowledgement():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, 'p:1-highest'])})
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, 'p:1-highest'], assignees=['alice'])})
+    client.permissions['alice'] = 'write'
     client.timelines[7] = [
         {
             'event': 'labeled',

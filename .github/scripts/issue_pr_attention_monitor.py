@@ -25,9 +25,7 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
-# The triage agent applies `community-backed` after reading an issue's thread
-# and judging that real people are asking for it; AI-generated pile-ons never
-# earn the label. Scripts trust the label and stay deterministic.
+# Applied only by the community-demand sweep; scripts trust the label.
 COMMUNITY_LABEL = 'community-backed'
 # Assigned priority or community-backed issues are kept in the attention queue
 # by `reconcile`; the owner is pinged once the item sits quiet past its window.
@@ -36,6 +34,10 @@ _REMINDER_SLAS = {
     'p:2-high': dt.timedelta(days=5),
     COMMUNITY_LABEL: dt.timedelta(days=7),
 }
+# An issue enters the reminder queue only after a quiet day, so the tracking
+# label cannot flap on actively worked issues; the owner ping therefore lands
+# between its window and one day after it.
+_MARK_QUIET_FLOOR = dt.timedelta(days=1)
 _SLA_MARK_LIMIT = 10
 _RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
@@ -639,6 +641,29 @@ def _first_maintainer_in_discussion(
     return None, complete and not probe.exhausted
 
 
+def _resolve_recipients(
+    client: GitHubClient,
+    repo: str,
+    current: Mapping[str, Any],
+    labels: set[str],
+    maintainers: list[str],
+) -> tuple[list[str] | None, str | None]:
+    """Return the notice recipients, or a completion line when the lane stands down.
+
+    A reminder-labeled item's assignment is a routing or human decision, never
+    the monitor's own placeholder: notify exactly the current owners, and stand
+    down entirely once a human removes them. Only the agent-marked lane uses
+    the placeholder heuristic in `_ensure_recipients`.
+    """
+    if not labels.intersection(_REMINDER_SLAS):
+        return _ensure_recipients(client, repo, current), None
+    number = int(current['number'])
+    if not maintainers:
+        _complete(client, repo, number, labels)
+        return None, f'#{number}: stood down after its owner was unassigned'
+    return maintainers, None
+
+
 def _ensure_recipients(
     client: GitHubClient,
     repo: str,
@@ -1064,9 +1089,30 @@ def _reconcile_item(
     if _acknowledged(client, repo, timeline, acknowledged_since, maintainers or [_FALLBACK_OWNER]):
         _complete(client, repo, number, labels)
         return f'#{number}: maintainer acknowledged the request', None
-    recipients = _ensure_recipients(client, repo, current)
+    recipients, stood_down = _resolve_recipients(client, repo, current, labels, maintainers)
+    if stood_down is not None:
+        return stood_down, None
     if recipients is None:
         return None
+    return _queue_stage_notice(
+        client, repo, number, labels, current_stage, transition, recipients, acknowledged_since, now=now
+    )
+
+
+def _queue_stage_notice(
+    client: GitHubClient,
+    repo: str,
+    number: int,
+    labels: set[str],
+    current_stage: Literal[0, 1, 2],
+    transition: tuple[dt.datetime, dict[str, Any]],
+    recipients: list[str],
+    acknowledged_since: dt.datetime,
+    *,
+    now: dt.datetime,
+) -> tuple[str, Notice | None] | None:
+    """Re-check settlement, apply the interrupt gates, and queue one notice."""
+    transition_at = transition[0]
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     if _closed_since(timeline, transition_at) or _acknowledged(client, repo, timeline, acknowledged_since, recipients):
         _complete(client, repo, number, labels)
@@ -1075,10 +1121,11 @@ def _reconcile_item(
     # Keeping that meaning makes the channel cutover safe for in-flight items.
     if current_stage != 2 and now - transition_at < _sla_for(labels):
         return None
-    # Only assigned priority or community-backed issues earn a channel
-    # interrupt: anything else the triage agent marks stays tracked, visible
-    # in the Monday digest, and silent.
-    if current_stage != 2 and not labels.intersection(_REMINDER_SLAS):
+    # Only assigned priority or community-backed issues enter the interrupt
+    # pipeline: anything else the triage agent marks stays tracked, visible in
+    # the Monday digest, and silent. Items already pinged before the cutover
+    # finish their lifecycle rather than stranding at stage 1.
+    if current_stage == 0 and not labels.intersection(_REMINDER_SLAS):
         return None
     kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
@@ -1140,34 +1187,55 @@ def _sla_for(labels: set[str]) -> dt.timedelta:
     return min(windows) if windows else _SLA
 
 
-def _mark_assigned_reminders(client: GitHubClient, repo: str, *, slot: int) -> list[str]:
+def _mark_assigned_reminders(
+    client: GitHubClient, repo: str, *, slot: int, now: dt.datetime
+) -> tuple[list[str], list[str]]:
     """Keep every assigned priority or community-backed issue inside the attention queue.
 
     Applying the label starts the reminder clock; owner activity clears the
-    cycle, and the next pass re-arms it, so an owner is pinged once per quiet
-    stretch and never nagged while the item is already cooling down.
+    cycle, and the next pass re-arms it once the item has been quiet for a
+    day, so an owner is pinged once per quiet stretch and the label does not
+    flap on actively worked issues. One label's failure never blocks the rest.
     """
     lines: list[str] = []
+    failures: list[str] = []
     excluded = ' '.join(f'-label:"{label}"' for label in (_ACTION_LABEL, *_LIFECYCLE_LABELS))
     for reminder_label in _REMINDER_SLAS:
-        matches = _rotated_search(
-            client,
-            f'repo:{repo} is:open is:issue label:"{reminder_label}" {excluded}',
-            order='asc',
-            limit=_SLA_MARK_LIMIT,
-            slot=slot,
-        )
+        try:
+            matches = _rotated_search(
+                client,
+                f'repo:{repo} is:open is:issue label:"{reminder_label}" {excluded}',
+                order='asc',
+                limit=_SLA_MARK_LIMIT,
+                slot=slot,
+            )
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            failures.append(f'{reminder_label} marking: {type(exc).__name__}: {exc}')
+            continue
         for match in matches:
             number = int(match['number'])
-            if str(match.get('state') or '').casefold() != 'open' or reminder_label not in _labels(match):
-                continue
-            if _labels(match).intersection((_ACTION_LABEL, *_LIFECYCLE_LABELS)):
-                continue
-            if not _maintainer_assignees(client, repo, match):
-                continue
-            _add_labels(client, repo, number, [_ACTION_LABEL])
-            lines.append(f'#{number}: queued assigned {reminder_label} issue for owner attention')
-    return lines
+            try:
+                # The search index lags: revalidate against live state so a
+                # just-unassigned or just-deprioritized issue is never marked.
+                current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+                labels = _labels(current)
+                if (
+                    str(current.get('state') or '').casefold() != 'open'
+                    or reminder_label not in labels
+                    or labels.intersection((_ACTION_LABEL, *_LIFECYCLE_LABELS))
+                    or not _maintainer_assignees(client, repo, current)
+                    or now - _parse_time(str(current['updated_at'])) < _MARK_QUIET_FLOOR
+                ):
+                    continue
+                _add_labels(client, repo, number, [_ACTION_LABEL])
+                lines.append(f'#{number}: queued assigned {reminder_label} issue for owner attention')
+            except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+                if isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
+                failures.append(f'#{number} marking: {type(exc).__name__}: {exc}')
+    return lines, failures
 
 
 def reconcile(
@@ -1181,13 +1249,8 @@ def reconcile(
     ensure_labels(client, repo)
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
     lines: list[str] = []
-    failures: list[str] = []
-    try:
-        lines.extend(_mark_assigned_reminders(client, repo, slot=slot))
-    except (urllib.error.URLError, RuntimeError, ValueError) as exc:
-        if isinstance(exc, urllib.error.HTTPError):
-            exc.close()
-        failures.append(f'reminder marking: {type(exc).__name__}: {exc}')
+    marked, failures = _mark_assigned_reminders(client, repo, slot=slot, now=now)
+    lines.extend(marked)
     closed = _rotated_search(
         client,
         f'repo:{repo} is:closed label:"{_ACTION_LABEL}"',
@@ -1254,24 +1317,31 @@ def _slack_escape(value: str) -> str:
     return normalized.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
-def _notice_mentions() -> dict[str, str]:
-    """The per-maintainer Slack mentions, or plain names when unconfigured."""
+def _notice_mentions(failures: list[str] | None = None) -> dict[str, str]:
+    """The per-maintainer Slack mentions, or plain names when unconfigured.
+
+    A configured-but-invalid map degrades to plain names, which ping nobody;
+    recording the failure turns that into a failure alert instead of a silent
+    loss of every owner notification.
+    """
     raw = os.environ.get('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS')
     if not raw:
         return {}
     try:
         return slack_mentions(raw, _FALLBACK_OWNER)
-    except ValueError:
+    except ValueError as exc:
+        if failures is not None:
+            failures.append(f'mention map: {exc}')
         return {}
 
 
-def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
+def _write_notices(repo: str, notices: Sequence[Notice], failures: list[str] | None = None) -> None:
     if output_path := os.environ.get('GITHUB_OUTPUT'):
         reasons = {
             'reminder': 'it has been waiting on its owner past the reminder window',
             'escalation': 'the earlier reminder got no maintainer response',
         }
-        mentions = _notice_mentions()
+        mentions = _notice_mentions(failures)
         details: list[str] = []
         for notice in notices:
             owners = ', '.join(mentions.get(login) or f'@{_slack_escape(login)}' for login in notice['recipients'])
@@ -1884,13 +1954,13 @@ def main() -> int:
     elif args.mode == 'reconcile':
         notices: list[Notice] = []
         lines, failures = reconcile(client, repo, now=now, notices=notices)
-        _write_notices(repo, notices)
+        _write_notices(repo, notices, failures)
     elif args.mode == 'prepare':
         source = os.environ.get('ATTENTION_NOTICES')
         if source is None:
             parser.error('ATTENTION_NOTICES is required')
         notices = prepare_notices(client, repo, _notice_refs(json.loads(source)), now=now)
-        _write_notices(repo, notices)
+        _write_notices(repo, notices, failures)
         lines = [f'prepared {len(notices)} current attention notice(s)']
     elif args.mode == 'census':
         mention = None

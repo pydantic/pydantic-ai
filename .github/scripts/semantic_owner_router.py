@@ -136,7 +136,6 @@ _RULES: dict[str, tuple[Rule, ...]] = {
             ),
         ),
     ),
-    # Temporarily empty: all harness intake goes to the default owner below.
     'pydantic/pydantic-ai-harness': (),
 }
 # Repos where one maintainer currently owns all intake. Harness has no triage
@@ -387,10 +386,8 @@ def _issue_gate(repo: str, item: Mapping[str, Any], normalized: Mapping[str, Any
     if _recently_unassigned(item):
         return Selection(number=number, decision=None, status='recently-unassigned')
     # A gate label missing from a truncated first page counts as absent, which
-    # fails toward leaving the issue unassigned. `community-backed` opens the
-    # gate too: the triage agent applies it after reading the thread and
-    # judging that real people are asking, so AI-generated pile-ons never
-    # reach a maintainer through this lane.
+    # fails toward leaving the issue unassigned. `community-backed` (a judged
+    # community-demand verdict, see `community_demand.py`) opens the gate too.
     if repo in _GATED_REPOS and not _labels(normalized) & (_PRIORITY_LABELS | {_COMMUNITY_LABEL}):
         return Selection(number=number, decision=None, status='awaiting-triage')
     return None

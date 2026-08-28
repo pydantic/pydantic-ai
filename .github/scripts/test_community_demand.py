@@ -86,6 +86,22 @@ def test_snapshot_search_excludes_already_decided_issues(tmp_path: Path):
         assert f'-label:"{excluded}"' in query
 
 
+def test_snapshot_sheds_trailing_candidates_instead_of_failing(tmp_path: Path):
+    # Without shedding, a fat backlog would fail the sweep every week on the
+    # same size limit, with no self-healing.
+    now = community_demand.dt.datetime.now(community_demand.dt.timezone.utc)
+    numbers = list(range(1, 9))
+    client = FakeClient({number: issue(number) for number in numbers}, search=numbers)
+    fat_comment = {'user': {'login': 'reporter'}, 'author_association': 'NONE', 'created_at': '', 'body': 'x' * 700}
+    for number in numbers:
+        client.comments[number] = [dict(fat_comment) for _ in range(20)]
+
+    community_demand.write_snapshot(client, REPO, str(tmp_path / 's.json'), now=now)
+
+    written = json.loads((tmp_path / 's.json').read_text(encoding='utf-8'))['candidates']
+    assert 0 < len(written) < len(numbers)
+
+
 def test_snapshot_revalidates_each_candidate_against_live_state(tmp_path: Path):
     now = community_demand.dt.datetime.now(community_demand.dt.timezone.utc)
     recent = (now - community_demand.dt.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ')
