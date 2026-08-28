@@ -64,10 +64,10 @@ agent = Agent(model)
 ...
 ```
 
-You can also customize the `CrusoeProvider` with a custom `httpx.AsyncClient`:
+You can also customize the `CrusoeProvider` with a custom `httpx2.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.crusoe import CrusoeModel

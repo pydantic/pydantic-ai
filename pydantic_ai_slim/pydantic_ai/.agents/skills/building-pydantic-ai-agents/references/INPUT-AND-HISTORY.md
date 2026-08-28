@@ -126,4 +126,4 @@ A `priority` controls delivery:
 - `'asap'` (default): delivered at the earliest opportunity — added to the next model request, or, if the agent would otherwise terminate, used to redirect the run into one more request. This is "steering" an in-flight agent.
 - `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages — a follow-up task that shouldn't interrupt in-flight work.
 
-Both priorities drain however you drive the run — `agent.run()`, explicit `AgentRun.next()`, and a bare `async for node in agent_run:` loop all deliver enqueued messages. See [message history docs](https://ai.pydantic.dev/message-history/#injecting-messages-mid-run) for details.
+Both priorities drain however you drive the run — `agent.run()`, explicit `AgentRun.next()`, and a bare `async for node in agent_run:` loop all deliver enqueued messages. See [message history docs](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run) for details.

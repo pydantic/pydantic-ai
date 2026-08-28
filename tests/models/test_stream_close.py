@@ -197,6 +197,7 @@ async def test_provider_close_stream_cancels_active_pull(provider: Literal['goog
             _model_name='gemini-2.0-flash',
             _response=google_stream,
             _provider_name='google',
+            _model_id_namespace='google',
             _provider_url='https://generativelanguage.googleapis.com',
         )
         stream: _ClosableStream = google_stream

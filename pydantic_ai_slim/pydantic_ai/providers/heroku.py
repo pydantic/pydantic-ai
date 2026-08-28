@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from typing import overload
-
-import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -18,6 +17,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -27,7 +27,19 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
+
+
+_HEROKU_GLM_MINOR_VERSION_RE = re.compile(r'^glm-(\d+)-(\d+)')
+
+
+def _heroku_glm_model_profile(model_name: str) -> ModelProfile | None:
+    # GLM is a Z.AI model family, but Heroku spells minor versions with a hyphen
+    # (`glm-4-7`) where the Z.AI profile expects a dot (`glm-4.7`).
+    return zai_model_profile(_HEROKU_GLM_MINOR_VERSION_RE.sub(r'glm-\1.\2', model_name))
 
 
 def _heroku_kimi_model_profile(model_name: str) -> ModelProfile | None:
@@ -66,7 +78,7 @@ class HerokuProvider(_OpenAICompatibleProvider):
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'kimi': _heroku_kimi_model_profile,
-            'glm': moonshotai_model_profile,
+            'glm': _heroku_glm_model_profile,
             'mistral': mistral_model_profile,
             'nova': amazon_model_profile,
             'llama': meta_model_profile,
@@ -97,10 +109,10 @@ class HerokuProvider(_OpenAICompatibleProvider):
     def __init__(self, *, api_key: str, base_url: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient, base_url: str) -> None: ...
+    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient, base_url: str) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -111,7 +123,7 @@ class HerokuProvider(_OpenAICompatibleProvider):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'

@@ -944,8 +944,9 @@ def test_attention_workflow_fetches_tags_for_runner_version():
     compiled = yaml.safe_load((workflow_dir / 'pydantic-ai-attention-triage.lock.yml').read_text(encoding='utf-8'))
     compiled_steps = compiled['jobs']['agent']['steps']
     expected_checkout_config = {
+        'repository': '${{ job.workflow_repository }}',
+        'ref': '${{ job.workflow_sha }}',
         'persist-credentials': False,
-        'ref': '${{ github.event.repository.default_branch }}',
         'fetch-depth': 0,
     }
 
