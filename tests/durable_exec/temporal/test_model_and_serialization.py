@@ -159,7 +159,6 @@ with workflow.unsafe.imports_passed_through():
     from ._shared import (
         BASE_ACTIVITY_CONFIG,
         TASK_QUEUE,
-        TEMPORAL_PORT,
         DynamicToolsetDeps,
         _BuiltinToolModel,  # pyright: ignore[reportPrivateUsage]
         _durability_fn_model,  # pyright: ignore[reportPrivateUsage]
@@ -194,7 +193,7 @@ warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', categ
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.xdist_group(name='temporal'),
+    pytest.mark.xdist_group(name='temporal-model'),
     pytest.mark.filterwarnings(
         'ignore:`TemporalAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
@@ -1718,8 +1717,10 @@ def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
     assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
-async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_env: WorkflowEnvironment) -> None:
-    client = await Client.connect(f'localhost:{TEMPORAL_PORT}')
+async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(
+    temporal_env: WorkflowEnvironment, temporal_port: int
+) -> None:
+    client = await Client.connect(f'localhost:{temporal_port}')
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
