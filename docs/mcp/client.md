@@ -152,7 +152,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-## Loading MCP toolsets from configuration
+## Loading MCP toolsets from configuration {#loading-mcp-toolsets-from-configuration}
 
 Instead of constructing `MCPToolset` instances individually, you can load multiple toolsets from a JSON configuration file using [`load_mcp_toolsets()`][pydantic_ai.mcp.load_mcp_toolsets].
 

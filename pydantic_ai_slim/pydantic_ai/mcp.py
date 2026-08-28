@@ -1924,6 +1924,9 @@ class _MCPServerConfig(TypedDict, total=False):
     Unknown keys are ignored rather than rejected, so a configuration file shared with another MCP
     client still loads. They are only ignored, never honoured: `disabled` does not skip a server,
     and `type` does not select the transport — that is inferred from the URL.
+
+    Optional transport values accept explicit JSON `null` for compatibility with existing shared
+    MCP configuration files; loading treats those values the same as omission.
     """
 
     command: str
@@ -1944,10 +1947,10 @@ _MCP_CONFIG_ADAPTER = TypeAdapter(_MCPConfig)
 def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     """Load `MCPToolset`s from a configuration file.
 
-    The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Cursor, and the
-    MCP specification. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset],
-    wrapped in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name
-    as prefix to disambiguate tools across multiple servers.
+    The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Claude Code,
+    and Cursor. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset], wrapped
+    in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name as prefix
+    to disambiguate tools across multiple servers.
 
     Environment variables can be referenced in the configuration file using:
 

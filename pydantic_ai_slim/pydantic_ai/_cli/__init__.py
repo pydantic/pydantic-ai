@@ -442,7 +442,7 @@ async def run_chat(
                     session_turns += 1
                 except anyio.get_cancelled_exc_class():  # pragma: no cover
                     console.print('[dim]Interrupted[/dim]')
-                except Exception as e:  # pragma: no cover
+                except Exception as e:
                     cause = getattr(e, '__cause__', None)
                     console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
                     if cause:

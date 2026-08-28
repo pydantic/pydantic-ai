@@ -26,7 +26,7 @@ pip install clai
 clai
 ```
 
-## CLI Usage
+## CLI Usage {#cli-usage}
 
 <!-- clai/README.md links here for full docs -->
 

@@ -13,6 +13,8 @@ import asyncio
 import base64
 import json
 import re
+import subprocess
+import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -93,6 +95,7 @@ with try_import() as imports_successful:
         load_mcp_toolsets,
     )
     from pydantic_ai.messages import TextContent
+    from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 
 pytestmark = [
@@ -1748,8 +1751,6 @@ class TestLoadMCPToolsets:
         # Single server entry, wrapped with `.prefixed('alpha')`.
         assert len(toolsets) == 1
         # The wrapped toolset is a `PrefixedToolset`, not an `MCPToolset` directly.
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
-
         assert isinstance(toolsets[0], PrefixedToolset)
         assert isinstance(toolsets[0].wrapped, MCPToolset)
 
@@ -1758,24 +1759,99 @@ class TestLoadMCPToolsets:
             load_mcp_toolsets('/nonexistent/path/to/config.json')
 
     async def test_load_mcp_toolsets_http_entry(self):
+        """A URL-configured toolset completes a real Streamable HTTP tool call."""
+        process = await anyio.open_process(
+            [
+                sys.executable,
+                '-c',
+                (
+                    'import socket; import uvicorn; from tests.mcp_server import mcp; '
+                    "server_socket = socket.create_server(('127.0.0.1', 0)); "
+                    'print(server_socket.getsockname()[1], flush=True); '
+                    'uvicorn.run(mcp.streamable_http_app(), fd=server_socket.fileno(), '
+                    "lifespan='on', log_level='warning')"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            assert process.stdout is not None
+            port = int((await process.stdout.receive()).decode().strip())
+            config = {
+                'mcpServers': {
+                    'beta': {'url': f'http://127.0.0.1:{port}/mcp', 'headers': {'X-Key': 'foo'}},
+                }
+            }
+            with TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / 'mcp.json'
+                config_path.write_text(json.dumps(config), encoding='utf-8')
+                toolsets = load_mcp_toolsets(config_path)
+
+            assert len(toolsets) == 1
+            assert isinstance(toolsets[0], PrefixedToolset)
+            wrapped = toolsets[0].wrapped
+            assert isinstance(wrapped, MCPToolset)
+            assert isinstance(wrapped.client.transport, StreamableHttpTransport)
+            assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+
+            with anyio.fail_after(10):
+                while True:
+                    if process.returncode is not None:
+                        assert process.stderr is not None
+                        stderr = (await process.stderr.receive()).decode()
+                        raise AssertionError(f'HTTP MCP test server exited during startup: {stderr}')
+                    try:
+                        stream = await anyio.connect_tcp('127.0.0.1', port)
+                    except OSError:
+                        await anyio.sleep(0.01)
+                    else:
+                        await stream.aclose()
+                        break
+
+            agent = Agent(TestModel(call_tools=['beta_get_weather_forecast']), toolsets=toolsets)
+            result = await agent.run('weather')
+        finally:
+            with anyio.CancelScope(shield=True):
+                if process.returncode is None:
+                    process.terminate()
+                    with anyio.move_on_after(5) as graceful_shutdown:
+                        await process.wait()
+                    if graceful_shutdown.cancel_called:
+                        process.kill()
+                if process.returncode is None:
+                    await process.wait()
+
+        assert result.output == snapshot(
+            '{"beta_get_weather_forecast":"The weather in a is sunny and 26 degrees Celsius."}'
+        )
+
+    async def test_load_mcp_toolsets_accepts_explicit_null_optional_values(self):
+        """Explicit JSON `null` keeps working for optional values used by shared MCP configs."""
         config = {
             'mcpServers': {
-                'beta': {'url': 'http://localhost:8000/mcp', 'headers': {'X-Key': 'foo'}},
+                'stdio': {'command': 'python', 'args': None, 'env': None, 'cwd': None},
+                'http': {'url': 'https://example.com/mcp', 'headers': None},
             }
         }
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'mcp.json'
             config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
-        assert len(toolsets) == 1
+        assert len(toolsets) == snapshot(2)
         assert isinstance(toolsets[0], PrefixedToolset)
-        wrapped = toolsets[0].wrapped
-        assert isinstance(wrapped, MCPToolset)
-        # Headers flowed through to the FastMCP transport.
-        assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+        stdio = toolsets[0].wrapped
+        assert isinstance(stdio, MCPToolset)
+        assert isinstance(stdio.client.transport, StdioTransport)
+        assert stdio.client.transport.args == []
+        assert stdio.client.transport.env is None
+        assert stdio.client.transport.cwd is None
+        assert isinstance(toolsets[1], PrefixedToolset)
+        http = toolsets[1].wrapped
+        assert isinstance(http, MCPToolset)
+        assert isinstance(http.client.transport, StreamableHttpTransport)
+        assert http.client.transport.headers == {}
 
     async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
         """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax

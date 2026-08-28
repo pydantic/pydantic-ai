@@ -185,12 +185,13 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
-def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path):
+@pytest.mark.parametrize('stream', [False, True])
+def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, stream: bool):
     """`--mcp-config` parses a Claude-Desktop-style config and connects to the MCP server.
 
     Drives the real `load_mcp_toolsets` -> `MCPToolset` path against `tests.mcp_server` over stdio,
-    without mocking the loader under test. `TestModel` then calls the prefixed MCP tool, which the
-    streaming render loop reports as `Called tool ...`.
+    without mocking the loader under test. `TestModel` then calls the prefixed MCP tool through
+    both the streaming and non-streaming paths.
     """
     env.set('OPENAI_API_KEY', 'test')
     config_file = tmp_path / 'mcp_servers.json'
@@ -198,10 +199,38 @@ def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path):
         json.dumps({'mcpServers': {'temp': {'command': 'python', 'args': ['-m', 'tests.mcp_server']}}})
     )
 
+    args = ['--mcp-config', str(config_file), 'weather in Mexico City?']
+    if not stream:
+        args.insert(0, '--no-stream')
     with cli_agent.override(model=TestModel(call_tools=['temp_get_weather_forecast'])):
-        assert cli(['--mcp-config', str(config_file), 'weather in Mexico City?']) == 0
+        assert cli(args) == 0
 
-    assert 'Called tool temp_get_weather_forecast' in capfd.readouterr().out
+    output = capfd.readouterr().out
+    assert 'temp_get_weather_forecast' in output
+    assert 'The weather in a is sunny and 26 degrees Celsius.' in ' '.join(output.split())
+    assert ('Called tool temp_get_weather_forecast' in output) is stream
+
+
+def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path):
+    """Interactive `clai --mcp-config` can invoke a configured server tool before exiting."""
+    env.set('OPENAI_API_KEY', 'test')
+    config_file = tmp_path / 'mcp_servers.json'
+    config_file.write_text(
+        json.dumps({'mcpServers': {'temp': {'command': 'python', 'args': ['-m', 'tests.mcp_server']}}})
+    )
+
+    with create_pipe_input() as inp:
+        inp.send_text('weather in Mexico City?\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+
+        with cli_agent.override(model=TestModel(call_tools=['temp_get_weather_forecast'])):
+            assert cli(['--mcp-config', str(config_file)]) == 0
+
+    output = capfd.readouterr().out
+    assert 'Called tool temp_get_weather_forecast' in output
+    assert 'The weather in a is sunny and 26 degrees Celsius.' in ' '.join(output.split())
 
 
 # Sentinel for the case where `--mcp-config` is handed an existing path that isn't a readable file.
@@ -318,17 +347,6 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
-async def _weather_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    """Stream narration text and a tool call, then a final answer once the tool has returned."""
-    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-        yield 'It is '
-        yield 'sunny in Mexico City.'
-    else:
-        yield 'Let me check '
-        yield 'the weather.'
-        yield {0: DeltaToolCall(name='get_weather', json_args='{"city": "Mexico City"}', tool_call_id='call_1')}
-
-
 @pytest.mark.anyio
 async def test_streaming_with_tool_calls():
     """The streaming CLI render loop interleaves streamed model text with tool-call indicators.
@@ -336,7 +354,17 @@ async def test_streaming_with_tool_calls():
     Uses a `FunctionModel` stream so the agent emits real text deltas and a tool call, exercising
     `ask_agent`'s render loop end to end rather than `TestModel`'s canned output.
     """
-    agent = Agent(FunctionModel(stream_function=_weather_stream))
+
+    async def weather_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'It is '
+            yield 'sunny in Mexico City.'
+        else:
+            yield 'Let me check '
+            yield 'the weather.'
+            yield {0: DeltaToolCall(name='get_weather', json_args='{"city": "Mexico City"}', tool_call_id='call_1')}
+
+    agent = Agent(FunctionModel(stream_function=weather_stream))
 
     @agent.tool_plain
     def get_weather(city: str) -> str:
@@ -357,18 +385,6 @@ It is sunny in Mexico City.                                                     
     assert messages[-1].parts[-1] == TextPart(content='It is sunny in Mexico City.')
 
 
-async def _two_city_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    """Stream narration then two tool calls at once, so both are in flight together."""
-    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-        yield 'Both cities checked.'
-    else:
-        yield 'Checking two cities.'
-        yield {
-            0: DeltaToolCall(name='get_weather', json_args='{"city": "Lisbon"}', tool_call_id='call_1'),
-            1: DeltaToolCall(name='get_temp', json_args='{"city": "Porto"}', tool_call_id='call_2'),
-        }
-
-
 def _distinct_frames(frames: list[str]) -> list[str]:
     """Drop consecutive duplicates — the same frame re-rendered carries no information."""
     return [frame for i, frame in enumerate(frames) if i == 0 or frame != frames[i - 1]]
@@ -384,9 +400,9 @@ def live_frames(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     frames: list[str] = []
     original_update = Live.update
 
-    def capture_update(self: Live, renderable: Markdown, **kwargs: Any) -> None:
+    def capture_update(self: Live, renderable: Markdown, *, refresh: bool = False) -> None:
         frames.append(renderable.markup)
-        return original_update(self, renderable, **kwargs)
+        return original_update(self, renderable, refresh=refresh)
 
     monkeypatch.setattr(Live, 'update', capture_update)
     return frames
@@ -406,7 +422,18 @@ async def test_streaming_with_concurrent_tool_calls(live_frames: list[str]):
     flake. `get_temp` waits on `get_weather` only to guarantee the two calls overlap.
     """
     weather_returned = anyio.Event()
-    agent = Agent(FunctionModel(stream_function=_two_city_stream))
+
+    async def two_city_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'Both cities checked.'
+        else:
+            yield 'Checking two cities.'
+            yield {
+                0: DeltaToolCall(name='get_weather', json_args='{"city": "Lisbon"}', tool_call_id='call_1'),
+                1: DeltaToolCall(name='get_temp', json_args='{"city": "Porto"}', tool_call_id='call_2'),
+            }
+
+    agent = Agent(FunctionModel(stream_function=two_city_stream))
 
     @agent.tool_plain
     async def get_weather(city: str) -> str:
@@ -462,15 +489,6 @@ async def test_streaming_ignores_output_tool_calls():
     assert 'Called tool' not in rendered
 
 
-async def _retrying_tool_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    """Call a tool that asks to be retried, then answer without calling it again."""
-    if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
-        yield 'Recovered without the tool.'
-    else:
-        yield 'Trying a tool.'
-        yield {0: DeltaToolCall(name='flaky', json_args='{}', tool_call_id='call_1')}
-
-
 @pytest.mark.anyio
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
@@ -479,7 +497,17 @@ async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str
     Popping on success alone left `> _Calling tool ...` on screen for the rest of the run. A retry
     still renders no `Called tool` line — surfacing retries is a separate feature.
     """
-    agent = Agent(FunctionModel(stream_function=_retrying_tool_stream))
+
+    async def retrying_tool_stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+            yield 'Recovered without the tool.'
+        else:
+            yield 'Trying a tool.'
+            yield {0: DeltaToolCall(name='flaky', json_args='{}', tool_call_id='call_1')}
+
+    agent = Agent(FunctionModel(stream_function=retrying_tool_stream))
 
     @agent.tool_plain
     def flaky() -> str:
@@ -551,6 +579,39 @@ async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, e
         assert await run_chat(True, agent, console, 'monokai', 'clai', config_dir=tmp_path, toolsets=[toolset]) == 0
 
     # Two turns ran, but the toolset was released once — at the end of the session, not per turn.
+    assert toolset.full_releases == snapshot(1)
+
+
+@pytest.mark.anyio
+async def test_chat_keeps_toolsets_open_after_failed_turn(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
+    """A failed turn is reported without releasing session toolsets or ending the REPL."""
+    env.set('OPENAI_API_KEY', 'test')
+    toolset = _LifetimeToolset(FunctionToolset[Any]())
+    attempts = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError('first turn failed')
+        return ModelResponse(parts=[TextPart('second turn succeeded')])
+
+    with create_pipe_input() as inp:
+        inp.send_text('fail\n')
+        inp.send_text('succeed\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+
+        output = StringIO()
+        console = Console(file=output, force_terminal=False, width=80)
+        agent = Agent(FunctionModel(function=respond))
+        assert await run_chat(False, agent, console, 'monokai', 'clai', config_dir=tmp_path, toolsets=[toolset]) == 0
+
+    rendered = output.getvalue()
+    assert 'RuntimeError: first turn failed' in rendered
+    assert 'second turn succeeded' in rendered
+    assert attempts == snapshot(2)
     assert toolset.full_releases == snapshot(1)
 
 
