@@ -1217,7 +1217,7 @@ def test_census_counts_coverage_without_writing_or_reading_prose():
     assert monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW, urgent_mention='<@UADITYA>') == (
         '<@UADITYA> :rotating_light: Attention coverage for pydantic/pydantic-ai — '
         'queue: 14 active, 9 cooling; assignment gate: 2 priority issues unassigned; '
-        'oldest #7740 opened 5d ago; triage pool: 240 unlabeled issues; PR intake: 3 unowned. '
+        'oldest #7740 in the gate 5d; triage pool: 240 unlabeled issues; PR intake: 3 unowned. '
         'The Monday digest covers assigned, legacy, and draft work.'
     )
     # Count-only plus one event-page read vetting the oldest candidate: no
@@ -1300,6 +1300,18 @@ def test_census_oldest_looks_past_vetoed_issues_across_the_whole_breach_window()
     # found, and the window spans the count-breach threshold.
     assert 'oldest #7741' in report
     assert client.gate_first == monitor._GATE_BATCH_BREACH
+
+
+def test_census_gate_age_runs_from_the_priority_label_not_creation():
+    client = CensusClient(CENSUS_COUNTS, stale_page=[{'number': 7740, 'created_at': '2026-08-10T00:00:00Z'}])
+    client.timelines[7740] = [{'event': 'labeled', 'created_at': '2026-08-24T18:00:00Z', 'label': {'name': 'p:2-high'}}]
+
+    report = monitor.census(client, 'pydantic/pydantic-ai', now=TRIAGE_NOW)
+
+    # Triage labeling an old backlog issue puts it in the gate *now*; its
+    # creation date must not fire the one-day breach.
+    assert report.startswith(':telescope:')
+    assert 'oldest #7740 in the gate 0d' in report
 
 
 def test_census_rejects_an_untrusted_urgent_mention():
@@ -1423,10 +1435,13 @@ def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
             'label': {'name': 'bug'},
         },
         {
+            # GitHub's real event shape: `actor` is the removed assignee,
+            # `assigner` is who acted. Out of the window, so excluded.
             'event': 'unassigned',
             'created_at': '2026-07-01T00:00:00Z',
             'actor': {'login': 'dsfaccini'},
             'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'DouweM'},
         },
     ]
     client.timelines[2] = [
@@ -1435,14 +1450,24 @@ def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
             'created_at': '2026-07-18T00:00:00Z',
             'actor': {'login': 'dsfaccini'},
             'assignee': {'login': 'dsfaccini'},
+            'assigner': {'login': 'DouweM'},
         },
         {
             # Removing a non-maintainer assignee is routine cleanup, not a
             # correction of the routing automation.
             'event': 'unassigned',
             'created_at': '2026-07-18T01:00:00Z',
-            'actor': {'login': 'dsfaccini'},
+            'actor': {'login': 'community-contributor'},
             'assignee': {'login': 'community-contributor'},
+            'assigner': {'login': 'dsfaccini'},
+        },
+        {
+            # An automated unassignment is not a human correction.
+            'event': 'unassigned',
+            'created_at': '2026-07-18T02:00:00Z',
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'github-actions[bot]'},
         },
     ]
 
@@ -1451,11 +1476,12 @@ def test_weekly_digest_reports_maintainer_corrections_from_the_past_week():
     assert '*Maintainer corrections this week*' in report
     assert '• #1: @DouweM removed `p:2-high`' in report
     assert '• #1: @DouweM added `p:3-mid`' in report
-    assert '• #2: @dsfaccini unassigned @dsfaccini' in report
-    # Bot relabels, non-priority labels, and events older than the window stay out.
+    assert '• #2: @DouweM unassigned @dsfaccini' in report
+    # Bot relabels, bot unassignments, non-priority labels, and events older
+    # than the window stay out.
+    assert report.count('unassigned') == 1
     assert '@pydanty' not in report
     assert '`bug`' not in report
-    assert '#1: @dsfaccini unassigned' not in report
     assert 'community-contributor' not in report
     assert 'none recorded' not in report
 
