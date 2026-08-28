@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -319,6 +320,35 @@ async def test_evaluate_decorator_async_basic():
     assert results[0].value is True
     assert ctx.output == 42
     assert ctx.inputs == {'x': 21}
+
+
+@pytest.mark.anyio
+async def test_evaluate_decorator_async_callable_instance():
+    """An async callable instance is awaited; this local wrapper dispatch has no provider boundary to record."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    class AsyncCallable:
+        async def __call__(self, x: int) -> int:
+            return x * 2
+
+    # `target` is passed explicitly because a callable instance has no `__name__`.
+    wrapped = config.evaluate(
+        OutputEquals(value=42),
+        target='async-callable',
+        msg_template='Calling async callable',
+    )(AsyncCallable())
+
+    result = await wrapped(21)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert results[0].value is True
+    assert ctx.output == 42
+    assert inspect.isawaitable(ctx.output) is False
 
 
 @pytest.mark.anyio

@@ -23,7 +23,6 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
-from functools import partial
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -73,6 +72,29 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
+_in_sync_callback: ContextVar[bool] = ContextVar('_in_sync_callback', default=False)
+# Any cancellation delivered while awaiting a worker thread abandons that thread, not just the one a
+# deadline schedules: `anyio` cannot tell them apart. That is acceptable only because this dial is set
+# tightly around calls that are already armed with a deadline, whose owner asked for a timeout.
+_abandon_on_cancel: ContextVar[bool] = ContextVar('_abandon_on_cancel', default=False)
+
+
+def check_no_nested_sync_run() -> None:
+    """Reject sync agent entry points inside sync callbacks dispatched by Pydantic AI.
+
+    Sync tools, output functions, and similar callbacks are dispatched through
+    [`run_in_executor`][pydantic_ai._utils.run_in_executor], which flags the callback's context —
+    whether the callback runs on a worker thread or inline under [`disable_threads`][pydantic_ai._utils.disable_threads].
+    On a worker thread, a nested sync run starts a second event loop that can deadlock against an async
+    resource bound to the parent run's loop; inline, it would drive the already-running loop and fail
+    anyway. Either way we fail fast with guidance instead.
+    """
+    if _in_sync_callback.get():
+        raise UserError(
+            '`Agent.run_sync()` and `Agent.run_stream_sync()` cannot be used inside a synchronous tool, '
+            'output function, or other function called during an agent run, as they can deadlock the run. '
+            'Make the function `async def` and use `await agent.run(...)` or `async with agent.run_stream(...)` instead.'
+        )
 
 
 def run_until_complete(coro: Awaitable[_R]) -> _R:
@@ -136,19 +158,46 @@ def using_thread_executor(executor: Executor) -> Generator[None]:
         _thread_executor.reset(token)
 
 
-async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if _disable_threads.get():
-        return func(*args, **kwargs)
+@contextmanager
+def abandon_threads_on_cancel() -> Generator[None]:
+    """Context manager to abandon worker threads running sync functions when they're cancelled.
 
-    wrapped_func = partial(func, *args, **kwargs)
+    Inside this context, a cancellation delivered while awaiting a worker thread abandons that thread
+    -- it runs to completion in the background and its result is discarded -- instead of waiting for it
+    to finish. Outside it, [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] shields the await, so
+    the cancellation is only delivered once the thread returns.
+
+    This is used around calls that carry a deadline, so that [`anyio.fail_after`][anyio.fail_after] can
+    actually raise `TimeoutError` when a sync function overruns it, rather than only after it returns.
+
+    Yields:
+        None
+    """
+    token = _abandon_on_cancel.set(True)
+    try:
+        yield
+    finally:
+        _abandon_on_cancel.reset(token)
+
+
+async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    def call_with_sync_agent_guard() -> _R:
+        token = _in_sync_callback.set(True)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _in_sync_callback.reset(token)
+
+    if _disable_threads.get():
+        return call_with_sync_agent_guard()
 
     executor = _thread_executor.get()
     if executor is not None:
         loop = asyncio.get_running_loop()
         ctx = copy_context()
-        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+        return await loop.run_in_executor(executor, ctx.run, call_with_sync_agent_guard)
 
-    return await run_sync(wrapped_func)
+    return await run_sync(call_with_sync_agent_guard, abandon_on_cancel=_abandon_on_cancel.get())
 
 
 def is_async_generator_already_running(exc: RuntimeError) -> bool:
@@ -331,6 +380,36 @@ def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
     return t_or_unset is not UNSET
 
 
+def replace_no_init(obj: T, **changes: Any) -> T:
+    """Return a shallow copy of a dataclass instance with `changes` applied to its fields.
+
+    Use instead of `dataclasses.replace` on instances of subclassable dataclasses:
+    `replace` reconstructs through `type(obj).__init__`, which crashes for subclasses whose
+    custom `__init__` doesn't accept the dataclass field names
+    (https://github.com/pydantic/pydantic-ai/issues/6674). Copying preserves the subclass
+    and all of its state, and never re-runs `__init__`/`__post_init__` — the caller must
+    refresh any state it derives from the changed fields.
+
+    Not a drop-in for `replace`: fields declared `init=False` are carried over rather than
+    reset, so call sites that rely on `replace` resetting derived state (e.g. per-run state
+    isolation) must keep using `replace`.
+    """
+    assert is_dataclass(obj)
+    field_names = {f.name for f in fields(obj)}
+    if unknown := changes.keys() - field_names:
+        raise TypeError(f'Invalid field name(s) for {type(obj).__name__}: {", ".join(sorted(unknown))}')
+    new_obj = copy.copy(obj)
+    if new_obj is obj:
+        # A `__copy__` that returns `self` (immutable-style classes) would make the loop below
+        # mutate the original in place, silently leaking the changes to everyone holding it.
+        raise TypeError(f'Cannot replace fields on {type(obj).__name__}: its `__copy__` does not return a new instance')
+    for name, value in changes.items():
+        # `object.__setattr__` so frozen dataclasses work too: `new_obj` is a fresh copy no
+        # caller has seen yet, the same way a frozen dataclass's own `__init__` assigns fields.
+        object.__setattr__(new_obj, name, value)
+    return new_obj
+
+
 async def _cleanup_temporal_group(
     task: asyncio.Task[Any] | None,
     aiterator: AsyncIterator[Any],
@@ -343,6 +422,28 @@ async def _cleanup_temporal_group(
     aclose = getattr(aiterator, 'aclose', None)
     if aclose is not None:  # pragma: no branch
         await aclose()
+
+
+async def aclose_if_supported(stream: AsyncIterable[Any]) -> None:
+    """Close an async iterable if it exposes an `aclose` method."""
+    aclose: Callable[[], Awaitable[None]] | None = getattr(stream, 'aclose', None)
+    if aclose is not None:
+        await aclose()
+
+
+async def aclose_all(streams: Iterable[AsyncIterable[Any]]) -> None:
+    """Close every async iterable, then propagate any close failures."""
+    errors: list[BaseException] = []
+    for stream in streams:
+        try:
+            await aclose_if_supported(stream)
+        except BaseException as error:
+            errors.append(error)
+
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise BaseExceptionGroup('Errors closing async iterables', errors)
 
 
 @asynccontextmanager
@@ -514,12 +615,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         self._source_iter: AsyncIterator[T] | None = None
         self._buffer: T | Unset = UNSET
         self._exhausted = False
-        # Serialize access to the underlying source so `aclose()` waits for any in-flight `__anext__`/
-        # `peek()` to finish before closing it. A debounced consumer (`group_by_temporal`) prefetches the
-        # next item in a background task, so the source generator can be mid-`anext` when the stream is
-        # abandoned (an early `break` or an exception in the consumer body); closing it then would raise
-        # `RuntimeError: aclose(): asynchronous generator is already running`.
+        # Serialize access to the underlying source so cancelling an in-flight pull releases the lock before
+        # `aclose()` closes it. A debounced consumer (`group_by_temporal`) prefetches the next item in a background
+        # task, so the source generator can be mid-`anext` when the stream is abandoned; closing it concurrently
+        # would raise `RuntimeError: aclose(): asynchronous generator is already running`.
         self._source_lock = anyio.Lock()
+        self._pull_scopes: set[anyio.CancelScope] = set()
 
     async def peek(self) -> T | Unset:
         """Returns the next item that would be yielded without consuming it.
@@ -537,14 +638,22 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        async with self._source_lock:
+        with anyio.CancelScope() as scope:
+            self._pull_scopes.add(scope)
             try:
-                self._buffer = await anext(self._source_iter)
-            except StopAsyncIteration:
-                self._exhausted = True
-                return UNSET
+                async with self._source_lock:
+                    try:
+                        self._buffer = await anext(self._source_iter)
+                    except StopAsyncIteration:
+                        self._exhausted = True
+                        return UNSET
+                return self._buffer
+            finally:
+                self._pull_scopes.discard(scope)
 
-        return self._buffer
+        # Only reached when `aclose()` cancelled the scope: the stream is closed, so iteration is over.
+        self._exhausted = True
+        return UNSET
 
     async def is_exhausted(self) -> bool:
         """Returns True if the stream is exhausted, False otherwise."""
@@ -572,22 +681,31 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        async with self._source_lock:
+        with anyio.CancelScope() as scope:
+            self._pull_scopes.add(scope)
             try:
-                return await anext(self._source_iter)
-            except StopAsyncIteration:
-                self._exhausted = True
-                raise
+                async with self._source_lock:
+                    try:
+                        return await anext(self._source_iter)
+                    except StopAsyncIteration:
+                        self._exhausted = True
+                        raise
+            finally:
+                self._pull_scopes.discard(scope)
+
+        # Only reached when `aclose()` cancelled the scope: the stream is closed, so iteration is over.
+        self._exhausted = True
+        raise StopAsyncIteration
 
     async def aclose(self) -> None:
         self._exhausted = True
+        for scope in self._pull_scopes:
+            scope.cancel()
         value = self._source_iter if self._source_iter is not None else self.source
-        aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
-        if aclose is not None:
-            # Wait for any in-flight `__anext__`/`peek()` (e.g. a `group_by_temporal` prefetch task) to
-            # release the source before closing it, so we don't close a generator that's still running.
-            async with self._source_lock:
-                await aclose()
+        # Wait for the cancelled pull to release the source before closing it, so we don't close a
+        # generator that's still running.
+        async with self._source_lock:
+            await aclose_if_supported(value)
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
@@ -664,6 +782,20 @@ def is_async_callable(obj: Any) -> Any:
         obj = obj.func
 
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
+
+
+async def await_maybe(value: T | Awaitable[T]) -> T:
+    """Await `value` if it is awaitable, otherwise return it unchanged.
+
+    Use this to resolve the result of calling a callback typed as `X | Awaitable[X]`, regardless of
+    how the awaitable is produced: an `async def`, or a plain `def` / callable object that *returns*
+    a coroutine. [`is_async_callable`][pydantic_ai._utils.is_async_callable] can't detect the latter
+    because it inspects the callable rather than its result, so dispatching on it alone drops such a
+    callback's coroutine un-awaited.
+    """
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def takes_run_context(callable_obj: Callable[..., Any]) -> bool:

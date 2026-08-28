@@ -46,16 +46,18 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "httpx>=0.27",
+    # `anyio>=4.7.0` is required for cancellation delivery our streaming teardown relies on:
+    # on 4.6.0 and below, `test_streaming_handoff_survives_absorbed_cancellation` deadlocks (#6422).
+    "anyio>=4.7.0",
     "logfire-api>=3.14.1",
     "pydantic>=2.12",
     "typing-inspection>=0.4.0",
 ]
 
 [project.urls]
-Homepage = "https://ai.pydantic.dev/graph/tree/main/pydantic_graph"
+Homepage = "https://pydantic.dev/docs/ai/graph/graph/"
 Source = "https://github.com/pydantic/pydantic-ai"
-Documentation = "https://ai.pydantic.dev/graph"
+Documentation = "https://pydantic.dev/docs/ai/graph/graph/"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.build.targets.wheel]

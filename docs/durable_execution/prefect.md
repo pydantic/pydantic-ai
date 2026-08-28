@@ -166,6 +166,8 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 
 For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks. Each task resolves and enters the toolset independently, so task retries re-resolve it and flow retries replay recorded discovery and tool results.
 
+A tool with an [`args_validator`](../tools-advanced.md#args-validator) gets a `Validate Tool Args: {name}` task, so the validator's I/O is checkpointed like the tool call's. A tool without one gets no extra task, and a tool with `metadata={'prefect': False}` is validated in flow code alongside its call. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. Validators can also defer from inside the task; resuming with approval runs validation again with `tool_call_approved` set.
+
 A default [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] for all tools can be passed as `tool_task_config` to the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] constructor. Per-tool config lives on the tool's [`metadata`][pydantic_ai.toolsets.FunctionToolset.tool] field — `PrefectDurability` looks for a `'prefect'` key. You can set the metadata directly on the tool definition, or apply it across a selection of tools via the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability. See the [capabilities documentation][pydantic_ai.capabilities.SetToolMetadata] for the full selector vocabulary.
 
 ```python {title="prefect_per_tool_config.py" test="skip"}
@@ -204,6 +206,9 @@ agent = Agent(
 3. Selector-based: [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] applies the same metadata across a selection of tools (`'all'`, a name list, a dict, or a callable).
 4. `tool_task_config` sets the default config for every tool.
 
+This opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
+their Prefect task, so `metadata={'prefect': False}` on an MCP tool raises a `UserError`.
+
 ### Streaming
 
 [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Prefect flow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable task, and its events are replayed to the flow after the task completes.
@@ -217,6 +222,8 @@ A durability `event_stream_handler=` and a separately registered `ProcessEventSt
 A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs flow-side against replayed model events.
 
 Because the model stream is consumed inside the task, cancelling it from the flow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
+
+[`CancellationToken`][pydantic_ai.CancellationToken] and [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] are same-process cancellation handles and cannot cross the Prefect durable boundary; cancel the Prefect flow instead.
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for flow code: it requires no running event loop and wraps `run_stream()`. Under [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a flow, an agent with `PrefectDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `PrefectAgent` forbids `run_stream` inside flows — use `run` + event stream handler there.)
 
@@ -290,6 +297,9 @@ This prevents requests from being retried multiple times at different layers.
 ## Caching and Idempotency
 
 Prefect 3.0 provides built-in caching and transactional semantics. Tasks with identical inputs will not re-execute if their results are already cached, making workflows naturally idempotent and resilient to failures.
+
+!!! warning "Dynamic-tool cache keys changed"
+    Dynamic-tool task keys now include the prepared tool definition. Existing cached results for dynamic tools will miss once after upgrading and recompute. No manual cache deletion is required; subsequent calls reuse the new value-addressed keys.
 
 * **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments, definition and [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] (so two parallel calls to the same tool with the same arguments each execute); and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
 

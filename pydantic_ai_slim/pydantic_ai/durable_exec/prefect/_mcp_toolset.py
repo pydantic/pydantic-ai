@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Any, Literal, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -12,11 +12,11 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.durable_exec._toolset import (
     CallToolOperation,
     DurableMCPToolset,
-    Instructions,
     unwrap_recorded_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
@@ -25,45 +25,15 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset, ToolResult
 
 
-def _discovery_operations(
-    wrapped: MCPToolset[AgentDepsT], base_config: TaskConfig
-) -> tuple[
-    Callable[[RunContext[AgentDepsT]], Awaitable[dict[str, ToolDefinition]]],
-    Callable[[RunContext[AgentDepsT]], Awaitable[Instructions]],
-]:
-    @task
-    async def get_tools_task(
-        operation: Literal['get_tools'], toolset_id: str | None, ctx: RunContext[AgentDepsT]
-    ) -> dict[str, ToolDefinition]:
-        # Forks the cache key so discovery operations sharing other inputs don't collide.
-        del operation
-        # Forks the cache key so toolsets sharing this task's source don't collide.
-        del toolset_id
-        return {name: tool.tool_def for name, tool in (await wrapped.get_tools(ctx)).items()}
-
-    @task
-    async def get_instructions_task(
-        operation: Literal['get_instructions'], toolset_id: str | None, ctx: RunContext[AgentDepsT]
-    ) -> Instructions:
-        # Forks the cache key so discovery operations sharing other inputs don't collide.
-        del operation
-        # Forks the cache key so toolsets sharing this task's source don't collide.
-        del toolset_id
-        return await wrapped.get_instructions(ctx)
-
-    async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
-        task_config = with_non_retryable_errors(base_config)
-        return await get_tools_task.with_options(name=f'Get MCP Tools: {wrapped.id}', **task_config)(
-            'get_tools', wrapped.id, ctx
+def _resolve_mcp_tool_config(tool: ToolsetTool[Any] | None, name: str) -> TaskConfig:
+    config = resolve_tool_task_config(tool, name, {})
+    if config is False:
+        raise UserError(
+            f'Prefect durable config for MCP tool {name!r} has been explicitly set to `False` '
+            '(durable execution disabled), but MCP tools perform I/O and cannot run outside a durable task. '
+            'Remove the metadata so the call stays durable.'
         )
-
-    async def get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
-        task_config = with_non_retryable_errors(base_config)
-        return await get_instructions_task.with_options(name=f'Get MCP Instructions: {wrapped.id}', **task_config)(
-            'get_instructions', wrapped.id, ctx
-        )
-
-    return get_tools_operation, get_instructions_operation
+    return config
 
 
 def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfig) -> CallToolOperation:
@@ -81,6 +51,7 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
@@ -111,16 +82,14 @@ class PrefectMCPToolset(DurableMCPToolset[AgentDepsT]):
         task_config: TaskConfig,
     ):
         base_config = default_task_config | (task_config or {})
-        get_tools_operation, get_instructions_operation = _discovery_operations(wrapped, base_config)
 
         super().__init__(
             wrapped,
             in_durable_context=lambda: True,
-            get_tools_operation=get_tools_operation,
-            get_instructions_operation=get_instructions_operation,
+            get_tools_operation=None,
+            get_instructions_operation=None,
             call_tool_operation=_call_tool_operation(wrapped, base_config),
-            # The deprecated wrapper never read per-tool metadata; leave its behavior frozen.
-            resolve_tool_config=lambda tool, name: {},
+            resolve_tool_config=_resolve_mcp_tool_config,
             lifecycle='enter-always',
             durable_config=base_config,
         )
@@ -130,17 +99,13 @@ def prefectify_mcp_toolset(
     wrapped: MCPToolset[AgentDepsT], *, task_config: TaskConfig
 ) -> DurableMCPToolset[AgentDepsT]:
     base_config = default_task_config | (task_config or {})
-    get_tools_operation, get_instructions_operation = _discovery_operations(wrapped, base_config)
     return DurableMCPToolset(
         wrapped,
         in_durable_context=lambda: FlowRunContext.get() is not None,
-        get_tools_operation=get_tools_operation,
-        get_instructions_operation=get_instructions_operation,
+        get_tools_operation=None,
+        get_instructions_operation=None,
         call_tool_operation=_call_tool_operation(wrapped, base_config),
-        # Per-tool config on MCP tools works the same as on function and dynamic tools: unlike
-        # Temporal, a Prefect flow can do I/O itself, so `False` runs the call inline in flow code
-        # rather than being rejected.
-        resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, {}),
+        resolve_tool_config=_resolve_mcp_tool_config,
         lifecycle='enter-always',
         durable_config=base_config,
     )

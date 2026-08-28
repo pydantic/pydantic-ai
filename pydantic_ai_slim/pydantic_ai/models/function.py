@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import inspect
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
@@ -26,10 +25,12 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -39,7 +40,12 @@ from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @dataclass(init=False)
@@ -48,6 +54,12 @@ class FunctionModel(Model):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    # A test double has no wire, so its "renderer" is whatever the test simulates: declaring every
+    # mode makes the `profile=` handed to it the whole simulation (no claim still means no channel),
+    # instead of requiring a subclass to restate what the profile already says.
+    supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
+    supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
 
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
@@ -102,7 +114,8 @@ class FunctionModel(Model):
         Args:
             function: The function to call for non-streamed requests.
             stream_function: The function to call for streamed requests.
-            model_name: The name of the model. If not provided, a name is generated from the function names.
+            model_name: The name of the model. If not provided, a name is generated from the function names,
+                falling back to the class name for a callable that has no `__name__`.
             profile: The model profile to use.
             settings: Model-specific settings that will be used as defaults for this model.
         """
@@ -112,8 +125,14 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-        function_name = self.function.__name__ if self.function is not None else ''
-        stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
+        function_name = (
+            getattr(self.function, '__name__', type(self.function).__name__) if self.function is not None else ''
+        )
+        stream_function_name = (
+            getattr(self.stream_function, '__name__', type(self.stream_function).__name__)
+            if self.stream_function is not None
+            else ''
+        )
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
         # Use a default profile that supports JSON schema and object output if none provided
@@ -135,7 +154,7 @@ class FunctionModel(Model):
             model_request_parameters,
         )
         agent_info = AgentInfo(
-            function_tools=model_request_parameters.function_tools,
+            function_tools=model_request_parameters.declared_function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
@@ -145,16 +164,21 @@ class FunctionModel(Model):
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
 
-        if inspect.iscoroutinefunction(self.function):
-            response = await self.function(messages, agent_info)
+        result: ModelResponse | Awaitable[ModelResponse]
+        if _utils.is_async_callable(self.function):
+            result = self.function(messages, agent_info)
         else:
-            response_ = await _utils.run_in_executor(self.function, messages, agent_info)
-            assert isinstance(response_, ModelResponse), response_
-            response = response_
+            result = await _utils.run_in_executor(self.function, messages, agent_info)
+        # A plain `def` may also return an awaitable, which `run_in_executor` would leave un-awaited.
+        response = await _utils.await_maybe(result)
+        assert isinstance(response, ModelResponse), response
         response.model_name = self._model_name
         # Add usage data if not already present
         if not response.usage.has_values():  # pragma: no branch
-            response.usage = _estimate_usage(chain(messages, [response]))
+            response.usage = _estimate_usage(
+                chain(messages, [response]),
+                allow_tool_availability_deltas=self.tool_addition_mode is not None,
+            )
         return response
 
     @asynccontextmanager
@@ -170,7 +194,7 @@ class FunctionModel(Model):
             model_request_parameters,
         )
         agent_info = AgentInfo(
-            function_tools=model_request_parameters.function_tools,
+            function_tools=model_request_parameters.declared_function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
@@ -288,12 +312,21 @@ DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 BuiltinToolCallsReturns: TypeAlias = dict[int, NativeToolCallPart | NativeToolReturnPart]
 
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
-"""A function used to generate a non-streamed response."""
+"""A function used to generate a non-streamed response.
+
+Any callable with this signature works: a plain `def`, an `async def`, or an instance with a `__call__`
+method of either kind. An async callable is awaited directly; a sync one is run in a worker thread.
+"""
 
 StreamFunctionDef: TypeAlias = Callable[
     [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]
 ]
 """A function used to generate a streamed response.
+
+Any callable with this signature works: an async generator function, a plain `def` returning an async
+iterator, or an instance with a `__call__` of either kind. What matters is the value returned, not the
+callable — an `async def __call__` that *returns* an async iterator instead of yielding does not match,
+and its coroutine is never awaited.
 
 While this is defined as having return type of `AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinTools]`, it should
 really be considered as `AsyncIterator[str] | AsyncIterator[DeltaToolCalls] | AsyncIterator[DeltaThinkingCalls]`,
@@ -383,10 +416,16 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
+def _estimate_usage(  # noqa: C901
+    messages: Iterable[ModelMessage], *, allow_tool_availability_deltas: bool = False
+) -> usage.RequestUsage:
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
+
+    `allow_tool_availability_deltas` mirrors the calling model's profile: a delta part is
+    legitimately present when the profile advertises a native tool-addition channel, and a
+    contract violation (`prepare_messages` was skipped) otherwise.
     """
     # there seem to be about 50 tokens of overhead for both Gemini and OpenAI calls, so add that here ¯\_(ツ)_/¯
     request_tokens = 50
@@ -400,6 +439,15 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
+                elif isinstance(part, ToolAvailabilityDeltaPart):
+                    if not allow_tool_availability_deltas:
+                        raise _unsynthesized_tool_availability_delta_error()
+                    request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, SpeechPart):
+                    # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
+                    # user speech can arrive unconverted; estimate from the transcript like the
+                    # response side below rather than undercounting the turn to zero.
+                    request_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
@@ -416,6 +464,8 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
                     pass
+                elif isinstance(part, SpeechPart):
+                    response_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         else:

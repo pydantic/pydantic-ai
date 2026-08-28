@@ -2,7 +2,11 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import os
 import re
+import subprocess
+import sys
+import textwrap
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,7 +16,7 @@ from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
@@ -44,10 +48,19 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.capabilities import NativeTool, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
+from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
+    InstructionPart,
+    ModelMessage,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
+    SystemPromptPart,
+    UploadedFile,
+    VideoUrl,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
@@ -56,7 +69,7 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -663,6 +676,114 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
             )
 
 
+async def test_stream_text_no_created_timestamp(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'created': None}),
+        text_chunk('world').model_copy(update={'created': None}),
+        text_chunk('.', finish_reason='stop').model_copy(update={'created': None}),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response == snapshot(
+            ModelResponse(
+                parts=[TextPart(content='hello world.')],
+                usage=RequestUsage(input_tokens=6, output_tokens=3),
+                model_name='gpt-4o-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        )
+        assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
+
+
+async def test_stream_text_ignores_zero_created_timestamp(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'created': 0}),
+        text_chunk('world').model_copy(update={'created': None}),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with Agent(model).run_stream('') as result:
+        await result.get_output()
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.provider_details is None
+        assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
+
+
+async def test_stream_text_uses_created_timestamp_from_usage_chunk(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'created': None}),
+        text_chunk('world', finish_reason='stop').model_copy(update={'created': None}),
+        chunk([]),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with Agent(model).run_stream('') as result:
+        assert await result.get_output() == 'hello world'
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.provider_details == {
+            'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc),
+            'finish_reason': 'stop',
+        }
+
+
+@pytest.mark.parametrize(
+    ('created_values', 'expected'),
+    [
+        ([1704067200, 1704153600, 1704240000], datetime(2024, 1, 1, tzinfo=timezone.utc)),
+        ([None, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        ([0, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        ([None, 0, 1704153600], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+    ],
+)
+async def test_stream_text_uses_created_timestamp_from_later_chunk(
+    allow_model_requests: None, created_values: list[int | None], expected: datetime
+):
+    stream = [
+        text_chunk('hello '),
+        text_chunk('world'),
+        text_chunk('.', finish_reason='stop'),
+    ]
+    stream = [chunk.model_copy(update={'created': created}) for chunk, created in zip(stream, created_values)]
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.provider_details == {
+            'timestamp': expected,
+            'finish_reason': 'stop',
+        }
+
+
 def struc_chunk(
     tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
 ) -> chat.ChatCompletionChunk:
@@ -683,65 +804,6 @@ def struc_chunk(
 class MyTypedDict(TypedDict, total=False):
     first: str
     second: str
-
-
-async def test_stream_structured(allow_model_requests: None):
-    stream = [
-        chunk([ChoiceDelta()]),
-        chunk([ChoiceDelta(tool_calls=[])]),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk('final_result', None),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        chunk([]),
-    ]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
-        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
-        # double check usage matches stream count
-        assert result.usage.output_tokens == len(stream)
-
-
-async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream = [
-        struc_chunk('final_result', None),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        struc_chunk(None, None, finish_reason='stop'),
-    ]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
 
 
 async def test_stream_native_output(allow_model_requests: None):
@@ -1184,6 +1246,7 @@ async def test_openai_audio_url_input(
             },
             output_reasoning_tokens=0,
             requests=1,
+            cost=Decimal('0.0009225'),
         )
     )
 
@@ -1417,6 +1480,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1458,6 +1522,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0013375'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1508,6 +1573,7 @@ async def test_audio_as_binary_content_input(
             },
             output_reasoning_tokens=0,
             requests=1,
+            cost=Decimal('0.00025'),
         )
     )
 
@@ -1593,6 +1659,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0009075'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1667,6 +1734,7 @@ Each of these interpretations would depend on the broader context in which this 
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0021625'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1720,6 +1788,7 @@ async def test_yaml_document_url_input(
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00806'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1919,7 +1988,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'test error',
-            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': 'test error'},
         )
     )
@@ -1934,7 +2003,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),
         )
     )
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -1949,7 +2018,7 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAIResponses.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),
         )
     )
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
@@ -2074,6 +2143,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0000252'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
@@ -3507,6 +3577,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00014'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -3564,6 +3635,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000044'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
@@ -3601,6 +3673,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000054'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
@@ -3658,6 +3731,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     output_tokens=1915,
                     output_reasoning_tokens=1600,
                     details={'reasoning_tokens': 1600},
+                    cost=Decimal('0.0084403'),
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -3705,6 +3779,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         'reasoning_tokens': 1792,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0108427'),
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -4076,6 +4151,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00029'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4121,6 +4197,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0005825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4194,6 +4271,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000215'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4233,6 +4311,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0002575'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4296,6 +4375,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0002975'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4335,6 +4415,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00038'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4412,6 +4493,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00051'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4455,6 +4537,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0007025'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4516,6 +4599,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0003825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4555,6 +4639,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000435'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4620,6 +4705,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0007925'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4663,6 +4749,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.000945'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -4977,6 +5064,17 @@ async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_mod
     assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
+async def test_reasoning_model_does_not_mutate_caller_settings(allow_model_requests: None):
+    shared_settings = OpenAIChatModelSettings(temperature=0.5, top_p=0.9)
+
+    reasoning_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='hi', role='assistant')))
+    reasoning_model = OpenAIChatModel('o3-mini', provider=OpenAIProvider(openai_client=reasoning_client))
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await Agent(reasoning_model, model_settings=shared_settings).run('hello')
+
+    assert shared_settings == {'temperature': 0.5, 'top_p': 0.9}
+
+
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
     m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
@@ -5078,43 +5176,26 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
 ):
     """Regression test for #5829: deterministic per-CI guard for the wire mapping.
 
-    Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn
-    with tool calls but no thinking. A `'field'`-mode provider (one that round-trips thinking in a
-    custom field) 400s if such a turn omits that field while the run is thinking, so it must be sent
-    empty when thinking is active and left off otherwise. Parametrized over the three providers that
-    use this mode — DeepSeek and MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to
-    pin that the backfill is field-name-agnostic (it reads `openai_chat_thinking_field`). The
-    real-API counterpart is `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+    Replaying a native tool-search exchange from another provider splits it into a
+    framework-synthesized `search_tools` assistant turn carrying tool calls but no thinking. A
+    `'field'`-mode provider (one that round-trips thinking in a custom field) 400s if such a turn
+    omits that field while the run is thinking, so it must be sent empty when thinking is active and
+    left off otherwise. Parametrized over the three providers that use this mode — DeepSeek and
+    MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to pin that the backfill is
+    field-name-agnostic (it reads `openai_chat_thinking_field`). The real-API counterpart is
+    `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+
+    A deferred capability load used to be the trigger, because the reveal was rendered as a
+    fabricated `search_tools` call/return pair. It's a system instruction now and produces no
+    assistant turn at all, so cross-provider replay is the path that still reaches this — and the
+    reason the backfill has to stay.
     """
-    load_capability_message = ChatCompletionMessage.model_construct(
-        content=None,
-        role='assistant',
-        tool_calls=[
-            ChatCompletionMessageFunctionToolCall(
-                id='call_load',
-                type='function',
-                function=Function(name='load_capability', arguments=json.dumps({'id': 'DICE_ROLL'})),
-            )
-        ],
-    )
-    roll_dice_message = ChatCompletionMessage.model_construct(
-        content=None,
-        role='assistant',
-        tool_calls=[
-            ChatCompletionMessageFunctionToolCall(
-                id='call_roll', type='function', function=Function(name='roll_dice', arguments='{}')
-            )
-        ],
-    )
+    answer_message = ChatCompletionMessage.model_construct(content='You win!', role='assistant')
     if thinking:
         # The provider returns its reasoning in the profile's custom field; the model parses it into a
         # `ThinkingPart`, which makes the run thinking-active so the synthetic turn gets backfilled.
-        setattr(load_capability_message, thinking_field, 'I should load the dice capability.')
-        setattr(roll_dice_message, thinking_field, 'Now I can roll.')
-    load_capability_turn = completion_message(load_capability_message)
-    roll_dice_turn = completion_message(roll_dice_message)
-    final_turn = completion_message(ChatCompletionMessage.model_construct(content='You win!', role='assistant'))
-    mock = MockOpenAI.create_mock([load_capability_turn, roll_dice_turn, final_turn])
+        setattr(answer_message, thinking_field, 'Now I can answer.')
+    mock = MockOpenAI.create_mock([completion_message(answer_message)])
     model = OpenAIChatModel(
         'foobar',
         provider=OpenAIProvider(openai_client=mock),
@@ -5124,18 +5205,48 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
         ),
     )
 
+    # An Anthropic-shaped native tool-search exchange: one `ModelResponse` carrying both the call and
+    # its inline result. `prepare_messages` splits it into `ModelResponse(call)` + `ModelRequest(return)`
+    # for a model with no native tool search, and that synthesized assistant turn is the one that has to
+    # carry the thinking field.
+    #
+    # The thinking sits in an *earlier* turn on purpose. It's what makes the run thinking-active, and
+    # keeping it out of the response that gets split is what leaves the synthesized turn without a
+    # thinking field of its own — which is the condition the backfill exists for.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find the dice tool.')]),
+        ModelResponse(
+            parts=[
+                *([ThinkingPart(content='I should search.')] if thinking else []),
+                TextPart(content='Let me look.'),
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Go ahead.')]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['dice']}, tool_call_id='srvtoolu_1', provider_name='anthropic'
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'roll_dice'}]},
+                    tool_call_id='srvtoolu_1',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
     def roll_dice() -> str:
-        return '4'
+        return '4'  # pragma: no cover
 
-    agent = Agent(model, capabilities=[Capability(id='DICE_ROLL', tools=[roll_dice], defer_loading=True)])
-    await agent.run('My guess is 4')
+    agent = Agent(model, tools=[Tool(roll_dice, defer_loading=True)], capabilities=[ToolSearch()])
+    await agent.run('My guess is 4', message_history=history)
 
-    # The second request is the one made after `load_capability` returned; it carries the
-    # synthetic `search_tools` assistant turn that the load injected into history.
-    second_request_messages = get_mock_chat_completion_kwargs(mock)[1]['messages']
+    request_messages = get_mock_chat_completion_kwargs(mock)[0]['messages']
     synthetic_turn = next(
         message
-        for message in second_request_messages
+        for message in request_messages
         if message.get('role') == 'assistant'
         and any(call['function']['name'] == 'search_tools' for call in message.get('tool_calls', ()))
     )
@@ -5442,7 +5553,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body=body,
         )
     )
@@ -5470,6 +5581,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': '0.000',
                 },
                 'model_name': 'gpt-5-mini',
                 'timestamp': IsStr(),
@@ -5502,7 +5614,7 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
     mock_client = MockOpenAIResponses.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
         )
     )
@@ -5549,7 +5661,7 @@ def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
         )
     )
@@ -5567,7 +5679,7 @@ def test_azure_400_non_dict_body(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body='Raw string body',
         )
     )
@@ -5585,7 +5697,7 @@ def test_azure_400_malformed_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'something_else': 'foo'},  # No 'error' key
         )
     )
@@ -6213,3 +6325,97 @@ async def test_extra_headers_not_mutated(allow_model_requests: None):
         'X-Custom': 'value',
         'User-Agent': IsStr(regex=r'pydantic-ai/.*'),
     }
+
+
+async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
+    """Malformed tool-call args are sent to the Chat Completions API as the `INVALID_JSON` wrapper.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7042.
+
+    OpenAI itself treats `arguments` as a free-form string, but an OpenAI-compatible gateway
+    (e.g. OpenRouter) fronting an object-typed backend rejects the whole request with
+    `tool_use.input: Input should be a valid dictionary`. Since the malformed part stays in the
+    history, every subsequent request replays it and the run can never recover — including the
+    retry the malformed args themselves triggered.
+
+    No cassette: OpenAI accepts anything in `arguments`, so a live recording can't exercise the
+    rejection — the party that rejects is a gateway we have no way to record against. The assertion
+    is therefore on the outbound request body.
+    """
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+
+    c = completion_message(ChatCompletionMessage(content='Here is the corrected result.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=[
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='search_knowledge', tool_call_id='call_123', args=bad_args)],
+                timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='search_knowledge',
+                        tool_call_id='call_123',
+                        content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                    )
+                ]
+            ),
+        ],
+    )
+    assert result.output == 'Here is the corrected result.'
+
+    # The raw malformed string never reaches the wire; the degraded object does.
+    assistant_message = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]
+    assert assistant_message == snapshot(
+        {
+            'role': 'assistant',
+            'content': None,
+            'tool_calls': [
+                {
+                    'id': 'call_123',
+                    'type': 'function',
+                    'function': {
+                        'name': 'search_knowledge',
+                        'arguments': """\
+{"INVALID_JSON":"{\\"query\\": \\"bad query\\", \\"file_ids\\":[4556]</parameter>\\n<parameter name=\\"limit\\": 8}"}\
+""",
+                    },
+                }
+            ],
+        }
+    )
+    assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {INVALID_JSON_KEY: bad_args}
+
+
+def test_model_construction_preloads_lazy_dependencies():
+    """Constructing a model resolves the deferred imports that stalled the first request's event loop (#7405).
+
+    No cassette, and a subprocess: import state is process-global and the rest of the suite has
+    already imported these modules, so only a fresh interpreter can observe what construction triggers.
+    """
+    script = textwrap.dedent(
+        """
+        import sys
+
+        from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        assert 'openai.resources.chat.completions' not in sys.modules, 'chat resources loaded too early'
+        assert 'genai_prices.data' not in sys.modules, 'pricing data loaded too early'
+
+        OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test'))
+        assert 'openai.resources.chat.completions' in sys.modules, 'chat resources not preloaded'
+        assert 'genai_prices.data' in sys.modules, 'pricing data not preloaded'
+
+        OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test'))
+        assert 'openai.resources.responses' in sys.modules, 'responses resources not preloaded'
+        """
+    )
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    process = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120, env=env)
+    assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'

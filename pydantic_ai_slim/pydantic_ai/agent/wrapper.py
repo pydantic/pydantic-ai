@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, Generator, Sequence
+from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, overload
 
@@ -11,6 +11,7 @@ from .. import (
     models,
     usage as _usage,
 )
+from .._cancel import CancellationToken
 from .._json_schema import JsonSchema
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
@@ -21,14 +22,31 @@ from ..tools import (
     AgentDepsT,
     AgentNativeTool,
     DeferredToolResults,
+    RunContext,
     Tool,
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
-from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRetries, EventStreamHandler, RunOutputDataT
+from .abstract import (
+    AbstractAgent,
+    AgentMetadata,
+    AgentModelSettings,
+    AgentRetries,
+    EventStreamHandler,
+    RunOutputDataT,
+    _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
+)
 
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
+    from ..realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeProviderSession,
+        RealtimeSession,
+    )
     from .spec import AgentSpec
 
 
@@ -78,6 +96,18 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self.wrapped.root_capability
 
     @property
+    def validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        """The Pydantic validation context used to validate tool arguments and outputs.
+
+        Set this when validators need values from [`ValidationInfo.context`][pydantic.ValidationInfo.context].
+        A callable can build the context from the current [`RunContext`][pydantic_ai.tools.RunContext].
+        """
+        return self.wrapped._get_validation_context()
+
+    def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        return self.wrapped._get_validation_context()
+
+    @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         return self.wrapped.toolsets
 
@@ -124,6 +154,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -148,6 +179,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -172,6 +204,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -229,7 +262,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
-                        usage=RequestUsage(input_tokens=56, output_tokens=7),
+                        usage=RequestUsage(
+                            cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                        ),
                         model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
@@ -256,6 +291,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
@@ -264,7 +300,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -282,6 +318,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
             usage=usage,
             metadata=metadata,
             retries=retries,
@@ -291,6 +328,96 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec=spec,
         ) as run:
             yield run
+
+    @asynccontextmanager
+    async def _resolve_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        run_lifecycle: bool = False,
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve realtime configuration on the wrapped agent.
+
+        This backs the WebRTC signaling helpers (`answer_webrtc_offer()` / `create_client_secret()`),
+        which bake the wrapped agent's instructions and tools into a provider call or browser
+        credential without opening a session — so a wrapper that gates realtime by overriding
+        `_open_realtime_session` (see its note below) must also override this method to gate
+        signaling.
+        """
+        async with self.wrapped._resolve_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            run_lifecycle=run_lifecycle,
+        ) as resolved:
+            yield resolved
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime].
+
+        Note that realtime sessions do not route through [`iter()`][pydantic_ai.agent.AbstractAgent.iter]
+        (there is no graph run to iterate), so a wrapper that enforces policy by overriding `iter()`
+        must also override this method to gate realtime sessions.
+        """
+        async with self.wrapped._open_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            audio_retention=audio_retention,
+            retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
+            provider_session=provider_session,
+        ) as session:
+            yield session
 
     @contextmanager
     def override(

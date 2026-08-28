@@ -4,10 +4,14 @@ from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from weakref import WeakValueDictionary
 
 from pydantic import ValidationError
+from typing_extensions import deprecated
 
+from pydantic_ai import _utils
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -79,12 +83,15 @@ WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]
 RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
 
+DurableOperationDispatcher: TypeAlias = Callable[
+    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
+]
+
 WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 """Handler type for wrap_output_validate."""
 
 WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
 """Handler type for wrap_output_process."""
-
 
 CapabilityPosition = Literal['outermost', 'innermost']
 """Position tier for a capability in the middleware chain.
@@ -155,6 +162,37 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
+class _DurableOperationBindings:
+    """Agent-identity bindings that do not retain unhashable agent instances."""
+
+    def __init__(self) -> None:
+        self._agents: WeakValueDictionary[int, AbstractAgent[Any, Any]] = WeakValueDictionary()
+        self._bindings: dict[int, dict[str, DurableOperationDispatcher]] = {}
+
+    def get(
+        self, agent: AbstractAgent[Any, Any], default: dict[str, DurableOperationDispatcher]
+    ) -> dict[str, DurableOperationDispatcher]:
+        self._prune()
+        agent_id = id(agent)
+        return self._bindings.get(agent_id, default) if self._agents.get(agent_id) is agent else default
+
+    def setdefault(self, agent: AbstractAgent[Any, Any]) -> dict[str, DurableOperationDispatcher]:
+        self._prune()
+        agent_id = id(agent)
+        if self._agents.get(agent_id) is not agent:
+            self._agents[agent_id] = agent
+            self._bindings[agent_id] = {}
+        return self._bindings[agent_id]
+
+    def __len__(self) -> int:
+        self._prune()
+        return len(self._bindings)
+
+    def _prune(self) -> None:
+        live_ids = set(self._agents)
+        self._bindings = {agent_id: bindings for agent_id, bindings in self._bindings.items() if agent_id in live_ids}
+
+
 @dataclass(init=False)
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
@@ -181,6 +219,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    def _get_durable_operation_bindings(
+        self,
+    ) -> _DurableOperationBindings:
+        bindings = self.__dict__.get('_pydantic_ai_durable_operation_bindings')
+        if not isinstance(bindings, _DurableOperationBindings):
+            bindings = _DurableOperationBindings()
+            object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
+        return bindings
+
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
@@ -203,7 +250,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     run — including the fresh instance a [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
     override may return — rather than a specific object.
 
-    Required when `defer_loading=True`. If omitted for an always-available
+    Required when `defer_loading=True`. If omitted for an always-on
     capability, the run derives a local id from the class name.
     """
 
@@ -234,8 +281,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         visitor(self)
 
     @property
+    @deprecated(
+        '`has_wrap_node_run` is deprecated: `wrap_node_run` now runs under every way of driving a run, '
+        'so there is nothing left to test for.',
+        category=PydanticAIDeprecationWarning,
+    )
     def has_wrap_node_run(self) -> bool:
-        """Whether this capability (or any sub-capability) overrides wrap_node_run."""
+        """Whether this capability (or any sub-capability) overrides wrap_node_run.
+
+        Deprecated: `wrap_node_run` runs under every way of driving a run, so there is nothing left to test for.
+        """
+        return self._has_wrap_node_run
+
+    @property
+    def _has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
 
     @property
@@ -291,11 +350,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Install private per-run state before any capability lifecycle hook runs.
+
+        Durable dispatch tables must be available before every capability's `before_run`, because
+        one capability may call another capability's durable operation from its hook. This setup
+        therefore cannot be implemented as a `before_run` hook itself. It stays private pending the
+        capability surface decisions tracked in #5477.
+        """
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
         Called once per run, before `get_*()` re-extraction and before any hooks fire.
         Override to return a fresh instance for per-run state isolation.
+        Under durable execution, worker processes re-derive this instance from the deserialized
+        run context, so all per-run state must be derivable from `ctx`.
         Default: return `self` (shared across runs).
         """
         return self
@@ -435,6 +505,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Return a filtered or modified list. The result flows into both the model's request
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
+
+        On a deferred capability this runs only once the capability is loaded, and then receives
+        every function tool, as an always-on capability does. There is nothing to govern
+        before that: an unloaded capability's tools are neither advertised to the model nor
+        callable, so no filtering here could change what the model can reach.
         """
         return tool_defs
 
@@ -460,7 +535,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
     ) -> None:
-        """Called before the agent run starts. Observe-only; use wrap_run for modification."""
+        """Called before the agent run starts. Observe-only; use `wrap_run` for modification.
+
+        A realtime session is a run. ContextVars set here are ambient in its instruction
+        resolution, pump and tool tasks, and the caller's `async with` block.
+        """
 
     async def after_run(
         self,
@@ -476,6 +555,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         cancellation still propagates after this hook returns and the run still ends cancelled.
         Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+
+        For a realtime session, the result is produced when the session closes; a transformed result
+        becomes `session.result` before the caller leaves the `async with` boundary.
         """
         return result
 
@@ -496,7 +578,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Note: if the caller cancels the run (e.g. by breaking out of an
         `iter()` loop), this method receives an `asyncio.CancelledError`.
-        Implementations that hold resources should handle cleanup accordingly.
+        Implementations that hold resources should handle cleanup accordingly. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success.
+
+        A realtime session is a run: `handler()` resolves when the session closes. ContextVars set
+        before calling it are ambient in instruction resolution, pumps, tool tasks, and the caller's
+        block. Downward ContextVar propagation is one-way; keep bidirectional per-run state on the
+        `for_run` copy's instance attributes. Suppression and result transformation apply at the
+        session's `async with` boundary, after the caller may have observed events in real time.
         """
         return await handler()
 
@@ -518,7 +607,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
         the error and recover the run.
 
+        Cancellation is terminal: the hook may observe it and clean up, but cannot recover the
+        run to success.
+
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
+
+        For a realtime session, returning a recovery result sets `session.result` and suppresses the
+        error at the caller's `async with` boundary, after events may already have been observed.
         """
         raise error
 
@@ -547,6 +642,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         boundary: cancellation skips downstream hooks. Put cancellation-safe cleanup in
         [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+        (A hook that catches the `CancelledError` *and* calls `Task.uncancel()` takes over the
+        cancellation bookkeeping for that boundary, so this hook does fire for that node —
+        the run itself still ends cancelled at the next boundary.)
         """
         return result
 
@@ -567,17 +665,23 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
-        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and when manually driving
-        an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but it does **not** fire when
-        iterating over the run with bare `async for` (which yields stream events, not
-        node results).
+        Note: this hook fires however the run is driven -- [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], an
+        [`agent.iter()`][pydantic_ai.agent.Agent.iter] run advanced with
+        [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
+        loop, which advances through `next()` too. The one exception is the final
+        [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode] under `run_stream()`, which hands back
+        the result mid-stream and so only fires `before_node_run`.
 
         When using `agent.run()` with `event_stream_handler`, the handler wraps both
         streaming and graph advancement (i.e. the model call happens inside the wrapper).
         When using `agent.run_stream()`, the handler wraps only graph advancement — streaming
         happens before the wrapper because `run_stream()` must yield the stream to the caller
         while the stream context is still open, which cannot happen from inside a callback.
+
+        A cancelled run delivers `asyncio.CancelledError` through `handler()`. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success —
+        even a returned `End` result is discarded once a cancellation is pending.
         """
         return await handler(node)
 
@@ -610,15 +714,27 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Wraps the event stream for a streamed node. Can observe or transform events.
+        """Wrap a run or realtime session's consumer-facing event stream.
+
+        For classic runs, the wrapper is applied where each node's stream is produced, so it fires
+        however the run is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter]
+        and when the caller streams a node itself with `node.stream()`. For realtime sessions, it
+        wraps the `async for event in session` view. A wrapper must yield events appropriate for the
+        stream it wraps.
+
+        Transformations affect only what the stream consumer sees. They never change realtime
+        session history, tool execution, or the classic run's accumulated response and output.
 
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
-        `agent.run()` automatically enables streaming mode so this hook
-        fires even without an explicit `event_stream_handler`.
+        `agent.run()` and [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable
+        streaming mode so this hook fires even without an explicit `event_stream_handler`.
         """
-        async for event in stream:
-            yield event
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await _utils.aclose_if_supported(stream)
 
     # --- Model request lifecycle hooks ---
 

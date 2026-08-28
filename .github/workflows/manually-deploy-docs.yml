@@ -27,4 +27,4 @@ jobs:
           gh api repos/pydantic/unified-docs/dispatches \
             --method POST \
             -f event_type=docs-update \
-            -f "client_payload[source]=pydantic/pydantic-ai (manual)"
+            -f "client_payload[source]=pydantic/pydantic-ai@${{ github.sha }}"
