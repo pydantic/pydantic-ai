@@ -63,6 +63,7 @@ with try_import() as imports_successful:
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.test import TestModel
+    from pydantic_ai.native_tools import OpenRouterAdvisorToolSettings, OpenRouterWebSearchToolSettings
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -1053,11 +1054,10 @@ async def test_openrouter_supported_native_tools() -> None:
 
 
 async def test_openrouter_web_search_tool_request(allow_model_requests: None) -> None:
-    """`WebSearchTool` maps portable settings to an `openrouter:web_search` server tool.
+    """`WebSearchTool` maps portable and OpenRouter settings without reading another system's entry.
 
     A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
-    VCR test despite the module-level `vcr` mark; the provider-acceptance side is covered by the
-    VCR test.
+    VCR test despite the module-level `vcr` mark.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
@@ -1066,6 +1066,16 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
         capabilities=[
             NativeTool(
                 WebSearchTool(
+                    provider_settings={
+                        'openrouter': OpenRouterWebSearchToolSettings(
+                            engine='exa',
+                            mode='auto',
+                            max_results=5,
+                            max_total_results=8,
+                            max_characters=5_000,
+                        ),
+                        'anthropic': {'response_inclusion': 'excluded'},
+                    },
                     search_context_size='high',
                     user_location={'city': 'London', 'country': 'GB', 'region': 'England', 'timezone': 'Europe/London'},
                     allowed_domains=['pydantic.dev'],
@@ -1096,6 +1106,11 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
                 'allowed_domains': ['pydantic.dev'],
                 'excluded_domains': ['example.com'],
                 'max_uses': 2,
+                'engine': 'exa',
+                'mode': 'auto',
+                'max_results': 5,
+                'max_total_results': 8,
+                'max_characters': 5_000,
             },
         }
     ]
@@ -1294,9 +1309,8 @@ async def test_openrouter_advisor_tool_request(
     """`AdvisorTool` maps to an `openrouter:advisor` server-tool entry in the request `tools` array.
 
     Unit test with a mocked client because our cassette matchers aren't sensitive to the request
-    body, so a VCR test wouldn't pin the mapped payload. `forward_transcript` remains `False` so
-    OpenRouter uses its default context behavior until provider-specific native tool parameters
-    can expose this choice to users.
+    body, so a VCR test wouldn't pin the mapped payload. The separate settings test pins the
+    provider-specific `forward_transcript` option.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel(executor, provider=OpenRouterProvider(openai_client=mock_client))
@@ -1307,6 +1321,34 @@ async def test_openrouter_advisor_tool_request(
     assert result.output == 'done'
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['tools'] == [{'type': 'openrouter:advisor', 'parameters': expected_parameters}]
+
+
+async def test_openrouter_advisor_tool_settings(allow_model_requests: None) -> None:
+    """OpenRouter advisor settings control the provider's advisor parameters."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                AdvisorTool(
+                    model='anthropic/claude-opus-4.8',
+                    provider_settings={'openrouter': OpenRouterAdvisorToolSettings(forward_transcript=True)},
+                )
+            )
+        ],
+    )
+
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == [
+        {
+            'type': 'openrouter:advisor',
+            'parameters': {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': True},
+        }
+    ]
 
 
 @pytest.mark.parametrize('field_kwargs', [{'caching': '5m'}, {'max_uses': 3}])
@@ -1666,62 +1708,67 @@ async def test_openrouter_web_search_tool_usage_stream(allow_model_requests: Non
     assert 'annotations' not in stream.response.provider_details
 
 
-async def test_openrouter_web_search_annotations(allow_model_requests: None, openrouter_api_key: str) -> None:
-    """OpenRouter's `url_citation` annotations surface as the response's `annotations` provider detail.
-
-    Uses a model whose downstream provider has no native search, because OpenRouter only returns
-    annotations when a non-native search engine ran; native provider search returns none.
-    """
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('deepseek/deepseek-chat', provider=provider)
-    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+async def test_openrouter_web_search_annotations(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """OpenRouter sends the selected search engine and returns its `url_citation` annotations."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    provider_settings={'openrouter': OpenRouterWebSearchToolSettings(engine='exa', max_results=3)},
+                    max_uses=1,
+                )
+            )
+        ],
+    )
 
     result = await agent.run("Use web search to find Pydantic AI's GitHub repository and answer with its URL only.")
 
+    assert request_capture.body()['tools'] == snapshot(
+        [
+            {
+                'type': 'openrouter:web_search',
+                'parameters': {
+                    'search_context_size': 'medium',
+                    'max_uses': 1,
+                    'engine': 'exa',
+                    'max_results': 3,
+                },
+            }
+        ]
+    )
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.provider_details is not None
     annotations = response.provider_details['annotations']
-    assert annotations[0] == snapshot(
+    assert [
         {
-            'type': 'url_citation',
-            'url_citation': {
-                'end_index': 0,
-                'start_index': 0,
-                'title': 'AI Agent Framework, the Pydantic way',
-                'url': 'https://github.com/pydantic/pydantic-ai',
-                'content': """\
-# pydantic/pydantic-ai
-
-...
-
-- Stars: 19265
-- Forks: 2514
-- Watchers: 19265
-- Open issues: 702
-- License: MIT License
-- Homepage: https://pydantic.dev/pydantic-ai
-- Default branch: main
-- Created: 2024-06-21T15:55:04Z
-
-...
-
-AI Agent Framework, the Pydantic way
-
-...
-
-### Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.\
-""",
-            },
+            'type': annotation['type'],
+            'url': annotation['url_citation']['url'],
+            'has_content': bool(annotation['url_citation']['content']),
         }
-    )
-    assert [annotation['url_citation']['url'] for annotation in annotations] == snapshot(
+        for annotation in annotations
+    ] == snapshot(
         [
-            'https://github.com/pydantic/pydantic-ai',
-            'https://pydantic.dev/pydantic-ai',
-            'https://github.com/pydantic/pydantic-ai/releases/tag/v2.0.0',
-            'https://pydantic.dev/docs/ai/overview/',
-            'https://github.com/pydantic/pydantic-ai/tree/refs/tags/v1.44.0',
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai',
+                'has_content': True,
+            },
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai/blob/main/README.md',
+                'has_content': True,
+            },
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai/tree/v1.84.0',
+                'has_content': True,
+            },
         ]
     )
 

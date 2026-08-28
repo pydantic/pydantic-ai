@@ -563,10 +563,20 @@ def test_model_json_schema_with_capabilities():
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
+                'AdvisorProviderSettings': {
+                    'additionalProperties': False,
+                    'properties': {'openrouter': {'$ref': '#/$defs/OpenRouterAdvisorToolSettings'}},
+                    'title': 'AdvisorProviderSettings',
+                    'type': 'object',
+                },
                 'AdvisorTool': {
                     'properties': {
                         'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/AdvisorProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'model': {
                             'anyOf': [
                                 {
@@ -603,6 +613,31 @@ def test_model_json_schema_with_capabilities():
                     },
                     'required': ['model'],
                     'title': 'AdvisorTool',
+                    'type': 'object',
+                },
+                'AnthropicWebFetchToolSettings': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'use_cache': {'title': 'Use Cache', 'type': 'boolean'},
+                        'response_inclusion': {
+                            'enum': ['full', 'excluded'],
+                            'title': 'Response Inclusion',
+                            'type': 'string',
+                        },
+                    },
+                    'title': 'AnthropicWebFetchToolSettings',
+                    'type': 'object',
+                },
+                'AnthropicWebSearchToolSettings': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'response_inclusion': {
+                            'enum': ['full', 'excluded'],
+                            'title': 'Response Inclusion',
+                            'type': 'string',
+                        }
+                    },
+                    'title': 'AnthropicWebSearchToolSettings',
                     'type': 'object',
                 },
                 'AgentRetries': {
@@ -1466,6 +1501,42 @@ def test_model_json_schema_with_capabilities():
                     'title': 'MemoryTool',
                     'type': 'object',
                 },
+                'OpenRouterAdvisorToolSettings': {
+                    'additionalProperties': False,
+                    'properties': {'forward_transcript': {'title': 'Forward Transcript', 'type': 'boolean'}},
+                    'title': 'OpenRouterAdvisorToolSettings',
+                    'type': 'object',
+                },
+                'OpenRouterWebSearchToolSettings': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'engine': {
+                            'enum': ['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'],
+                            'title': 'Engine',
+                            'type': 'string',
+                        },
+                        'mode': {
+                            'enum': [
+                                'instant',
+                                'fast',
+                                'auto',
+                                'deep-lite',
+                                'deep',
+                                'deep-reasoning',
+                                'turbo',
+                                'basic',
+                                'advanced',
+                            ],
+                            'title': 'Mode',
+                            'type': 'string',
+                        },
+                        'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'max_total_results': {'title': 'Max Total Results', 'type': 'integer'},
+                        'max_characters': {'title': 'Max Characters', 'type': 'integer'},
+                    },
+                    'title': 'OpenRouterWebSearchToolSettings',
+                    'type': 'object',
+                },
                 'ModelSettings': {
                     'properties': {
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
@@ -1535,6 +1606,12 @@ def test_model_json_schema_with_capabilities():
                     'title': 'ToolSearchTool',
                     'type': 'object',
                 },
+                'WebFetchProviderSettings': {
+                    'additionalProperties': False,
+                    'properties': {'anthropic': {'$ref': '#/$defs/AnthropicWebFetchToolSettings'}},
+                    'title': 'WebFetchProviderSettings',
+                    'type': 'object',
+                },
                 'UploadedFile': {
                     'properties': {
                         'file_id': {'title': 'File Id', 'type': 'string'},
@@ -1578,10 +1655,23 @@ def test_model_json_schema_with_capabilities():
                     'title': 'UploadedFile',
                     'type': 'object',
                 },
+                'WebSearchProviderSettings': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'anthropic': {'$ref': '#/$defs/AnthropicWebSearchToolSettings'},
+                        'openrouter': {'$ref': '#/$defs/OpenRouterWebSearchToolSettings'},
+                    },
+                    'title': 'WebSearchProviderSettings',
+                    'type': 'object',
+                },
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/WebFetchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1611,6 +1701,10 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'search_context_size': {
                             'default': 'medium',
                             'enum': ['low', 'medium', 'high'],

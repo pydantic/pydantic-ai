@@ -235,10 +235,12 @@ try:
         BetaUsage,
         BetaWebFetchTool20250910Param,
         BetaWebFetchTool20260209Param,
+        BetaWebFetchTool20260318Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
         BetaWebSearchTool20260209Param,
+        BetaWebSearchTool20260318Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
@@ -376,6 +378,10 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...
     'text_editor_code_execution',
 )
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
+# Web tool versions that provision code execution server-side.
+_ANTHROPIC_CODE_EXECUTING_WEB_TOOL_TYPES = frozenset(
+    {'web_search_20260209', 'web_fetch_20260209', 'web_search_20260318', 'web_fetch_20260318'}
+)
 # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
 # `tool_addition` accepted and honored verified live on `claude-opus-4-8`: a boundary on the block
 # writes and reads back the full prefix. It can end a mid-conversation `system` entry, where a
@@ -1363,14 +1369,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The native memory tool is client-executed and surfaces as a regular `tool_use` block.
         enabled_server_tool_names.discard('memory')
 
-        implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
         if 'code_execution' in enabled_server_tool_names:
-            enabled_server_tool_names.update(implicit_code_execution_names)
-        # The 20260209 web tools provision code execution for dynamic filtering server-side.
-        if self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
-            isinstance(tool, WebSearchTool | WebFetchTool) for tool in model_request_parameters.native_tools
-        ):
-            enabled_server_tool_names.update(implicit_code_execution_names)
+            enabled_server_tool_names.update(_ANTHROPIC_CODE_EXECUTION_TOOL_NAMES)
+        # Newer web tools provision code execution server-side, including when an explicit setting
+        # selects 20260318 on a profile that does not otherwise use dynamic filtering.
+        if any(tool.get('type') in _ANTHROPIC_CODE_EXECUTING_WEB_TOOL_TYPES for tool in native_tools):
+            enabled_server_tool_names.update(_ANTHROPIC_CODE_EXECUTION_TOOL_NAMES)
         return frozenset(enabled_server_tool_names)
 
     async def _process_streamed_response(
@@ -1441,9 +1445,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, supports_dynamic_filtering: bool
-    ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
+        tool: WebSearchTool,
+        supports_dynamic_filtering: bool,
+    ) -> BetaWebSearchTool20260318Param | BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        if (response_inclusion := settings.get('response_inclusion')) is not None:
+            return BetaWebSearchTool20260318Param(
+                name='web_search',
+                type='web_search_20260318',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                user_location=user_location,
+                response_inclusion=response_inclusion,
+            )
         if supports_dynamic_filtering:
             return BetaWebSearchTool20260209Param(
                 name='web_search',
@@ -1464,9 +1480,31 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_dynamic_filtering: bool
-    ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
+        tool: WebFetchTool,
+        supports_dynamic_filtering: bool,
+    ) -> tuple[
+        BetaWebFetchTool20260318Param | BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param,
+        str | None,
+    ]:
         citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        use_cache = settings.get('use_cache')
+        response_inclusion = settings.get('response_inclusion')
+        if use_cache is not None or response_inclusion is not None:
+            web_fetch_tool = BetaWebFetchTool20260318Param(
+                name='web_fetch',
+                type='web_fetch_20260318',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                citations=citations,
+                max_content_tokens=tool.max_content_tokens,
+            )
+            if use_cache is not None:
+                web_fetch_tool['use_cache'] = use_cache
+            if response_inclusion is not None:
+                web_fetch_tool['response_inclusion'] = response_inclusion
+            return web_fetch_tool, None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
