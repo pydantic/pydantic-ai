@@ -1203,9 +1203,23 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
     assert capability.calls == 1
 
 
+@pytest.fixture(scope='module')
+def prefect_test_server() -> Generator[None, None, None]:
+    """Run the module's Prefect flow tests against an isolated test server.
+
+    The implicit ephemeral server uses the shared default PREFECT_HOME and a short
+    connect timeout that flakes on slow CI runners; the test harness gives an isolated
+    database and a 60s startup budget, mirroring tests/durable_exec/test_prefect.py.
+    """
+    from prefect.testing.utilities import prefect_test_harness
+
+    with prefect_test_harness(server_startup_timeout=60):
+        yield
+
+
 @requires_prefect
 @pytest.mark.xdist_group(name='prefect')
-async def test_prefect_capability_operation_end_to_end() -> None:
+async def test_prefect_capability_operation_end_to_end(prefect_test_server: None) -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='prefect_operations', capabilities=[capability, PrefectDurability()])
 
@@ -1220,7 +1234,9 @@ async def test_prefect_capability_operation_end_to_end() -> None:
 
 @requires_prefect
 @pytest.mark.xdist_group(name='prefect')
-async def test_prefect_capability_operation_cache_identity_includes_context_and_model() -> None:
+async def test_prefect_capability_operation_cache_identity_includes_context_and_model(
+    prefect_test_server: None,
+) -> None:
     class CacheIdentityOperation(AbstractCapability[str]):
         id = 'cache_identity'
 
