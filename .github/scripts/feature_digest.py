@@ -76,9 +76,11 @@ def _sanitize_reason(value: str) -> str:
     Links and channel-wide mention keywords are dropped, not escaped: a
     prompt-injected reason must not be able to make anyone click or ping.
     """
+    # Filter after `_plain` so invisible characters cannot reassemble a
+    # mention or link once they are stripped downstream.
     words = [
         word
-        for word in value.split()
+        for word in _plain(value).split()
         if '://' not in word
         and not word.casefold().startswith('www.')
         and not any(mention in word.casefold() for mention in ('@channel', '@here', '@everyone'))
@@ -335,15 +337,20 @@ def finalize_picks(client: attention.GitHubClient, numbers: list[int]) -> tuple[
     for number in numbers:
         try:
             current = cast(dict[str, Any], client.get(f'/repos/{REPO}/issues/{number}'))
-            if str(current.get('state') or '').casefold() != 'open' or CONSIDERED_LABEL in _labels(current):
-                lines.append(f'#{number}: already settled, not relabeled')
+            # A pick closed since delivery is still labeled (labels apply to
+            # closed issues): reopening must not surface it a second time.
+            if CONSIDERED_LABEL in _labels(current):
+                lines.append(f'#{number}: already marked, not relabeled')
                 continue
             client.post(f'/repos/{REPO}/issues/{number}/labels', {'labels': [CONSIDERED_LABEL]})
             lines.append(f'#{number}: marked considered')
-        except urllib.error.HTTPError as exc:
-            exc.close()
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+            error = type(exc).__name__
+            if isinstance(exc, urllib.error.HTTPError):
+                error += f' {exc.code}'
+                exc.close()
             failed.append(number)
-            lines.append(f'#{number}: not relabeled (HTTPError {exc.code}); it may be surfaced again')
+            lines.append(f'#{number}: not relabeled ({error}); it may be surfaced again')
     return lines, failed
 
 
