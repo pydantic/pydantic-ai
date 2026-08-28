@@ -17,11 +17,13 @@ import urllib.request
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-# Stdlib-only imports: production invokes this script with the runner's bare
-# `python`, which has no third-party packages installed. The repo-wide ban on
-# `typing.TypedDict` exists for pydantic validation on Python 3.10/3.11, and
-# this script uses no pydantic.
+# The workflows install exactly one pinned third-party package for these
+# scripts: pydantic, the typed boundary in `triage_models`. The repo-wide ban
+# on `typing.TypedDict` exists for pydantic validation on Python 3.10/3.11;
+# these scripts only run on the newer runner Python.
 from typing import Any, Literal, TypedDict, cast  # noqa: TID251
+
+from triage_models import AgentItem, IssueEvent, agent_items, item_labels, parse_time, snapshot_candidates
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
@@ -110,10 +112,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-class Decision(TypedDict):
+class Decision(AgentItem):
     """The complete model-controlled surface."""
 
-    item_number: int
     next_actor: Literal['maintainer', 'contributor', 'automation', 'none', 'uncertain']
     confidence: Literal['high', 'medium', 'low']
 
@@ -258,10 +259,6 @@ class GitHubClient:
         return self._maintainers[key]
 
 
-def _parse_time(value: str) -> dt.datetime:
-    return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
-
-
 def _link_path(links: str | None, relation: str) -> str:
     if not links:
         return ''
@@ -271,10 +268,6 @@ def _link_path(links: str | None, relation: str) -> str:
             parsed = urllib.parse.urlparse(url)
             return f'{parsed.path}?{parsed.query}'
     return ''
-
-
-def _labels(item: Mapping[str, Any]) -> set[str]:
-    return {str(label['name']) for label in item.get('labels', [])}
 
 
 def _login(entry: Mapping[str, Any]) -> str:
@@ -410,11 +403,11 @@ def build_snapshot(client: GitHubClient, repo: str, *, now: dt.datetime) -> dict
     for result in _candidate_page(client, repo, now=now):
         number = int(result['number'])
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-        labels = _labels(current)
+        labels = item_labels(current)
         updated_at = str(current['updated_at'])
         if (
             current.get('state') != 'open'
-            or _parse_time(updated_at) > cutoff
+            or parse_time(updated_at) > cutoff
             or _ACTION_LABEL in labels
             or _ESCALATED_LABEL in labels
         ):
@@ -447,67 +440,6 @@ def write_snapshot(client: GitHubClient, repo: str, path: str, *, now: dt.dateti
     destination.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding='utf-8')
     candidates = cast(list[object], snapshot['candidates'])
     return [f'wrote {len(candidates)} attention candidate(s)']
-
-
-def _snapshot_candidates(path: str) -> dict[int, str]:
-    """Return the trusted candidate map (number -> snapshot updated_at)."""
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Snapshot must contain a candidates list')
-    data = cast(Mapping[str, object], loaded)
-    raw_candidates = data.get('candidates')
-    if not isinstance(raw_candidates, list):
-        raise ValueError('Snapshot must contain a candidates list')
-    candidates: dict[int, str] = {}
-    for value in cast(list[object], raw_candidates):
-        if not isinstance(value, Mapping):
-            raise ValueError('Snapshot candidate must be an object')
-        candidate = cast(Mapping[str, object], value)
-        number = candidate.get('number')
-        updated_at = candidate.get('updated_at')
-        if not isinstance(number, int) or number < 1 or number in candidates or not isinstance(updated_at, str):
-            raise ValueError('Snapshot candidates must have unique positive numbers and timestamps')
-        candidates[number] = updated_at
-    if len(candidates) > _CANDIDATE_LIMIT:
-        raise ValueError('Snapshot exceeds the candidate limit')
-    return candidates
-
-
-def _parse_decisions(path: str) -> list[Decision]:
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Agent output must contain an items list')
-    data = cast(Mapping[str, object], loaded)
-    raw_items = data.get('items')
-    if not isinstance(raw_items, list):
-        raise ValueError('Agent output must contain an items list')
-    decisions: list[Decision] = []
-    for value in cast(list[object], raw_items):
-        if not isinstance(value, Mapping):
-            continue
-        decision = cast(Mapping[str, object], value)
-        if decision.get('type') != 'record_attention_decision':
-            continue
-        number = decision.get('item_number')
-        actor = decision.get('next_actor')
-        confidence = decision.get('confidence')
-        if not isinstance(number, str) or re.fullmatch(r'[1-9][0-9]*', number) is None:
-            raise ValueError('Decision item_number must be a positive decimal string')
-        if actor not in {'maintainer', 'contributor', 'automation', 'none', 'uncertain'}:
-            raise ValueError(f'Invalid next_actor: {actor!r}')
-        if confidence not in {'high', 'medium', 'low'}:
-            raise ValueError(f'Invalid confidence: {confidence!r}')
-        decisions.append(
-            Decision(
-                item_number=int(number),
-                next_actor=cast(Literal['maintainer', 'contributor', 'automation', 'none', 'uncertain'], actor),
-                confidence=cast(Literal['high', 'medium', 'low'], confidence),
-            )
-        )
-    numbers = [decision['item_number'] for decision in decisions]
-    if len(numbers) > _CANDIDATE_LIMIT or len(numbers) != len(set(numbers)):
-        raise ValueError('Agent output contains too many or duplicate decisions')
-    return decisions
 
 
 def ensure_labels(client: GitHubClient, repo: str) -> None:
@@ -633,7 +565,7 @@ def _ensure_recipients(
     """Return who to notify, or None when ownership could not be decided."""
     number = int(item['number'])
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    if current.get('state') != 'open' or _ACTION_LABEL not in _labels(current):
+    if current.get('state') != 'open' or _ACTION_LABEL not in item_labels(current):
         raise RuntimeError('Attention state changed during owner selection')
     # Whoever a human put on the item owns it: the monitor never reassigns
     # around an explicit decision. Its own fallback assignment is a placeholder
@@ -654,7 +586,7 @@ def _ensure_recipients(
         client.delete(f'/repos/{repo}/issues/{number}/assignees', {'assignees': current_maintainers})
 
     assigned = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    if assigned.get('state') != 'open' or _ACTION_LABEL not in _labels(assigned):
+    if assigned.get('state') != 'open' or _ACTION_LABEL not in item_labels(assigned):
         raise RuntimeError('Attention state changed during owner assignment')
     assigned_maintainers = _maintainer_assignees(client, repo, assigned)
     if [login.casefold() for login in assigned_maintainers] != [owner.casefold()]:
@@ -674,21 +606,21 @@ def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> N
 
 def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_path: str) -> list[str]:
     """Revalidate allowlisted model decisions, then assign and label them."""
-    candidates = _snapshot_candidates(snapshot_path)
-    decisions = _parse_decisions(output_path)
-    unknown = {decision['item_number'] for decision in decisions} - candidates.keys()
+    candidates = snapshot_candidates(snapshot_path, limit=_CANDIDATE_LIMIT)
+    decisions = agent_items(output_path, Decision, tag='record_attention_decision', limit=_CANDIDATE_LIMIT)
+    unknown = {decision.item_number for decision in decisions} - candidates.keys()
     if unknown:
         raise ValueError(f'Agent output contains numbers outside the snapshot: {sorted(unknown)}')
-    if {decision['item_number'] for decision in decisions} != candidates.keys():
+    if {decision.item_number for decision in decisions} != candidates.keys():
         raise ValueError('Agent output must classify every snapshot candidate exactly once')
     ensure_labels(client, repo)
     lines: list[str] = []
     failures: list[str] = []
     for decision in decisions:
-        number = decision['item_number']
+        number = decision.item_number
         try:
             current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-            labels = _labels(current)
+            labels = item_labels(current)
             if (
                 current.get('state') != 'open'
                 or str(current.get('updated_at')) != candidates[number]
@@ -696,17 +628,17 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             ):
                 lines.append(f'#{number}: skipped because the item changed after classification')
                 continue
-            if decision['confidence'] != 'high' or decision['next_actor'] == 'uncertain':
+            if decision.confidence != 'high' or decision.next_actor == 'uncertain':
                 lines.append(f'#{number}: left unclassified for a future run')
                 continue
-            if decision['next_actor'] != 'maintainer':
+            if decision.next_actor != 'maintainer':
                 lines.append(f'#{number}: did not request maintainer attention')
                 continue
             for label in labels.intersection(_LIFECYCLE_LABELS):
                 _remove_label(client, repo, number, label)
             _add_labels(client, repo, number, [_ACTION_LABEL])
             attention_item = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-            if attention_item.get('state') != 'open' or _ACTION_LABEL not in _labels(attention_item):
+            if attention_item.get('state') != 'open' or _ACTION_LABEL not in item_labels(attention_item):
                 raise RuntimeError('Attention state changed while applying the request')
             recipients = _ensure_recipients(client, repo, attention_item)
             if recipients is None:
@@ -741,7 +673,7 @@ def _advance_stage(client: GitHubClient, repo: str, number: int, labels: set[str
 
 def _event_time(event: Mapping[str, Any]) -> dt.datetime | None:
     value = event.get('created_at') or event.get('submitted_at')
-    return _parse_time(str(value)) if value else None
+    return parse_time(str(value)) if value else None
 
 
 def _label_transition(timeline: Sequence[dict[str, Any]], label: str) -> tuple[dt.datetime, dict[str, Any]] | None:
@@ -863,7 +795,7 @@ def _status(
     probe = _MaintainerProbe(client, repo)
     parts = ['pull request' if 'pull_request' in item else 'issue']
     if opened := item.get('created_at'):
-        parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
+        parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, parse_time(str(opened)))}')
     # `comments` is GitHub's own total. The timeline holds only the newest pages,
     # so counting it would understate a long-lived thread.
     # It counts issue comments only, so a PR carrying nothing but reviews reads
@@ -924,7 +856,7 @@ def _notice_if_current(
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     current_transition = _transition(events, stage)
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    labels = _labels(current)
+    labels = item_labels(current)
     maintainers = _maintainer_assignees(client, repo, current)
     if (
         current.get('state') != 'open'
@@ -1015,7 +947,7 @@ def _reconcile_item(
     now: dt.datetime,
 ) -> tuple[str, Notice | None] | None:
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    labels = _labels(current)
+    labels = item_labels(current)
     if current.get('state') != 'open':
         # Closing an item is the ultimate resolution: tear down the lifecycle
         # labels so a later reopen can't wake an ancient SLA clock.
@@ -1078,7 +1010,7 @@ def _reconcile_item(
 def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> str | None:
     """Wake, recycle, or retire one escalated item."""
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    labels = _labels(current)
+    labels = item_labels(current)
     if _ACTION_LABEL in labels or _ESCALATED_LABEL not in labels:
         return None
     if _DELIVERED_LABEL in labels:
@@ -1172,7 +1104,7 @@ def reconcile(
     )
     for item in dormant:
         number = int(item['number'])
-        if number in processed or _ACTION_LABEL in _labels(item):
+        if number in processed or _ACTION_LABEL in item_labels(item):
             continue
         try:
             if line := _sweep_escalated_item(client, repo, number, now=now):
@@ -1330,15 +1262,12 @@ def _recent_unassignment(events: Sequence[dict[str, Any]], *, now: dt.datetime) 
     assignee.
     """
     owner_keys = {owner.casefold() for owner in MAINTAINER_OWNERS}
-    for event in events:
-        if str(event.get('event') or '') != 'unassigned':
+    for event in (IssueEvent.model_validate(value) for value in events):
+        if event.event != 'unassigned':
             continue
-        performer = _nested_field(event, 'assigner', 'login').casefold()
-        target = _nested_field(event, 'assignee', 'login').casefold()
-        if performer not in owner_keys or target not in owner_keys:
+        if event.assigner.login.casefold() not in owner_keys or event.assignee.login.casefold() not in owner_keys:
             continue
-        created = event.get('created_at')
-        if isinstance(created, str) and now - _parse_time(created) < dt.timedelta(days=ROUTING_UNASSIGN_BACKOFF_DAYS):
+        if event.created_at and now - parse_time(event.created_at) < dt.timedelta(days=ROUTING_UNASSIGN_BACKOFF_DAYS):
             return True
     return False
 
@@ -1360,18 +1289,16 @@ def _gate_entry_time(events: Sequence[dict[str, Any]]) -> dt.datetime | None:
     present: set[str] = set()
     entered: dt.datetime | None = None
     left: dt.datetime | None = None
-    for event in events:
-        name = _nested_field(event, 'label', 'name')
+    for event in (IssueEvent.model_validate(value) for value in events):
+        name = event.label.name
         if name not in PRIORITY_GATE_LABELS:
             continue
-        kind = str(event.get('event') or '')
-        created = event.get('created_at')
-        when = _parse_time(created) if isinstance(created, str) else None
-        if kind == 'labeled' and when is not None:
+        when = parse_time(event.created_at) if event.created_at else None
+        if event.event == 'labeled' and when is not None:
             if not present and (left is None or when - left > _GATE_RELABEL_GRACE):
                 entered = when
             present.add(name)
-        elif kind == 'unlabeled':
+        elif event.event == 'unlabeled':
             present.discard(name)
             if not present:
                 left = when
@@ -1403,7 +1330,7 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
         if _recent_unassignment(events, now=now):
             continue
-        entered = _gate_entry_time(events) or _parse_time(str(candidate['created_at']))
+        entered = _gate_entry_time(events) or parse_time(str(candidate['created_at']))
         if oldest is None or entered < oldest[1]:
             oldest = (number, entered)
     untriaged = _search_count(client, _untriaged_query(repo))
@@ -1439,7 +1366,7 @@ def _weekly_status(
     """Describe recent interaction without scanning or interpreting discussion prose."""
     parts = ['pull request' if 'pull_request' in item else 'issue']
     if opened := item.get('created_at'):
-        parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, _parse_time(str(opened)))}')
+        parts.append(f'opened by @{_login(item) or "unknown"} {_age(now, parse_time(str(opened)))}')
     if comments := int(item.get('comments') or 0):
         parts.append(f'{comments} issue comment{"" if comments == 1 else "s"}')
     replies = [event for event in timeline if structured_reply(event) is not None]
@@ -1476,7 +1403,7 @@ def _weekly_items(
             continue
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
         assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
-        labels = _labels(current)
+        labels = item_labels(current)
         if (
             str(current.get('state') or '').casefold() != 'open'
             or owner.casefold() not in assignees
@@ -1484,7 +1411,7 @@ def _weekly_items(
         ):
             continue
         timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100')
-        updated = _age(now, _parse_time(str(current['updated_at'])))
+        updated = _age(now, parse_time(str(current['updated_at'])))
         title = _slack_escape(str(current.get('title') or ''))[:120]
         status = _slack_escape(_weekly_status(current, timeline, owner, now=now))
         label = f'#{number} {title}'.rstrip()
@@ -1514,12 +1441,12 @@ def _legacy_items(
         number = int(match['number'])
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
         assignees = {str(value.get('login') or '').casefold() for value in current.get('assignees', [])}
-        updated_at = _parse_time(str(current['updated_at']))
+        updated_at = parse_time(str(current['updated_at']))
         if (
             str(current.get('state') or '').casefold() != 'open'
             or assignees.intersection(owner_keys)
             or current.get('draft') is True
-            or _parse_time(str(current['created_at'])).date() >= dt.date.fromisoformat(ROUTING_RECOVERY_EPOCH)
+            or parse_time(str(current['created_at'])).date() >= dt.date.fromisoformat(ROUTING_RECOVERY_EPOCH)
         ):
             continue
         timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline?per_page=100')
@@ -1530,11 +1457,6 @@ def _legacy_items(
             f'• <https://github.com/{repo}/issues/{number}|{label}> — updated {_age(now, updated_at)} · {status}'
         )
     return lines
-
-
-def _nested_field(event: Mapping[str, Any], key: str, field: str) -> str:
-    value = event.get(key)
-    return str(cast(Mapping[str, object], value).get(field) or '') if isinstance(value, Mapping) else ''
 
 
 def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
@@ -1553,20 +1475,20 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     lines: list[str] = []
     for match in matches:
         number = int(match['number'])
-        for event in client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2):
-            kind = str(event.get('event') or '')
+        raw_events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=2)
+        for event in (IssueEvent.model_validate(value) for value in raw_events):
+            kind = event.event
             if kind not in ('labeled', 'unlabeled', 'unassigned'):
                 continue
-            created = event.get('created_at')
-            if not isinstance(created, str) or _parse_time(created) < since:
+            if not event.created_at or parse_time(event.created_at) < since:
                 continue
             # On (un)assigned events GitHub puts the *removed assignee* in
             # `actor`; the person who acted is in `assigner`.
-            performer = _nested_field(event, 'assigner', 'login') if kind == 'unassigned' else _actor(event)
+            performer = event.assigner.login if kind == 'unassigned' else event.actor.login
             if performer.casefold() not in owner_keys:
                 continue
             if kind == 'unassigned':
-                target = _nested_field(event, 'assignee', 'login')
+                target = event.assignee.login
                 # Routing only ever assigns maintainer owners, so only those
                 # unassignments correct the automation; removing a stale
                 # contributor or bot assignee is routine cleanup.
@@ -1574,7 +1496,7 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
                     continue
                 lines.append(f'• #{number}: @{_slack_escape(performer)} unassigned @{_slack_escape(target)}')
             else:
-                name = _nested_field(event, 'label', 'name')
+                name = event.label.name
                 if not name.startswith('p:'):
                     continue
                 verb = 'added' if kind == 'labeled' else 'removed'
@@ -1766,7 +1688,7 @@ def _finalize_notice(
 ) -> str | None:
     number = notice['number']
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    labels = _labels(current)
+    labels = item_labels(current)
     stage = _stage(labels)
     if current.get('state') != 'open' or _ACTION_LABEL not in labels or stage != notice['expected_stage']:
         return None
