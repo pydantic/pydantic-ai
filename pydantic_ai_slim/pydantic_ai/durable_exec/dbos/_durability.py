@@ -246,6 +246,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             return
         await super()._dispatch_event_stream_event(ctx, event)
 
+    @property
+    def _batch_event_stream_dispatch(self) -> bool:
+        return not self._in_legacy_workflow.get()
+
     # --- Capability hooks ---
 
     async def wrap_run(
