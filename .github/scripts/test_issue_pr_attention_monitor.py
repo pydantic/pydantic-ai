@@ -3,9 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
-import os
 import re
-import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -372,36 +370,47 @@ def test_parse_decisions_rejects_injection_and_duplicates(tmp_path: Path):
     output = tmp_path / 'output.json'
     write_output(output, ['1; echo pwned'])
     with pytest.raises(ValueError, match='positive decimal'):
-        monitor._parse_decisions(str(output))
+        monitor.agent_items(
+            str(output), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
 
     write_output(output, ['1', '1'])
     with pytest.raises(ValueError, match='duplicate'):
-        monitor._parse_decisions(str(output))
+        monitor.agent_items(
+            str(output), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
 
 
 @pytest.mark.parametrize(
     ('contents', 'message'),
     [
-        ([], 'Snapshot must contain'),
-        ({}, 'Snapshot must contain'),
-        ({'candidates': [None]}, 'candidate must be'),
-        ({'candidates': [{'number': 0, 'updated_at': OLD}]}, 'unique positive'),
+        ([], 'should be an object'),
+        ({}, 'candidates'),
+        ({'candidates': [None]}, 'should be an object'),
+        ({'candidates': [{'number': 0, 'updated_at': OLD}]}, 'greater than or equal to 1'),
     ],
 )
 def test_snapshot_validation_rejects_invalid_shapes(tmp_path: Path, contents: object, message: str):
     path = tmp_path / 'snapshot.json'
     path.write_text(json.dumps(contents), encoding='utf-8')
     with pytest.raises(ValueError, match=message):
-        monitor._snapshot_candidates(str(path))
+        monitor.snapshot_candidates(str(path), limit=monitor._CANDIDATE_LIMIT)
 
 
 def test_agent_output_requires_items_but_ignores_other_safe_outputs(tmp_path: Path):
     path = tmp_path / 'output.json'
     path.write_text('{}', encoding='utf-8')
     with pytest.raises(ValueError, match='items list'):
-        monitor._parse_decisions(str(path))
+        monitor.agent_items(
+            str(path), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
     path.write_text(json.dumps({'items': [None, {'type': 'noop'}]}), encoding='utf-8')
-    assert monitor._parse_decisions(str(path)) == []
+    assert (
+        monitor.agent_items(
+            str(path), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
+        == []
+    )
 
 
 def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
@@ -750,11 +759,11 @@ def test_apply_rejects_unknown_actor_or_confidence(tmp_path: Path):
     write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
 
     write_output(output, ['7'], next_actor='attacker')
-    with pytest.raises(ValueError, match='Invalid next_actor'):
+    with pytest.raises(ValueError, match='next_actor'):
         monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot))
 
     write_output(output, ['7'], confidence='certain')
-    with pytest.raises(ValueError, match='Invalid confidence'):
+    with pytest.raises(ValueError, match='confidence'):
         monitor.apply_decisions(FakeClient({7: item(7)}), 'r', str(output), str(snapshot))
 
 
@@ -1054,12 +1063,14 @@ def test_snapshot_and_decision_batch_limits_are_enforced(tmp_path: Path):
     snapshot = tmp_path / 'snapshot.json'
     write_snapshot(snapshot, [{'number': n, 'updated_at': OLD} for n in range(1, monitor._CANDIDATE_LIMIT + 2)])
     with pytest.raises(ValueError, match='candidate limit'):
-        monitor._snapshot_candidates(str(snapshot))
+        monitor.snapshot_candidates(str(snapshot), limit=monitor._CANDIDATE_LIMIT)
 
     output = tmp_path / 'output.json'
     write_output(output, [str(n) for n in range(1, monitor._CANDIDATE_LIMIT + 2)])
     with pytest.raises(ValueError, match='too many or duplicate'):
-        monitor._parse_decisions(str(output))
+        monitor.agent_items(
+            str(output), monitor.Decision, tag='record_attention_decision', limit=monitor._CANDIDATE_LIMIT
+        )
 
 
 def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -2433,6 +2444,17 @@ def test_operations_workflow_routes_all_notices_to_the_triage_channel():
         assert checkout['with']['persist-credentials'] is False
 
 
+def test_every_script_running_job_installs_the_pinned_boundary_dependency():
+    """pydantic is the scripts' one required package; every job that runs one pins it exactly."""
+    for name in ('issue-pr-attention-monitor.yml', 'pydantic-ai-owner-routing.yml'):
+        jobs = yaml.safe_load((Path(__file__).parent.parent / 'workflows' / name).read_text())['jobs']
+        for job_name, job in jobs.items():
+            runs = [str(step.get('run', '')) for step in job.get('steps', [])]
+            if not any('python .github/scripts/' in run for run in runs):
+                continue
+            assert any("pip install --quiet 'pydantic==" in run for run in runs), (name, job_name)
+
+
 def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
     workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
     text = workflow.read_text()
@@ -2485,18 +2507,6 @@ def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolate
         action = jobs[job_name]['steps'][0]
         assert action['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
         assert action['with']['webhook'] == '${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}'
-
-
-def test_monitor_imports_with_stdlib_only():
-    # Production invokes the script with the runner's bare `python` (no venv,
-    # no third-party packages); `-S` blocks site-packages to reproduce that.
-    result = subprocess.run(
-        [sys.executable, '-S', '-c', 'import issue_pr_attention_monitor'],
-        env={**os.environ, 'PYTHONPATH': str(Path(__file__).parent)},
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 class StubResponse(io.BytesIO):

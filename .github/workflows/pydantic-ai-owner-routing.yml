@@ -46,13 +46,17 @@ jobs:
           sparse-checkout: |
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_models.py
             .github/scripts/triage_telemetry.py
           sparse-checkout-cone-mode: false
-      - name: Install the telemetry dependency (best effort)
-        # Telemetry rides along; a registry outage must not stop the GitHub
-        # write path, and the scripts no-op emission when logfire is absent.
-        # The exact pin keeps a compromised new release away from these jobs.
-        run: python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Select routing decisions
         id: select
         env:
@@ -93,13 +97,17 @@ jobs:
           sparse-checkout: |
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_models.py
             .github/scripts/triage_telemetry.py
           sparse-checkout-cone-mode: false
-      - name: Install the telemetry dependency (best effort)
-        # Telemetry rides along; a registry outage must not stop the GitHub
-        # write path, and the scripts no-op emission when logfire is absent.
-        # The exact pin keeps a compromised new release away from these jobs.
-        run: python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Revalidate and prepare canonical routing intent
         id: prepare
         env:

@@ -37,6 +37,10 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Reconcile active attention items
         id: reconcile
         env:
@@ -62,6 +66,10 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Revalidate attention notices immediately before delivery
         id: prepare
         env:
@@ -92,6 +100,10 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Finalize delivered attention notices
         env:
           ATTENTION_NOTICES: '{"items":${{ needs.notify.outputs.notice_items }}}'
@@ -122,11 +134,14 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
-      - name: Install the telemetry dependency (best effort)
-        # Telemetry rides along; a registry outage must not stop the GitHub
-        # write path, and the scripts no-op emission when logfire is absent.
-        # The exact pin keeps a compromised new release away from these jobs.
-        run: python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Count repository-wide attention coverage
         id: census
         env:

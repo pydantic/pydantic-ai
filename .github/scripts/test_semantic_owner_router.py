@@ -1046,6 +1046,7 @@ def test_workflow_is_notification_first_and_least_privilege():
         'matrix': {'route': '${{ fromJSON(needs.select.outputs.routes) }}'},
     }
     assert jobs['route']['concurrency']['group'] == 'semantic-owner-${{ github.repository }}-${{ matrix.route.number }}'
+    # steps: checkout, pinned dependency install, then the script steps.
     prepare, notify, assign = jobs['route']['steps'][2:]
     select_step = jobs['select']['steps'][2]
     assert set(select_step['env']) == {
