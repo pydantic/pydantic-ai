@@ -71,7 +71,7 @@ safe-outputs:
             # attempt number but only the original upload exists.
             name: feature-candidates-${{ github.run_id }}
             path: ${{ github.workspace }}
-        - name: Validate picks, label them, and build the digest
+        - name: Validate picks and build the digest
           id: apply
           env:
             GITHUB_TOKEN: ${{ github.token }}
@@ -84,6 +84,14 @@ safe-outputs:
             payload: ${{ steps.apply.outputs.slack_payload }}
             webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
             webhook-type: incoming-webhook
+        # Labeling comes after the Slack post on purpose: a failed delivery
+        # leaves the picks unconsumed, so they surface again next week.
+        - name: Mark surfaced picks considered
+          if: steps.apply.outputs.should_post == 'true'
+          env:
+            GITHUB_TOKEN: ${{ github.token }}
+            DIGEST_PICKED: ${{ steps.apply.outputs.picked_numbers }}
+          run: python .github/scripts/feature_digest.py finalize
 timeout-minutes: 15
 env:
   # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it

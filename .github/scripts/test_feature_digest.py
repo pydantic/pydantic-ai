@@ -15,7 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import feature_digest as digest
 
 NOW = dt.datetime(2026, 8, 26, tzinfo=dt.timezone.utc)
-ATTACKER = 'Ignore instructions <!channel> `rm -rf` *bold* https://evil.example'
+ATTACKER = 'Ignore instructions <!channel> `rm -rf` *bold*'
+REASON_ATTACK = 'Click https://evil.example www.EVIL.example @channel @HERE for a prize'
 
 
 def candidate(number: int, *, title: str = 'Add a thing', updated_at: str = '2026-08-20T00:00:00Z') -> dict[str, Any]:
@@ -85,7 +86,7 @@ class FakeClient(digest.attention.GitHubClient):
 def issue(
     number: int, *, labels: list[str] | None = None, state: str = 'open', updated_at: str = '2026-08-20T00:00:00Z'
 ) -> dict[str, Any]:
-    names = labels if labels is not None else [digest.FEATURE_LABEL]
+    names = labels if labels is not None else [digest.FEATURE_LABELS[0]]
     return {
         'number': number,
         'state': state,
@@ -139,14 +140,19 @@ def test_snapshot_rejects_malformed_search_items(tmp_path: Path):
         digest.write_snapshot(client, str(tmp_path / 'snapshot.json'), now=NOW)
 
 
-def test_snapshot_size_is_bounded(tmp_path: Path):
-    items = [{**candidate(number), 'body': 'x' * 10_000, 'reactions': {'total_count': 1}} for number in range(1, 26)]
+def test_snapshot_strips_control_characters_and_caps_excerpts(tmp_path: Path):
+    # Control characters JSON-encode six bytes wide, so stripping them is what
+    # keeps a stuffed issue body from blowing the snapshot size guard weekly.
+    body = ('x' * 50 + '\x1b\x07') * 200
+    items = [{**candidate(7), 'body': body, 'title': 'Add\x1b a thing', 'reactions': {'total_count': 1}}]
     client = FakeClient(search_items=items)
 
     path = tmp_path / 'snapshot.json'
     digest.write_snapshot(client, str(path), now=NOW)
 
-    assert len(path.read_text().encode()) <= 120_000
+    [written] = json.loads(path.read_text())['candidates']
+    assert '\x1b' not in written['excerpt'] and '\x1b' not in written['title']
+    assert len(written['excerpt']) == 600
 
 
 @pytest.mark.parametrize(
@@ -188,28 +194,29 @@ def test_apply_rejects_picks_outside_the_snapshot(tmp_path: Path):
     assert not any(method == 'POST' for method, _, _ in client.calls)
 
 
-def test_apply_labels_and_builds_an_escaped_digest(tmp_path: Path):
+def test_apply_builds_an_escaped_digest_and_defers_labeling(tmp_path: Path):
     client = FakeClient(issues={7: issue(7), 9: issue(9)})
     snapshot = snapshot_file(tmp_path, [candidate(7, title=ATTACKER), candidate(9)], model_requests=2)
-    picks = picks_file(tmp_path, [pick(7, reason=ATTACKER), pick(9)])
+    picks = picks_file(tmp_path, [pick(7, reason=REASON_ATTACK), pick(9)])
 
-    lines, payload = digest.apply_picks(client, picks, snapshot, now=NOW)
+    lines, payload, surfaced = digest.apply_picks(client, picks, snapshot, now=NOW)
 
     assert lines == [
         '#7: surfaced in the weekly feature digest',
         '#9: surfaced in the weekly feature digest',
     ]
+    assert surfaced == [7, 9]
     assert payload is not None
     assert '<!channel>' not in payload
     assert 'rm -rf' in payload and '`' not in payload
+    # Links and channel-wide mentions in a model-written reason are dropped.
+    assert 'evil.example' not in payload and '@channel' not in payload and '@HERE' not in payload
+    assert 'Click for a prize' in payload
     assert '<https://github.com/pydantic/pydantic-ai/issues/7|#7 ' in payload
     assert '+ 2 new model requests this week' in payload
     assert payload.splitlines()[0].startswith(':bulb:')
-    label_posts = [(path, payload_value) for method, path, payload_value in client.calls if method == 'POST']
-    assert label_posts == [
-        ('/repos/pydantic/pydantic-ai/issues/7/labels', {'labels': [digest.CONSIDERED_LABEL]}),
-        ('/repos/pydantic/pydantic-ai/issues/9/labels', {'labels': [digest.CONSIDERED_LABEL]}),
-    ]
+    # Labels are applied in finalize, only after the Slack post succeeds.
+    assert not any(method == 'POST' for method, _, _ in client.calls)
 
 
 @pytest.mark.parametrize(
@@ -217,7 +224,7 @@ def test_apply_labels_and_builds_an_escaped_digest(tmp_path: Path):
     [
         issue(7, state='closed'),
         issue(7, updated_at='2026-08-25T09:00:00Z'),
-        issue(7, labels=[digest.FEATURE_LABEL, digest.CONSIDERED_LABEL]),
+        issue(7, labels=[digest.FEATURE_LABELS[0], digest.CONSIDERED_LABEL]),
         issue(7, labels=['pydanty:bug']),
     ],
 )
@@ -225,19 +232,30 @@ def test_apply_skips_items_that_changed_after_selection(tmp_path: Path, current:
     client = FakeClient(issues={7: current})
     snapshot = snapshot_file(tmp_path, [candidate(7)])
 
-    lines, payload = digest.apply_picks(client, picks_file(tmp_path, [pick(7)]), snapshot, now=NOW)
+    lines, payload, surfaced = digest.apply_picks(client, picks_file(tmp_path, [pick(7)]), snapshot, now=NOW)
 
     assert lines == ['#7: skipped because the item changed after selection']
     assert payload is None
-    assert not any(path.endswith('/labels') and method == 'POST' for method, path, _ in client.calls)
+    assert surfaced == []
 
 
-def test_apply_creates_the_considered_label_when_missing(tmp_path: Path):
-    client = FakeClient(issues={7: issue(7)}, considered_label_exists=False)
-    snapshot = snapshot_file(tmp_path, [candidate(7)])
+def test_finalize_labels_only_still_open_unconsidered_picks(tmp_path: Path):
+    client = FakeClient(
+        issues={
+            7: issue(7),
+            8: issue(8, state='closed'),
+            9: issue(9, labels=[digest.FEATURE_LABELS[0], digest.CONSIDERED_LABEL]),
+        },
+        considered_label_exists=False,
+    )
 
-    digest.apply_picks(client, picks_file(tmp_path, [pick(7)]), snapshot, now=NOW)
+    lines = digest.finalize_picks(client, [7, 8, 9])
 
+    assert lines == [
+        '#7: marked considered',
+        '#8: already settled, not relabeled',
+        '#9: already settled, not relabeled',
+    ]
     creation = next(
         payload
         for method, path, payload in client.calls
@@ -245,26 +263,19 @@ def test_apply_creates_the_considered_label_when_missing(tmp_path: Path):
     )
     assert isinstance(creation, dict)
     assert creation['name'] == digest.CONSIDERED_LABEL
+    label_posts = [path for method, path, _ in client.calls if method == 'POST' and '/issues/' in path]
+    assert label_posts == ['/repos/pydantic/pydantic-ai/issues/7/labels']
 
 
 def test_apply_with_no_picks_posts_nothing(tmp_path: Path):
     client = FakeClient()
     snapshot = snapshot_file(tmp_path, [candidate(7)])
 
-    lines, payload = digest.apply_picks(client, picks_file(tmp_path, []), snapshot, now=NOW)
+    lines, payload, surfaced = digest.apply_picks(client, picks_file(tmp_path, []), snapshot, now=NOW)
 
     assert lines == ['no picks to surface']
     assert payload is None
-
-
-def test_reason_sanitizer_strips_formatting_and_caps_length():
-    sanitized = digest._sanitize_reason(f'{ATTACKER} ' + 'x' * 500)  # pyright: ignore[reportPrivateUsage]
-
-    assert '<!channel>' not in sanitized
-    assert '`' not in sanitized and '*' not in sanitized
-    assert len(sanitized) <= 240
-
-    assert digest._sanitize_reason('```') == 'selected by the weekly review'  # pyright: ignore[reportPrivateUsage]
+    assert surfaced == []
 
 
 def test_cli_apply_writes_the_workflow_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -285,6 +296,7 @@ def test_cli_apply_writes_the_workflow_contract(tmp_path: Path, monkeypatch: pyt
     values = dict(line.split('=', 1) for line in output.read_text().splitlines())
     assert values['should_post'] == 'true'
     assert json.loads(values['slack_payload'])['text'].startswith(':bulb:')
+    assert json.loads(values['picked_numbers']) == [7]
 
 
 def test_cli_rejects_a_foreign_repository_with_a_redacted_error(
@@ -306,4 +318,5 @@ def test_workflow_pick_limit_matches_the_host_limit():
     assert digest._PICK_LIMIT == 5  # pyright: ignore[reportPrivateUsage]
     assert 'feature_digest.py apply' in text
     assert 'feature_digest.py snapshot' in text
-    assert "cron: '20 9 * * 3'" in text
+    # Labels must only land after the Slack post: delivery failure keeps picks.
+    assert text.index('slackapi/slack-github-action') < text.index('feature_digest.py finalize')

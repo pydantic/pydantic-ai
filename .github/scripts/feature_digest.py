@@ -3,10 +3,9 @@
 
 Deterministic code owns eligibility, validation, and every write; the agent only
 ranks a bounded immutable snapshot. A surfaced feature gets the
-`digest:considered` label so it is never surfaced again; a human removing that
-label returns it to the pool. Community pressure on an ignored feature still
-reaches maintainers through the routing community lane, so "considered" means
-"will not proactively resurface", not "can never reach us".
+`digest:considered` label — only after the Slack post succeeds, so a failed
+delivery leaves the picks in the pool — and is never surfaced again; a human
+removing that label returns it to the pool.
 """
 
 from __future__ import annotations
@@ -27,7 +26,9 @@ from typing import Any, TypedDict, cast  # noqa: TID251
 import issue_pr_attention_monitor as attention
 
 REPO = 'pydantic/pydantic-ai'
-FEATURE_LABEL = 'pydanty:feature'
+# The triage agent applies `pydanty:feature`; older and human-triaged requests
+# carry plain `feature`. Both pools are eligible.
+FEATURE_LABELS = ('pydanty:feature', 'feature')
 MODEL_REQUEST_LABEL = 'pydanty:model-request'
 CONSIDERED_LABEL = 'digest:considered'
 _CONSIDERED_COLOR = 'c2e0c6'
@@ -55,10 +56,14 @@ def _repository(value: str) -> str:
     return value
 
 
+def _plain(value: str) -> str:
+    """Collapse whitespace and drop every control/format character."""
+    collapsed = ' '.join(value.split())
+    return ''.join(character for character in collapsed if not unicodedata.category(character).startswith('C'))
+
+
 def _slack_escape(value: str) -> str:
-    """Mirror the attention monitor's Slack sanitizer for untrusted text."""
-    normalized = ' '.join(value.split())
-    normalized = ''.join(character for character in normalized if unicodedata.category(character) != 'Cf')
+    normalized = _plain(value)
     for character in '*_~`|\\':
         normalized = normalized.replace(character, '')
     normalized = ' '.join(normalized.split())
@@ -66,21 +71,33 @@ def _slack_escape(value: str) -> str:
 
 
 def _sanitize_reason(value: str) -> str:
-    """Bound model-written text that was derived from untrusted issue bodies."""
-    text = _slack_escape(value)[:_REASON_LIMIT].strip()
+    """Bound model-written text that was derived from untrusted issue bodies.
+
+    Links and channel-wide mention keywords are dropped, not escaped: a
+    prompt-injected reason must not be able to make anyone click or ping.
+    """
+    words = [
+        word
+        for word in value.split()
+        if '://' not in word
+        and not word.casefold().startswith('www.')
+        and word.casefold() not in ('@channel', '@here', '@everyone')
+    ]
+    text = _slack_escape(' '.join(words)[:_REASON_LIMIT]).strip()
     return text or 'selected by the weekly review'
 
 
 def _excerpt(value: object) -> str:
     if not isinstance(value, str):
         return ''
-    return ' '.join(value.split())[:_EXCERPT_LIMIT]
+    return _plain(value)[:_EXCERPT_LIMIT]
 
 
 def eligible_query() -> str:
     """Open, never-surfaced, unowned feature requests; model asks are counted separately."""
+    either_feature = ','.join(f'"{label}"' for label in FEATURE_LABELS)
     return (
-        f'repo:{REPO} is:open is:issue label:"{FEATURE_LABEL}" '
+        f'repo:{REPO} is:open is:issue label:{either_feature} '
         f'-label:"{CONSIDERED_LABEL}" -label:"{MODEL_REQUEST_LABEL}" no:assignee no:milestone'
     )
 
@@ -136,7 +153,7 @@ def build_snapshot(client: attention.GitHubClient, *, now: dt.datetime) -> dict[
         candidates.append(
             {
                 'number': number,
-                'title': ' '.join(title.split())[: _TITLE_LIMIT * 2],
+                'title': _plain(title)[: _TITLE_LIMIT * 2],
                 'excerpt': _excerpt(item.get('body')),
                 'created_at': created_at,
                 'updated_at': updated_at,
@@ -259,16 +276,20 @@ def apply_picks(
     snapshot_path: str,
     *,
     now: dt.datetime,
-) -> tuple[list[str], str | None]:
-    """Revalidate the agent's picks, label them, and build the Slack digest."""
+) -> tuple[list[str], str | None, list[int]]:
+    """Revalidate the agent's picks and build the Slack digest.
+
+    Labeling happens in `finalize_picks`, only after the Slack post succeeds:
+    a failed delivery must leave the picks in the pool, not consume them.
+    """
     snapshot = _load_snapshot(snapshot_path)
     picks = _parse_picks(output_path)
     unknown = {pick['item_number'] for pick in picks} - snapshot['candidates'].keys()
     if unknown:
         raise ValueError(f'Agent output contains numbers outside the snapshot: {sorted(unknown)}')
-    ensure_considered_label(client)
     lines: list[str] = []
     bullets: list[str] = []
+    surfaced: list[int] = []
     for pick in picks:
         number = pick['item_number']
         current = cast(dict[str, Any], client.get(f'/repos/{REPO}/issues/{number}'))
@@ -277,17 +298,17 @@ def apply_picks(
             str(current.get('state') or '').casefold() != 'open'
             or str(current.get('updated_at')) != snapshot['candidates'][number]['updated_at']
             or CONSIDERED_LABEL in labels
-            or FEATURE_LABEL not in labels
+            or not labels.intersection(FEATURE_LABELS)
         ):
             lines.append(f'#{number}: skipped because the item changed after selection')
             continue
-        client.post(f'/repos/{REPO}/issues/{number}/labels', {'labels': [CONSIDERED_LABEL]})
-        title = _slack_escape(snapshot['candidates'][number]['title'])[:_TITLE_LIMIT]
+        title = _slack_escape(snapshot['candidates'][number]['title'][:_TITLE_LIMIT])
         reason = _sanitize_reason(pick['reason'])
         bullets.append(f'• <https://github.com/{REPO}/issues/{number}|#{number} {title}> — {reason}')
+        surfaced.append(number)
         lines.append(f'#{number}: surfaced in the weekly feature digest')
     if not bullets:
-        return lines or ['no picks to surface'], None
+        return lines or ['no picks to surface'], None, []
     text_lines = [
         f':bulb: *Weekly feature digest — {REPO}* · {now.date().isoformat()}',
         *bullets,
@@ -298,21 +319,46 @@ def apply_picks(
     text_lines.append(
         'React in the issue, milestone it, or close it as not planned — surfaced features are not shown again.'
     )
-    return lines, '\n'.join(text_lines)
+    return lines, '\n'.join(text_lines), surfaced
 
 
-def _write_outputs(payload: str | None) -> None:
+def finalize_picks(client: attention.GitHubClient, numbers: list[int]) -> list[str]:
+    """Mark delivered picks `digest:considered`; runs only after the Slack post succeeded."""
+    ensure_considered_label(client)
+    lines: list[str] = []
+    for number in numbers:
+        current = cast(dict[str, Any], client.get(f'/repos/{REPO}/issues/{number}'))
+        if str(current.get('state') or '').casefold() != 'open' or CONSIDERED_LABEL in _labels(current):
+            lines.append(f'#{number}: already settled, not relabeled')
+            continue
+        client.post(f'/repos/{REPO}/issues/{number}/labels', {'labels': [CONSIDERED_LABEL]})
+        lines.append(f'#{number}: marked considered')
+    return lines
+
+
+def _picked_numbers(value: str) -> list[int]:
+    loaded: object = json.loads(value)
+    if not isinstance(loaded, list) or not all(type(item) is int and 0 < item for item in cast(list[object], loaded)):
+        raise ValueError('DIGEST_PICKED must be a JSON list of positive issue numbers')
+    numbers = cast(list[int], loaded)
+    if len(numbers) > _PICK_LIMIT or len(numbers) != len(set(numbers)):
+        raise ValueError('DIGEST_PICKED contains too many or duplicate numbers')
+    return numbers
+
+
+def _write_outputs(payload: str | None, surfaced: list[int]) -> None:
     if output_path := os.environ.get('GITHUB_OUTPUT'):
         with Path(output_path).open('a', encoding='utf-8') as output:
             output.write(f'should_post={str(payload is not None).lower()}\n')
             if payload is not None:
                 output.write(f'slack_payload={json.dumps({"text": payload}, separators=(",", ":"))}\n')
+                output.write(f'picked_numbers={json.dumps(surfaced, separators=(",", ":"))}\n')
 
 
 def main() -> int:
     """Build the candidate snapshot or apply validated picks."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['snapshot', 'apply'])
+    parser.add_argument('mode', choices=['snapshot', 'apply', 'finalize'])
     parser.add_argument('--snapshot-path', default=SNAPSHOT_PATH)
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
@@ -325,11 +371,16 @@ def main() -> int:
         now = dt.datetime.now(dt.timezone.utc)
         if args.mode == 'snapshot':
             lines = write_snapshot(client, args.snapshot_path, now=now)
+        elif args.mode == 'finalize':
+            picked = os.environ.get('DIGEST_PICKED')
+            if picked is None:
+                raise ValueError('DIGEST_PICKED is required')
+            lines = finalize_picks(client, _picked_numbers(picked))
         else:
             if not args.agent_output:
                 parser.error('--agent-output is required')
-            lines, payload = apply_picks(client, args.agent_output, args.snapshot_path, now=now)
-            _write_outputs(payload)
+            lines, payload, surfaced = apply_picks(client, args.agent_output, args.snapshot_path, now=now)
+            _write_outputs(payload, surfaced)
     except (KeyError, OSError, ValueError, RuntimeError) as exc:
         error = type(exc).__name__
         if isinstance(exc, urllib.error.HTTPError):
