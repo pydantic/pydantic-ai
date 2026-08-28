@@ -14,10 +14,15 @@ def reset_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(triage_telemetry, '_instance', None)
     monkeypatch.setattr(triage_telemetry, '_disabled', False)
     monkeypatch.delenv('LOGFIRE_TRIAGE_WRITE_TOKEN', raising=False)
+    monkeypatch.delenv('LOGFIRE_TRIAGE_BASE_URL', raising=False)
     monkeypatch.delenv('GITHUB_RUN_ID', raising=False)
 
 
 class FakeLogfire:
+    class AdvancedOptions:
+        def __init__(self, base_url: str) -> None:
+            self.base_url = base_url
+
     def __init__(self) -> None:
         self.configured: list[dict[str, Any]] = []
         self.events: list[tuple[str, dict[str, Any]]] = []
@@ -61,10 +66,30 @@ def test_emit_configures_once_and_tags_the_workflow_run(fake_logfire: FakeLogfir
 
     assert len(fake_logfire.configured) == 1
     assert fake_logfire.configured[0]['token'] == 'write-token'
+    assert fake_logfire.configured[0]['advanced'] is None
     assert fake_logfire.events == [
         ('router.sweep', {'github_run_id': '4242', 'repo': 'pydantic/pydantic-ai', 'selected': 2}),
         ('router.decision', {'github_run_id': '4242', 'repo': 'pydantic/pydantic-ai', 'number': 7}),
     ]
+
+
+def test_a_base_url_routes_to_the_self_hosted_instance(fake_logfire: FakeLogfire, monkeypatch: pytest.MonkeyPatch):
+    """A self-hosted token cannot route itself; an empty variable must not override cloud routing."""
+    monkeypatch.setenv('LOGFIRE_TRIAGE_BASE_URL', 'https://logfire-eu.pydantic.info')
+
+    triage_telemetry.emit('census.run', repo='pydantic/pydantic-ai')
+
+    advanced = fake_logfire.configured[0]['advanced']
+    assert advanced.base_url == 'https://logfire-eu.pydantic.info'
+
+
+def test_an_empty_base_url_keeps_the_tokens_own_routing(fake_logfire: FakeLogfire, monkeypatch: pytest.MonkeyPatch):
+    """Reusable-workflow callers without the `LOGFIRE_URL` variable pass an empty string."""
+    monkeypatch.setenv('LOGFIRE_TRIAGE_BASE_URL', '')
+
+    triage_telemetry.emit('census.run', repo='pydantic/pydantic-ai')
+
+    assert fake_logfire.configured[0]['advanced'] is None
 
 
 def test_a_missing_logfire_package_never_raises(monkeypatch: pytest.MonkeyPatch):

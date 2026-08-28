@@ -3,9 +3,9 @@
 
 Emission is best-effort by contract: without `LOGFIRE_TRIAGE_WRITE_TOKEN` or
 the `logfire` package every helper is a no-op, and no emission failure may
-ever break the GitHub write path it rides along with. The token embeds its
-Logfire region, so the SDK routes itself; there is deliberately no base-URL
-plumbing here.
+ever break the GitHub write path it rides along with. A cloud token embeds
+its Logfire region, so the SDK routes itself; `LOGFIRE_TRIAGE_BASE_URL`
+overrides that routing for tokens minted on a self-hosted instance.
 """
 
 from __future__ import annotations
@@ -35,12 +35,16 @@ def _logfire() -> Any:
         _disabled = True
         print(f'logfire is unavailable ({type(exc).__name__}); skipping triage telemetry', file=sys.stderr)
         return None
+    # Callers without the variable pass an empty string; only a real value
+    # may override the token's own routing.
+    base_url = os.environ.get('LOGFIRE_TRIAGE_BASE_URL')
     try:
         logfire.configure(
             token=token,
             service_name=SERVICE_NAME,
             environment='github-actions',
             console=False,
+            advanced=logfire.AdvancedOptions(base_url=base_url) if base_url else None,
         )
     except Exception as exc:  # telemetry must never break the GitHub write path
         _disabled = True

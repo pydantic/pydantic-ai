@@ -132,6 +132,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
           LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          # Self-hosted Logfire; resolves from the calling repository's
+          # variables, and empty keeps the token's own routing.
+          LOGFIRE_TRIAGE_BASE_URL: ${{ vars.LOGFIRE_URL }}
         run: python .github/scripts/issue_pr_attention_monitor.py census
       - name: Post the daily coverage heartbeat to the triage channel
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3

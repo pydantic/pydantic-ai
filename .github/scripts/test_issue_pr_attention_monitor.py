@@ -2456,6 +2456,7 @@ def test_operations_workflow_sends_an_unconditional_daily_coverage_heartbeat():
     assert jobs['coverage']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
     census_step = next(step for step in jobs['coverage']['steps'] if step.get('id') == 'census')
     assert census_step['env']['PYDANTIC_AI_TRIAGE_SLACK_MENTIONS'] == '${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}'
+    assert census_step['env']['LOGFIRE_TRIAGE_BASE_URL'] == '${{ vars.LOGFIRE_URL }}'
     assert 'coverage' in jobs['alert']['needs']
 
 

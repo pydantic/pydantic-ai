@@ -1015,7 +1015,9 @@ def test_workflow_is_notification_first_and_least_privilege():
         'GITHUB_TOKEN',
         'ROUTING_COMMUNITY_RECOVERY',
         'LOGFIRE_TRIAGE_WRITE_TOKEN',
+        'LOGFIRE_TRIAGE_BASE_URL',
     }
+    assert select_step['env']['LOGFIRE_TRIAGE_BASE_URL'] == '${{ vars.LOGFIRE_URL }}'
     assert select_step['env']['ROUTING_COMMUNITY_RECOVERY'] == (
         "${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}"
     )
