@@ -23,6 +23,8 @@ from pathlib import Path
 # this script uses no pydantic.
 from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
+import triage_telemetry as telemetry
+
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
 _RESURFACE_AFTER = dt.timedelta(days=7)
@@ -59,6 +61,9 @@ _PRIORITY_LABELS_ALL = (*PRIORITY_GATE_LABELS, 'p:3-mid', 'p:4-low')
 _GATE_BATCH_BREACH = 15
 _OVERRIDE_SCAN_LIMIT = 30
 _OVERRIDE_WINDOW_DAYS = 7
+# One hour of overlap between daily census runs; the GitHub event id attribute
+# lets Logfire queries deduplicate corrections seen by two consecutive runs.
+_CORRECTION_WINDOW = dt.timedelta(hours=25)
 _MAINTAINER_NAMES = {
     'adtyavrdhn': 'Aditya',
     'dsfaccini': 'David SF',
@@ -1337,6 +1342,30 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
     )
     if breach and (urgent_mention is None or _SLACK_MENTION.fullmatch(urgent_mention) is None):
         raise ValueError('A valid Aditya Slack mention is required for an intake breach')
+    corrections, _, _ = _override_scan(client, repo, now=now, window=_CORRECTION_WINDOW)
+    for record in corrections:
+        telemetry.emit(
+            'triage.correction',
+            repo=repo,
+            number=record['number'],
+            kind=record['kind'],
+            actor=record['actor'],
+            detail=record['detail'],
+            event_id=record['event_id'],
+            bot_origin=record['bot_origin'],
+        )
+    telemetry.emit(
+        'census.run',
+        repo=repo,
+        active=active,
+        cooling=cooling,
+        gate_unassigned=gate_total,
+        gate_oldest_age_days=oldest_age if oldest else None,
+        untriaged=untriaged,
+        pull_intake=pull_intake,
+        breach=breach,
+        corrections=len(corrections),
+    )
     prefix = f'{urgent_mention} :rotating_light:' if breach else ':telescope:'
     gate = (
         f'{gate_total} priority issues unassigned; oldest #{oldest[0]} opened {oldest_age}d ago'
@@ -1344,10 +1373,16 @@ def census(client: GitHubClient, repo: str, *, now: dt.datetime, urgent_mention:
         else f'{gate_total} priority issues unassigned'
     )
     saturation = ' — intake search saturated' if pull_intake > 100 else ''
+    # Numbers only, like the rest of the heartbeat: the Monday digest carries
+    # the who-changed-what detail for the same corrections.
+    numbers = sorted({record['number'] for record in corrections})
+    listed = ', '.join(f'#{number}' for number in numbers[:5]) + ('…' if len(numbers) > 5 else '')
+    correction_note = f' Maintainer corrections in the last day: {len(corrections)} on {listed}.' if corrections else ''
     return (
         f'{prefix} Attention coverage for {_slack_escape(repo)} — '
         f'queue: {active} active, {cooling} cooling; assignment gate: {gate}; '
-        f'triage pool: {untriaged} unlabeled issues; PR intake: {pull_intake} unowned{saturation}. '
+        f'triage pool: {untriaged} unlabeled issues; PR intake: {pull_intake} unowned{saturation}.'
+        f'{correction_note} '
         'The Monday digest covers assigned, legacy, and draft work.'
     )
 
@@ -1456,23 +1491,53 @@ def _nested_field(event: Mapping[str, Any], key: str, field: str) -> str:
     return str(cast(Mapping[str, object], value).get(field) or '') if isinstance(value, Mapping) else ''
 
 
-def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
-    """List maintainer corrections from the past week: priority relabels and unassignments.
+class OverrideRecord(TypedDict):
+    """One maintainer correction to an automation decision, from an issue's event log."""
 
-    These are the calibration signal for the triage automation, so the report names
-    who changed what, as metadata only, without pinging anyone.
+    number: int
+    kind: Literal['labeled', 'unlabeled', 'unassigned']
+    actor: str
+    detail: str
+    event_id: int | str | None
+    bot_origin: bool | None
+
+
+def _bot_assignment_origin(prior: Sequence[dict[str, Any]], login: str) -> bool | None:
+    """Whether the removed assignment was made by automation.
+
+    ``None`` when the matching `assigned` event predates the fetched history, so
+    a human undoing another human's assignment is never counted as a correction.
     """
-    since = now - dt.timedelta(days=_OVERRIDE_WINDOW_DAYS)
+    key = login.casefold()
+    for event in reversed(prior):
+        if str(event.get('event') or '') != 'assigned':
+            continue
+        if _nested_field(event, 'assignee', 'login').casefold() != key:
+            continue
+        return _actor(event).endswith('[bot]')
+    return None
+
+
+def _override_scan(
+    client: GitHubClient, repo: str, *, now: dt.datetime, window: dt.timedelta
+) -> tuple[list[OverrideRecord], int, int]:
+    """Collect maintainer corrections in the window: priority relabels and unassignments.
+
+    These are the calibration signal for the triage automation, so each record names
+    who changed what, as metadata only, without quoting any issue prose.
+    """
+    since = now - window
     total, matches = _search_summary(
         client,
         f'repo:{repo} updated:>={since.date().isoformat()} sort:updated-desc',
         first=_OVERRIDE_SCAN_LIMIT,
     )
     owner_keys = {owner.casefold() for owner in MAINTAINER_OWNERS}
-    lines: list[str] = []
+    records: list[OverrideRecord] = []
     for match in matches:
         number = int(match['number'])
-        for event in client.last_pages(f'/repos/{repo}/issues/{number}/events?per_page=100'):
+        events = client.last_pages(f'/repos/{repo}/issues/{number}/events?per_page=100')
+        for index, event in enumerate(events):
             kind = str(event.get('event') or '')
             if kind not in ('labeled', 'unlabeled', 'unassigned'):
                 continue
@@ -1482,17 +1547,43 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
             actor = _actor(event)
             if actor.casefold() not in owner_keys:
                 continue
+            event_id = event.get('id')
+            if not isinstance(event_id, (int, str)) or isinstance(event_id, bool):
+                event_id = None
             if kind == 'unassigned':
-                target = _nested_field(event, 'assignee', 'login') or 'unknown'
-                lines.append(f'• #{number}: @{_slack_escape(actor)} unassigned @{_slack_escape(target)}')
+                detail = _nested_field(event, 'assignee', 'login') or 'unknown'
+                bot_origin = _bot_assignment_origin(events[:index], detail)
             else:
-                name = _nested_field(event, 'label', 'name')
-                if not name.startswith('p:'):
+                detail = _nested_field(event, 'label', 'name')
+                if not detail.startswith('p:'):
                     continue
-                verb = 'added' if kind == 'labeled' else 'removed'
-                lines.append(f'• #{number}: @{_slack_escape(actor)} {verb} `{_slack_escape(name)}`')
-    if total > len(matches):
-        lines.append(f'…covering the {len(matches)} most recently updated of {total} changed items')
+                bot_origin = None
+            records.append(
+                OverrideRecord(
+                    number=number,
+                    kind=kind,
+                    actor=actor,
+                    detail=detail,
+                    event_id=event_id,
+                    bot_origin=bot_origin,
+                )
+            )
+    return records, len(matches), total
+
+
+def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
+    """Render the weekly maintainer-corrections report from the past week's records."""
+    records, scanned, total = _override_scan(client, repo, now=now, window=dt.timedelta(days=_OVERRIDE_WINDOW_DAYS))
+    lines: list[str] = []
+    for record in records:
+        number, actor = record['number'], _slack_escape(record['actor'])
+        if record['kind'] == 'unassigned':
+            lines.append(f'• #{number}: @{actor} unassigned @{_slack_escape(record["detail"])}')
+        else:
+            verb = 'added' if record['kind'] == 'labeled' else 'removed'
+            lines.append(f'• #{number}: @{actor} {verb} `{_slack_escape(record["detail"])}`')
+    if total > scanned:
+        lines.append(f'…covering the {scanned} most recently updated of {total} changed items')
     return lines
 
 

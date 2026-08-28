@@ -17,6 +17,9 @@ on:
     secrets:
       PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
         required: true
+      # Optional: callers without a Logfire project simply skip telemetry.
+      LOGFIRE_TRIAGE_WRITE_TOKEN:
+        required: false
 
 permissions: {}
 
@@ -43,13 +46,19 @@ jobs:
           sparse-checkout: |
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_telemetry.py
           sparse-checkout-cone-mode: false
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.12"
       - name: Select routing decisions
         id: select
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ROUTING_COMMUNITY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}
-        run: python .github/scripts/semantic_owner_router.py select
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
+        run: uv run --no-project --with certifi --with logfire python .github/scripts/semantic_owner_router.py select
 
   route:
     name: Notify intent and assign maintainer
@@ -80,7 +89,11 @@ jobs:
           sparse-checkout: |
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_telemetry.py
           sparse-checkout-cone-mode: false
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.12"
       - name: Revalidate and prepare canonical routing intent
         id: prepare
         env:
@@ -109,7 +122,10 @@ jobs:
           ROUTE_NUMBER: ${{ matrix.route.number }}
           ROUTE_OWNER: ${{ matrix.route.owner }}
           ROUTE_EVIDENCE: ${{ matrix.route.evidence }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
         run: >-
+          uv run --no-project --with certifi --with logfire
           python .github/scripts/semantic_owner_router.py assign
           --number "$ROUTE_NUMBER"
           --owner "$ROUTE_OWNER"

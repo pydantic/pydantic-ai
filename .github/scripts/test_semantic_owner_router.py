@@ -619,6 +619,29 @@ def test_gated_selection_excludes_every_fixed_owner_and_prefers_issues():
     ]
 
 
+def test_selection_emits_one_decision_event_per_examined_item(monkeypatch: pytest.MonkeyPatch):
+    events: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(router.telemetry, 'emit', lambda name, **attrs: events.append((name, attrs)))
+    client = FakeClient({7: item(7, labels=['MCP', 'p:2-high'])})
+
+    router.select_batch(client, CORE)
+
+    assert events == [
+        (
+            'router.decision',
+            {
+                'repo': CORE,
+                'lane': 'gate',
+                'number': 7,
+                'status': 'route',
+                'owner': 'dsfaccini',
+                'evidence': 'label:MCP',
+            },
+        ),
+        ('router.sweep', {'repo': CORE, 'lane': 'gate', 'candidates': 1, 'selected': 1}),
+    ]
+
+
 def test_gated_selection_is_bounded():
     client = FakeClient({number: item(number, labels=['MCP', 'p:2-high']) for number in range(1, 6)})
 
@@ -943,9 +966,14 @@ def test_workflow_is_notification_first_and_least_privilege():
         'matrix': {'route': '${{ fromJSON(needs.select.outputs.routes) }}'},
     }
     assert jobs['route']['concurrency']['group'] == 'semantic-owner-${{ github.repository }}-${{ matrix.route.number }}'
-    prepare, notify, assign = jobs['route']['steps'][1:]
-    select_step = jobs['select']['steps'][1]
-    assert set(select_step['env']) == {'GITHUB_TOKEN', 'ROUTING_COMMUNITY_RECOVERY'}
+    prepare, notify, assign = jobs['route']['steps'][2:]
+    select_step = jobs['select']['steps'][2]
+    assert set(select_step['env']) == {
+        'GITHUB_TOKEN',
+        'ROUTING_COMMUNITY_RECOVERY',
+        'LOGFIRE_TRIAGE_WRITE_TOKEN',
+        'LOGFIRE_URL',
+    }
     assert select_step['env']['ROUTING_COMMUNITY_RECOVERY'] == (
         "${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}"
     )
