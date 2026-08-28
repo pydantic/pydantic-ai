@@ -32,7 +32,7 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
-from .toolsets.abstract import AbstractToolset, ToolsetTool
+from .toolsets.abstract import OUTPUT_TOOLSET_ID, AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability, RawOutput
@@ -1502,7 +1502,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return '<output>'
+        return OUTPUT_TOOLSET_ID
 
     @property
     def label(self) -> str:
