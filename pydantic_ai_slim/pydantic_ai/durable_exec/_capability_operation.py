@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass
 from functools import update_wrapper, wraps
-from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints, overload
+from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints
 
 from pydantic_ai._function_schema import (
     FunctionSchema,
@@ -185,25 +185,22 @@ def set_durable_operation_marker(obj: object, marker: Marker) -> None:
     setattr(obj, _MARKER_ATTRIBUTE, marker)
 
 
-def _operation_name(function: Callable[..., Any], name: str | None) -> str:
-    return name or function.__name__.removeprefix('_')
+def _validate_operation_name(name: object) -> str:
+    if not isinstance(name, str):
+        raise TypeError(f'`durable_operation` name must be a string, got {type(name).__name__}')
+    if not name:
+        raise ValueError('`durable_operation` name must not be empty')
+    return name
 
 
-@overload
-def durable_operation(function: Callable[P, A], /) -> Callable[P, A]: ...
-
-
-@overload
-def durable_operation(*, name: str | None = None) -> Callable[[Callable[P, A]], Callable[P, A]]: ...
-
-
-def durable_operation(function: Any = None, /, *, name: str | None = None) -> Any:
+def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     """Declare an async capability method as a durable operation.
 
     The method keeps its original signature. During a run with a durability capability, calls
     dispatch through that engine's activity, step, or task. Without durability, calls await the
-    original method directly. The optional `name` is the stable operation name within the
-    capability's required stable `id`.
+    original method directly. The required `name` becomes part of persisted durable-unit names
+    within the capability's required stable `id`, so it must essentially never change. The Python
+    method itself can be renamed freely as long as `name` stays the same.
 
     ```python
     from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -213,38 +210,44 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
     class Audit(AbstractCapability[None]):
         id = 'audit'
 
-        @durable_operation
+        @durable_operation(name='record')
         async def record(self, ctx: RunContext[None], message: str) -> bool:
             return bool(message)
     ```
 
     Args:
-        function: The async capability method when used as `@durable_operation`.
-        name: An explicit stable name when used as `@durable_operation(name='...')`.
+        name: The stable operation name. This can be passed positionally or by keyword.
 
     Returns:
         The marked method with its parameter and return types preserved.
 
     Raises:
-        TypeError: If the decorated method is synchronous.
+        TypeError: If used without an explicit name or if the decorated method is synchronous.
+        ValueError: If `name` is empty.
     """
+    if callable(name):
+        raise TypeError(
+            '`durable_operation` requires an explicit operation name because it becomes persisted compatibility data '
+            "and must not change when the function is renamed. Use `@durable_operation(name='operation_name')`."
+        )
+    name = _validate_operation_name(name)
 
-    def decorate(target: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
+    def decorate(target: Callable[P, A]) -> Callable[P, A]:
         if not inspect.iscoroutinefunction(target):
             if target.__name__ in _SYNC_NEVER_DURABLE_HOOKS:
                 set_durable_operation_marker(
                     target,
                     Marker(
-                        name=_operation_name(target, name),
+                        name=name,
                         function=cast(Callable[..., Awaitable[Any]], target),
                     ),
                 )
                 return target
             raise TypeError('`durable_operation` can only decorate async methods')
-        marker = Marker(name=_operation_name(target, name), function=target)
+        marker = Marker(name=name, function=cast(Callable[..., Awaitable[Any]], target))
 
         @wraps(target)
-        async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> ResultT:
+        async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> Any:
             # Bind the call so context parameters are visible regardless of calling style.
             bound = inspect.signature(target).bind(self, *args, **kwargs)
 
@@ -257,7 +260,7 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
             if ctx is None:
                 # Agent runs and durable scopes set the ambient context. Calls outside either scope
                 # deliberately pass through to the undecorated method.
-                return await target(self, *args, **kwargs)
+                return await cast(Callable[..., Awaitable[Any]], target)(self, *args, **kwargs)
 
             # Project live model-request context before it crosses a durable boundary.
             request_context = next(
@@ -299,26 +302,33 @@ def durable_operation(function: Any = None, /, *, name: str | None = None) -> An
             # Apply worker-side model-request mutations back to the live context.
             if request_context is not None and isinstance(result, _ResolvedModelRequestContext):
                 result.projection.apply(request_context, result.model)
-                return cast(ResultT, request_context)
-            return cast(ResultT, result)
+                return request_context
+            return result
 
         set_durable_operation_marker(decorated, marker)
-        return decorated
+        return cast(Callable[P, A], decorated)
 
-    return decorate(function) if function is not None else decorate
+    return decorate
 
 
-def base_hook_durable_operation(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
+def base_hook_durable_operation(
+    name: str,
+) -> Callable[[Callable[..., Awaitable[ResultT]]], Callable[..., Awaitable[ResultT]]]:
     """Mark a base hook so every override inherits durable execution automatically."""
-    set_durable_operation_marker(
-        function,
-        Marker(
-            name=_operation_name(function, None),
-            function=cast(Callable[..., Awaitable[Any]], function),
-            base_hook=True,
-        ),
-    )
-    return function
+    name = _validate_operation_name(name)
+
+    def decorate(function: Callable[..., Awaitable[ResultT]]) -> Callable[..., Awaitable[ResultT]]:
+        set_durable_operation_marker(
+            function,
+            Marker(
+                name=name,
+                function=cast(Callable[..., Awaitable[Any]], function),
+                base_hook=True,
+            ),
+        )
+        return function
+
+    return decorate
 
 
 def collect_capability_operations(
