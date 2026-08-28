@@ -334,12 +334,6 @@ class GraphAgentState:
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]s from
     [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]);
     the graph drains it into the agent event stream around node events."""
-    inline_dispatched_event_ids: set[int] = dataclasses.field(default_factory=set[int])
-    """IDs of emitted events already delivered inline, pending stream deduplication."""
-    event_stream_replacements: dict[int, _messages.AgentStreamEvent] = dataclasses.field(
-        default_factory=dict[int, _messages.AgentStreamEvent]
-    )
-    """Legacy `hooks.on.event` replacements to apply at the consumer-facing stream position."""
     mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = dataclasses.field(
         default_factory=dict[str, dict[str, ToolDefinition]]
     )
@@ -438,6 +432,23 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
+
+    pending_inline_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
+        default_factory=dict[int, list[asyncio.Event]], repr=False
+    )
+    """Settlement signals for buffered events dispatched inline, keyed by `id(event)`.
+
+    Runtime-only, deliberately not on `GraphAgentState`: raw object ids are meaningless in a revived
+    process (a stale persisted id could even collide with a new event's address), so a revived run
+    starts empty and buffered events degrade to dispatching at stream position."""
+
+    event_stream_replacements: dict[int, _messages.AgentStreamEvent] = dataclasses.field(
+        default_factory=dict[int, _messages.AgentStreamEvent], repr=False
+    )
+    """Legacy `hooks.on.event` replacements to apply at the consumer-facing stream position.
+
+    Runtime-only and id-keyed like `pending_inline_dispatches`, and excluded from persistence for
+    the same reason."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -2374,8 +2385,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
-        _inline_dispatched_event_ids=ctx.state.inline_dispatched_event_ids,
-        _event_stream_replacements=ctx.state.event_stream_replacements,
+        _pending_inline_dispatches=ctx.deps.pending_inline_dispatches,
+        _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)

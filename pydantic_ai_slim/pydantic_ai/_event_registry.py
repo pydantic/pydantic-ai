@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import inspect
+import sys
 import warnings
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -58,15 +59,62 @@ def guard_post_init(cls: type, base_post_init: Callable[[Any], None]) -> None:
     def guarded(self: Any, *args: Any, **kwargs: Any) -> None:
         base_post_init(self)
         user_post_init(self, *args, **kwargs)
+        # Re-run the guards afterwards too: the user's `__post_init__` could itself corrupt a
+        # protocol field (e.g. reassign `name`), and validation is idempotent.
+        base_post_init(self)
 
     guarded._event_guarded = True  # pyright: ignore[reportAttributeAccessIssue]
     cls.__post_init__ = guarded
 
 
+def own_annotation_names(cls: type) -> set[str]:
+    """The names annotated on the class itself, without forcing lazy (PEP 649) annotations.
+
+    On Python 3.14+ annotations are evaluated lazily, so a payload field referencing a class defined
+    later in the module must not be evaluated during `__init_subclass__` — plain dataclasses defer it,
+    and event registration has to as well. `Format.FORWARDREF` never raises `NameError`.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        return set(annotationlib.get_annotations(cls, format=annotationlib.Format.FORWARDREF))
+    return set(inspect.get_annotations(cls))
+
+
 def shadowed_envelope_fields(cls: type, reserved: frozenset[str]) -> str | None:
     """The class's own field names that shadow the family's envelope fields, or `None`."""
-    shadowed = set(inspect.get_annotations(cls)) & reserved
+    shadowed = own_annotation_names(cls) & reserved
     return ', '.join(sorted(shadowed)) if shadowed else None
+
+
+def inject_tag_field(cls: type, tag_field: str, tag_value: str) -> None:
+    """Redeclare `tag_field` on the subclass so it defaults to (and serializes as) the registered tag.
+
+    The annotation is re-declared on the subclass so `@dataclass` (which runs after
+    `__init_subclass__`) picks up the new default. On Python 3.14+ the merge wraps the class's lazy
+    `__annotate__` function instead of materializing `__annotations__`, preserving PEP 649 deferred
+    evaluation for payload fields that reference names defined later in the module.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        original_annotate = annotationlib.get_annotate_from_class_namespace(cls.__dict__)
+        if original_annotate is not None:
+
+            def annotate(format: int, /) -> dict[str, Any]:
+                return {
+                    tag_field: str,
+                    **annotationlib.call_annotate_function(original_annotate, annotationlib.Format(format), owner=cls),
+                }
+
+            cls.__annotate__ = annotate  # pyright: ignore[reportAttributeAccessIssue]
+        else:
+            # No lazy annotate function: the class body had no annotations, or stored them eagerly
+            # (e.g. under `from __future__ import annotations`); merge with whatever it has.
+            cls.__annotations__ = {tag_field: str, **cls.__dict__.get('__annotations__', {})}
+    else:
+        cls.__annotations__ = {tag_field: 'str', **cls.__annotations__}
+    setattr(cls, tag_field, dataclasses.field(default=tag_value, kw_only=True))
 
 
 def event_family_schema(
@@ -124,7 +172,8 @@ def _gather_unknown_payload(
                 envelope['data'] = payload
             warnings.warn(
                 f'Unknown event {tag_field} {value.get(tag_field)!r}; validating as {unknown_type.__name__}. '
-                f'Is the module that defines this event imported?',
+                f'Is the module that defines this event imported? (A serializer built before the event '
+                f'class was defined also treats it as unknown.)',
                 UserWarning,
                 stacklevel=2,
             )

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import textwrap
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +16,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CUSTOM_EVENT_TYPES,
     AgentStreamEvent,
     CustomEvent,
     ModelMessage,
@@ -446,6 +449,97 @@ async def test_typed_subclass_emitted_from_tool():
     events = await _collect_events(agent)
     custom = [event for event in events if isinstance(event, UploadProgressEvent)]
     assert custom == snapshot([UploadProgressEvent(done=1, total=2, tool_call_id='call_1', tool_name='progress')])
+
+
+async def test_emit_returns_same_typed_instance():
+    """`emit` returns the passed instance under its own type, so payload fields typecheck without casts."""
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+    payloads: list[Any] = []
+
+    @agent.tool
+    async def progress(ctx: RunContext[Any]) -> str:
+        original = ProgressEvent(payload={'pct': 50})
+        event = await ctx.emit(original)
+        # `event` is typed `ProgressEvent`, not bare `CustomEvent`: accessing the payload field
+        # is the pyright-checked claim here.
+        payloads.append(event.payload)
+        assert event is original
+        return 'ok'
+
+    await _collect_events(agent)
+    assert payloads == [{'pct': 50}]
+
+
+def test_undecorated_subclass_rejected():
+    """Forgetting `@dataclass` fails loudly at construction and validation instead of dropping payload."""
+
+    class ForgotDecoratorEvent(CustomEvent):
+        done: int
+
+    try:
+        with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
+            ForgotDecoratorEvent()
+
+        adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+        with pytest.raises(pydantic.ValidationError, match='must be decorated with `@dataclass`'):
+            adapter.validate_python({'event_kind': 'custom', 'name': 'forgot_decorator', 'done': 3})
+    finally:
+        # The broken class must not stay registered: adapters built by later tests would embed it.
+        del CUSTOM_EVENT_TYPES['forgot_decorator']
+
+
+def test_empty_derived_name_rejected():
+    """A class name that derives an empty event name is rejected at definition, not at first use."""
+    with pytest.raises(TypeError, match='derives an empty name'):
+
+        class Event(CustomEvent):  # pyright: ignore[reportUnusedClass]
+            pass
+
+
+def test_post_init_cannot_corrupt_name():
+    """A subclass `__post_init__` reassigning the registered `name` is caught by the re-run guard."""
+
+    @dataclass(kw_only=True)
+    class CorruptingEvent(CustomEvent):
+        def __post_init__(self) -> None:
+            self.name = 'corrupted'
+
+    with pytest.raises(ValueError, match="registered name 'corrupting'"):
+        CorruptingEvent()
+
+
+def test_forward_referenced_payload_annotation():
+    """An event payload field may reference a class defined later in the module (PEP 649 lazy annotations).
+
+    Below Python 3.14, annotations in a no-`__future__` module evaluate eagerly at class creation, so
+    the deferred reference only exists on 3.14+; the classes are built from source to keep this module
+    importable everywhere.
+    """
+    if sys.version_info < (3, 14):
+        pytest.skip('deferred (PEP 649) annotations require Python 3.14+')
+    namespace: dict[str, Any] = {'CustomEvent': CustomEvent, 'dataclass': dataclass}
+    try:
+        exec(
+            textwrap.dedent(
+                """
+                @dataclass(kw_only=True)
+                class DeferredRefEvent(CustomEvent):
+                    ref: DefinedLater
+
+                @dataclass
+                class DefinedLater:
+                    value: int
+                """
+            ),
+            namespace,
+        )
+        event = namespace['DeferredRefEvent'](ref=namespace['DefinedLater'](value=1))
+        assert event.name == 'deferred_ref'
+        assert event.ref.value == 1
+    finally:
+        # The class's annotation only resolves inside the exec namespace; unregister it so adapters
+        # built by later tests don't try (and fail) to build a schema for it.
+        CUSTOM_EVENT_TYPES.pop('deferred_ref', None)
 
 
 async def test_event_stream_position_relative_to_framework_events():

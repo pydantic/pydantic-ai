@@ -19,6 +19,7 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
+from ._run_context import CustomEventT
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -511,7 +512,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         return self._graph_run.state.pending_messages
 
-    async def emit(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent:
+    async def emit(self, event: CustomEventT, /) -> CustomEventT:
         """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into this run's event stream.
 
         Lets code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] inject application-defined

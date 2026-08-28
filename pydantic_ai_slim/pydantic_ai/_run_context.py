@@ -38,6 +38,7 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
+CustomEventT = TypeVar('CustomEventT', bound=_messages.CustomEvent)
 CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
 
 
@@ -66,11 +67,20 @@ async def dispatch_event_inline(ctx: RunContext[Any], event: _messages.AgentStre
         return
     # Mark before awaiting listeners: awaiting yields the event loop, and a concurrent stream
     # consumer (e.g. the `run_stream_events` reader task) could drain the buffered event in that
-    # window and dispatch it a second time if it weren't already marked.
-    ctx._inline_dispatched_event_ids.add(id(event))  # pyright: ignore[reportPrivateUsage]
-    capability = ctx.root_capability
-    if capability is not None and capability.has_on_event:
-        await capability.on_event(ctx, event=event)
+    # window and dispatch it a second time if it weren't already marked. Each marker carries a
+    # settlement signal the stream consumer awaits before yielding the event, so consumers never
+    # observe a decision event whose listeners are still mutating it. A list per id keeps repeated
+    # emissions of one object (a capability re-emitting on behalf of another) exactly-once each.
+    settled = asyncio.Event()
+    ctx._pending_inline_dispatches.setdefault(id(event), []).append(settled)  # pyright: ignore[reportPrivateUsage]
+    try:
+        capability = ctx.root_capability
+        if capability is not None and capability.has_on_event:
+            await capability.on_event(ctx, event=event)
+    finally:
+        # Settle even when a listener raises (the exception propagates to the emitter): the
+        # buffered event must not wedge the stream of a run that is already failing.
+        settled.set()
 
 
 async def dispatch_event_stream(
@@ -80,8 +90,11 @@ async def dispatch_event_stream(
     capability = ctx.root_capability
     async for event in stream:
         event_id = id(event)
-        if event_id in ctx._inline_dispatched_event_ids:  # pyright: ignore[reportPrivateUsage]
-            ctx._inline_dispatched_event_ids.discard(event_id)  # pyright: ignore[reportPrivateUsage]
+        if pending := ctx._pending_inline_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
+            settled = pending.pop(0)
+            if not pending:
+                del ctx._pending_inline_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
+            await settled.wait()
         elif capability is not None and capability.has_on_event:
             await capability.on_event(ctx, event=event)
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
@@ -225,8 +238,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     where [`emit`][pydantic_ai.tools.RunContext.emit] raises.
     """
 
-    _inline_dispatched_event_ids: set[int] = field(default_factory=set[int], repr=False)
-    """IDs of buffered events already dispatched inline, shared across the run."""
+    _pending_inline_dispatches: dict[int, list[asyncio.Event]] = field(
+        default_factory=dict[int, list[asyncio.Event]], repr=False
+    )
+    """Per-event-id settlement signals for buffered events dispatched inline, shared across the run.
+
+    Keyed by `id(event)` and held only while the event sits in the buffer, so ids can't collide with
+    later objects. Kept out of persisted graph state: raw ids are meaningless in a revived process
+    (a revived buffer degrades to dispatching at stream position, like a plain-list buffer)."""
 
     _event_stream_replacements: dict[int, _messages.AgentStreamEvent] = field(
         default_factory=dict[int, _messages.AgentStreamEvent], repr=False
@@ -532,7 +551,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
     @overload
-    async def emit(self, event: _messages.CustomEvent, /) -> _messages.CustomEvent: ...
+    async def emit(self, event: CustomEventT, /) -> CustomEventT: ...
 
     @overload
     async def emit(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
@@ -556,7 +575,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         When emitted from within a tool call and the event doesn't already set a
         [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id], the current
         [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] and
-        [`tool_name`][pydantic_ai.tools.RunContext.tool_name] are stamped on a copy of the event so
+        [`tool_name`][pydantic_ai.tools.RunContext.tool_name] are stamped on the event in place so
         consumers can attribute it to the originating tool call.
 
         By default, capability and application listeners run when the event's stream position is
@@ -573,7 +592,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] to emit.
 
         Returns:
-            The event as emitted (with any stamped attribution fields).
+            The same event instance, with any attribution fields stamped. For an inline-dispatched
+            decision event, both the return value and the passed reference reflect listener decisions.
 
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent's event stream, or the event
@@ -605,15 +625,22 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     'received capability event as one.'
                 )
             if event.capability_id is None:
-                event = dataclasses.replace(event, capability_id=capability_id)
-        # This private ClassVar is the intentional in-tree opt-out for app-facing callback capabilities.
-        elif capability is not None and not capability._emits_app_events:  # pyright: ignore[reportPrivateUsage]
+                event.capability_id = capability_id
+        # This private property is the intentional in-tree opt-out for app-facing callback capabilities.
+        # It gates hooks and capability-contributed tools alike, resolved through the owning capability.
+        elif (
+            owner := capability if capability is not None else self.capabilities.get(capability_id or '')
+        ) is not None and not owner._emits_app_events:  # pyright: ignore[reportPrivateUsage]
             raise UserError(
                 'Capabilities should define and emit `CapabilityEvent` subclasses instead of application '
                 '`CustomEvent`s.'
             )
         if event.tool_call_id is None and self.tool_call_id is not None:
-            event = dataclasses.replace(event, tool_call_id=self.tool_call_id, tool_name=self.tool_name)
+            event.tool_call_id = self.tool_call_id
+            event.tool_name = self.tool_name
+        # Attribution is stamped on the event in place (never on a copy): listeners of an inline
+        # decision event mutate the dispatched object, and the emitter must be able to read those
+        # decisions off its own reference as well as off the returned one.
         self._emit_event(event)
         await dispatch_event_inline(self, event)
         return event

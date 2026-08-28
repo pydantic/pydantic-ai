@@ -59,6 +59,22 @@ def test_missing_namespace_rejected():
             pass
 
 
+@pytest.mark.parametrize('namespace', ['', '.', 'a..b', '.leading'])
+def test_invalid_namespace_rejected(namespace: str):
+    with pytest.raises(TypeError, match='invalid namespace'):
+
+        @dataclass(kw_only=True)
+        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):  # pyright: ignore[reportUnusedClass]
+            pass
+
+
+def test_empty_derived_name_rejected():
+    with pytest.raises(TypeError, match='derives an empty name'):
+
+        class Event(CapabilityEvent, namespace='empty_name'):  # pyright: ignore[reportUnusedClass]
+            pass
+
+
 def test_duplicate_kind_rejected():
     with pytest.raises(TypeError, match=r"Duplicate capability event kind 'test_file_system\.file_read'"):
 
@@ -330,6 +346,20 @@ async def test_capability_cannot_emit_custom_event():
     agent = Agent(FunctionModel(stream_function=_only_text), capabilities=[BadCapability()])
     with pytest.raises(UserError, match='Capabilities should define and emit `CapabilityEvent`'):
         await agent.run('go')
+
+
+async def test_capability_tool_cannot_emit_custom_event():
+    """The app-event gate applies to capability-contributed tools the same as to capability hooks."""
+    capability = Capability[Any](id='files')
+
+    @capability.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit(BridgeEvent())
+        return 'ok'  # pragma: no cover - the emit above raises
+
+    agent = Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[capability])
+    with pytest.raises(UserError, match='Capabilities should define and emit `CapabilityEvent`'):
+        await _collect(agent)
 
 
 async def test_hooks_can_emit_custom_event():

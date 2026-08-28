@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, overload
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
-from pydantic_ai._run_context import AnchoredEvidence
+from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
@@ -155,10 +155,10 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         return super()._deferred_capability_ids
 
     @overload
-    async def emit(self, event: CustomEvent, /) -> CustomEvent: ...
+    async def emit(self, event: CustomEventT, /) -> CustomEventT: ...
 
     @overload
-    async def emit(self, event: CapabilityEvent, /) -> CapabilityEvent: ...
+    async def emit(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
 
     async def emit(self, event: CustomEvent | CapabilityEvent, /) -> CustomEvent | CapabilityEvent:
         """Reject `emit` from inside a Temporal activity.

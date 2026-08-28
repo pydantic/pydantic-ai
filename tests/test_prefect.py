@@ -1958,7 +1958,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
-        '_inline_dispatched_event_ids',  # live stream-deduplication state, not a task input
+        '_pending_inline_dispatches',  # live stream-deduplication state, not a task input
         '_event_stream_replacements',  # live legacy-replacement state applied at stream position, not a task input
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks

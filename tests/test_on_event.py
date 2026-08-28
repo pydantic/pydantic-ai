@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -387,6 +388,78 @@ async def test_combined_subclass_marked_listeners_run_after_children() -> None:
     )
     await team.on_event(ctx, event=OnEventNoteEvent())
     assert order == ['child', 'team']
+
+
+async def test_emitter_reference_reflects_inline_decisions() -> None:
+    """Attribution stamps in place: the emitter's own reference to an inline event sees listener decisions."""
+    alias_saw: list[bool] = []
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        event = ThingStartEvent()
+        returned = await ctx.emit(event)
+        alias_saw.append(event.cancelled)
+        assert returned is event
+        return 'ok'
+
+    @dataclass
+    class Canceller(AbstractCapability[Any]):
+        @on_event(ThingStartEvent)
+        async def cancel(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
+            event.cancel()
+
+    await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Canceller()]).run('go')
+    assert alias_saw == [True]
+
+
+async def test_reemitted_inline_event_dispatched_once_per_emit() -> None:
+    """Re-emitting the instance `emit` returned delivers to listeners exactly once per emission."""
+    count = 0
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        event = await ctx.emit(ThingStartEvent())
+        await ctx.emit(event)
+        return 'ok'
+
+    @dataclass
+    class Counter(AbstractCapability[Any]):
+        @on_event(ThingStartEvent)
+        async def count_up(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
+            nonlocal count
+            count += 1
+
+    await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Counter()]).run('go')
+    assert count == 2
+
+
+async def test_stream_consumers_observe_settled_inline_events() -> None:
+    """A stream consumer never sees an inline decision event before its listeners have settled it."""
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit(ThingStartEvent())
+        return 'ok'
+
+    @dataclass
+    class SlowCanceller(AbstractCapability[Any]):
+        @on_event(ThingStartEvent)
+        async def cancel(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
+            # Yield the event loop first so a concurrent stream consumer could drain the buffered
+            # event mid-dispatch; without settlement it would observe `cancelled=False`.
+            await asyncio.sleep(0.02)
+            event.cancel()
+
+    observed: list[bool] = []
+    agent = Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, SlowCanceller()])
+    async with agent.run_stream_events('go') as stream:
+        async for event in stream:
+            if isinstance(event, ThingStartEvent):
+                observed.append(event.cancelled)
+    assert observed == [True]
 
 
 async def test_stream_listener_exception_fails_run() -> None:
