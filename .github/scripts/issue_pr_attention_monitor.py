@@ -681,8 +681,9 @@ def _recent_human_unassignment(
             days=ROUTING_UNASSIGN_BACKOFF_DAYS
         ):
             continue
-        performer = _nested_field(event, 'assigner', 'login')
-        if not performer or performer.endswith('[bot]'):
+        # GitHub types app principals as `Bot`; login naming is a convention,
+        # not a contract. An unattributable event cannot count as a decision.
+        if not _nested_field(event, 'assigner', 'login') or _nested_field(event, 'assigner', 'type') == 'Bot':
             continue
         if probe.login(_nested_field(event, 'assignee', 'login')):
             return True
@@ -1222,7 +1223,18 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: 
         _add_labels(client, repo, number, [_ACTION_LABEL])
         _remove_label(client, repo, number, _ESCALATED_LABEL)
         reactivated = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-        _ensure_recipients(client, repo, reactivated, now=now)
+        # The reminder lanes own their assignment: only the agent-marked lane
+        # may re-run the placeholder heuristic on resurface.
+        _, stood_down = _resolve_recipients(
+            client,
+            repo,
+            reactivated,
+            _labels(reactivated),
+            _maintainer_assignees(client, repo, reactivated),
+            now=now,
+        )
+        if stood_down is not None:
+            return stood_down
         return f'#{number}: returned unresolved attention to the active queue'
     return None
 

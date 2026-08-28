@@ -1270,6 +1270,29 @@ def test_agent_marked_reminder_items_respect_the_owner_quiet_window():
     assert notices == []
 
 
+def test_bot_unassignments_do_not_back_off_the_placeholder_heuristic():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.permissions = {'samuelcolvin': 'admin'}
+    client.comments[7] = [{'user': {'login': 'samuelcolvin'}, 'created_at': OLD}]
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL),
+        {
+            'event': 'unassigned',
+            'created_at': (NOW - dt.timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'actor': {'login': 'samuelcolvin'},
+            'assignee': {'login': 'samuelcolvin'},
+            'assigner': {'login': 'github-actions[bot]', 'type': 'Bot'},
+        },
+    ]
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW)
+
+    # The sweep's own unassignment is cleanup, not a decision to back off
+    # from: the discussion heuristic may still hand the item to a maintainer.
+    assert failures == []
+    assert any(method == 'POST' and path.endswith('/assignees') for method, path, _ in client.calls)
+
+
 def test_placeholder_heuristic_backs_off_after_a_recent_unassignment():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
     # A maintainer outside the routing roster: the back-off must probe live
@@ -2446,6 +2469,27 @@ def test_sweep_keeps_untouched_escalated_item_dormant():
 
     assert monitor.reconcile(client, 'r', now=NOW) == ([], [])
     assert not any(call[0] == 'DELETE' for call in client.calls)
+
+
+def test_resurfaced_reminder_item_stands_down_instead_of_placeholder_assignment():
+    client = FakeClient({7: item(7, labels=[monitor._ESCALATED_LABEL, 'p:1-highest'])})
+    client.timelines[7] = [
+        label_event(monitor._ESCALATED_LABEL, created_at='2026-07-12T00:00:00Z'),
+        {
+            'event': 'unlabeled',
+            'created_at': '2026-07-12T00:00:01Z',
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+    ]
+
+    lines, failures = monitor.reconcile(client, 'r', now=NOW)
+
+    # A reminder-labeled item's owner was removed while it cooled off: the
+    # resurface must stand down, never re-assign the placeholder.
+    assert failures == []
+    assert lines == ['#7: stood down after its owner was unassigned']
+    assert not any(method == 'POST' and path.endswith('/assignees') for method, path, _ in client.calls)
 
 
 def test_sweep_returns_unresolved_escalation_to_active_queue_after_cooldown():
