@@ -73,9 +73,11 @@ async def conversation(session: RealtimeSession) -> None:
         # speaker pace while the model runs ahead; `stream_audio()`'s own buffer bounds
         # the backlog, dropping its oldest chunks if playback falls too far behind, so a
         # machine that stutters glitches instead of ending the call. Received and played
-        # bytes are tracked per assistant turn so barge-in can report how much of its
-        # reply the user actually heard.
-        received = played = 0
+        # byte counts run for the whole session — a new turn can start while the previous
+        # turn's tail is still playing (after a quick tool call, say), so per-turn resets
+        # would misattribute that tail. `turn_start` marks where the current turn begins
+        # in the received count, letting barge-in report how much of it was really heard.
+        received = played = turn_start = 0
 
         async def play_audio(scope: anyio.CancelScope) -> None:
             nonlocal played
@@ -105,9 +107,13 @@ async def conversation(session: RealtimeSession) -> None:
                         playback.cancel()
                         playback = anyio.CancelScope()
                         tg.start_soon(play_audio, playback)
-                        await session.interrupt(played_ms=played * 1000 // byte_rate)
+                        # If the previous turn's tail was still playing, none of this
+                        # turn was heard yet, so its played duration clamps to zero.
+                        played_ms = max(0, played - turn_start) * 1000 // byte_rate
+                        await session.interrupt(played_ms=played_ms)
+                        played = received  # the dropped audio is settled; stay in sync
                 case PartStartEvent(part=SpeechPart(speaker='assistant')):
-                    received = played = 0
+                    turn_start = received  # older audio belongs to earlier turns
                 case PartEndEvent(part=SpeechPart() as part) if part.transcript:
                     print(f'{part.speaker}: {part.transcript}')
                 case FunctionToolCallEvent(part=call):

@@ -40,9 +40,16 @@ with try_import() as imports_successful:
         at module level it would raise `NameError` in environments without the realtime extras.
         """
 
-        def __init__(self, *, chunk: bytes, wait_for_playback: asyncio.Event | None = None) -> None:
+        def __init__(
+            self,
+            *,
+            chunk: bytes,
+            wait_for_playback: asyncio.Event | None = None,
+            completed_turn: tuple[bytes, asyncio.Event] | None = None,
+        ) -> None:
             self._chunk = chunk
             self._wait_for_playback = wait_for_playback
+            self._completed_turn = completed_turn
             self.sent: list[RealtimeInput] = []
             self._response_cancelled = asyncio.Event()
 
@@ -52,6 +59,12 @@ with try_import() as imports_successful:
                 self._response_cancelled.set()
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            if self._completed_turn is not None:
+                # A full earlier turn, spoken and played to the end before the next turn starts.
+                prior_chunk, prior_played = self._completed_turn
+                yield AudioDelta(data=prior_chunk)
+                yield ResponseDone()
+                await prior_played.wait()
             yield AudioDelta(data=self._chunk)
             if self._wait_for_playback is not None:
                 # Only report the user speaking once the speaker finished the chunk, so the turn was
@@ -72,8 +85,9 @@ pytestmark = [
 ]
 
 MIC_CHUNK = b'\xaa' * 4
-SLOW_CHUNK = b'\x01' * 4  # playback of this chunk never completes
-FAST_CHUNK = b'\x02' * 4  # playback of this chunk completes immediately
+# 100 ms each at gpt-realtime's 24 kHz mono PCM16, so misattributed playback shows up in `played_ms`.
+SLOW_CHUNK = b'\x01' * 4800  # playback of this chunk never completes
+FAST_CHUNK = b'\x02' * 4800  # playback of this chunk completes immediately
 
 
 class FakeMicrophone:
@@ -167,6 +181,25 @@ async def test_voice_assistant_barge_in_drops_unheard_audio(
     assert speaker.written == [FAST_CHUNK]
     # The microphone block was forwarded through `send_audio(mic)`.
     assert BinaryAudio(data=MIC_CHUNK, media_type='audio/pcm') in connection.sent
+
+
+async def test_voice_assistant_barge_in_excludes_earlier_turns_from_played_ms(
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`played_ms` reports playback of the interrupted turn only, not of earlier completed turns.
+
+    A whole first turn plays to the end (100 ms of audio); the second turn's chunk never finishes
+    playing. Interrupting the second turn must truncate it at 0 ms — a per-session counter without
+    the turn-start watermark would misreport the first turn's 100 ms as heard second-turn audio.
+    """
+    speaker = _fake_audio_io(monkeypatch)
+    connection = ScriptedConnection(chunk=SLOW_CHUNK, completed_turn=(FAST_CHUNK, speaker.played))
+    _script_connection(mocker, connection)
+
+    await realtime_voice.main()
+
+    assert TruncateOutput(audio_end_ms=0) in connection.sent
+    assert speaker.written == [FAST_CHUNK, FAST_CHUNK]
 
 
 async def test_voice_assistant_no_interrupt_when_turn_was_heard_in_full(
