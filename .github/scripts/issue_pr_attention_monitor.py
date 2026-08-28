@@ -1334,9 +1334,20 @@ def _pull_intake_query(repo: str, owners: Sequence[str]) -> str:
 
 
 def _recent_unassignment(events: Sequence[dict[str, Any]], *, now: dt.datetime) -> bool:
-    """Whether anyone removed an assignee from this item inside the back-off window."""
+    """Whether a maintainer deliberately took a maintainer off this item recently.
+
+    Bot unassignments (sweeps, placeholder swaps) and removals of stale
+    non-maintainer assignees are cleanup, not decisions to back off from. On
+    (un)assigned events the performer is `assigner`; `actor` is the removed
+    assignee.
+    """
+    owner_keys = {owner.casefold() for owner in MAINTAINER_OWNERS}
     for event in events:
         if str(event.get('event') or '') != 'unassigned':
+            continue
+        performer = _nested_field(event, 'assigner', 'login').casefold()
+        target = _nested_field(event, 'assignee', 'login').casefold()
+        if performer not in owner_keys or target not in owner_keys:
             continue
         created = event.get('created_at')
         if isinstance(created, str) and now - _parse_time(created) < dt.timedelta(days=ROUTING_UNASSIGN_BACKOFF_DAYS):
