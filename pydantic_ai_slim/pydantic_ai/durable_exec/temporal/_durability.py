@@ -198,8 +198,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 needing a separate message queue. This is sugar over
                 [`workflow_stream_event_handler`][pydantic_ai.durable_exec.temporal.workflow_stream_event_handler];
                 it enables streaming on its own and is orthogonal to `event_stream_handler` (both run,
-                each seeing every event). The workflow must construct a `WorkflowStream` in its
-                `@workflow.init` for events to be delivered.
+                concurrently with no ordering guarantee, each seeing every event). They form one unit of
+                replay: if either fails, the other is cancelled and the event-handler activity fails. An
+                activity retry can republish earlier events at new offsets, so consumers must allow
+                at-least-once delivery. The workflow must construct a `WorkflowStream` in its `@workflow.init`
+                for events to be delivered.
             event_stream_events: Optional predicate to select which events are published to
                 `event_stream_topic`; by default every event is published. A model stream emits a
                 `PartDeltaEvent` per token, so filtering (e.g. dropping deltas) can significantly reduce

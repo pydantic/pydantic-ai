@@ -314,7 +314,9 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 Rather than standing up a separate message queue, you can use Temporal's built-in [Workflow Streams](https://docs.temporal.io/develop/python/workflows/workflow-streams) as the transport: the parent workflow itself becomes the durable, offset-addressed channel that an external consumer subscribes to.
 
-Set `event_stream_topic` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and construct a [`WorkflowStream`](https://docs.temporal.io/develop/python/workflows/workflow-streams) in your workflow's `@workflow.init`. Every event is then published to that topic from within the activity. Setting `event_stream_topic` enables streaming on its own, and it's orthogonal to `event_stream_handler`: if you also pass a handler, both run and each sees every event.
+Set `event_stream_topic` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and construct a [`WorkflowStream`](https://docs.temporal.io/develop/python/workflows/workflow-streams) in your workflow's `@workflow.init`. Every event is then published to that topic from within the activity. Setting `event_stream_topic` enables streaming on its own, and it's orthogonal to `event_stream_handler`: if you also pass a handler, both run concurrently with no ordering guarantee, and each sees every event.
+
+The publisher and user handler form one unit of replay. If either fails, the other is cancelled and the durable event-handler activity fails. When Temporal retries that activity, the publisher can publish earlier events again at new offsets. Consumers must therefore handle these events with at-least-once delivery semantics.
 
 ```python {test="skip"}
 import asyncio

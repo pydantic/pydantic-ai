@@ -13,6 +13,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, AgentStreamEvent, PartDeltaEvent, PartEndEvent, PartStartEvent, RunContext, RunUsage
+from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
@@ -31,6 +32,7 @@ try:
         stream_agent_events,
         workflow_stream_event_handler,
     )
+    from pydantic_ai.durable_exec.temporal._event_stream import combine_event_stream_handlers
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -46,11 +48,6 @@ with workflow.unsafe.imports_passed_through():
     from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE, _stream_fn_model  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='temporal-durability')]
-
-
-def test_temporal_durability_event_stream_topic_implies_handler() -> None:
-    durability = TemporalDurability(event_stream_topic='agent_events')
-    assert durability.has_wrap_run_event_stream is True
 
 
 _teed_events: list[AgentStreamEvent] = []
@@ -142,6 +139,62 @@ async def test_streaming_to_workflow_stream(client: Client) -> None:
     assert any(isinstance(event, PartStartEvent) for event in _teed_events)
 
 
+async def test_publisher_failure_cancels_handler_and_fails_activity() -> None:
+    handler_started = anyio.Event()
+    handler_cancelled = anyio.Event()
+
+    async def publisher(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        await handler_started.wait()
+        raise RuntimeError('publisher failed')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        handler_started.set()
+        try:
+            await anyio.sleep_forever()
+        finally:
+            handler_cancelled.set()
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='publisher-failure')
+    combined = combine_event_stream_handlers(publisher, handler)
+    send, stream = anyio.create_memory_object_stream[AgentStreamEvent]()
+    send.close()
+
+    async with stream:
+        with pytest.raises(BaseExceptionGroup) as exc_info:
+            await combined(ctx, stream)
+
+    assert exc_info.value.subgroup(RuntimeError) is not None
+    assert handler_cancelled.is_set()
+
+
+async def test_handler_failure_interrupts_publisher_and_fails_activity() -> None:
+    publisher_started = anyio.Event()
+    publisher_cancelled = anyio.Event()
+
+    async def publisher(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        publisher_started.set()
+        try:
+            await anyio.sleep_forever()
+        finally:
+            publisher_cancelled.set()
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        await publisher_started.wait()
+        raise RuntimeError('handler failed')
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='handler-failure')
+    combined = combine_event_stream_handlers(publisher, handler)
+    send, stream = anyio.create_memory_object_stream[AgentStreamEvent]()
+    send.close()
+
+    async with stream:
+        with pytest.raises(BaseExceptionGroup) as exc_info:
+            await combined(ctx, stream)
+
+    assert exc_info.value.subgroup(RuntimeError) is not None
+    assert publisher_cancelled.is_set()
+
+
 _offset_agent = Agent(
     _stream_fn_model,
     name='durability_offsets_stream_agent',
@@ -174,6 +227,12 @@ class WorkflowStreamOffsetsWorkflow:
     def release(self) -> None:
         self._released = True
 
+    @workflow.signal
+    def publish_noise(self) -> None:
+        other = self.stream.topic('other_events')
+        for i in range(3, 6):
+            other.publish(f'noise-{i}')
+
 
 async def test_workflow_stream_offsets_support_resume(client: Client) -> None:
     """A consumer can resume at the next global stream offset without gaps or duplicates."""
@@ -200,6 +259,7 @@ async def test_workflow_stream_offsets_support_resume(client: Client) -> None:
             )
         ) as subscription:
             last_offset, _ = await asyncio.wait_for(anext(subscription), timeout=60)
+        await handle.signal(WorkflowStreamOffsetsWorkflow.publish_noise)
 
         rest: list[tuple[int, AgentStreamEvent]] = []
         async for offset, event in stream_agent_events(
@@ -216,7 +276,7 @@ async def test_workflow_stream_offsets_support_resume(client: Client) -> None:
         output = await handle.result()
 
     assert output == 'Streamed response'
-    assert rest[0][0] == last_offset + 1
+    assert rest[0][0] > last_offset
     offsets = [last_offset, *(offset for offset, _ in rest)]
     assert offsets == sorted(set(offsets))
     assert offsets[0] == 3

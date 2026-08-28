@@ -105,6 +105,9 @@ def combine_event_stream_handlers(
 
     async def combined(run_context: RunContext[AgentDepsT], stream: Any) -> None:
         senders: list[Any] = []
+        # The publisher and user handler deliberately form one unit of replay: either failure cancels the
+        # other and fails the durable event-handler activity. A retry can therefore publish earlier events
+        # again at new Workflow Stream offsets, giving consumers at-least-once delivery.
         async with anyio.create_task_group() as tg:
             for handler in handlers:
                 send, receive = anyio.create_memory_object_stream[_messages.AgentStreamEvent](_FANOUT_BUFFER_SIZE)
