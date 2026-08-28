@@ -1129,17 +1129,23 @@ def _queue_stage_notice(
         return f'#{number}: maintainer acknowledged the request', None
     # Stage 2 is the existing durable "terminal Slack delivery pending" state.
     # Keeping that meaning makes the channel cutover safe for in-flight items.
-    # A stage-0 reminder item was marked precisely because its owner already
-    # breached the window, so its first ping goes out on this pass; stage 1
-    # then waits its own window between the ping and the channel escalation.
+    # Stage 1 waits its window between the ping and the channel escalation.
     if current_stage == 1 and now - transition_at < _sla_for(labels):
         return None
-    # Only assigned priority or community-backed issues enter the interrupt
-    # pipeline: anything else the triage agent marks stays tracked, visible in
-    # the Monday digest, and silent. Items already pinged before the cutover
-    # finish their lifecycle rather than stranding at stage 1.
-    if current_stage == 0 and not labels.intersection(_REMINDER_SLAS):
-        return None
+    if current_stage == 0:
+        # Only assigned priority or community-backed issues enter the
+        # interrupt pipeline: anything else the triage agent marks stays
+        # tracked, visible in the Monday digest, and silent. Items already
+        # pinged before the cutover finish their lifecycle rather than
+        # stranding at stage 1.
+        if not labels.intersection(_REMINDER_SLAS):
+            return None
+        # Items reach stage 0 from several lanes (the reminder sweep, agent
+        # classification, escalation resurface), so the owner-quiet window is
+        # enforced here, at the one seam every ping passes through: a lane
+        # cannot ping early, and owner activity after marking holds the ping.
+        if not _owner_quiet_since(timeline, recipients, since=now - _sla_for(labels)):
+            return None
     kind: Literal['reminder', 'escalation'] = 'reminder' if current_stage == 0 else 'escalation'
     notice = _notice_if_current(
         client,
@@ -1185,7 +1191,8 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: 
         return f'#{number}: restored attention eligibility after new activity'
     if now - transition[0] >= _RESURFACE_AFTER:
         # Add the active marker first so a partial GitHub failure cannot leave
-        # unresolved work in neither state. Its label event starts a fresh SLA.
+        # unresolved work in neither state; the notice seam's owner-quiet
+        # check then decides when the next ping is due.
         _add_labels(client, repo, number, [_ACTION_LABEL])
         _remove_label(client, repo, number, _ESCALATED_LABEL)
         reactivated = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
@@ -1200,28 +1207,27 @@ def _sla_for(labels: set[str]) -> dt.timedelta:
     return min(windows) if windows else _SLA
 
 
-def _owner_active_since(timeline: Sequence[dict[str, Any]], owners: list[str]) -> dt.datetime | None:
-    """The owner's newest visible action: a comment, or being assigned.
+def _owner_quiet_since(timeline: Sequence[dict[str, Any]], owners: Sequence[str], *, since: dt.datetime) -> bool:
+    """Whether the owners took no visible action in the timeline since `since`.
 
-    `None` when both predate the fetched pages — then the owner has been
-    silent for so long that the reminder window is certainly breached.
+    Counts the same actions as `_acknowledged` — any owner-attributed event
+    except the passive kinds — so "quiet enough to remind" and "responded
+    after the reminder" can never disagree and loop. When the fetched pages
+    do not reach back to `since`, the owners' action may have been pushed off
+    by newer noise: treated as not quiet, never as a false reminder. (On
+    `assigned` events GitHub mirrors the assignee into `actor`, so being
+    assigned counts as that owner's activity with no special case.)
     """
+    if timeline and ((first := _event_time(timeline[0])) is None or first > since):
+        return False
     keys = {owner.casefold() for owner in owners}
-    latest: dt.datetime | None = None
-    for event in timeline:
-        kind = str(event.get('event') or '')
-        if kind == 'commented':
-            login = _actor(event).casefold()
-        elif kind == 'assigned':
-            login = _nested_field(event, 'assignee', 'login').casefold()
-        else:
-            continue
-        if login not in keys:
-            continue
-        when = _event_time(event)
-        if when is not None and (latest is None or when > latest):
-            latest = when
-    return latest
+    return not any(
+        (event_time := _event_time(event)) is not None
+        and event_time >= since
+        and event.get('event') not in _NON_ACK_EVENTS
+        and _actor(event).casefold() in keys
+        for event in timeline
+    )
 
 
 def _mark_assigned_reminders(
@@ -1229,11 +1235,11 @@ def _mark_assigned_reminders(
 ) -> tuple[list[str], list[str]]:
     """Keep every assigned priority or community-backed issue inside the attention queue.
 
-    An issue is marked once its owner has gone quiet past the label's window —
-    measured from the owner's own last comment (or assignment), so community
-    chatter can neither delay the reminder nor cause one while the owner is
-    responding. An owner comment acknowledges and clears the cycle, which
-    re-arms the next one. One label's failure never blocks the rest.
+    An issue is marked once its owner has gone quiet past the label's window
+    (`_owner_quiet_since` — the same activity rule acknowledgment uses), so
+    community chatter can neither delay the reminder nor cause one while the
+    owner is responding. Owner activity acknowledges and clears the cycle,
+    which re-arms the next one. One label's failure never blocks the rest.
     """
     lines: list[str] = []
     failures: list[str] = []
@@ -1268,8 +1274,7 @@ def _mark_assigned_reminders(
                 ):
                     continue
                 timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
-                active_at = _owner_active_since(timeline, maintainers)
-                if active_at is not None and now - active_at < _sla_for(labels):
+                if not _owner_quiet_since(timeline, maintainers, since=now - _sla_for(labels)):
                     continue
                 _add_labels(client, repo, number, [_ACTION_LABEL])
                 lines.append(f'#{number}: queued assigned {reminder_label} issue for owner attention')

@@ -1222,6 +1222,82 @@ def test_community_chatter_neither_suppresses_nor_hastens_the_owner_reminder():
     assert marked(build(owner_comment_days=1, contributor_comment_days=0)) is False
 
 
+def test_owner_activity_other_than_comments_counts_as_responding():
+    # An owner who triages daily through labels but last commented long ago
+    # must not be pinged and re-pinged: the quiet rule counts the same actions
+    # acknowledgment does, or the two would disagree and loop.
+    client = FakeClient({7: item(7, labels=['p:1-highest'], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'actor': {'login': 'alice'},
+            'created_at': (NOW - dt.timedelta(days=6)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        },
+        {
+            'event': 'labeled',
+            'actor': {'login': 'alice'},
+            'created_at': (NOW - dt.timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'label': {'name': 'bug'},
+        },
+    ]
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW, notices=[])
+
+    assert failures == []
+    assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[7]['labels']}
+
+
+def test_agent_marked_reminder_items_respect_the_owner_quiet_window():
+    # The triage agent can mark an assigned p:2 issue after 3 total-quiet days;
+    # the owner-quiet gate at the notice seam still holds the ping until the
+    # owner has been silent for the label's full 5-day window.
+    client = FakeClient({7: item(7, labels=['p:2-high', monitor._ACTION_LABEL], assignees=['alice'])})
+    client.permissions = {'alice': 'write'}
+    client.timelines[7] = [
+        {
+            'event': 'commented',
+            'actor': {'login': 'alice'},
+            'created_at': (NOW - dt.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        },
+        label_event(monitor._ACTION_LABEL, created_at=(NOW - dt.timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')),
+    ]
+    notices: list[monitor.Notice] = []
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    assert failures == []
+    assert notices == []
+
+
+def test_placeholder_heuristic_backs_off_after_a_recent_unassignment():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
+    client.timelines[7] = [
+        label_event(monitor._ACTION_LABEL),
+        {
+            'event': 'commented',
+            'actor': {'login': 'DouweM'},
+            'created_at': OLD,
+        },
+        {
+            'event': 'unassigned',
+            'created_at': (NOW - dt.timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'actor': {'login': 'DouweM'},
+            'assignee': {'login': 'DouweM'},
+            'assigner': {'login': 'DouweM'},
+        },
+    ]
+    notices: list[monitor.Notice] = []
+
+    _, failures = monitor.reconcile(client, 'r', now=NOW, notices=notices)
+
+    # DouweM took himself off two days ago: the discussion heuristic must not
+    # hand the item straight back to him.
+    assert failures == []
+    assert notices == []
+    assert not any(method == 'POST' and path.endswith('/assignees') for method, path, _ in client.calls)
+
+
 def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))
