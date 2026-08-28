@@ -23,11 +23,21 @@ from ._inline_snapshot import snapshot
 from .conftest import IsInstance, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from prompt_toolkit.buffer import Buffer
+    from prompt_toolkit.document import Document
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command, run_chat
+    from pydantic_ai._cli import (
+        CustomAutoSuggest,
+        ask_agent,
+        cli,
+        cli_agent,
+        format_usage,
+        handle_slash_command,
+        run_chat,
+    )
     from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -1242,3 +1252,15 @@ def test_clai_chat_session_does_not_print_a_second_banner(
             assert cli([]) == 0
 
     assert capfd.readouterr().out.count('·.______|______.·') == 1
+
+
+def test_auto_suggest_completes_a_slash_command():
+    """A typed prefix of a slash command wins over whatever history would have suggested."""
+    suggestion = CustomAutoSuggest(['/exit']).get_suggestion(Buffer(), Document('/e'))
+
+    assert suggestion is not None and suggestion.text == 'xit'
+
+
+def test_auto_suggest_falls_back_to_history_for_a_non_command():
+    """Text matching no slash command leaves the history suggestion in place — here, none."""
+    assert CustomAutoSuggest(['/exit']).get_suggestion(Buffer(), Document('hello')) is None
