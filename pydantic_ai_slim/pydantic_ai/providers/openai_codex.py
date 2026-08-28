@@ -14,10 +14,8 @@ machine serve (or tunnel) `localhost:1455` themselves and hand the code to `exch
 from __future__ import annotations as _annotations
 
 import base64
-import hashlib
 import json
 import os
-import secrets
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,6 +34,7 @@ from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.openai_codex import openai_codex_model_profile
 
+from ._oauth import OAuthFlow
 from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
     OpenAICompatibleProvider as _OpenAICompatibleProvider,
@@ -383,7 +382,7 @@ def _read_codex_cli_credentials() -> OpenAICodexCredentials:
     return OpenAICodexCredentials.from_codex_cli_auth(data)
 
 
-class OpenAICodexOAuthFlow:
+class OpenAICodexOAuthFlow(OAuthFlow[OpenAICodexCredentials]):
     """Pure authorization-code + PKCE context for the OpenAI Codex public client.
 
     This is the only login flow the public client supports (no device flow; redirect URI pinned to
@@ -394,15 +393,13 @@ class OpenAICodexOAuthFlow:
     """
 
     def __init__(self, *, redirect_uri: str = _REDIRECT_URI, state: str | None = None) -> None:
-        self.redirect_uri = redirect_uri
-        self.state = state or secrets.token_urlsafe(16)
-        self.code_verifier = secrets.token_urlsafe(32)
+        super().__init__(redirect_uri=redirect_uri, state=state)
 
-    def authorization_url(self, *, scope: str = _DEFAULT_SCOPE, extra_params: Mapping[str, str] | None = None) -> str:
+    def authorization_url(self, *, scope: str | None = None, extra_params: Mapping[str, str] | None = None) -> str:
         """The URL to send the user to. Note the public client pins redirects to localhost.
 
         Args:
-            scope: The OAuth scopes to request.
+            scope: The OAuth scopes to request; `None` means the standard Codex login scopes.
             extra_params: Additional query parameters, merged over the defaults (so they can also
                 override them), except `client_id` and `redirect_uri`: `exchange_code()` always
                 posts the public client id and the flow's `redirect_uri`, so overriding either
@@ -411,27 +408,18 @@ class OpenAICodexOAuthFlow:
                 default: without the former, the `id_token` can omit the account id for multi-org
                 accounts (live-verified 2026-08-25).
         """
-        challenge = base64.urlsafe_b64encode(hashlib.sha256(self.code_verifier.encode()).digest()).rstrip(b'=')
         params: dict[str, str] = {
             'response_type': 'code',
             'client_id': _PUBLIC_CLIENT_ID,
             'redirect_uri': self.redirect_uri,
-            'scope': scope,
+            'scope': scope if scope is not None else _DEFAULT_SCOPE,
             'state': self.state,
-            'code_challenge': challenge.decode(),
+            'code_challenge': self.code_challenge,
             'code_challenge_method': 'S256',
             'id_token_add_organizations': 'true',
             'codex_cli_simplified_flow': 'true',
         }
-        if extra_params:
-            if overridden := sorted({'client_id', 'redirect_uri'} & extra_params.keys()):
-                raise UserError(
-                    f'`extra_params` cannot override {", ".join(overridden)}: `exchange_code()` always posts '
-                    "the public client id and the flow's `redirect_uri`, so the authorization code would be "
-                    'unusable. Pass `redirect_uri=` to the constructor instead.'
-                )
-            params.update(extra_params)
-        return f'{_AUTHORIZE_URL}?{urlencode(params)}'
+        return f'{_AUTHORIZE_URL}?{urlencode(self._merge_extra_params(params, extra_params))}'
 
     async def exchange_code(self, code: str) -> OpenAICodexCredentials:
         """Exchange an authorization code for credentials (call this in your callback handler)."""
