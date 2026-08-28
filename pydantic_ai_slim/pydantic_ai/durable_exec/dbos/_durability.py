@@ -3,17 +3,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dbos import DBOS
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import Lifecycle
+from pydantic_ai.durable_exec._operation import ToolsetKind
+from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters
@@ -51,19 +51,20 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         ```
     """
 
-    engine_name = 'DBOS'
-    _codec: ClassVar = IDENTITY_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset({'mcp', 'dynamic'})
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'mcp': 'enter-never',
-        'dynamic': 'enter-never',
-    }
-    _tool_call_result_upgrade_lenient = True
-    _journal_discovery = True
-    _durable_unit_noun = 'step'
-    _durable_container_noun = 'workflow'
-    # No `_tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
+    engine_spec = DurabilityEngineSpec(
+        engine_name='DBOS',
+        durable_unit_noun='step',
+        durable_container_noun='workflow',
+        codec=IDENTITY_CODEC,
+        unsupported_runtime_toolset_kinds=frozenset({'mcp', 'dynamic'}),
+        wrapped_toolset_kinds=frozenset({'mcp', 'dynamic'}),
+        toolset_lifecycles={'mcp': 'enter-never', 'dynamic': 'enter-never'},
+        tool_call_result_upgrade_lenient=True,
+        journal_discovery=True,
+        sequential_tools_in_durable_context=False,
+        tool_config_key=None,
+    )
+    # No `tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
     # before this capability existed). It can't be supported without changing durable history: a step
     # is registered once per name, and DBOS tool-call step names deliberately carry no tool name
     # (every tool in a toolset shares one step), so per-tool config would be first-tool-wins.

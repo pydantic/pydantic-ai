@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import TypeAdapter
@@ -20,10 +20,8 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
-from pydantic_ai.durable_exec._base import (
-    BaseDurabilityCapability,
-    ToolsetKind,
-)
+from pydantic_ai.durable_exec import DurabilityEngineSpec
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
     CacheIdentity,
@@ -58,7 +56,6 @@ from pydantic_ai.durable_exec._toolset import (
     DurableFunctionToolset,
     DynamicToolInfo,
     DynamicToolsResult,
-    Lifecycle,
     ToolConfig,
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
@@ -172,17 +169,12 @@ class _JournalBackend(CallableOperationBackend[ToolConfig]):
 
 
 class JournalDurability(BaseDurabilityCapability[Any]):
-    engine_name = 'Journal operation test stub'
-    _durable_unit_noun = 'unit'
-    _durable_container_noun = 'journal'
-    _codec: ClassVar = JSON_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
-    _wrapped_toolset_kinds: ClassVar = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Journal operation test stub',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+    )
 
     @property
     def in_durable_context(self) -> bool:
@@ -198,7 +190,7 @@ class JournalDurability(BaseDurabilityCapability[Any]):
 
 async def test_durability_forces_sequential_tools_inside_durable_context() -> None:
     class SequentialJournalDurability(JournalDurability):
-        _force_sequential_tools_in_durable_context = True
+        engine_spec = replace(JournalDurability.engine_spec, sequential_tools_in_durable_context=True)
 
     durability = SequentialJournalDurability()
     agent = Agent(TestModel(), name='sequential', capabilities=[durability])

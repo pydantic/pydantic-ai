@@ -3857,12 +3857,12 @@ async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS, metadata: d
 
     DBOS registers a step once per name and its tool-call step names carry no tool name, so
     per-tool config can't be honored. Metadata that other engines read (`{'dbos': False}` would
-    be an opt-out under Prefect/Temporal's `_tool_config_key`) must leave the step in place --
+    be an opt-out under Prefect/Temporal's `engine_spec.tool_config_key`) must leave the step in place --
     dropping it would both un-checkpoint the call and shift the recorded step sequence, breaking
     recovery of workflows recorded before this capability existed.
 
     The empty-string key is the same contract from the other side: an engine with no
-    `_tool_config_key` must not consult metadata at all, rather than reading key `''`.
+    `engine_spec.tool_config_key` must not consult metadata at all, rather than reading key `''`.
     """
     calls: list[str] = []
 

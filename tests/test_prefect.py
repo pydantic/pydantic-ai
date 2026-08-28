@@ -14,7 +14,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
@@ -62,6 +62,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     Toolset,
 )
+from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
     ToolsetKind,
@@ -167,56 +168,29 @@ def test_durability_codecs() -> None:
     assert JSON_CODEC.load(list[int], value) == value
 
 
-def test_durability_declarative_contract_validates_at_bind_time() -> None:
-    class MissingLifecycleDurability(PrefectDurability):
-        _wrapped_toolset_kinds = frozenset({'function', 'dynamic'})
-        _toolset_lifecycles = {'function': 'enter-always'}
-
-    agent = Agent(TestModel(), name='declarative-contract')
+def test_durability_engine_spec_rejects_missing_lifecycle() -> None:
     with pytest.raises(
         UserError,
-        match=r"Invalid Prefect declarative durability contract: missing toolset lifecycles for: \['dynamic'\]\.",
+        match=r"Invalid Test durability engine spec: missing toolset lifecycles for: \['dynamic'\]\.",
     ):
-        MissingLifecycleDurability().for_agent(agent)
+        DurabilityEngineSpec(
+            engine_name='Test',
+            durable_unit_noun='unit',
+            durable_container_noun='container',
+            wrapped_toolset_kinds=frozenset({'function', 'dynamic'}),
+            toolset_lifecycles={'function': 'enter-always'},
+        )
 
-    bound = PrefectDurability().for_agent(agent)
-    assert bound.name == 'declarative-contract'
 
-
-@pytest.mark.parametrize(
-    ('durability_type', 'error'),
-    [
-        (
-            type(
-                'UnknownKindDurability',
-                (PrefectDurability,),
-                {'_wrapped_toolset_kinds': frozenset({'function', 'unknown'})},
-            ),
-            r"unsupported wrapped toolset kinds: \['unknown'\]",
+def test_durability_engine_spec_rejects_empty_nouns() -> None:
+    with pytest.raises(
+        UserError,
+        match=(
+            r'Invalid Test durability engine spec: `durable_unit_noun` must not be empty; '
+            r'`durable_container_noun` must not be empty\.'
         ),
-        (
-            type('MissingEngineNameDurability', (PrefectDurability,), {'engine_name': ''}),
-            r'MissingEngineNameDurability declarative durability contract: required ClassVars are unset: engine_name',
-        ),
-        (
-            type(
-                'MissingNounsDurability',
-                (PrefectDurability,),
-                {'_durable_unit_noun': '', '_durable_container_noun': ''},
-            ),
-            (
-                r'Invalid Prefect declarative durability contract: required ClassVars are unset: '
-                r'_durable_unit_noun, _durable_container_noun'
-            ),
-        ),
-    ],
-)
-def test_durability_declarative_contract_rejects_other_invalid_fields(
-    durability_type: type[PrefectDurability[Any]], error: str
-) -> None:
-    agent = Agent(TestModel(), name='invalid-declarative-contract')
-    with pytest.raises(UserError, match=error):
-        durability_type().for_agent(agent)
+    ):
+        DurabilityEngineSpec(engine_name='Test', durable_unit_noun='', durable_container_noun='')
 
 
 async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,7 +201,7 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
     """
 
     class FunctionOnlyDurability(PrefectDurability):
-        _wrapped_toolset_kinds = frozenset({'function'})
+        engine_spec = replace(PrefectDurability.engine_spec, wrapped_toolset_kinds=frozenset({'function'}))
 
     durability = PrefectDurability(name='base-defaults')
     base = cast(BaseDurabilityCapability[Any], durability)
@@ -275,7 +249,11 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
 
     payload = await wrap_tool_call_result(value())
     with monkeypatch.context() as patch:
-        patch.setattr(type(durability), '_tool_call_result_upgrade_lenient', False)
+        patch.setattr(
+            type(durability),
+            'engine_spec',
+            replace(PrefectDurability.engine_spec, tool_call_result_upgrade_lenient=False),
+        )
         assert durability._unwrap_tool_result(payload) == 'value'  # pyright: ignore[reportPrivateUsage]
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
@@ -283,7 +261,11 @@ async def test_durability_base_default_hooks(monkeypatch: pytest.MonkeyPatch) ->
     agent = Agent(TestModel(), name='sequential-default', capabilities=[PrefectDurability()])
     bound = PrefectDurability.from_agent(agent)
     assert bound is not None
-    monkeypatch.setattr(PrefectDurability, '_force_sequential_tools_in_durable_context', True)
+    monkeypatch.setattr(
+        PrefectDurability,
+        'engine_spec',
+        replace(PrefectDurability.engine_spec, sequential_tools_in_durable_context=True),
+    )
 
     async def sequential_handler() -> Any:
         assert ToolManager(FunctionToolset()).get_parallel_execution_mode() == 'sequential'
@@ -301,7 +283,7 @@ async def test_durability_base_serialization_failure_hook() -> None:
         pass
 
     class JsonDurability(PrefectDurability[Any]):
-        _codec = JSON_CODEC
+        engine_spec = replace(PrefectDurability.engine_spec, codec=JSON_CODEC)
 
         def __init__(self, *, map_failure: bool) -> None:
             super().__init__(name='json-durability')

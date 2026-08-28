@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     )
     from ._operation_backend import CallableOperationBackend, DurableOperationBackend, RegisteredOperationBackend
     from ._operation_names import DurableOperationNamer, JournalOperationNamer
+    from ._spec import DurabilityEngineSpec
 
 __all__ = [
     'BaseDurabilityCapability',
@@ -41,6 +42,7 @@ __all__ = [
     'CapabilityOperationId',
     'ModelCompactMessagesId',
     'DurabilityCodec',
+    'DurabilityEngineSpec',
     'DurableOperationBackend',
     'DurableOperationId',
     'DurableOperationNamer',
@@ -60,6 +62,7 @@ __all__ = [
 _exports = {
     'BaseDurabilityCapability': ('._base', 'BaseDurabilityCapability'),
     'DurabilityCodec': ('._codec', 'DurabilityCodec'),
+    'DurabilityEngineSpec': ('._spec', 'DurabilityEngineSpec'),
     'IDENTITY_CODEC': ('._codec', 'IDENTITY_CODEC'),
     'JSON_CODEC': ('._codec', 'JSON_CODEC'),
     'ToolsetCallToolId': ('._operation', 'ToolsetCallToolId'),

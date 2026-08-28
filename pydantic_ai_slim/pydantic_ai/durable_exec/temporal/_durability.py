@@ -4,7 +4,7 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
@@ -17,20 +17,18 @@ from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec._base import (
-    BaseDurabilityCapability,
-    ToolsetKind,
-)
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
     ToolsetCallToolId,
     ToolsetCallToolParams,
+    ToolsetKind,
     ToolsetValidateToolArgumentsId,
 )
-from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle, validation_context_from_agent
+from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
+from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
@@ -125,23 +123,23 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         ```
     """
 
-    engine_name = 'Temporal'
-    _codec: ClassVar = IDENTITY_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset(
-        {'function', 'mcp', 'dynamic'}
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Temporal',
+        durable_unit_noun='activity',
+        durable_container_noun='workflow',
+        codec=IDENTITY_CODEC,
+        unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        toolset_lifecycles={
+            'function': 'enter-outside-durable',
+            'mcp': 'enter-outside-durable',
+            'dynamic': 'enter-never',
+        },
+        tool_call_result_upgrade_lenient=False,
+        journal_discovery=True,
+        sequential_tools_in_durable_context=False,
+        tool_config_key='temporal',
     )
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-outside-durable',
-        'mcp': 'enter-outside-durable',
-        'dynamic': 'enter-never',
-    }
-    _tool_call_result_upgrade_lenient = False
-    _journal_discovery = True
-
-    _durable_unit_noun = 'activity'
-    _durable_container_noun = 'workflow'
-    _tool_config_key = 'temporal'
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""

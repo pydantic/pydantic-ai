@@ -4,12 +4,13 @@ import copy
 import uuid
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
+from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationParams,
@@ -22,10 +23,10 @@ from pydantic_ai.durable_exec._capability_operation import (
     recover_capability,
 )
 from pydantic_ai.durable_exec._codec import JSON_CODEC
-from pydantic_ai.durable_exec._operation import DurableOperationId, OperationConfigRole, ToolsetKind
+from pydantic_ai.durable_exec._operation import DurableOperationId, OperationConfigRole
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
-from pydantic_ai.durable_exec._toolset import Lifecycle, ToolConfig
+from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -119,17 +120,12 @@ class _RecordingBackend(CallableOperationBackend[ToolConfig]):
 
 
 class RecordingDurability(BaseDurabilityCapability[Any]):
-    engine_name = 'recording'
-    _durable_unit_noun = 'unit'
-    _durable_container_noun = 'journal'
-    _codec: ClassVar = JSON_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
-    _wrapped_toolset_kinds: ClassVar = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
+    engine_spec = DurabilityEngineSpec(
+        engine_name='recording',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+    )
 
     replay_capability_operations = False
 

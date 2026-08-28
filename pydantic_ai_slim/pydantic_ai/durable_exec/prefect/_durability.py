@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, Literal, cast
 
 from prefect.context import FlowRunContext
 
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
+from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._operation_backend import DurableOperationBackend
-from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import Lifecycle
+from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
@@ -31,23 +31,19 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     capability contributes the Prefect operation backend, transparency gate, and task configuration.
     """
 
-    # --- Declarative surface ---
-    engine_name = 'Prefect'
-    _codec: ClassVar = IDENTITY_CODEC  # object-passing: Prefect serializes/caches internally
-    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset(
-        {'function', 'mcp', 'dynamic'}
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Prefect',
+        durable_unit_noun='task',
+        durable_container_noun='flow',
+        codec=IDENTITY_CODEC,  # object-passing: Prefect serializes/caches internally
+        unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-always', 'dynamic': 'enter-never'},
+        tool_call_result_upgrade_lenient=True,  # cached payloads may predate value-wrapping
+        journal_discovery=False,  # resolve MCP/dynamic toolsets in flow code, journal only calls
+        sequential_tools_in_durable_context=False,
+        tool_config_key='prefect',
     )
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
-    _tool_call_result_upgrade_lenient: ClassVar[bool] = True  # cached payloads may predate value-wrapping
-    _journal_discovery: ClassVar[bool] = False  # resolve MCP/dynamic toolsets in flow code, journal only calls
-    _durable_unit_noun = 'task'
-    _durable_container_noun = 'flow'
-    _tool_config_key = 'prefect'
 
     def __init__(
         self,

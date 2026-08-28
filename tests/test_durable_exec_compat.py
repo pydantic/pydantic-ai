@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
-from typing import Any, ClassVar, cast
+from collections.abc import AsyncIterable, Awaitable, Callable
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -23,6 +23,7 @@ from pydantic_ai.durable_exec import (
     BaseDurabilityCapability,
     CallableOperationBackend,
     CapabilityOperationId,
+    DurabilityEngineSpec,
     DurableOperationId,
     EventStreamHandlerId,
     JournalOperationNamer,
@@ -33,7 +34,6 @@ from pydantic_ai.durable_exec import (
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
-    ToolsetKind,
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._capability_operation import (
@@ -43,7 +43,6 @@ from pydantic_ai.durable_exec._capability_operation import (
 )
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
-    Lifecycle,
     ToolConfig,
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
@@ -75,6 +74,7 @@ def test_public_engine_builder_exports() -> None:
         'CapabilityOperationId',
         'ModelCompactMessagesId',
         'DurabilityCodec',
+        'DurabilityEngineSpec',
         'DurableOperationBackend',
         'DurableOperationId',
         'DurableOperationNamer',
@@ -230,17 +230,12 @@ class _JournalBackend(CallableOperationBackend[ToolConfig]):
 
 
 class JournalDurability(BaseDurabilityCapability[Any]):
-    engine_name = 'Journal compatibility stub'
-    _codec: ClassVar = JSON_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
-    _wrapped_toolset_kinds: ClassVar = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
-    _durable_unit_noun = 'unit'
-    _durable_container_noun = 'journal'
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Journal compatibility stub',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+    )
 
     @property
     def in_durable_context(self) -> bool:

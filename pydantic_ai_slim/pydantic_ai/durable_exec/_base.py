@@ -55,7 +55,7 @@ from ._capability_operation import (
     collect_capability_operations,
     recover_capability,
 )
-from ._codec import IDENTITY_CODEC, DurabilityCodec
+from ._codec import IDENTITY_CODEC
 from ._operation import (
     CacheIdentity,
     CapabilityOperationId,
@@ -76,15 +76,16 @@ from ._operation import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetGetToolsParams,
+    ToolsetKind,
     ToolsetValidateToolArgumentsId,
     TypedResultCodec,
 )
 from ._operation_backend import DurableOperationBackend, RegisteredOperationBackend
 from ._runtime_toolsets import (
-    RuntimeToolsetKind,
     cancellation_token_unsupported_error,
     reject_unsupported_runtime_toolsets,
 )
+from ._spec import DurabilityEngineSpec
 from ._toolset import (
     CallToolResult,
     DurableDynamicToolset,
@@ -92,7 +93,6 @@ from ._toolset import (
     DurableMCPToolset,
     DynamicToolsResult,
     Instructions,
-    Lifecycle,
     ToolConfig,
     call_dynamic_tool,
     get_dynamic_tools,
@@ -107,7 +107,6 @@ from ._toolset import (
 from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, unwrap_model
 
 _T = TypeVar('_T')
-ToolsetKind = Literal['function', 'mcp', 'dynamic']
 
 if TYPE_CHECKING:
     pass
@@ -192,48 +191,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
 
-    engine_name: ClassVar[str]
-    """Human-readable engine name used in error messages (e.g. `'Temporal'`)."""
+    engine_spec: ClassVar[DurabilityEngineSpec]
+    """Declarative configuration for this durable execution engine."""
 
-    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]]
-    _durable_unit_noun: ClassVar[str]
-    _durable_container_noun: ClassVar[str]
-    _tool_config_key: ClassVar[str | None] = None
+    @property
+    def engine_name(self) -> str:
+        """Human-readable engine name used in error messages."""
+        return self.engine_spec.engine_name
 
-    # --- Declarative engine surface -------------------------------------------------------------
-    # Everything below is DATA an engine sets rather than behavior it overrides. The base's
-    # concrete `_wrap_leaf_toolset` / `wrap_model_request` / `_dispatch_event_stream_event`
-    # Operation backends and toolset construction consult these declarative fields.
+    @property
+    def durable_unit_noun(self) -> str:
+        """Name for one durable unit of work."""
+        return self.engine_spec.durable_unit_noun
 
-    _codec: ClassVar[DurabilityCodec] = IDENTITY_CODEC
-    """How the base serializes at every durable boundary. Identity for object-passing engines
-    (Temporal/DBOS/Prefect), JSON for journal engines (Restate/Lambda/Absurd)."""
-
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
-    """Which leaf-toolset kinds this engine wraps in a durable unit. DBOS omits `'function'`
-    (function tools run inline via `@DBOS.step`)."""
-
-    _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
-    """Per-kind lifecycle profile (`enter-always` / `enter-outside-durable` / `enter-never`).
-    Forced explicit because two real bugs came from defaulted gates (#5477 requirement 3).
-    Restate opts function tools out of entry (`enter-never`)."""
-
-    _tool_call_result_upgrade_lenient: ClassVar[bool] = False
-    """When True, recorded tool payloads are decoded leniently for library-upgrade compat
-    (`unwrap_recorded_tool_call_result`) -- engines that replay stored outputs (Prefect cache,
-    DBOS/Lambda recovery). Journal engines that never cross an upgrade set False."""
-
-    _journal_discovery: ClassVar[bool] = True
-    """Whether toolset DISCOVERY (`get_tools`/`get_instructions`) runs in its own durable unit.
-    Journal engines (Restate/Lambda/Absurd) journal it; Prefect deliberately runs discovery in
-    flow code (flow retries re-resolve anyway) and journals only tool CALLS. THE odd one out."""
-
-    _force_sequential_tools_in_durable_context: ClassVar[bool] = False
-    """Whether tool calls must run sequentially inside the durable container."""
+    @property
+    def durable_container_noun(self) -> str:
+        """Name for the durable container."""
+        return self.engine_spec.durable_container_noun
 
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
@@ -260,13 +234,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
-        self._validate_declarative_contract()
         self._check_bindable()
         if not (self.name or agent.name):
             raise UserError(
                 f'An agent needs to have a unique `name` in order to be used with {self.engine_name} '
                 f'(or pass `name=` to `{type(self).__name__}`). The name is used to identify the '
-                f"agent's durable {self._durable_unit_noun}s."
+                f"agent's durable {self.durable_unit_noun}s."
             )
         bound = copy.copy(self)
         bound.name = self.name or agent.name or ''
@@ -304,7 +277,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     declaration: CapabilityMethodDeclaration = declaration,
                     capability_id: str = capability_id,
                 ) -> Any:
-                    arguments = self._codec.load(dict[str, Any], self._codec.dump(dict[str, Any], params.arguments))
+                    arguments = self.engine_spec.codec.load(
+                        dict[str, Any], self.engine_spec.codec.dump(dict[str, Any], params.arguments)
+                    )
                     validated = cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
                     semantic_params = CapabilityOperationParams(params.run_context, validated, params.model_id)
                     recovered = await recover_capability(params.run_context, capability_id)
@@ -344,7 +319,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     cache_identity=CapabilityCacheIdentity(),
                     result_codec=TypedResultCodec(
                         capability_operation_result_type(declaration.result_type),
-                        mode='identity' if self._codec is IDENTITY_CODEC else 'json',
+                        mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
                     ),
                     config_role='capability',
                 )
@@ -429,27 +404,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _capability_operation_parameter_transport(self, declaration: CapabilityMethodDeclaration) -> Any:
         return IdentityParameterTransport[CapabilityOperationParams]()
 
-    def _validate_declarative_contract(self) -> None:
-        """Fail at binding when an engine's declarative durability configuration is incomplete."""
-        cls = type(self)
-        engine_name = getattr(cls, 'engine_name', '') or cls.__name__
-        missing_fields = [
-            field
-            for field in ('engine_name', '_durable_unit_noun', '_durable_container_noun')
-            if not getattr(cls, field, None)
-        ]
-        invalid_kinds = self._wrapped_toolset_kinds - {'function', 'mcp', 'dynamic'}
-        missing_lifecycles = self._wrapped_toolset_kinds - self._toolset_lifecycles.keys()
-        errors: list[str] = []
-        if missing_fields:
-            errors.append(f'required ClassVars are unset: {", ".join(missing_fields)}')
-        if invalid_kinds:
-            errors.append(f'unsupported wrapped toolset kinds: {sorted(invalid_kinds)!r}')
-        if missing_lifecycles:
-            errors.append(f'missing toolset lifecycles for: {sorted(missing_lifecycles)!r}')
-        if errors:
-            raise UserError(f'Invalid {engine_name} declarative durability contract: {"; ".join(errors)}.')
-
     def _check_bindable(self) -> None:
         """Validate that the capability can be bound in the current context."""
 
@@ -516,9 +470,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         toolset.apply(collect)
         reject_unsupported_runtime_toolsets(
             runtime_leaves,
-            unsupported_kinds=self._unsupported_runtime_toolset_kinds,
+            unsupported_kinds=self.engine_spec.unsupported_runtime_toolset_kinds,
             engine=self.engine_name,
-            tool_config_key=self._tool_config_key,
+            tool_config_key=self.engine_spec.tool_config_key,
         )
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -590,8 +544,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
-                f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
+                f"The ID will be used to identify the toolset's {self.durable_unit_noun}s within the "
+                f'{self.durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
                 "or, when it is contributed by a capability, set the capability's `id` (for example, "
                 "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
                 '`capabilities=` cannot carry an `id`; wrap it explicitly: '
@@ -607,7 +561,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
                 f"toolsets registered with the same agent, as they identify the toolset's "
-                f'{self._durable_unit_noun}s within the {self._durable_container_noun}.'
+                f'{self.durable_unit_noun}s within the {self.durable_container_noun}.'
             )
         wrapped = self._wrap_leaf_toolset(ts)
         if wrapped is None:
@@ -616,8 +570,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
-                f'{self._durable_container_noun}.'
+                f"The ID will be used to identify the toolset's {self.durable_unit_noun}s within the "
+                f'{self.durable_container_noun}.'
             )
         self._toolsets_by_id[ts_id] = wrapped
         return wrapped
@@ -628,12 +582,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _typed_result_codec(self, result_type: object) -> _TypedResultCodec[Any]:
         """Build a typed result codec with the engine's serialization-failure mapping."""
-        return _TypedResultCodec(partial(self._encode, result_type), partial(self._codec.load, result_type))
+        return _TypedResultCodec(partial(self._encode, result_type), partial(self.engine_spec.codec.load, result_type))
 
     def _encode(self, tp: Any, value: Any) -> Any:
         """Encode a durable-unit result, mapping deterministic serialization failures when configured."""
         try:
-            return self._codec.dump(tp, value)
+            return self.engine_spec.codec.dump(tp, value)
         except (PydanticSerializationError, TypeError) as exc:
             mapped = self._serialization_failure(exc)
             if mapped is not None:
@@ -657,7 +611,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         """Guard `ctx.enqueue()` and `ctx.cancel()` for user code that runs inside a durable unit (#6666)."""
-        return guard_run_context(ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun)
+        return guard_run_context(ctx, unit_noun=self.durable_unit_noun, container_noun=self.durable_container_noun)
 
     @contextmanager
     def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
@@ -692,7 +646,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""
-        metadata_key = self._tool_config_key
+        metadata_key = self.engine_spec.tool_config_key
 
         def resolve(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
             if metadata_key is None:
@@ -733,7 +687,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         """Force sequential tool execution when required by a sequence-keyed durable engine."""
         agent = self._agent
-        if not self._force_sequential_tools_in_durable_context or agent is None or not self.in_durable_context:
+        if not self.engine_spec.sequential_tools_in_durable_context or agent is None or not self.in_durable_context:
             return await handler()
         with agent.parallel_tool_call_execution_mode('sequential'):
             return await handler()
@@ -745,10 +699,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _unwrap_tool_result(self, payload: CallToolResult) -> Any:
         """Turn a recorded tool payload back into a value/exception (control-flow-as-values seam).
 
-        `_tool_call_result_upgrade_lenient` engines (Prefect cache, DBOS/Lambda recovery) also
+        `tool_call_result_upgrade_lenient` engines (Prefect cache, DBOS/Lambda recovery) also
         accept raw pre-value-wrapping recordings; strict journal engines assert the wire shape.
         """
-        if self._tool_call_result_upgrade_lenient:
+        if self.engine_spec.tool_call_result_upgrade_lenient:
             return unwrap_recorded_tool_call_result(payload)
         return unwrap_tool_call_result(payload)
 
@@ -861,16 +815,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         """Base-owned dispatch: build the right `Durable*Toolset` for a leaf toolset kind.
 
-        Consults `_wrapped_toolset_kinds` (DBOS omits `'function'`) and `_toolset_lifecycles`. The
+        Consults `engine_spec.wrapped_toolset_kinds` (DBOS omits `'function'`) and
+        `engine_spec.toolset_lifecycles`. The
         operation closures dispatch through the backend, so the codec + control-flow-value wrapping
         + upgrade-lenient decoding are all framework-owned; the engine only supplies the primitive.
         """
         if isinstance(ts, FunctionToolset):
-            if 'function' not in self._wrapped_toolset_kinds:
+            if 'function' not in self.engine_spec.wrapped_toolset_kinds:
                 return None
             return self._build_function_toolset(ts)
         if isinstance(ts, DynamicToolset):
-            if 'dynamic' not in self._wrapped_toolset_kinds:
+            if 'dynamic' not in self.engine_spec.wrapped_toolset_kinds:
                 return None
             return self._build_dynamic_toolset(ts)
         try:
@@ -878,7 +833,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         except ImportError:  # pragma: no cover
             return None
         if isinstance(ts, MCPToolset):
-            if 'mcp' not in self._wrapped_toolset_kinds:
+            if 'mcp' not in self.engine_spec.wrapped_toolset_kinds:
                 return None
             return self._build_mcp_toolset(ts)
         return None
@@ -941,7 +896,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             validate_args_operation=validate_args_operation,
             resolve_tool_config=resolve_tool_config,
             resolve_validation_config=resolve_validation_config,
-            lifecycle=self._toolset_lifecycles['function'],
+            lifecycle=self.engine_spec.toolset_lifecycles['function'],
             durable_registrations=self._bound_operation_registrations(call_tool, validate_args),
             durable_config=base_config,
         )
@@ -995,7 +950,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return backend.config_for_tool(validate_args.operation, tool, tool_name)
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
-            if not self._journal_discovery:
+            if not self.engine_spec.journal_discovery:
                 # Prefect resolves the dynamic toolset in flow code, not a durable unit.
                 return await get_dynamic_tools(toolset, ctx)
 
@@ -1035,7 +990,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             validate_args_operation=validate_args_operation,
             resolve_tool_config=resolve_tool_config,
             resolve_validation_config=resolve_validation_config,
-            lifecycle=self._toolset_lifecycles['dynamic'],
+            lifecycle=self.engine_spec.toolset_lifecycles['dynamic'],
             durable_registrations=self._bound_operation_registrations(get_tools, call_tool, validate_args),
             durable_config=base_config,
         )
@@ -1044,7 +999,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         base_config = self._toolset_operation_config('mcp', cast(str, toolset.id))
         get_tools_registration_source: object | None = None
 
-        if self._journal_discovery:
+        if self.engine_spec.journal_discovery:
             get_tools = self._bind_mcp_get_tools_operation(toolset)
             get_tools_registration_source = get_tools
 
@@ -1089,7 +1044,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         get_tools: object | None,
         get_tools_registration: list[Callable[..., Any]],
     ) -> DurableMCPToolset[AgentDepsT]:
-        get_instructions = self._bind_mcp_get_instructions_operation(toolset) if self._journal_discovery else None
+        get_instructions = (
+            self._bind_mcp_get_instructions_operation(toolset) if self.engine_spec.journal_discovery else None
+        )
 
         async def get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
             assert get_instructions is not None
@@ -1155,12 +1112,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
             if tool is not None and tool.tool_def.metadata is not None:
-                metadata_key = self._tool_config_key or self.engine_name.lower()
+                metadata_key = self.engine_spec.tool_config_key or self.engine_name.lower()
                 if tool.tool_def.metadata.get(metadata_key) is False:
                     raise UserError(
                         f'{self.engine_name} durable config for MCP tool {tool_name!r} has been explicitly '
                         'set to `False` (durable execution disabled), but MCP tools perform I/O and cannot '
-                        f'run outside a durable {self._durable_unit_noun}. Remove the metadata so the call '
+                        f'run outside a durable {self.durable_unit_noun}. Remove the metadata so the call '
                         'stays durable.'
                     )
             return backend.config_for_tool(call_operation, tool, tool_name)
@@ -1179,12 +1136,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return DurableMCPToolset(
             toolset,
             in_durable_context=self._toolset_in_durable_context,
-            # Prefect runs MCP discovery in flow code, not a durable unit (`_journal_discovery`).
-            get_tools_operation=get_tools_operation if self._journal_discovery else None,
-            get_instructions_operation=get_instructions_operation if self._journal_discovery else None,
+            # Prefect runs MCP discovery in flow code, not a durable unit (`journal_discovery`).
+            get_tools_operation=get_tools_operation if self.engine_spec.journal_discovery else None,
+            get_instructions_operation=get_instructions_operation if self.engine_spec.journal_discovery else None,
             call_tool_operation=call_tool_operation,
             resolve_tool_config=resolve_tool_config,
-            lifecycle=self._toolset_lifecycles['mcp'],
+            lifecycle=self.engine_spec.toolset_lifecycles['mcp'],
             durable_registrations=[*discovery_registrations, *self._bound_operation_registrations(call_tool)],
             durable_config=base_config,
         )
@@ -1538,8 +1495,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
         raise UserError(
             f'The model instance {model.model_id!r} was not registered with `{type(self).__name__}`, so it '
-            f'cannot be used inside a {self._durable_container_noun}. A `Model` instance cannot be serialized '
-            f'across the {self._durable_unit_noun} boundary, and rebuilding it from its `model_id` would build '
+            f'cannot be used inside a {self.durable_container_noun}. A `Model` instance cannot be serialized '
+            f'across the {self.durable_unit_noun} boundary, and rebuilding it from its `model_id` would build '
             'a different model — the same model name on the provider the worker environment implies — so the '
             f'request would go to another endpoint with other credentials. {self._model_rebuild_escape_hatches()}'
         )
@@ -1551,7 +1508,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         raise UserError(
             'A durable `before_model_request` hook replaced `request_context.model` with the unregistered model '
             f'instance {model.model_id!r}. A live `Model` instance cannot be transported across the '
-            f'{self._durable_unit_noun} boundary. Register it in `models=` on `{type(self).__name__}` and select '
+            f'{self.durable_unit_noun} boundary. Register it in `models=` on `{type(self).__name__}` and select '
             'that registered model by ID.'
         )
 

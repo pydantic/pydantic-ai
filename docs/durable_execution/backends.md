@@ -38,8 +38,8 @@ This complete in-process example runs each operation immediately. A real integra
 `in_durable_context` to query the engine runtime.
 
 ```python
-from collections.abc import Awaitable, Callable, Mapping
-from typing import ClassVar, Literal
+from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec import (
@@ -47,9 +47,9 @@ from pydantic_ai.durable_exec import (
     BaseDurabilityCapability,
     CallableOperationBackend,
     DurableOperationId,
+    DurabilityEngineSpec,
     JournalOperationNamer,
     OperationConfigRole,
-    ToolsetKind,
 )
 from pydantic_ai.models.test import TestModel
 
@@ -84,19 +84,12 @@ class ImmediateBackend(CallableOperationBackend[None]):
 
 
 class ImmediateDurability(BaseDurabilityCapability[None]):
-    engine_name = 'Immediate'
-    _codec: ClassVar = IDENTITY_CODEC
-    _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
-    _wrapped_toolset_kinds: ClassVar[frozenset[ToolsetKind]] = frozenset({'function', 'mcp', 'dynamic'})
-    _toolset_lifecycles: ClassVar[
-        Mapping[ToolsetKind, Literal['enter-outside-durable', 'enter-always', 'enter-never']]
-    ] = {
-        'function': 'enter-always',
-        'mcp': 'enter-always',
-        'dynamic': 'enter-never',
-    }
-    _durable_unit_noun = 'operation'
-    _durable_container_noun = 'run'
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Immediate',
+        durable_unit_noun='operation',
+        durable_container_noun='run',
+        codec=IDENTITY_CODEC,
+    )
 
     @property
     def in_durable_context(self) -> bool:
@@ -111,9 +104,16 @@ result = agent.run_sync('hello')
 assert result.output == 'success (no tool calls)'
 ```
 
-The declarative fields tell the shared base which toolsets to wrap, where their async context
-managers open, whether discovery is durable, and whether calls must be sequential. Define every
-field deliberately for a production engine. In particular, lifecycle choices must ensure toolset
+The public [`DurabilityEngineSpec`][pydantic_ai.durable_exec.DurabilityEngineSpec] groups the
+declarative engine surface in one immutable object. Its required fields name the engine, durable
+unit, and durable container. Its optional fields select the codec, wrapped toolset kinds, lifecycle
+policy, upgrade compatibility, durable discovery, sequential tool execution, unsupported runtime
+toolsets, and per-tool configuration key. The default lifecycle policy enters function and MCP
+toolsets for every run and never enters dynamic toolsets.
+
+Define every field whose engine behavior differs from the defaults. The spec validates non-empty
+nouns and requires a lifecycle for every wrapped toolset kind when it is constructed, so an invalid
+engine declaration fails while its class is being defined. Lifecycle choices must ensure toolset
 resources close on success, errors, and cancellation.
 
 ## Serialization and configuration
