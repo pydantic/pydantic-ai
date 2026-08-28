@@ -5428,7 +5428,7 @@ dev = [
     { name = "pytest-pretty", specifier = ">=1.3.0" },
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
-    { name = "strict-no-cover", git = "https://github.com/Kludex/strict-no-cover.git?rev=8712cae7e2ccdbff2feae2273791b7907be5da0d" },
+    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1" },
     { name = "tavily-python", specifier = ">=0.5.0" },
 ]
 lint = [
@@ -7256,7 +7256,7 @@ wheels = [
 [[package]]
 name = "strict-no-cover"
 version = "0.1.1"
-source = { git = "https://github.com/Kludex/strict-no-cover.git?rev=8712cae7e2ccdbff2feae2273791b7907be5da0d#8712cae7e2ccdbff2feae2273791b7907be5da0d" }
+source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1#6c644106e03138abae01d8d60105d4a7ad4916a1" }
 dependencies = [
     { name = "coverage" },
 ]

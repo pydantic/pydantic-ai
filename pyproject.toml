@@ -209,7 +209,7 @@ dev = [
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
     "boto3-stubs[bedrock-runtime]>=1.42.63",
-    "strict-no-cover @ git+https://github.com/Kludex/strict-no-cover.git@8712cae7e2ccdbff2feae2273791b7907be5da0d",
+    "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
