@@ -14,7 +14,7 @@ def reset_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(triage_telemetry, '_instance', None)
     monkeypatch.setattr(triage_telemetry, '_disabled', False)
     monkeypatch.delenv('LOGFIRE_TRIAGE_WRITE_TOKEN', raising=False)
-    monkeypatch.delenv('LOGFIRE_TRIAGE_BASE_URL', raising=False)
+    monkeypatch.delenv('LOGFIRE_URL', raising=False)
     monkeypatch.delenv('GITHUB_RUN_ID', raising=False)
 
 
@@ -75,7 +75,7 @@ def test_emit_configures_once_and_tags_the_workflow_run(fake_logfire: FakeLogfir
 
 def test_a_base_url_routes_to_the_self_hosted_instance(fake_logfire: FakeLogfire, monkeypatch: pytest.MonkeyPatch):
     """A self-hosted token cannot route itself; an empty variable must not override cloud routing."""
-    monkeypatch.setenv('LOGFIRE_TRIAGE_BASE_URL', 'https://logfire-eu.pydantic.info')
+    monkeypatch.setenv('LOGFIRE_URL', 'https://logfire-eu.pydantic.info')
 
     triage_telemetry.emit('census.run', repo='pydantic/pydantic-ai')
 
@@ -85,7 +85,7 @@ def test_a_base_url_routes_to_the_self_hosted_instance(fake_logfire: FakeLogfire
 
 def test_an_empty_base_url_keeps_the_tokens_own_routing(fake_logfire: FakeLogfire, monkeypatch: pytest.MonkeyPatch):
     """Reusable-workflow callers without the `LOGFIRE_URL` variable pass an empty string."""
-    monkeypatch.setenv('LOGFIRE_TRIAGE_BASE_URL', '')
+    monkeypatch.setenv('LOGFIRE_URL', '')
 
     triage_telemetry.emit('census.run', repo='pydantic/pydantic-ai')
 

@@ -4,8 +4,9 @@
 Emission is best-effort by contract: without `LOGFIRE_TRIAGE_WRITE_TOKEN` or
 the `logfire` package every helper is a no-op, and no emission failure may
 ever break the GitHub write path it rides along with. A cloud token embeds
-its Logfire region, so the SDK routes itself; `LOGFIRE_TRIAGE_BASE_URL`
-overrides that routing for tokens minted on a self-hosted instance.
+its Logfire region, so the SDK routes itself; `LOGFIRE_URL` (the same
+variable every other Logfire emitter in this repository reads) overrides
+that routing for tokens minted on a self-hosted instance.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ def _logfire() -> Any:
         return None
     # Callers without the variable pass an empty string; only a real value
     # may override the token's own routing.
-    base_url = os.environ.get('LOGFIRE_TRIAGE_BASE_URL')
+    base_url = os.environ.get('LOGFIRE_URL')
     try:
         logfire.configure(
             token=token,

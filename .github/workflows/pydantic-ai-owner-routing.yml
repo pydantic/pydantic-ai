@@ -60,7 +60,7 @@ jobs:
           LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
           # Self-hosted Logfire; resolves from the calling repository's
           # variables, and empty keeps the token's own routing.
-          LOGFIRE_TRIAGE_BASE_URL: ${{ vars.LOGFIRE_URL }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
         run: python .github/scripts/semantic_owner_router.py select
 
   route:
@@ -127,7 +127,7 @@ jobs:
           ROUTE_OWNER: ${{ matrix.route.owner }}
           ROUTE_EVIDENCE: ${{ matrix.route.evidence }}
           LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
-          LOGFIRE_TRIAGE_BASE_URL: ${{ vars.LOGFIRE_URL }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
         run: >-
           python .github/scripts/semantic_owner_router.py assign
           --number "$ROUTE_NUMBER"
