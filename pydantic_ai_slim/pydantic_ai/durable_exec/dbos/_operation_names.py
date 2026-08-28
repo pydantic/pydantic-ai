@@ -12,5 +12,5 @@ class DBOSOperationNamer(JournalOperationNamer):
     def _model_suffix(self, model_id: str | None) -> str:
         return ''
 
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
+    def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName:
         return DurableInvocationName(self.operation_name(operation_id))

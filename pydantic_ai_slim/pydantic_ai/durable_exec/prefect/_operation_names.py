@@ -12,10 +12,10 @@ from .._operation import (
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
 )
-from .._operation_names import DurableInvocationName, _tool_name  # pyright: ignore[reportPrivateUsage]
+from .._operation_names import DurableInvocationName, DurableOperationNamer
 
 
-class PrefectOperationNamer:
+class PrefectOperationNamer(DurableOperationNamer):
     """Generate Prefect task names that are persisted compatibility data.
 
     These names must essentially never change. Changing them can strand in-flight flows and
@@ -49,8 +49,9 @@ class PrefectOperationNamer:
                 return 'Call Tool'
         assert_never(operation_id)
 
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
+    def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName:
         name = self.operation_name(operation_id)
         if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
-            name = f'{name}: {_tool_name(params)}'
+            assert label is not None
+            name = f'{name}: {label}'
         return DurableInvocationName(name, display_name=name)

@@ -149,6 +149,11 @@ requirements. Pin every generated name in tests before refactoring agent names, 
 IDs, capability IDs, or operation names. A rename without a migration prevents in-flight executions
 from finding their recorded work.
 
+The namer receives the typed operation ID and an optional keyword-only `label`. Operations that
+need an invocation-specific suffix provide a typed `invocation_label` callable when they are
+declared. Built-in tool-call and argument-validation operations use the tool name. Namers should
+not inspect an operation's parameter object.
+
 A durable unit can run more than once when a worker fails after its side effect but before the
 checkpoint commits. Tools and decorated capability operations should therefore be idempotent unless the
 engine provides a suitable at-most-once mode. Test replay and recovery, resource teardown,

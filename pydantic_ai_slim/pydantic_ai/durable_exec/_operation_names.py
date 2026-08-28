@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from typing_extensions import assert_never
 
@@ -36,12 +36,7 @@ class DurableOperationNamer(Protocol):
 
     def operation_name(self, operation_id: DurableOperationId) -> str: ...
 
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName: ...
-
-
-@runtime_checkable
-class _NamedToolInvocation(Protocol):
-    name: str
+    def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName: ...
 
 
 def _toolset_prefix(kind: ToolsetKind) -> str:
@@ -49,13 +44,7 @@ def _toolset_prefix(kind: ToolsetKind) -> str:
     return 'mcp_server' if kind == 'mcp' else f'{kind}_toolset'
 
 
-def _tool_name(params: object) -> str:
-    if not isinstance(params, _NamedToolInvocation):
-        raise TypeError('Tool-call invocation parameters must expose a string `name` attribute')
-    return params.name
-
-
-class JournalOperationNamer:
+class JournalOperationNamer(DurableOperationNamer):
     """Stable default naming policy for sequence-based journal engines.
 
     Generated names are persisted compatibility data and must essentially never change. Changing
@@ -96,8 +85,9 @@ class JournalOperationNamer:
                 return f'{self._agent_name}__{_toolset_prefix(kind)}__{toolset_id}.call_tool'
         assert_never(operation_id)
 
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
+    def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName:
         name = self.operation_name(operation_id)
         if isinstance(operation_id, ToolsetCallToolId) and operation_id.toolset_kind != 'mcp':
-            name = f'{name}:{_tool_name(params)}'
+            assert label is not None
+            name = f'{name}:{label}'
         return DurableInvocationName(name)

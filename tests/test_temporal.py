@@ -812,6 +812,71 @@ def test_temporal_agent_construction_warns_deprecated() -> None:
         TemporalAgent(Agent(TestModel(), name='temporal_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
 
 
+async def test_temporal_operation_backend_registers_novel_id_generically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic_ai.durable_exec._operation import DurableOperation, NoCacheIdentity, TypedResultCodec
+    from pydantic_ai.durable_exec.temporal._operation_backend import (
+        TemporalOperationBackend,
+        TemporalParameterTransport,
+    )
+
+    @dataclass(frozen=True)
+    class NovelOperationId:
+        name: str
+
+    @dataclass(frozen=True)
+    class Params:
+        value: str
+
+    @dataclass(frozen=True)
+    class WireParams:
+        value: str
+
+    class Transport(TemporalParameterTransport[Params, tuple[WireParams, None]]):
+        wire_type = WireParams
+        result_type = str
+
+        def dump(self, params: Params) -> tuple[WireParams, None]:
+            return WireParams(params.value), None
+
+        def load(self, payload: tuple[WireParams, None], *, runtime: object) -> Params:
+            return Params(payload[0].value)
+
+    async def handler(params: Params) -> str:
+        return f'handled:{params.value}'
+
+    async def execute_registered_activity(
+        activity: Callable[..., object], *, args: Sequence[object], **config: object
+    ) -> object:
+        return await cast(Any, activity)(*args)
+
+    monkeypatch.setattr(
+        'pydantic_ai.durable_exec.temporal._operation_backend.execute_activity',
+        execute_registered_activity,
+    )
+    operation = DurableOperation(
+        operation_id=cast(Any, NovelOperationId('novel')),
+        handler=handler,
+        parameter_transport=Transport(),
+        cache_identity=NoCacheIdentity[Params](),
+        result_codec=TypedResultCodec[str](str, mode='identity'),
+        config_role='capability',
+    )
+    backend = TemporalOperationBackend(
+        agent_name='novel',
+        deps_type=type(None),
+        model_config={},
+        event_config={},
+        tool_config={},
+        resolve_tool_config=lambda operation_id, tool, tool_name: {},
+    )
+    bound, registrations = backend.register(operation, name='novel.generic', config={})
+
+    assert await bound(Params('input')) == 'handled:input'
+    assert registrations == (cast(Any, bound).registration,)
+
+
 async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> None:
     """Temporal decodes old cancel payloads and resolves registered and inferred models."""
     response = ModelResponse(parts=[TextPart(content='cancel')], model_name='test')

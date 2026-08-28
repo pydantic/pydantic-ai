@@ -30,6 +30,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._operation_backend import TemporalParameterTransport
 from ._toolset import CallToolParams, GetToolsParams
 
 if TYPE_CHECKING:
@@ -54,7 +55,7 @@ __all__ = (
 )
 
 
-class _FunctionCallTransport:
+class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
     wire_type = CallToolParams
     result_type = CallToolResult
 
@@ -93,7 +94,7 @@ class _FunctionCallTransport:
         return ToolsetCallToolParams(params.name, params.tool_args, ctx, tool)
 
 
-class _GetToolsTransport:
+class _GetToolsTransport(TemporalParameterTransport[ToolsetGetToolsParams, tuple[GetToolsParams, Any]]):
     wire_type = GetToolsParams
     result_type = dict[str, ToolDefinition]
 
@@ -113,7 +114,7 @@ class _GetToolsTransport:
         )
 
 
-class _MCPCallTransport:
+class _MCPCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
     wire_type = CallToolParams
     result_type = CallToolResult
 
@@ -145,7 +146,7 @@ class _MCPCallTransport:
         )
 
 
-class _DynamicCallTransport:
+class _DynamicCallTransport(TemporalParameterTransport[DynamicToolsetCallToolParams, tuple[CallToolParams, Any]]):
     wire_type = CallToolParams
     result_type = CallToolResult
 
@@ -193,7 +194,9 @@ class _CapabilityOperationParams:
     model_id: str | None = None
 
 
-class _CapabilityOperationTransport:
+class _CapabilityOperationTransport(
+    TemporalParameterTransport[CapabilityOperationParams, tuple[_CapabilityOperationParams, Any]]
+):
     wire_type = _CapabilityOperationParams
 
     def __init__(self, durability: TemporalDurability[Any], declaration: CapabilityMethodDeclaration) -> None:
@@ -248,7 +251,7 @@ class _EventStreamHandlerParams:
 _StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
 
 
-class _ModelRequestTransport:
+class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tuple[_RequestParams, Any]]):
     wire_type = _RequestParams
 
     def __init__(self, durability: TemporalDurability[Any], *, result_type: object) -> None:
@@ -280,7 +283,9 @@ class _ModelRequestTransport:
         )
 
 
-class _CompactMessagesTransport:
+class _CompactMessagesTransport(
+    TemporalParameterTransport[ModelCompactMessagesParams, tuple[_CompactMessagesParams, Any]]
+):
     wire_type = _CompactMessagesParams
     result_type = ModelResponse
 
@@ -316,7 +321,7 @@ class _CompactMessagesTransport:
         return ModelCompactMessagesParams(params.model_id, request_context, params.instructions, ctx)
 
 
-class _CancelTransport:
+class _CancelTransport(TemporalParameterTransport[ModelCancelSuspendedResponseParams, tuple[_CancelParams, Any]]):
     wire_type = _CancelParams
     result_type = type(None)
 
@@ -346,7 +351,9 @@ class _CancelTransport:
         return ModelCancelSuspendedResponseParams(params.model_id, params.response, ctx)
 
 
-class _EventStreamHandlerTransport:
+class _EventStreamHandlerTransport(
+    TemporalParameterTransport[_SemanticEventStreamHandlerParams, tuple[_EventStreamHandlerParams, Any]]
+):
     wire_type = _EventStreamHandlerParams
     result_type = type(None)
 

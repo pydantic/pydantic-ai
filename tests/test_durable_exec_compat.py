@@ -163,11 +163,6 @@ DBOS_OPERATION_NAMES = {
 }
 
 
-class _ToolParams:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
 def _operation_ids() -> list[DurableOperationId]:
     return [
         ModelRequestId(None, False, 'test'),
@@ -191,12 +186,10 @@ def _operation_ids() -> list[DurableOperationId]:
     ]
 
 
-def _operation_params(operation_id: DurableOperationId) -> object:
+def _operation_label(operation_id: DurableOperationId) -> str | None:
     if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
-        return _ToolParams(
-            {'function': 'function_tool', 'mcp': 'mcp_tool', 'dynamic': 'dynamic_tool'}[operation_id.toolset_kind]
-        )
-    return object()
+        return {'function': 'function_tool', 'mcp': 'mcp_tool', 'dynamic': 'dynamic_tool'}[operation_id.toolset_kind]
+    return None
 
 
 class CompatCapability(AbstractCapability[Any]):
@@ -288,7 +281,7 @@ async def test_journal_operation_name_assembly_sequence() -> None:
 def test_default_journal_operation_name_matrix() -> None:
     namer = JournalOperationNamer('compat')
     names = {
-        namer.invocation_name(operation_id, _operation_params(operation_id)).operation_name
+        namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
         for operation_id in _operation_ids()
     }
     assert names == JOURNAL_OPERATION_NAMES
@@ -302,7 +295,7 @@ def test_prefect_operation_name_matrix() -> None:
     ]
     namer = PrefectOperationNamer()
     names = {
-        namer.invocation_name(operation_id, _operation_params(operation_id)).operation_name
+        namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
         for operation_id in operation_ids
     }
     assert names == PREFECT_OPERATION_NAMES
@@ -333,7 +326,7 @@ def test_prefect_operation_name_assembly_completeness() -> None:
     ]
     namer = PrefectOperationNamer()
     assembled_names = {
-        namer.invocation_name(operation_id, _operation_params(operation_id)).operation_name
+        namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
         for operation_id in operation_ids
     }
     assert assembled_names == PREFECT_OPERATION_NAMES

@@ -10,12 +10,14 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
     DurableOperation,
+    DurableOperationConfig,
     DurableOperationId,
     EventStreamHandlerId,
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
     ModelRequestId,
     OperationConfigRole,
+    ParameterTransport,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -32,7 +34,7 @@ W = TypeVar('W')
 R = TypeVar('R')
 
 
-class TemporalParameterTransport(Protocol[P, W]):
+class TemporalParameterTransport(ParameterTransport[P, W], Protocol[P, W]):
     wire_type: object
     result_type: object
 
@@ -51,7 +53,7 @@ class _EventParams(Protocol):
     event: Any
 
 
-class TemporalOperationConfig:
+class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
     def __init__(
         self,
         *,
@@ -82,7 +84,7 @@ class TemporalOperationConfig:
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
-class TemporalBoundOperation(Generic[P, W, R]):
+class TemporalBoundOperation(BoundDurableOperation[P, W, R], Generic[P, W, R]):
     def __init__(
         self,
         operation: DurableOperation[P, W, R],
@@ -124,10 +126,14 @@ class TemporalBoundOperation(Generic[P, W, R]):
             activity_config['summary'] = f'get instructions: {operation_id.toolset_id}'
         elif isinstance(operation_id, CapabilityOperationId):
             activity_config['summary'] = f'capability: {operation_id.capability_id}.{operation_id.operation}'
-        else:
-            assert isinstance(operation_id, EventStreamHandlerId)
+        elif isinstance(operation_id, EventStreamHandlerId):
             event = cast(_EventParams, params).event
             activity_config['summary'] = f'handle event: {event.event_kind}'
+        else:
+            # New operation ids use their stable activity name as the default summary. Their
+            # parameter transport must implement `TemporalParameterTransport`, including
+            # `wire_type` and `result_type`, so the payload converter can inspect the activity.
+            activity_config['summary'] = self.registration.__name__
 
         if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
             with model_response_payload_errors(model_name):
@@ -178,6 +184,9 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
             async with heartbeating():
                 return await operation.handler(semantic_params)
 
+        # Existing operation transports retain their shipped wire dataclasses and activity
+        # signatures. New operation ids ride this generic registration path and only need a
+        # `TemporalParameterTransport` with `wire_type` and `result_type`.
         # Temporal's Pydantic payload converter deserializes `deps` by inspecting the
         # registered callable, so patch the exact function that the SDK will inspect.
         activity_handler.__annotations__ = {

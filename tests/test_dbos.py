@@ -2403,19 +2403,46 @@ async def test_dbos_durability_accepts_legacy_stream_step_shape(dbos: DBOS) -> N
     agent = Agent(TestModel(), name='legacy_stream_shape', capabilities=[DBOSDurability()])
     durability = DBOSDurability.from_agent(agent)
     assert durability is not None
+    result = await durability._load_streamed_activity_result(  # pyright: ignore[reportPrivateUsage]
+        response, ModelRequestParameters()
+    )
+    assert result.response == response
+    assert result.events
 
-    async def legacy_stream_step(*args: Any) -> ModelResponse:
-        return response
 
-    durability._request_stream_step = legacy_stream_step  # pyright: ignore[reportPrivateUsage]
+async def test_dbos_operation_backend_registers_novel_id_generically(dbos: DBOS) -> None:
+    from pydantic_ai.durable_exec._operation import (
+        DurableOperation,
+        IdentityParameterTransport,
+        NoCacheIdentity,
+        TypedResultCodec,
+    )
+    from pydantic_ai.durable_exec.dbos._operation_backend import DBOSOperationBackend, DBOSOperationConfig
 
-    @DBOS.workflow()
-    async def run_agent() -> tuple[str, list[str]]:
-        async with agent.run_stream('stream') as result:
-            chunks = [chunk async for chunk in result.stream_text(debounce_by=None)]
-            return await result.get_output(), chunks
+    @dataclass(frozen=True)
+    class NovelOperationId:
+        name: str
 
-    assert await run_agent() == ('legacy stream', ['legacy stream'])
+    @dataclass(frozen=True)
+    class Params:
+        value: str
+
+    async def handler(params: Params) -> str:
+        return f'handled:{params.value}'
+
+    operation = DurableOperation(
+        operation_id=cast(Any, NovelOperationId('novel')),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[Params](),
+        cache_identity=NoCacheIdentity[Params](),
+        result_codec=TypedResultCodec[str](str, mode='identity'),
+        config_role='capability',
+    )
+    backend = DBOSOperationBackend(agent_name='novel', config=DBOSOperationConfig(model={}, event={}, tool={}))
+    bound, registrations = backend.register(operation, name='novel.generic', config={})
+
+    assert await bound(Params('input')) == 'handled:input'
+    assert registrations == (cast(Any, bound).step,)
 
 
 # Module-level like real wrapper-era handlers: `DBOSAgent.run` recorded the handler as a

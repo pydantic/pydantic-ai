@@ -36,7 +36,7 @@ class DurabilityCodec(Protocol):
     def load(self, tp: Any, payload: Any) -> Any: ...
 
 
-class _IdentityCodec:
+class _IdentityCodec(DurabilityCodec):
     """Passes values through untouched; the engine's durable primitive owns serialization."""
 
     def dump(self, tp: Any, value: Any) -> Any:
@@ -46,7 +46,7 @@ class _IdentityCodec:
         return payload
 
 
-class _JsonCodec:
+class _JsonCodec(DurabilityCodec):
     """Round-trips values through a cached `TypeAdapter` so they journal as JSON."""
 
     def __init__(self) -> None:

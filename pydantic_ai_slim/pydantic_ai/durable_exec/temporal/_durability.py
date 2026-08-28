@@ -320,18 +320,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
 
-    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
-        if isinstance(ts, FunctionToolset):
-            return self._build_function_toolset(ts)
-        if isinstance(ts, DynamicToolset):
-            return self._build_dynamic_toolset(ts)
-        try:
-            from pydantic_ai.mcp import MCPToolset
-        except ImportError:  # pragma: no cover
-            pass
-        else:
-            if isinstance(ts, MCPToolset):
-                return self._build_mcp_toolset(ts)
+    def _wrap_other_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         ts_id = ts.id
         toolset_activity_config = self.activity_config.copy()
         if ts_id is not None:

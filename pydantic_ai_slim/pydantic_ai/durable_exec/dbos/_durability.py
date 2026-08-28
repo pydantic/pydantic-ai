@@ -121,10 +121,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
         self._register_legacy_workflows = register_legacy_workflows
         # Populated by for_agent when the capability is attached to an agent.
-        self._request_step: Any = None
-        self._request_stream_step: Any = None
-        self._cancel_suspended_response_step: Any = None
-        self._event_stream_handler_step: Any = None
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
@@ -160,26 +156,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._bound_model_operations = self._bind_model_operations(
             self._operation_backend, model_id=None, model_name='default'
         )
-        request, request_stream, compact_messages, cancel = self._bound_model_operations
-        assert isinstance(request, DBOSBoundOperation)
-        assert isinstance(request_stream, DBOSBoundOperation)
-        assert isinstance(cancel, DBOSBoundOperation)
-        assert isinstance(compact_messages, DBOSBoundOperation)
-        self._request_step = request.step
-        self._request_stream_step = request_stream.step
-        self._compact_messages_step = compact_messages.step
-        self._cancel_suspended_response_step = cancel.step
-        request.use_step_getter(lambda: self._request_step)
-        request_stream.use_step_getter(lambda: self._request_stream_step)
-        compact_messages.use_step_getter(lambda: self._compact_messages_step)
-        cancel.use_step_getter(lambda: self._cancel_suspended_response_step)
-
         if self._event_stream_handler is not None:
             event = self._bind_event_operation(self._operation_backend)
             assert isinstance(event, DBOSBoundOperation)
             self._bound_event_operation = event
-            self._event_stream_handler_step = event.step
-            event.use_step_getter(lambda: self._event_stream_handler_step)
 
         # --- MCP toolset wrapping ---
         self._register_toolsets(agent)

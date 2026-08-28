@@ -48,7 +48,7 @@ class DurableOperationBackend(ABC, Generic[ConfigT]):
     def registrations(self) -> Sequence[Callable[..., object]]: ...
 
 
-class _CallableBoundOperation(Generic[P, W, R]):
+class _CallableBoundOperation(BoundDurableOperation[P, W, R], Generic[P, W, R]):
     def __init__(
         self, operation: DurableOperation[P, W, R], dispatch: Callable[[P, object | None], Awaitable[R]]
     ) -> None:
@@ -77,7 +77,8 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
 
     def bind(self, operation: DurableOperation[P, W, R]) -> BoundDurableOperation[P, W, R]:
         async def dispatch(params: P, explicit_config: object | None) -> R:
-            invocation_name = self._namer.invocation_name(operation.operation_id, params)
+            label = operation.invocation_label(params) if operation.invocation_label is not None else None
+            invocation_name = self._namer.invocation_name(operation.operation_id, label=label)
             resolved_config = (
                 explicit_config
                 if explicit_config is not None

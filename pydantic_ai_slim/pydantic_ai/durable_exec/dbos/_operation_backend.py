@@ -10,6 +10,7 @@ from pydantic_ai.durable_exec._capability_operation import CapabilityOperationPa
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
     DurableOperation,
+    DurableOperationConfig,
     DurableOperationId,
     DynamicToolsetCallToolParams,
     EventStreamHandlerId,
@@ -42,7 +43,7 @@ W = TypeVar('W')
 R = TypeVar('R')
 
 
-class DBOSOperationConfig:
+class DBOSOperationConfig(DurableOperationConfig[StepConfig]):
     def __init__(self, *, model: StepConfig, event: StepConfig, tool: StepConfig) -> None:
         self._model = model
         self._event = event
@@ -65,7 +66,7 @@ class DBOSOperationConfig:
         return self._tool
 
 
-class DBOSBoundOperation(Generic[P, W, R]):
+class DBOSBoundOperation(BoundDurableOperation[P, W, R], Generic[P, W, R]):
     def __init__(
         self,
         operation: DurableOperation[P, W, R],
@@ -75,17 +76,13 @@ class DBOSBoundOperation(Generic[P, W, R]):
         self._operation = operation
         self.step = step
         self._dispatch = dispatch
-        self._step_getter: Callable[[], Callable[..., Any]] = lambda: self.step
 
     @property
     def operation(self) -> DurableOperation[P, W, R]:
         return self._operation
 
     async def __call__(self, params: P, *, config: object | None = None) -> R:
-        return cast(R, await self._dispatch(self._step_getter(), params))
-
-    def use_step_getter(self, getter: Callable[[], Callable[..., Any]]) -> None:
-        self._step_getter = getter
+        return cast(R, await self._dispatch(self.step, params))
 
 
 class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
@@ -108,11 +105,31 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
             (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId, EventStreamHandlerId),
         ):
             step, dispatch = self._bind_model_or_event(operation, name, config)
-        else:
+        elif isinstance(
+            operation.operation_id,
+            (ToolsetGetToolsId, ToolsetGetInstructionsId, ToolsetCallToolId, ToolsetValidateToolArgumentsId),
+        ):
             step, dispatch = self._bind_toolset(operation, name, config)
+        else:
+            # The branches above are the frozen compatibility surface for operations whose recorded
+            # step signatures shipped. New operation ids use this generic shape and need no edits here.
+            step, dispatch = self._bind_generic(operation, name, config)
 
         bound_operation = DBOSBoundOperation(operation, step, dispatch)
         return bound_operation, (step,)
+
+    def _bind_generic(
+        self, operation: DurableOperation[P, W, R], name: str, step_config: StepConfig
+    ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], P], Any]]:
+        async def operation_step(params: P) -> object:
+            return operation.result_codec.dump(await operation.handler(params))
+
+        step = DBOS.step(name=name, **step_config)(operation_step)
+
+        async def dispatch(step: Callable[..., Any], params: P) -> R:
+            return operation.result_codec.load(await step(params))
+
+        return step, dispatch
 
     def _bind_capability(
         self, operation: DurableOperation[P, W, R], name: str, step_config: StepConfig

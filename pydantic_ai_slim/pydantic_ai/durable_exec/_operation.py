@@ -254,9 +254,10 @@ class DurableOperation(Generic[P, W, R]):
     cache_identity: CacheIdentity[P]
     result_codec: ResultCodec[R]
     config_role: OperationConfigRole
+    invocation_label: Callable[[P], str] | None = None
 
 
-class IdentityParameterTransport(Generic[P]):
+class IdentityParameterTransport(ParameterTransport[P, P], Generic[P]):
     def dump(self, params: P) -> P:
         return params
 
@@ -264,12 +265,12 @@ class IdentityParameterTransport(Generic[P]):
         return payload
 
 
-class NoCacheIdentity(Generic[P]):
+class NoCacheIdentity(CacheIdentity[P], Generic[P]):
     def project(self, params: P) -> tuple[()]:
         return ()
 
 
-class TypedResultCodec(Generic[R]):
+class TypedResultCodec(ResultCodec[R], Generic[R]):
     def __init__(self, result_type: object, *, mode: Literal['json', 'identity'] = 'json') -> None:
         self._result_type = result_type
         self._codec: DurabilityCodec = JSON_CODEC if mode == 'json' else IDENTITY_CODEC

@@ -262,16 +262,16 @@ def _ids() -> list[DurableOperationId]:
     ]
 
 
-def _params(operation_id: DurableOperationId) -> object:
+def _label(operation_id: DurableOperationId) -> str | None:
     if isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId):
         names = {'function': 'function_tool', 'mcp': 'mcp_tool', 'dynamic': 'dynamic_tool'}
-        return _ToolParams(names[operation_id.toolset_kind])
-    return object()
+        return names[operation_id.toolset_kind]
+    return None
 
 
 def test_journal_operation_names() -> None:
     namer = JournalOperationNamer('compat')
-    actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in _ids()]
+    actual = [namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in _ids()]
     assert set(actual) == JOURNAL_OPERATION_NAMES
 
 
@@ -289,7 +289,7 @@ def test_prefect_operation_names() -> None:
         _ids()[15],
     ]
     namer = PrefectOperationNamer()
-    actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
+    actual = [namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids]
     assert set(actual) == PREFECT_OPERATION_NAMES
 
 
@@ -322,7 +322,7 @@ def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
         _ids()[15],
     ]
     namer = DBOSOperationNamer('compat')
-    actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
+    actual = [namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids]
     assert set(actual) == live
     assert set(actual) == DBOS_OPERATION_NAMES
     assert namer.operation_name(ModelRequestId('registered', False, 'test')) in live
@@ -364,7 +364,7 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
         ToolsetValidateToolArgumentsId('dynamic', 'dynamic'),
     ]
     namer = TemporalOperationNamer('compat')
-    actual = {namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids}
+    actual = {namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids}
     assert actual == live
     assert actual == TEMPORAL_ACTIVITY_NAMES
 
@@ -777,7 +777,7 @@ async def test_dbos_compact_messages_operation_dispatches_step() -> None:
     async def step(*args: object) -> object:
         return await step_body(*args)
 
-    operation.use_step_getter(lambda: step)
+    operation.step = step
     ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
     request_context = ModelRequestContext(
         model=model,
@@ -793,8 +793,8 @@ async def test_dbos_compact_messages_operation_dispatches_step() -> None:
 
 
 def test_namer_error_paths_and_unrepresented_formats() -> None:
-    with pytest.raises(TypeError, match='must expose'):
-        JournalOperationNamer('agent').invocation_name(ToolsetCallToolId('function', 'tools'), object())
+    with pytest.raises(AssertionError):
+        JournalOperationNamer('agent').invocation_name(ToolsetCallToolId('function', 'tools'), label=None)
     prefect = PrefectOperationNamer()
     with pytest.raises(RuntimeError, match='bug in the durability integration; please report it'):
         prefect.operation_name(ToolsetGetToolsId('dynamic', 'tools'))

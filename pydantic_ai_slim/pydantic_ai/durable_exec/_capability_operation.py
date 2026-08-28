@@ -23,6 +23,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import GenerateToolJsonSchema, RunContext
 from pydantic_ai.usage import RunUsage
 
+from ._operation import CacheIdentity
 from ._operation_backend import BoundDurableOperation
 
 R = TypeVar('R')
@@ -120,7 +121,7 @@ class CapabilityMethodDeclaration:
         return self.model_request_parameter is not None
 
 
-class CapabilityCacheIdentity:
+class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
     """Project the model, validated arguments, and run context into Prefect's cache identity.
 
     The model separates registered model targets, the arguments identify the operation input,

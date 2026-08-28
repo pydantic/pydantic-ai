@@ -793,6 +793,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 cache_identity=cache_identity,
                 result_codec=self._typed_result_codec(CallToolResult),
                 config_role='tool',
+                invocation_label=lambda params: params.name,
             )
         )
 
@@ -839,6 +840,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             if 'mcp' not in self.engine_spec.wrapped_toolset_kinds:
                 return None
             return self._build_mcp_toolset(ts)
+        return self._wrap_other_leaf_toolset(ts)
+
+    def _wrap_other_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        """Wrap an engine-specific leaf toolset not handled by the built-in kind dispatch."""
         return None
 
     def _build_function_toolset(self, toolset: FunctionToolset[AgentDepsT]) -> DurableFunctionToolset[AgentDepsT]:
@@ -860,6 +865,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             cache_identity=_FunctionCallToolCacheIdentity(),
             result_codec=self._typed_result_codec(CallToolResult),
             config_role='tool',
+            invocation_label=lambda params: params.name,
         )
         call_tool = backend.bind(operation)
         validate_args = self._bind_validate_tool_arguments_operation(backend, toolset, 'function')
@@ -942,6 +948,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             cache_identity=_DynamicCallToolCacheIdentity(),
             result_codec=self._typed_result_codec(CallToolResult),
             config_role='tool',
+            invocation_label=lambda params: params.name,
         )
         call_tool = backend.bind(call_operation)
         validate_args = self._bind_validate_tool_arguments_operation(backend, toolset, 'dynamic')
@@ -1110,6 +1117,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             cache_identity=_FunctionCallToolCacheIdentity(),
             result_codec=self._typed_result_codec(CallToolResult),
             config_role='tool',
+            invocation_label=lambda params: params.name,
         )
         call_tool = backend.bind(call_operation)
 

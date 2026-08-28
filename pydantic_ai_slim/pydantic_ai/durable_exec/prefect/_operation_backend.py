@@ -8,6 +8,7 @@ from prefect.context import FlowRunContext
 
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
+    DurableOperationConfig,
     DurableOperationId,
     EventStreamHandlerId,
     OperationConfigRole,
@@ -21,7 +22,7 @@ from ._operation_names import PrefectOperationNamer
 from ._types import TaskConfig
 
 
-class PrefectOperationConfig:
+class PrefectOperationConfig(DurableOperationConfig[TaskConfig]):
     def __init__(
         self,
         *,

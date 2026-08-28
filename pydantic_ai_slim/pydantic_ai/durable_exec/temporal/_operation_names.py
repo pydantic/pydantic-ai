@@ -12,10 +12,14 @@ from .._operation import (
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
 )
-from .._operation_names import DurableInvocationName, _toolset_prefix  # pyright: ignore[reportPrivateUsage]
+from .._operation_names import (
+    DurableInvocationName,
+    DurableOperationNamer,
+    _toolset_prefix as _toolset_prefix,  # pyright: ignore[reportPrivateUsage]
+)
 
 
-class TemporalOperationNamer:
+class TemporalOperationNamer(DurableOperationNamer):
     """Generate Temporal activity names that are persisted compatibility data.
 
     These names must essentially never change. Changing them can strand in-flight workflows and
@@ -51,5 +55,5 @@ class TemporalOperationNamer:
                 return f'{self._prefix}__{prefix}__{toolset_id}__call_tool'
         assert_never(operation_id)
 
-    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
+    def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName:
         return DurableInvocationName(self.operation_name(operation_id))
