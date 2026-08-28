@@ -1160,7 +1160,7 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: 
             client,
             repo,
             reactivated,
-            _labels(reactivated),
+            item_labels(reactivated),
             _maintainer_assignees(client, repo, reactivated),
             now=now,
         )
@@ -1237,7 +1237,7 @@ def _mark_assigned_reminders(
                 # The search index lags: revalidate against live state so a
                 # just-unassigned or just-deprioritized issue is never marked.
                 current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-                labels = _labels(current)
+                labels = item_labels(current)
                 maintainers = _maintainer_assignees(client, repo, current)
                 if (
                     str(current.get('state') or '').casefold() != 'open'

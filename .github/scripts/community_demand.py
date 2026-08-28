@@ -21,12 +21,11 @@ import sys
 import urllib.error
 from collections.abc import Mapping
 from pathlib import Path
-
-# `typing.TypedDict` is fine here: nothing validates these shapes with pydantic.
-from typing import Any, Literal, TypedDict, cast  # noqa: TID251
+from typing import Any, Literal, cast
 
 sys.path.insert(0, str(Path(__file__).parent))
 import issue_pr_attention_monitor as attention
+from triage_models import AgentItem, agent_items, item_labels, parse_time, snapshot_candidates
 
 _IGNORED_DAYS = 14
 _MIN_INTERACTIONS = 3
@@ -42,20 +41,11 @@ _SNAPSHOT_LIMIT = 120_000
 _EXCLUDED_LABELS = (attention.COMMUNITY_LABEL, *attention.PRIORITY_GATE_LABELS, 'unplanned', 'duplicate')
 
 
-class Verdict(TypedDict):
+class Verdict(AgentItem):
     """One validated agent classification of a snapshot candidate."""
 
-    item_number: int
     verdict: Literal['genuine', 'artificial', 'unclear']
     confidence: Literal['high', 'medium', 'low']
-
-
-def _labels(item: Mapping[str, Any]) -> set[str]:
-    return {str(label['name']) for label in item.get('labels', [])}
-
-
-def _parse_time(value: str) -> dt.datetime:
-    return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
 def _candidate_numbers(client: attention.GitHubClient, repo: str, *, now: dt.datetime) -> list[int]:
@@ -93,7 +83,7 @@ def build_snapshot(client: attention.GitHubClient, repo: str, *, now: dt.datetim
     candidates: list[dict[str, object]] = []
     for number in _candidate_numbers(client, repo, now=now):
         current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-        labels = _labels(current)
+        labels = item_labels(current)
         interactions = int(current.get('comments') or 0) + int(
             cast(Mapping[str, Any], current.get('reactions') or {}).get('total_count') or 0
         )
@@ -102,7 +92,7 @@ def build_snapshot(client: attention.GitHubClient, repo: str, *, now: dt.datetim
             or 'pull_request' in current
             or current.get('assignees')
             or labels.intersection(_EXCLUDED_LABELS)
-            or _parse_time(str(current['created_at'])) > cutoff
+            or parse_time(str(current['created_at'])) > cutoff
             or interactions <= _MIN_INTERACTIONS
         ):
             continue
@@ -139,92 +129,33 @@ def write_snapshot(client: attention.GitHubClient, repo: str, path: str, *, now:
     return [f'wrote {len(candidates)} community demand candidate(s)']
 
 
-def _snapshot_candidates(path: str) -> dict[int, str]:
-    """Return the trusted candidate map (number -> snapshot updated_at)."""
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Snapshot must contain a candidates list')
-    raw_candidates = cast(Mapping[str, object], loaded).get('candidates')
-    if not isinstance(raw_candidates, list):
-        raise ValueError('Snapshot must contain a candidates list')
-    candidates: dict[int, str] = {}
-    for value in cast(list[object], raw_candidates):
-        if not isinstance(value, Mapping):
-            raise ValueError('Snapshot candidate must be an object')
-        candidate = cast(Mapping[str, object], value)
-        number = candidate.get('number')
-        updated_at = candidate.get('updated_at')
-        if not isinstance(number, int) or number < 1 or number in candidates or not isinstance(updated_at, str):
-            raise ValueError('Snapshot candidates must have unique positive numbers and timestamps')
-        candidates[number] = updated_at
-    if len(candidates) > _CANDIDATE_LIMIT:
-        raise ValueError('Snapshot exceeds the candidate limit')
-    return candidates
-
-
-def _parse_verdicts(path: str) -> list[Verdict]:
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Agent output must contain an items list')
-    raw_items = cast(Mapping[str, object], loaded).get('items')
-    if not isinstance(raw_items, list):
-        raise ValueError('Agent output must contain an items list')
-    verdicts: list[Verdict] = []
-    for value in cast(list[object], raw_items):
-        if not isinstance(value, Mapping):
-            continue
-        entry = cast(Mapping[str, object], value)
-        if entry.get('type') != 'record_community_verdict':
-            continue
-        number = entry.get('item_number')
-        verdict = entry.get('verdict')
-        confidence = entry.get('confidence')
-        if not isinstance(number, str) or not number.isdecimal() or number.startswith('0'):
-            raise ValueError('Verdict item_number must be a positive decimal string')
-        if verdict not in {'genuine', 'artificial', 'unclear'}:
-            raise ValueError(f'Invalid verdict: {verdict!r}')
-        if confidence not in {'high', 'medium', 'low'}:
-            raise ValueError(f'Invalid confidence: {confidence!r}')
-        verdicts.append(
-            Verdict(
-                item_number=int(number),
-                verdict=cast(Literal['genuine', 'artificial', 'unclear'], verdict),
-                confidence=cast(Literal['high', 'medium', 'low'], confidence),
-            )
-        )
-    numbers = [entry['item_number'] for entry in verdicts]
-    if len(numbers) > _CANDIDATE_LIMIT or len(numbers) != len(set(numbers)):
-        raise ValueError('Agent output contains too many or duplicate verdicts')
-    return verdicts
-
-
 def apply_verdicts(client: attention.GitHubClient, repo: str, output_path: str, snapshot_path: str) -> list[str]:
     """Revalidate allowlisted model verdicts, then label genuine demand."""
-    candidates = _snapshot_candidates(snapshot_path)
-    verdicts = _parse_verdicts(output_path)
-    if {entry['item_number'] for entry in verdicts} != candidates.keys():
+    candidates = snapshot_candidates(snapshot_path, limit=_CANDIDATE_LIMIT)
+    verdicts = agent_items(output_path, Verdict, tag='record_community_verdict', limit=_CANDIDATE_LIMIT)
+    if {entry.item_number for entry in verdicts} != candidates.keys():
         raise ValueError('Agent output must classify every snapshot candidate exactly once')
     attention.ensure_labels(client, repo)
     lines: list[str] = []
     failures: list[str] = []
     for entry in verdicts:
-        number = entry['item_number']
+        number = entry.item_number
         try:
             current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
             if (
                 current.get('state') != 'open'
                 or str(current.get('updated_at')) != candidates[number]
                 or current.get('assignees')
-                or _labels(current).intersection(_EXCLUDED_LABELS)
+                or item_labels(current).intersection(_EXCLUDED_LABELS)
             ):
                 lines.append(f'#{number}: skipped because the issue changed after classification')
                 continue
-            if entry['verdict'] != 'genuine' or entry['confidence'] != 'high':
-                lines.append(f'#{number}: left unlabeled ({entry["verdict"]}, {entry["confidence"]} confidence)')
+            if entry.verdict != 'genuine' or entry.confidence != 'high':
+                lines.append(f'#{number}: left unlabeled ({entry.verdict}, {entry.confidence} confidence)')
                 continue
             client.post(f'/repos/{repo}/issues/{number}/labels', {'labels': [attention.COMMUNITY_LABEL]})
             labeled = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-            if attention.COMMUNITY_LABEL not in _labels(labeled):
+            if attention.COMMUNITY_LABEL not in item_labels(labeled):
                 raise RuntimeError('GitHub did not apply the community label')
             lines.append(f'#{number}: marked as genuine community demand')
         except (urllib.error.URLError, RuntimeError) as exc:
