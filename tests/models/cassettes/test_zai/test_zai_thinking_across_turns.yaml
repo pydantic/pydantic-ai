@@ -1,0 +1,452 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '157'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 17 * 19? Think it through.
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        clear_thinking: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '2519'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - df770964009e9261817ec796554e3176
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: |-
+            To calculate $17 \times 19$, you can use a simple mental math strategy by rounding one of the numbers up to the nearest ten.
+
+            Here is the step-by-step breakdown:
+
+            1.  **Round 19 up to 20:** Think of the problem as $17 \times 20$.
+            2.  **Multiply:** $17 \times 20 = 340$.
+            3.  **Adjust:** Since you added 1 to 19 to make it 20, you have one extra group of 17 that needs to be subtracted.
+            4.  **Subtract:** $340 - 17 = 323$.
+
+            So, **$17 \times 19 = 323$**.
+          reasoning_content: |2-
+
+            The user is asking for the product of 17 and 19.
+            The instruction "Think it through" implies that I should show the steps or a mental math method to arrive at the answer, rather than just stating the number.
+
+            Step 1: Identify the numbers: 17 and 19.
+            Step 2: Determine a calculation strategy.
+                - Option A: Standard multiplication (vertical layout).
+                - Option B: Distributive property (expansion).
+                - Option C: Difference of squares method (since $17 \times 19$ is $(18-1)(18+1)$).
+
+            Let's explore Option C (Difference of Squares) as it is elegant.
+            $(18-1)(18+1) = 18^2 - 1^2$
+            $18^2 = 324$
+            $1^2 = 1$
+            $324 - 1 = 323$
+
+            Let's explore Option B (Distributive) to verify.
+            $17 \times 19 = 17 \times (20 - 1)$
+            $= (17 \times 20) - (17 \times 1)$
+            $= 340 - 17$
+            $= 323$
+
+            Let's explore Option A (Standard) to verify.
+              17
+            x 19
+            ----
+             153  (9 * 17 = 9 * 10 + 9 * 7 = 90 + 63 = 153)
+             170  (10 * 17 = 170)
+            ----
+             323  (153 + 170 = 323)
+
+            Step 3: Formulate the response.
+            The user asked to "think it through". I will present one of the methods clearly. The difference of squares or the rounding to 20 method are usually the most intuitive for mental math. I'll stick to the rounding to 20 method as it's very standard, or perhaps show a couple of ways for clarity.
+
+            Method 1: Rounding up.
+            $17 \times 19$
+            $= 17 \times (20 - 1)$
+            $= 340 - 17$
+            $= 323$
+
+            Method 2: Difference of Squares.
+            $17 \times 19 = (18 - 1)(18 + 1)$
+            $= 18^2 - 1^2$
+            $= 324 - 1$
+            $= 323$
+
+            I will provide the calculation using the rounding method as it is straightforward to follow.
+          role: assistant
+      created: 1788036992
+      id: 20260830045622bbcfeafe131e4a03
+      model: glm-4.7
+      object: chat.completion
+      request_id: 20260830045622bbcfeafe131e4a03
+      usage:
+        completion_tokens: 662
+        completion_tokens_details:
+          reasoning_tokens: 512
+        prompt_tokens: 17
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 679
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2353'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 17 * 19? Think it through.
+        role: user
+      - content: |-
+          To calculate $17 \times 19$, you can use a simple mental math strategy by rounding one of the numbers up to the nearest ten.
+
+          Here is the step-by-step breakdown:
+
+          1.  **Round 19 up to 20:** Think of the problem as $17 \times 20$.
+          2.  **Multiply:** $17 \times 20 = 340$.
+          3.  **Adjust:** Since you added 1 to 19 to make it 20, you have one extra group of 17 that needs to be subtracted.
+          4.  **Subtract:** $340 - 17 = 323$.
+
+          So, **$17 \times 19 = 323$**.
+        reasoning_content: |2-
+
+          The user is asking for the product of 17 and 19.
+          The instruction "Think it through" implies that I should show the steps or a mental math method to arrive at the answer, rather than just stating the number.
+
+          Step 1: Identify the numbers: 17 and 19.
+          Step 2: Determine a calculation strategy.
+              - Option A: Standard multiplication (vertical layout).
+              - Option B: Distributive property (expansion).
+              - Option C: Difference of squares method (since $17 \times 19$ is $(18-1)(18+1)$).
+
+          Let's explore Option C (Difference of Squares) as it is elegant.
+          $(18-1)(18+1) = 18^2 - 1^2$
+          $18^2 = 324$
+          $1^2 = 1$
+          $324 - 1 = 323$
+
+          Let's explore Option B (Distributive) to verify.
+          $17 \times 19 = 17 \times (20 - 1)$
+          $= (17 \times 20) - (17 \times 1)$
+          $= 340 - 17$
+          $= 323$
+
+          Let's explore Option A (Standard) to verify.
+            17
+          x 19
+          ----
+           153  (9 * 17 = 9 * 10 + 9 * 7 = 90 + 63 = 153)
+           170  (10 * 17 = 170)
+          ----
+           323  (153 + 170 = 323)
+
+          Step 3: Formulate the response.
+          The user asked to "think it through". I will present one of the methods clearly. The difference of squares or the rounding to 20 method are usually the most intuitive for mental math. I'll stick to the rounding to 20 method as it's very standard, or perhaps show a couple of ways for clarity.
+
+          Method 1: Rounding up.
+          $17 \times 19$
+          $= 17 \times (20 - 1)$
+          $= 340 - 17$
+          $= 323$
+
+          Method 2: Difference of Squares.
+          $17 \times 19 = (18 - 1)(18 + 1)$
+          $= 18^2 - 1^2$
+          $= 324 - 1$
+          $= 323$
+
+          I will provide the calculation using the rounding method as it is straightforward to follow.
+        role: assistant
+      - content: Now multiply that result by 2.
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '1335'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - ba7133d96d56bc4528202d4e121a5923
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: |-
+            To multiply the previous result by 2:
+
+            $$323 \times 2 = 646$$
+          reasoning_content: |2-
+
+            1.  **Analyze the Request:** The user wants to take the result from the previous turn ($323$) and multiply it by $2$.
+            2.  **Identify the Operation:** Multiplication ($323 \times 2$).
+            3.  **Perform the Calculation:**
+                *   Method 1: Direct multiplication.
+                    *   $300 \times 2 = 600$
+                    *   $20 \times 2 = 40$
+                    *   $3 \times 2 = 6$
+                    *   Sum: $600 + 40 + 6 = 646$
+                *   Method 2: Doubling.
+                    *   $323 + 323$
+                    *   $300 + 300 = 600$
+                    *   $20 + 20 = 40$
+                    *   $3 + 3 = 6$
+                    *   Sum: $646$
+            4.  **Verify:** $323 \times 2 = 646$.
+            5.  **Formulate the Response:** State the calculation clearly.
+                *   Start with the previous result: $323$.
+                *   Perform the operation: $323 \times 2$.
+                *   Give the final answer: $646$.
+          role: assistant
+      created: 1788036997
+      id: 20260830045632b56f15f2825e4002
+      model: glm-4.7
+      object: chat.completion
+      request_id: 20260830045632b56f15f2825e4002
+      usage:
+        completion_tokens: 294
+        completion_tokens_details:
+          reasoning_tokens: 271
+        prompt_tokens: 688
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 982
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3382'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 17 * 19? Think it through.
+        role: user
+      - content: |-
+          To calculate $17 \times 19$, you can use a simple mental math strategy by rounding one of the numbers up to the nearest ten.
+
+          Here is the step-by-step breakdown:
+
+          1.  **Round 19 up to 20:** Think of the problem as $17 \times 20$.
+          2.  **Multiply:** $17 \times 20 = 340$.
+          3.  **Adjust:** Since you added 1 to 19 to make it 20, you have one extra group of 17 that needs to be subtracted.
+          4.  **Subtract:** $340 - 17 = 323$.
+
+          So, **$17 \times 19 = 323$**.
+        reasoning_content: |2-
+
+          The user is asking for the product of 17 and 19.
+          The instruction "Think it through" implies that I should show the steps or a mental math method to arrive at the answer, rather than just stating the number.
+
+          Step 1: Identify the numbers: 17 and 19.
+          Step 2: Determine a calculation strategy.
+              - Option A: Standard multiplication (vertical layout).
+              - Option B: Distributive property (expansion).
+              - Option C: Difference of squares method (since $17 \times 19$ is $(18-1)(18+1)$).
+
+          Let's explore Option C (Difference of Squares) as it is elegant.
+          $(18-1)(18+1) = 18^2 - 1^2$
+          $18^2 = 324$
+          $1^2 = 1$
+          $324 - 1 = 323$
+
+          Let's explore Option B (Distributive) to verify.
+          $17 \times 19 = 17 \times (20 - 1)$
+          $= (17 \times 20) - (17 \times 1)$
+          $= 340 - 17$
+          $= 323$
+
+          Let's explore Option A (Standard) to verify.
+            17
+          x 19
+          ----
+           153  (9 * 17 = 9 * 10 + 9 * 7 = 90 + 63 = 153)
+           170  (10 * 17 = 170)
+          ----
+           323  (153 + 170 = 323)
+
+          Step 3: Formulate the response.
+          The user asked to "think it through". I will present one of the methods clearly. The difference of squares or the rounding to 20 method are usually the most intuitive for mental math. I'll stick to the rounding to 20 method as it's very standard, or perhaps show a couple of ways for clarity.
+
+          Method 1: Rounding up.
+          $17 \times 19$
+          $= 17 \times (20 - 1)$
+          $= 340 - 17$
+          $= 323$
+
+          Method 2: Difference of Squares.
+          $17 \times 19 = (18 - 1)(18 + 1)$
+          $= 18^2 - 1^2$
+          $= 324 - 1$
+          $= 323$
+
+          I will provide the calculation using the rounding method as it is straightforward to follow.
+        role: assistant
+      - content: Now multiply that result by 2.
+        role: user
+      - content: |-
+          To multiply the previous result by 2:
+
+          $$323 \times 2 = 646$$
+        reasoning_content: |2-
+
+          1.  **Analyze the Request:** The user wants to take the result from the previous turn ($323$) and multiply it by $2$.
+          2.  **Identify the Operation:** Multiplication ($323 \times 2$).
+          3.  **Perform the Calculation:**
+              *   Method 1: Direct multiplication.
+                  *   $300 \times 2 = 600$
+                  *   $20 \times 2 = 40$
+                  *   $3 \times 2 = 6$
+                  *   Sum: $600 + 40 + 6 = 646$
+              *   Method 2: Doubling.
+                  *   $323 + 323$
+                  *   $300 + 300 = 600$
+                  *   $20 + 20 = 40$
+                  *   $3 + 3 = 6$
+                  *   Sum: $646$
+          4.  **Verify:** $323 \times 2 = 646$.
+          5.  **Formulate the Response:** State the calculation clearly.
+              *   Start with the previous result: $323$.
+              *   Perform the operation: $323 \times 2$.
+              *   Give the final answer: $646$.
+        role: assistant
+      - content: And what was my first question?
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        clear_thinking: true
+        type: disabled
+      user_id: pydantic-ai-test-user
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '504'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - ff925f6b20d5dde9592b23d5448e2f2f
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 'Your first question was: "What is 17 * 19? Think it through."'
+          role: assistant
+      created: 1788036998
+      id: 2026083004563722357bc348624ce7
+      model: glm-4.7
+      object: chat.completion
+      request_id: 2026083004563722357bc348624ce7
+      usage:
+        completion_tokens: 19
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 207
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 226
+    status:
+      code: 200
+      message: OK
+version: 1
