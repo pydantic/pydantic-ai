@@ -1,23 +1,30 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
 from pydantic_ai.direct import model_request
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import FinishReason, ModelMessage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 from .conftest import RequestCapture
 
 with try_import() as imports_successful:
+    from openai.types import chat
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.zai import (
         ZaiModel,
@@ -26,6 +33,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.profiles.zai import ZaiModelProfile, zai_model_profile
     from pydantic_ai.providers.zai import ZaiProvider
+
+    from .mock_openai import MockOpenAI
 
 
 pytestmark = [
@@ -515,3 +524,109 @@ def test_zai_glm_5_3_reasoning_effort_mapping(thinking: ThinkingLevel, expected_
     assert transformed == {
         'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': expected_effort}
     }
+
+
+@pytest.mark.parametrize(
+    'raw_finish_reason,expected_finish_reason',
+    [
+        pytest.param('sensitive', 'content_filter', id='sensitive'),
+        pytest.param('model_context_window_exceeded', 'length', id='model_context_window_exceeded'),
+        pytest.param('network_error', 'error', id='network_error'),
+    ],
+)
+async def test_zai_non_standard_finish_reason(
+    allow_model_requests: None, raw_finish_reason: str, expected_finish_reason: FinishReason
+):
+    """Z.AI's non-standard `finish_reason` values are normalized instead of failing validation.
+
+    Z.AI documents three termination causes the OpenAI schema has no room for, so
+    `OpenAIChatModel._validate_completion` rejected the whole response and ended the run with
+    `UnexpectedModelBehavior` (#7678). The raw string stays in `provider_details`.
+
+    Unit tests, because none of the three can be provoked on demand: the requests that should
+    trigger them come back as an HTTP 400 instead (`1261` for an over-long prompt, `1301` for
+    disallowed content), and a 120k-token prompt still finished with `stop`. They arrive as a
+    finish reason only when the condition develops while the response is being produced, which no
+    request can stage.
+    """
+    message = ChatCompletionMessage(role='assistant', content='Partial answer.')
+    completion = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[Choice.model_construct(finish_reason=raw_finish_reason, index=0, message=message)],
+        created=1704067200,  # 2024-01-01
+        model='glm-4.7',
+        object='chat.completion',
+    )
+    model = ZaiModel('glm-4.7', provider=ZaiProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run('Tell me something.')
+
+    # 4. the text produced before the non-standard finish reason is kept, not discarded
+    assert result.output == 'Partial answer.'
+    assert result.response.finish_reason == expected_finish_reason
+    assert (result.response.provider_details or {})['finish_reason'] == raw_finish_reason
+
+
+@pytest.mark.parametrize(
+    'raw_finish_reason,expected_finish_reason',
+    [
+        pytest.param('sensitive', 'content_filter', id='sensitive'),
+        pytest.param('model_context_window_exceeded', 'length', id='model_context_window_exceeded'),
+        pytest.param('network_error', 'error', id='network_error'),
+    ],
+)
+async def test_zai_non_standard_finish_reason_stream(
+    allow_model_requests: None, raw_finish_reason: str, expected_finish_reason: FinishReason
+):
+    """Streamed responses map the same non-standard values, and keep the text received before them.
+
+    A stream never raised, but every non-standard value came out as `finish_reason=None`, hiding a
+    moderation hit or an interrupted generation from anything that branches on it. Unit test for the
+    same reason as `test_zai_non_standard_finish_reason`.
+    """
+
+    def chunk(content: str, finish_reason: str | None = None) -> chat.ChatCompletionChunk:
+        return chat.ChatCompletionChunk.model_construct(
+            id='123',
+            choices=[
+                ChunkChoice.model_construct(
+                    index=0, delta=ChoiceDelta(content=content, role='assistant'), finish_reason=finish_reason
+                )
+            ],
+            created=1704067200,  # 2024-01-01
+            model='glm-4.7',
+            object='chat.completion.chunk',
+        )
+
+    stream = [chunk('Partial '), chunk('answer.', finish_reason=raw_finish_reason)]
+    model = ZaiModel('glm-4.7', provider=ZaiProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream('Tell me something.') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['Partial ', 'Partial answer.'])
+
+    assert result.response.finish_reason == expected_finish_reason
+    assert (result.response.provider_details or {})['finish_reason'] == raw_finish_reason
+
+
+async def test_zai_sensitive_without_content_raises_content_filter_error(allow_model_requests: None):
+    """A moderation hit that returns no content ends the run as a content filter, naming Z.AI's reason.
+
+    Mapping `sensitive` onto `content_filter` is what lets the agent loop and
+    [`RaiseContentFilterError`][pydantic_ai.capabilities.content_filter.RaiseContentFilterError]
+    recognize it, and the raw value kept in `provider_details` is what they report.
+    """
+    completion = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[
+            Choice.model_construct(
+                finish_reason='sensitive', index=0, message=ChatCompletionMessage(role='assistant', content='')
+            )
+        ],
+        created=1704067200,  # 2024-01-01
+        model='glm-4.7',
+        object='chat.completion',
+    )
+    model = ZaiModel('glm-4.7', provider=ZaiProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    with pytest.raises(ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'sensitive'")):
+        await Agent(model).run('Tell me something.')
