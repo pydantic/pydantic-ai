@@ -76,7 +76,11 @@ from pydantic_ai.models import (
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
-from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
+from pydantic_ai.profiles.anthropic import (
+    ANTHROPIC_SAMPLING_PARAMS,
+    ANTHROPIC_THINKING_BUDGET_MAP,
+    resolve_anthropic_effort,
+)
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -786,6 +790,8 @@ class BedrockConverseModel(Model[BaseClient]):
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
+        if self.profile.get('anthropic_disallows_sampling_settings', False):
+            settings = self._drop_disallowed_sampling_settings(settings)
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         converse: ConverseTokensRequestTypeDef = {
             'messages': bedrock_messages,
@@ -1003,6 +1009,8 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
         settings = model_settings or BedrockModelSettings()
+        if self.profile.get('anthropic_disallows_sampling_settings', False):
+            settings = self._drop_disallowed_sampling_settings(settings)
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         inference_config = self._map_inference_config(settings)
 
@@ -1057,6 +1065,26 @@ class BedrockConverseModel(Model[BaseClient]):
             else:
                 model_response = await _call_bedrock(client, client.converse, params, settings.get('extra_headers'))
         return model_response
+
+    def _drop_disallowed_sampling_settings(self, model_settings: BedrockModelSettings) -> BedrockModelSettings:
+        """Return a copy of `model_settings` without sampling settings the model rejects.
+
+        Claude 5-class models served through Bedrock return a 400 for `temperature`, `top_p`, and
+        `top_k` (`anthropic_disallows_sampling_settings`), instead of ignoring them like the direct
+        Anthropic API's deprecated-field behavior. `top_k` is also dropped so it does not ride in
+        `additionalModelRequestFields` via the `anthropic` top-K variant.
+        """
+        dropped = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if model_settings.get(setting) is not None]
+        filtered: BedrockModelSettings = {**model_settings}
+        for setting in dropped:
+            filtered.pop(setting)
+        if dropped:
+            warnings.warn(
+                f'Sampling parameters {dropped} are not supported by {self.model_name!r}. These settings will be ignored.',
+                UserWarning,
+                stacklevel=2,
+            )
+        return filtered
 
     @staticmethod
     def _map_inference_config(

@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import warnings
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
@@ -3757,6 +3758,66 @@ async def test_bedrock_top_k_nova_variant(
     sent = single_request_body(vcr)
     assert sent['additionalModelRequestFields'] == {'inferenceConfig': {'topK': 20}}
     assert result.output == IsStr()
+
+
+async def test_bedrock_anthropic_disallows_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Claude 5-class models on Bedrock reject sampling settings with a 400, so they are dropped with a warning.
+
+    Unified `temperature`, `top_p`, and `top_k` (the latter would ride in `additionalModelRequestFields`)
+    never reach the request, while non-sampling settings are preserved. Mirrors the `AnthropicModel`
+    warn-and-drop behavior for the same `anthropic_disallows_sampling_settings` profile flag (#7791).
+    """
+    model = BedrockConverseModel('us.anthropic.claude-opus-5', provider=bedrock_provider)
+    assert model.profile.get('anthropic_disallows_sampling_settings') is True
+
+    model_settings = ModelSettings(temperature=0.5, top_p=0.9, top_k=20, max_tokens=100)
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['inferenceConfig'] == {'maxTokens': 100}
+    assert 'additionalModelRequestFields' not in kwargs
+    # The original settings dict is preserved — filtering happens on a copy.
+    assert model_settings == ModelSettings(temperature=0.5, top_p=0.9, top_k=20, max_tokens=100)
+
+
+async def test_bedrock_sampling_settings_kept_when_profile_allows(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Models whose profile does not set `anthropic_disallows_sampling_settings` keep their sampling settings."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    assert model.profile.get('anthropic_disallows_sampling_settings') is not True
+
+    agent = Agent(model, model_settings=ModelSettings(temperature=0.5, top_p=0.9, top_k=20))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter('always')
+        await agent.run('What is the capital of France?')
+
+    assert not [w for w in recorded if 'Sampling parameters' in str(w.message)]
+    _, kwargs = mock_converse.call_args
+    assert kwargs['inferenceConfig'] == {'temperature': 0.5, 'topP': 0.9}
+    assert kwargs['additionalModelRequestFields'] == {'top_k': 20}
 
 
 async def test_bedrock_top_k_user_field_takes_precedence(

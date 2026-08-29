@@ -35,6 +35,13 @@ _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-sonnet-5',
 )
 
+ANTHROPIC_SAMPLING_PARAMS: tuple[str, ...] = ('temperature', 'top_p', 'top_k')
+"""The unified sampling settings governed by `anthropic_disallows_sampling_settings`.
+
+Models whose profile sets that flag reject these settings outright (HTTP 400), so providers
+serving them — including over Bedrock — must drop and warn instead of forwarding them.
+"""
+
 
 class AnthropicModelProfile(ModelProfile, total=False):
     """Profile for models used with `AnthropicModel`.
