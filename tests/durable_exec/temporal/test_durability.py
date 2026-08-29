@@ -1205,7 +1205,8 @@ async def test_durability_continue_as_new_args_none_is_passthrough():
     continue_as_new_mock.assert_not_called()
 
 
-async def test_durability_continue_as_new_invokes_user_callable():
+@pytest.mark.parametrize('stream', [False, True])
+async def test_durability_continue_as_new_invokes_user_callable(stream: bool):
     received_contexts: list[RunContext[None]] = []
     continue_kwargs: dict[str, Any] = {'args': ['original prompt', RunUsage(requests=1)]}
 
@@ -1233,11 +1234,121 @@ async def test_durability_continue_as_new_invokes_user_callable():
         ) as continue_as_new_mock,
     ):
         with pytest.raises(_SentinelContinueAsNew):
-            await agent.run('hello')
+            if stream:
+                async with agent.run_stream('hello'):
+                    pass  # pragma: no cover
+            else:
+                await agent.run('hello')
 
     continue_as_new_mock.assert_called_once_with(**continue_kwargs)
     assert len(received_contexts) == 1
     assert [type(message).__name__ for message in received_contexts[0].messages] == ['ModelRequest']
+
+
+_continue_as_new_model_requests: list[list[ModelMessage]] = []
+
+
+def _continue_as_new_model_fn(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+    _continue_as_new_model_requests.append(messages)
+    tool_return = next(
+        (
+            part
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'record_transition'
+        ),
+        None,
+    )
+    if tool_return is None:
+        return ModelResponse(
+            parts=[ToolCallPart('record_transition', {'value': 'first request completed'}, tool_call_id='transition')],
+            usage=RequestUsage(input_tokens=2, output_tokens=3),
+        )
+    return ModelResponse(
+        parts=[TextPart(f'successor received: {tool_return.content}')],
+        usage=RequestUsage(input_tokens=5, output_tokens=7),
+    )
+
+
+def _continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
+    return {'args': [None, ctx.messages, ctx.usage]}
+
+
+_continue_as_new_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    continue_as_new_args=_continue_as_new_args,
+)
+_continue_as_new_agent = Agent(
+    FunctionModel(_continue_as_new_model_fn),
+    name='continue_as_new_agent',
+    deps_type=NoneType,
+    capabilities=[_continue_as_new_durability],
+)
+
+
+@_continue_as_new_agent.tool_plain
+def record_transition(value: str) -> str:
+    return value
+
+
+@dataclass
+class ContinueAsNewResult:
+    output: str
+    messages: list[ModelMessage]
+    usage: RunUsage
+    continued_run_id: str | None
+
+
+@workflow.defn
+class ContinueAsNewWorkflow:
+    @workflow.run
+    async def run(
+        self,
+        prompt: str | None,
+        message_history: list[ModelMessage] | None = None,
+        usage: RunUsage | None = None,
+    ) -> ContinueAsNewResult:
+        result = await _continue_as_new_agent.run(prompt, message_history=message_history, usage=usage)
+        return ContinueAsNewResult(
+            output=result.output,
+            messages=result.all_messages(),
+            usage=result.usage,
+            continued_run_id=workflow.info().continued_run_id,
+        )
+
+
+async def test_durability_continue_as_new_real_workflow_transition(client: Client):
+    _continue_as_new_model_requests.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ContinueAsNewWorkflow],
+        plugins=[AgentPlugin(_continue_as_new_agent)],
+    ):
+        result = await client.execute_workflow(
+            ContinueAsNewWorkflow.run,
+            args=['start', None, None],
+            id=ContinueAsNewWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result.output == 'successor received: first request completed'
+    assert result.continued_run_id is not None
+    assert result.usage == RunUsage(requests=2, input_tokens=7, output_tokens=10, tool_calls=1)
+    assert [type(message).__name__ for message in result.messages] == [
+        'ModelRequest',
+        'ModelResponse',
+        'ModelRequest',
+        'ModelResponse',
+    ]
+    assert [
+        part.content
+        for message in result.messages
+        for part in message.parts
+        if isinstance(part, (UserPromptPart, TextPart, ToolReturnPart))
+    ] == ['start', 'first request completed', 'successor received: first request completed']
+    assert len(_continue_as_new_model_requests) == 2
+    assert [len(messages) for messages in _continue_as_new_model_requests] == [1, 3]
 
 
 async def test_durability_continue_as_new_outside_workflow_is_passthrough():

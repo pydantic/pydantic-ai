@@ -129,7 +129,12 @@ async def temporal_env(temporal_port: int) -> AsyncIterator[WorkflowEnvironment]
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=temporal_port,
         ui=True,
-        dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        dev_server_extra_args=[
+            '--dynamic-config-value',
+            'frontend.enableServerVersionCheck=false',
+            '--dynamic-config-value',
+            'limit.historyCount.suggestContinueAsNew=10',
+        ],
         download_dest_dir=str(download_dest_dir),
     ) as env:
         yield env
