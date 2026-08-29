@@ -326,6 +326,15 @@ LatestBedrockModelNames = Literal[
     # Amazon Nova
     'us.amazon.nova-premier-v1:0',
     'global.amazon.nova-2-lite-v1:0',
+    # OpenAI GPT-5.6 (models that require a cross-region inference profile)
+    'us.openai.gpt-5.6-sol',
+    'global.openai.gpt-5.6-sol',
+    'us.openai.gpt-5.6-luna',
+    'in.openai.gpt-5.6-luna',
+    'global.openai.gpt-5.6-luna',
+    'us.openai.gpt-5.6-terra',
+    'in.openai.gpt-5.6-terra',
+    'global.openai.gpt-5.6-terra',
     # Meta Llama 4
     'us.meta.llama4-maverick-17b-instruct-v1:0',
     'us.meta.llama4-scout-17b-instruct-v1:0',

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import assert_never
 
-from pydantic_ai import Agent, UserError
+from pydantic_ai import UserError
 from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -18,7 +18,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from openai import AsyncBedrockOpenAI
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.models.bedrock import BedrockConverseModel, LatestBedrockModelNames
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
@@ -221,26 +221,50 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
 
 def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
     # #7793: AWS model cards list GPT-5.6 Sol/Luna/Terra on the Converse API — unlike every other
-    # proprietary GPT model, they construct on `BedrockConverseModel`. No further Converse capabilities
-    # are card-verified, so the profile adds nothing beyond the defaults.
+    # proprietary GPT model, they construct on `BedrockConverseModel`. No Pydantic AI profile overrides
+    # have been verified for them, so the effective profile keeps the relevant defaults.
     for base_name in ('gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'):
         assert BedrockProvider.model_profile(f'openai.{base_name}') is None
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
-        Agent(model)
+        assert {
+            'supports_json_schema_output': model.profile['supports_json_schema_output'],
+            'supports_thinking': model.profile['supports_thinking'],
+            'bedrock_thinking_variant': model.profile.get('bedrock_thinking_variant'),
+        } == snapshot(
+            {
+                'supports_json_schema_output': False,
+                'supports_thinking': False,
+                'bedrock_thinking_variant': None,
+            }
+        )
     assert isinstance(infer_model('bedrock:openai.gpt-5.6-luna'), BedrockConverseModel)
 
 
 def test_bedrock_converse_gpt_5_6_inference_id_forms() -> None:
-    # On Converse, GPT-5.6 is reached through the `us.`/`in.`/`global.` cross-region inference-profile
-    # model IDs. `split_bedrock_model_id` strips the geo prefix before vendor dispatch, so every form
-    # resolves through the exact-match allowlist on the stripped base name.
-    for model_name in (
-        'us.openai.gpt-5.6-sol',
-        'in.openai.gpt-5.6-sol',
-        'global.openai.gpt-5.6-sol',
-        'openai.gpt-5.6-sol',
-    ):
+    # AWS lists eight GPT-5.6 cross-region inference-profile IDs for Converse: Sol supports US and
+    # global routing, while Luna and Terra additionally support India routing.
+    model_names = tuple(name for name in get_args(LatestBedrockModelNames) if '.openai.gpt-5.6-' in name)
+    assert model_names == snapshot(
+        (
+            'us.openai.gpt-5.6-sol',
+            'global.openai.gpt-5.6-sol',
+            'us.openai.gpt-5.6-luna',
+            'in.openai.gpt-5.6-luna',
+            'global.openai.gpt-5.6-luna',
+            'us.openai.gpt-5.6-terra',
+            'in.openai.gpt-5.6-terra',
+            'global.openai.gpt-5.6-terra',
+        )
+    )
+    for model_name in model_names:
         BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-west-2'))
+
+    # India normalization must still route unsupported proprietary models through the OpenAI profile gate.
+    assert BedrockProvider.model_profile('in.openai.gpt-5.6-cyber') == snapshot(
+        {'bedrock_supported_on_converse': False}
+    )
+    with pytest.raises(UserError, match='BedrockMantleProvider'):
+        BedrockConverseModel('in.openai.gpt-5.6-cyber', provider=BedrockProvider(region_name='ap-south-1'))
 
 
 def test_gateway_bedrock_remains_on_converse() -> None:

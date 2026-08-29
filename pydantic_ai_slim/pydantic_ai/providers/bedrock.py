@@ -452,10 +452,8 @@ def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
 
 
 # MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
-# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
-# upstream profile via `_strip_builtin_tools(<upstream>_model_profile(model_name))` like the
-# other `bedrock_<vendor>_model_profile` fns do. The inline `'openai'` lambda in
-# `BedrockProvider.model_profile` follows the same from-scratch pattern for the same reason.
+# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
+# profile. OpenAI is handled separately because Converse support differs between its model families.
 
 
 def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
@@ -497,7 +495,7 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
 
 
 # Stripped base names of the proprietary (non-GPT-OSS) OpenAI GPT models AWS serves on the Bedrock
-# Converse API, per AWS model cards (checked 2026-08-27). Exact-match on purpose: `gpt-5.6-cyber` is
+# Converse API, per AWS model cards (checked 2026-08-29). Exact-match on purpose: `gpt-5.6-cyber` is
 # Mantle-only, so prefix matching would wrongly admit it.
 _CONVERSE_SERVED_OPENAI_GPT_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'})
 
@@ -505,9 +503,8 @@ _CONVERSE_SERVED_OPENAI_GPT_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-luna', '
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
     if model_name in _CONVERSE_SERVED_OPENAI_GPT_MODELS:
-        # AWS serves GPT-5.6 Sol/Luna/Terra on Converse (via `us.`/`in.`/`global.` inference-profile
-        # IDs), but their model cards verify no Converse-specific capabilities, so they keep the
-        # default profile.
+        # AWS serves GPT-5.6 Sol/Luna/Terra on Converse, but no Pydantic AI profile overrides have been
+        # verified for them, so they keep the default profile.
         return None
     # Only the open-weight GPT-OSS family is otherwise served on Converse; every other proprietary GPT
     # model (GPT-5.4, GPT-5.5, GPT-5.6 Cyber today, and future GPT-6/7/… tomorrow) is Bedrock
