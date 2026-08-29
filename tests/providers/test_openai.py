@@ -55,7 +55,7 @@ def test_init_of_openai_with_base_url_env_var_and_without_api_key(env: TestEnv):
     assert provider.client.api_key == 'api-key-not-set'
 
 
-def test_openai_provider_async_api_key_callback():
+async def test_openai_provider_async_api_key_callback():
     """`api_key` accepts an async callable, forwarded verbatim to the OpenAI SDK.
 
     The SDK resolves the callable per request, so `client.api_key` stays empty at rest.
@@ -68,3 +68,4 @@ def test_openai_provider_async_api_key_callback():
     assert isinstance(provider.client, AsyncOpenAI)
     assert provider.client._api_key_provider is provide_key  # pyright: ignore[reportPrivateUsage]
     assert provider.client.api_key == ''
+    assert await provider.client._refresh_api_key() == 'test-api-key'  # pyright: ignore[reportPrivateUsage]
