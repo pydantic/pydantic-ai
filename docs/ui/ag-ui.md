@@ -525,99 +525,15 @@ For managed Slack, [CopilotKit Intelligence](https://docs.copilotkit.ai/slack/py
 Slack  ──►  CopilotKit Intelligence  ──►  channel process (Node)  ──►  Pydantic AI server (AG-UI)
 ```
 
-Install the exact package versions tested together by the CopilotKit guide:
-
-```bash
-npm install --save-exact @copilotkit/channels@0.6.1 @copilotkit/runtime@1.65.0 @ag-ui/client@0.0.57
-npm install --save-dev tsx typescript @types/node
-```
-
-Point the channel at your server with a fresh [`HttpAgent`](https://docs.ag-ui.com/sdk/js/client/http-agent) for each conversation. Pass the triggering message explicitly, including attachments when present, and add the platform and user as AG-UI `context` entries:
-
-```ts {title="channel.ts"}
-import { createServer } from 'node:http';
-import { HttpAgent } from '@ag-ui/client';
-import { createChannel } from '@copilotkit/channels';
-import { CopilotRuntime, CopilotKitIntelligence } from '@copilotkit/runtime/v2';
-import { createCopilotNodeListener } from '@copilotkit/runtime/v2/node';
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing required environment variable: ${name}`);
-  return value;
-}
-
-function makeAgent(threadId: string): HttpAgent {
-  const agent = new HttpAgent({ url: 'http://localhost:8000/' });
-  agent.threadId = threadId;
-  return agent;
-}
-
-const channel = createChannel({
-  name: required('CHANNEL_CODE'),
-  identifyUser: 'platform',
-  agent: makeAgent,
-});
-
-channel.onMessage(async ({ thread, message }) => {
-  await thread.runAgent({
-    prompt: message.contentParts?.length
-      ? [
-          ...(message.text ? [{ type: 'text' as const, text: message.text }] : []),
-          ...message.contentParts,
-        ]
-      : message.text,
-    context: [
-      { description: 'Originating platform', value: message.platform },
-      {
-        description: 'Requesting user',
-        value: message.user?.name ?? 'Unidentified application user',
-      },
-    ],
-  });
-});
-
-const runtime = new CopilotRuntime({
-  agents: {},
-  intelligence: new CopilotKitIntelligence({
-    apiKey: required('INTELLIGENCE_API_KEY'),
-  }),
-  channels: [channel],
-});
-
-const listener = createCopilotNodeListener({
-  runtime,
-  basePath: '/api/copilotkit',
-});
-const channels = listener.channels;
-const server = createServer(listener);
-
-async function shutdown(): Promise<void> {
-  await channels.stop();
-  if (server.listening) server.close();
-}
-process.once('SIGINT', shutdown);
-process.once('SIGTERM', shutdown);
-
-await channels.ready({ timeoutMs: 30_000 });
-const status = channels.status();
-if (status.overall !== 'online') {
-  throw new Error(`Slack Channel is not online: ${JSON.stringify(status)}`);
-}
-
-server.listen(3000, () => {
-  console.log('Slack Channel online; lifecycle server listening on :3000');
-});
-```
+Follow the [CopilotKit guide](https://docs.copilotkit.ai/slack/pydantic-ai/connect) to create the channel process and point its AG-UI client at your Pydantic AI server. When the process handles a platform event, it passes the triggering message to the agent and can attach platform and user details as AG-UI `context` entries.
 
 AG-UI `context` is client-provided data, so Pydantic AI deliberately does not put it in the model prompt automatically. Run the channel process alongside the [`ag_ui_context.py`](#context) server above: it reads `adapter.run_input.context`, keeps authenticated workspace data separate, and exposes the channel entries through the `frontend_context` tool rather than treating them as instructions.
 
 ```bash
-uvicorn ag_ui_context:app  # terminal 1: Pydantic AI server
-node --env-file=.env --import tsx channel.ts  # terminal 2: channel process
+uvicorn ag_ui_context:app
 ```
 
-Configure `INTELLIGENCE_API_KEY` and `CHANNEL_CODE` from the CopilotKit Intelligence dashboard before starting the channel process. It needs a long-running host because a serverless request handler cannot own its persistent gateway connection.
+Start the channel process as described in the CopilotKit guide. It needs a long-running host because a serverless request handler cannot own its persistent gateway connection.
 
 ### Slack
 
