@@ -899,8 +899,8 @@ async def test_anthropic_code_execution_files_with_message_cache(allow_model_req
 async def test_anthropic_code_execution_files_500_without_uploads_is_not_retried(allow_model_requests: None):
     """A 500 on a request carrying a history-resolved container id but no uploads raises as-is, with no second attempt.
 
-    Not a VCR test: an expired container with no `container_upload` in play answers 200 with an
-    `unavailable` tool result, so this 500 shape can only be simulated. Pins that the container-drop
+    Not a VCR test: a container the API will not accept, with no `container_upload` in play, answers
+    200 with an `unavailable` tool result, so this 500 shape can only be simulated. Pins that the container-drop
     retry needs *both* halves of the shape that actually 500s — an id we resolved from history *and*
     uploads on the wire — so an unrelated 500 never costs a caller a duplicate request. The mock
     would answer a second attempt with another 500, so a retry that fired would show up as a second
@@ -994,15 +994,18 @@ async def test_anthropic_code_execution_files_500_keeps_caller_container(
     assert [kwargs['container'] for kwargs in completion_kwargs] == [expected_container]
 
 
+# `expect_retry` rather than the expected container list: the list would have to name `OMIT`, which
+# comes from the anthropic SDK, and a parametrize decorator is evaluated at import — so the module
+# would fail to collect in the CI variants that install pydantic-ai without anthropic.
 @pytest.mark.parametrize(
-    'status_code,expected_containers',
+    'status_code,expect_retry',
     [
-        pytest.param(500, ['container_from_history', OMIT], id='500-retried'),
-        pytest.param(429, ['container_from_history'], id='429-not-retried'),
+        pytest.param(500, True, id='500-retried'),
+        pytest.param(429, False, id='429-not-retried'),
     ],
 )
 async def test_anthropic_code_execution_files_500_with_uploads_drops_history_container(
-    allow_model_requests: None, status_code: int, expected_containers: list[str | object]
+    allow_model_requests: None, status_code: int, expect_retry: bool
 ):
     """A 500 on a history-resolved id with uploads on the wire is resent once, carrying no container at all.
 
@@ -1046,6 +1049,7 @@ async def test_anthropic_code_execution_files_500_with_uploads_drops_history_con
 
     assert exc_info.value.status_code == status_code
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    expected_containers: list[object] = ['container_from_history', OMIT] if expect_retry else ['container_from_history']
     assert [kwargs['container'] for kwargs in completion_kwargs] == expected_containers
 
 

@@ -993,17 +993,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             try:
                 return await create(container)
             except APIStatusError as e:
-                # A request that asks Anthropic to materialize a `container_upload` into a container it
-                # will not accept comes back 500, with the same generic `api_error` body any internal
-                # failure produces — not the 404 it gives for an id that never existed. We cannot read a
-                # cause off that response, so this is an inference from the shape that reproduces it:
-                # a `CodeExecutionTool(files=...)` conversation resumed against a days-old id 500s, and
-                # the same request without the id succeeds (https://github.com/pydantic/pydantic-ai/issues/7833).
-                # Anthropic documents containers as living 30 days with a checkpoint after ~5 minutes of
-                # inactivity, so this is deliberately *not* described here as expiry — the `expires_at`
-                # field is a shorter rolling value the docs warn does not report that limit.
+                # Dropping the container and resending is Anthropic's own prescribed recovery for a
+                # container that cannot be reused: "Send the request again without the `container`
+                # parameter to get a new container." So the remedy here is the documented one, and
+                # what the docs do not pin down is the trigger — they say such a request "returns an
+                # error" without naming a status.
                 #
-                # Retrying an opaque 500 is blunt, so the guard is narrow on purpose. It needs both
+                # What we measured is narrower than the docs describe, which is why the guard keys on
+                # 500. A request asking Anthropic to materialize a `container_upload` into an id it
+                # will not accept comes back 500 carrying the same generic `api_error` body any
+                # internal failure produces — not the 404 it gives for an id that never existed. The
+                # id we measured against was only days old, and the docs put the lifetime at 30 days
+                # with a checkpoint after ~5 minutes of inactivity and a restore on the next request
+                # inside that window, so it should have been restored rather than refused. That gap —
+                # documented-restorable, actually-refused, and refused untyped — is the upstream bug
+                # (https://github.com/pydantic/pydantic-ai/issues/7833). Do not call this expiry: the
+                # `expires_at` field is a shorter rolling value the docs warn does not report the
+                # 30-day limit, and reading it as the lifetime is what produced the wrong "~1h" story
+                # this comment used to tell. If Anthropic ever returns the typed error the docs imply,
+                # widen this guard to it and the 500 special case can go.
+                #
+                # Keying a retry on an opaque 500 is blunt, so the guard is narrow on purpose. It needs both
                 # halves of the shape that reproduces — an id *we* resolved from history, and uploads
                 # actually on the wire — so any other 500 raises untouched and costs nobody a second
                 # round trip. A container the caller set is never rewritten, whether they passed

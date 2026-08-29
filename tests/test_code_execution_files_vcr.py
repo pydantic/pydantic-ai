@@ -294,7 +294,8 @@ async def test_anthropic_code_execution_files_with_function_tool(
 # A real container from an earlier recording, days old. Anthropic answers a `container_upload` aimed
 # at it with a 500 rather than the 404 it gives for an id that never existed. Deliberately not called
 # expired: the docs put the lifetime at 30 days with a restore-on-request inside that window, so an
-# id this age should still resolve, and the cause of the refusal is not something we can read back.
+# id this age should have been restored rather than refused. What the refusal is, we cannot read back
+# — the body is a generic `api_error`. That gap is tracked upstream in #7833.
 _DEAD_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
 
 
@@ -308,10 +309,12 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
     worse than no id: the API refuses to materialize the upload and answers 500 — the same generic
     `api_error` body any internal failure produces — rather than the 404 it gives for an id that
     never existed (#7833). The cause is not readable off the response, so this test pins the shape
-    that reproduces rather than a documented rule: Anthropic documents containers as living 30 days
-    with a checkpoint after ~5 minutes of inactivity, and `expires_at` is a shorter rolling value the
-    docs warn does not report that limit. Two requests go out — the first carrying the dead id, the
-    second carrying no container at all — and the fresh container gets the file.
+    that reproduces. The *remedy* is documented — "Send the request again without the `container`
+    parameter to get a new container" — and that is exactly what the two requests here show: the
+    first carries the dead id, the second carries no container at all, and the fresh container gets
+    the file. What is not documented is the trigger. Anthropic puts the container lifetime at 30 days
+    with a restore-on-request inside that window, so this days-old id should have been restored; that
+    it was refused instead, and refused with an untyped 500, is the upstream gap in #7833.
 
     `max_retries=0` keeps the SDK's own retry out of the way, so the two captured requests are ours.
     It also makes playback match live: the real 500 carries `x-should-retry: false` and the SDK stops
