@@ -7,10 +7,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
-from pydantic import ValidationError
 from typing_extensions import override
 
-from .. import UnexpectedModelBehavior
 from ..messages import FinishReason
 from ..profiles import ModelProfileSpec
 from ..profiles.zai import ZaiModelProfile
@@ -20,16 +18,15 @@ from . import ModelRequestParameters
 
 try:
     from openai import AsyncOpenAI, Omit, omit
-    from openai.types import chat, completion_usage
-    from openai.types.chat import chat_completion, chat_completion_chunk
+    from openai.types import chat
+    from openai.types.chat import chat_completion
 
     from .openai import (
-        _CHAT_FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
         OpenAIChatModel,
         OpenAIChatModelSettings,
         OpenAIStreamedResponse,
+        _CHAT_FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
         _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -37,57 +34,45 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`'
     ) from _import_error
 
+__all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
 
-# Non-standard finish reasons that the Z.AI API returns but the OpenAI SDK's strict
-# `ChatCompletion.Choice.finish_reason` Literal rejects. These trigger `UnexpectedModelBehavior`
-# on the non-streaming path because pydantic-ai re-validates the SDK response dict; the SDK
-# streaming constructor is lenient so streams never crash on them, but we still need the
-# widened Literal below so the validated chunk type is accurate.
-_ZAI_EXTRA_FINISH_REASONS = Literal['sensitive', 'network_error']
-_ZAI_FINISH_REASON = Literal[
-    'stop', 'length', 'tool_calls', 'content_filter', 'function_call', 'sensitive', 'network_error'
+
+_ZaiFinishReason = Literal[
+    'stop',
+    'length',
+    'tool_calls',
+    'content_filter',
+    'function_call',
+    'sensitive',
+    'model_context_window_exceeded',
+    'network_error',
 ]
+"""The `finish_reason` values Z.AI documents, a superset of the OpenAI ones.
+
+See [the Z.AI docs](https://docs.z.ai/api-reference/llm/chat-completion) for the full list.
+"""
+
+_ZAI_FINISH_REASON_MAP: dict[_ZaiFinishReason, FinishReason] = {
+    **_CHAT_FINISH_REASON_MAP,
+    # Blocked by Z.AI's content moderation.
+    'sensitive': 'content_filter',
+    'model_context_window_exceeded': 'length',
+    # Inference was interrupted, so the generation is truncated rather than complete.
+    'network_error': 'error',
+}
 
 
 class _ZaiChoice(chat_completion.Choice):
-    """Z.AI's choice type widens `finish_reason` to accept Z.AI-specific termination causes."""
+    """Wraps the OpenAI chat completion choice with Z.AI's wider set of finish reasons."""
 
-    finish_reason: _ZAI_FINISH_REASON | None  # type: ignore[reportIncompatibleVariableOverride]
+    finish_reason: _ZaiFinishReason  # type: ignore[reportIncompatibleVariableOverride]
 
 
 class _ZaiChatCompletion(_ChatCompletion):
-    """Z.AI's chat completion type widens the choice list to `_ZaiChoice`."""
+    """Wraps the OpenAI chat completion with Z.AI's choice type."""
 
     choices: list[_ZaiChoice]  # type: ignore[reportIncompatibleVariableOverride]
 
-
-class _ZaiChunkChoice(chat_completion_chunk.Choice):
-    """Z.AI's chunk choice type widens `finish_reason` the same way."""
-
-    finish_reason: _ZAI_FINISH_REASON | None  # type: ignore[reportIncompatibleVariableOverride]
-
-
-class _ZaiChatCompletionChunk(_ChatCompletionChunk):
-    """Z.AI's chat completion chunk type widens the choice list to `_ZaiChunkChoice`."""
-
-    choices: list[_ZaiChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
-
-
-# Map Z.AI's non-standard finish reasons onto the standard pydantic-ai `FinishReason` enum.
-# The raw string is preserved in `provider_details['finish_reason']` by `_map_provider_details`
-# so the original value never gets lost.  `sensitive` = content moderation stop.
-# `network_error` (proxy-side transport failure) is reported as `FinishReason='error'`
-# so callers — and pydantic-ai agents themselves — can detect the interrupted
-# generation and handle it as a failure rather than silently accepting a partial
-# response as a clean `stop`.
-_ZAI_FINISH_REASON_MAP: dict[_ZAI_FINISH_REASON, FinishReason] = {
-    **_CHAT_FINISH_REASON_MAP,
-    'sensitive': 'content_filter',
-    'network_error': 'error',
-}
-del completion_usage, chat_completion, chat_completion_chunk
-
-__all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
 
 LatestZaiModelNames = Literal[
     'glm-5.3',
@@ -204,29 +189,10 @@ class ZaiModel(OpenAIChatModel):
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _ZaiChatCompletion:
-        """Re-validate the SDK completion dict through `_ZaiChatCompletion`.
-
-        The base OpenAI re-validation path uses the strict 5-value `finish_reason` Literal.
-        Z.AI returns non-standard values `sensitive` (content moderation) and `network_error`
-        (proxy-side transport failure) that fail that strict Literal and abort the run with
-        `UnexpectedModelBehavior`. This override widens the literal so the same shape passes,
-        then `_map_finish_reason` below normalises the non-standard values onto the standard
-        pydantic-ai `FinishReason` enum (raw string kept in `provider_details['finish_reason']`).
-        """
-        try:
-            return _ZaiChatCompletion.model_validate(response.model_dump())
-        except ValidationError as exc:
-            # Preserve the same exception semantics as the base method: unknown validation
-            # failures still surface as `UnexpectedModelBehavior`.
-            raise UnexpectedModelBehavior(
-                f'Invalid response from {self.system} chat completions endpoint: {exc}'
-            ) from exc
+        return _ZaiChatCompletion.model_validate(response.model_dump())
 
     @override
-    def _map_finish_reason(
-        self,
-        key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call', 'sensitive', 'network_error'],
-    ) -> FinishReason | None:
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:
         return _ZAI_FINISH_REASON_MAP.get(key)
 
     @property
@@ -237,37 +203,14 @@ class ZaiModel(OpenAIChatModel):
 
 @dataclass
 class ZaiStreamedResponse(OpenAIStreamedResponse):
-    """Streamed response handler for Z.AI.
+    """Implementation of `StreamedResponse` for Z.AI models.
 
-    Re-validates each chunk through `_ZaiChatCompletionChunk` so Z.AI's non-standard
-    `finish_reason` values on the terminal chunk are accepted rather than raising
-    `ValidationError` when pydantic-ai tries to consume the streamed finish.  Mapping
-    from non-standard -> standard `FinishReason` is applied via the override below.
+    Streamed chunks need no widened type: the openai SDK builds them leniently, so Z.AI's
+    non-standard `finish_reason` reaches us as-is and only the mapping below has to know about it.
     """
 
     @override
-    async def _validate_response(self):
-        """Pass each SDK chunk through `_ZaiChatCompletionChunk` validation.
-
-        The OpenAI SDK constructs `ChatCompletionChunk` leniently on the wire, so prior to
-        this override Z.AI's non-standard finish_reasons used to arrive without crashing.
-        However, we still validate each chunk to keep the two paths (non-streaming / streaming)
-        symmetric and guarantee that a malformed choice fails loudly instead of being
-        silently type-incorrect downstream.
-        """
-        async for chunk in self._response:
-            try:
-                yield _ZaiChatCompletionChunk.model_validate(chunk.model_dump())
-            except ValidationError as exc:
-                raise UnexpectedModelBehavior(
-                    f'Invalid response from {self._model_name} chat completions stream: {exc}'
-                ) from exc
-
-    @override
-    def _map_finish_reason(
-        self,
-        key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call', 'sensitive', 'network_error'],
-    ) -> FinishReason | None:
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:
         return _ZAI_FINISH_REASON_MAP.get(key)
 
 
