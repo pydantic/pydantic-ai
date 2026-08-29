@@ -1,18 +1,31 @@
 from __future__ import annotations
 
 from abc import ABC
+from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from weakref import WeakValueDictionary
 
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from pydantic_ai import _utils
-from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._instructions import (
+    AgentInstruction,
+    AgentInstructions,
+    SourcedInstruction,
+    normalize_instructions,
+    sourced_instruction,
+)
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    CapabilityInstructionSource,
+    ModelResponse,
+    ToolCallPart,
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -82,12 +95,15 @@ WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]
 RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
 
+DurableOperationDispatcher: TypeAlias = Callable[
+    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
+]
+
 WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 """Handler type for wrap_output_validate."""
 
 WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
 """Handler type for wrap_output_process."""
-
 
 CapabilityPosition = Literal['outermost', 'innermost']
 """Position tier for a capability in the middleware chain.
@@ -158,6 +174,37 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
+class _DurableOperationBindings:
+    """Agent-identity bindings that do not retain unhashable agent instances."""
+
+    def __init__(self) -> None:
+        self._agents: WeakValueDictionary[int, AbstractAgent[Any, Any]] = WeakValueDictionary()
+        self._bindings: dict[int, dict[str, DurableOperationDispatcher]] = {}
+
+    def get(
+        self, agent: AbstractAgent[Any, Any], default: dict[str, DurableOperationDispatcher]
+    ) -> dict[str, DurableOperationDispatcher]:
+        self._prune()
+        agent_id = id(agent)
+        return self._bindings.get(agent_id, default) if self._agents.get(agent_id) is agent else default
+
+    def setdefault(self, agent: AbstractAgent[Any, Any]) -> dict[str, DurableOperationDispatcher]:
+        self._prune()
+        agent_id = id(agent)
+        if self._agents.get(agent_id) is not agent:
+            self._agents[agent_id] = agent
+            self._bindings[agent_id] = {}
+        return self._bindings[agent_id]
+
+    def __len__(self) -> int:
+        self._prune()
+        return len(self._bindings)
+
+    def _prune(self) -> None:
+        live_ids = set(self._agents)
+        self._bindings = {agent_id: bindings for agent_id, bindings in self._bindings.items() if agent_id in live_ids}
+
+
 @dataclass(init=False)
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
@@ -183,6 +230,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     YAML/JSON specs (via `Agent.from_spec`); they have
     sensible defaults and typically don't need to be overridden.
     """
+
+    def _get_durable_operation_bindings(
+        self,
+    ) -> _DurableOperationBindings:
+        bindings = self.__dict__.get('_pydantic_ai_durable_operation_bindings')
+        if not isinstance(bindings, _DurableOperationBindings):
+            bindings = _DurableOperationBindings()
+            object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
+        return bindings
 
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
@@ -306,11 +362,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Install private per-run state before any capability lifecycle hook runs.
+
+        Durable dispatch tables must be available before every capability's `before_run`, because
+        one capability may call another capability's durable operation from its hook. This setup
+        therefore cannot be implemented as a `before_run` hook itself. It stays private pending the
+        capability surface decisions tracked in #5477.
+        """
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
         Called once per run, before `get_*()` re-extraction and before any hooks fire.
         Override to return a fresh instance for per-run state isolation.
+        Under durable execution, worker processes re-derive this instance from the deserialized
+        run context, so all per-run state must be derivable from `ctx`.
         Default: return `self` (shared across runs).
         """
         return self
@@ -338,6 +405,53 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `load_capability` tool for this capability.
         """
         return None
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Return this capability's instructions, each paired with the id to address it by.
+
+        The agent uses this instead of [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]
+        so a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] gets its own
+        [`InstructionPart`][pydantic_ai.messages.InstructionPart]s rather than being folded into the
+        agent's — computed contributions included, since addressing the capability means addressing
+        everything it tells the model. Container capabilities override this to keep each leaf's
+        contribution attributed; every other capability inherits this default, so overriding
+        `get_instructions` is enough.
+        """
+        return self._collect_own_instructions()
+
+    def _collect_own_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Collect this capability's public contribution without container recursion."""
+        return [
+            self._attribute_instruction(instruction) for instruction in normalize_instructions(self.get_instructions())
+        ]
+
+    def _attribute_instruction(self, instruction: AgentInstruction[AgentDepsT]) -> SourcedInstruction[AgentDepsT]:
+        """Attribute one instruction recipe to this capability."""
+        return sourced_instruction(instruction, CapabilityInstructionSource(self.id) if self.id is not None else None)
+
+    def _attribute_container_instructions(
+        self,
+        authored: Sequence[AgentInstruction[AgentDepsT]],
+        relayed: Sequence[SourcedInstruction[AgentDepsT]],
+    ) -> list[SourcedInstruction[AgentDepsT]]:
+        """Attribute what an overriding container returned, keeping what it merely passed along.
+
+        Public container overrides return bare recipes, so identity is the only information that
+        connects a relayed recipe to the child that authored it. An object appearing under more
+        than one child is deliberately not connected: equal interned strings can be the same
+        object, and leaving their keys unidentified is safer than assigning either child at random.
+        """
+        occurrences = Counter(id(sourced.instruction) for sourced in relayed)
+        relayed_by_identity = {
+            id(sourced.instruction): sourced for sourced in relayed if occurrences[id(sourced.instruction)] == 1
+        }
+        # `relayed` keeps every recipe alive for the whole call, so these identities stay meaningful.
+        return [
+            self._attribute_instruction(instruction)
+            if (sourced := relayed_by_identity.get(id(instruction))) is None
+            else sourced
+            for instruction in authored
+        ]
 
     def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
         """Return a human-readable description of this capability, or None.
@@ -688,7 +802,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Called before each model request. Can modify messages, settings, and parameters."""
+        """Called before each model request. Can modify messages, settings, and parameters.
+
+        [`model_request_parameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts]
+        is the source of truth for the instructions: rewriting them here changes what the model
+        receives, and the request recorded in message history is re-rendered from them afterwards.
+        Assigning to a [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest] in
+        `request_context.messages` is not propagated the other way, so it does not reach the model.
+        """
         return request_context
 
     async def after_model_request(

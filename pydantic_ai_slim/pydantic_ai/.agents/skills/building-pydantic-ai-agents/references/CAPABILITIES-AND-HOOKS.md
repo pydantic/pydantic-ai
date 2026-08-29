@@ -118,6 +118,8 @@ Reach for a custom capability when:
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
 
+Give a capability an `id` when its instructions should be addressable. You declare `InstructionPart.name`; the framework issues `InstructionPart.id` as an `InstructionId`, whose source identifies the agent, toolset, or capability and whose optional name identifies one named part. It renders and serializes as `agent`, `toolset:<id>`, `capability:<id>`, or one of those followed by `:<name>`. Compare the structured source and name in Python; use `str(part.id)` only when a persisted string key is required. Naming a part whose source has no `id` of its own leaves `id` as `None`: the name still travels with the part, but nothing addresses it.
+
 ### Isolate Mutable State Per Run
 
 Assume a capability instance may outlive and be reused across runs. By default, `for_run()` returns `self`, so every run uses that same instance. Mutating its fields from hooks, tools, dynamic callables, or other code executed during a run will therefore share state across sequential and concurrent runs.

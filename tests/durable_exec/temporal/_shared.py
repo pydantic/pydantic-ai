@@ -124,6 +124,22 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Generator[No
     assert exc_info.value.__cause__.message == exc_message
 
 
+@contextmanager
+def workflow_activity_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
+    """Assert an activity failure preserves the user exception through Temporal's cause chain."""
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        yield
+    causes: list[BaseException] = []
+    error: BaseException | None = exc_info.value
+    while error is not None:
+        causes.append(error)
+        error = error.__cause__
+    assert any(
+        isinstance(cause, ApplicationError) and cause.type == exc_type.__name__ and cause.message == exc_message
+        for cause in causes
+    ), f'{exc_type.__name__}({exc_message!r}) not found in the workflow failure cause chain: {causes}'
+
+
 TASK_QUEUE = 'pydantic-ai-agent-task-queue'
 
 BASE_ACTIVITY_CONFIG = ActivityConfig(

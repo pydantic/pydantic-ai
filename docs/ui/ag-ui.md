@@ -262,6 +262,7 @@ Read the entries off `adapter.run_input.context` and deliver them to the model a
 from dataclasses import dataclass
 
 from ag_ui.core import Context
+from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -276,6 +277,7 @@ class ChannelDeps:
 
 
 agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
+app = FastAPI()
 
 
 @agent.instructions
@@ -294,6 +296,7 @@ def authenticated_workspace(request: Request) -> str:
     ...
 
 
+@app.post('/')
 async def run_agent(request: Request) -> Response:
     adapter = await AGUIAdapter.from_request(request, agent=agent)
     deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.run_input.context)
@@ -514,6 +517,42 @@ async def run_agent(request: Request) -> Response:
         request, agent=agent, manage_system_prompt='client'
     )
 ```
+
+## Channels
+
+The agent you exposed over AG-UI can also power a bot in Slack or another messaging platform. The [CopilotKit Channels SDK](https://docs.copilotkit.ai/slack/pydantic-ai) receives platform events, runs your agent over AG-UI, and renders its response as native platform content.
+
+!!! note
+    CopilotKit maintains the platform setup and deployment instructions. This section shows the Pydantic AI integration; use the [CopilotKit Slack guide for Pydantic AI](https://docs.copilotkit.ai/slack/pydantic-ai/connect) for the complete walkthrough.
+
+### How it fits together
+
+For managed Slack, [CopilotKit Intelligence](https://docs.copilotkit.ai/slack/pydantic-ai) holds the Slack credentials and delivers each turn to a long-running Node process built with [`@copilotkit/channels`](https://www.npmjs.com/package/@copilotkit/channels). That process sends the conversation to your Pydantic AI server over AG-UI and returns the streamed response to Slack.
+
+```
+Slack  ──►  CopilotKit Intelligence  ──►  channel process (Node)  ──►  Pydantic AI server (AG-UI)
+```
+
+Follow the [CopilotKit guide](https://docs.copilotkit.ai/slack/pydantic-ai/connect) to create the channel process and point its AG-UI client at your Pydantic AI server. When the process handles a platform event, it passes the triggering message to the agent and can attach platform and user details as AG-UI `context` entries.
+
+AG-UI `context` is client-provided data, so Pydantic AI deliberately does not put it in the model prompt automatically. Run the channel process alongside the [`ag_ui_context.py`](#context) server above: it reads `adapter.run_input.context`, keeps authenticated workspace data separate, and exposes the channel entries through the `frontend_context` tool rather than treating them as instructions.
+
+```bash
+uvicorn ag_ui_context:app
+```
+
+Start the channel process as described in the CopilotKit guide. It needs a long-running host because a serverless request handler cannot own its persistent gateway connection.
+
+### Slack
+
+The managed Slack connection is configured in CopilotKit Intelligence, which walks you through creating the Slack app and holds its credentials. Mention the bot in a real workspace and test a direct message to verify the platform connection, gateway listener, AG-UI server, and reply path together.
+
+### Other platforms
+
+Managed and developer-operated connections have different setup and support. See the [Channels SDK reference](https://docs.copilotkit.ai/reference/channels) for the current managed platforms, direct adapters, and provider-specific guides.
+
+!!! note
+    CopilotKit Intelligence reconstructs managed conversation history, but SDK workflow state and interactive callback snapshots use an in-memory store by default. Configure a durable store before promising restart-safe state or interactions; see [Persistence and scaling](https://docs.copilotkit.ai/slack/pydantic-ai/persistence-and-scaling).
 
 ## Examples
 
