@@ -255,16 +255,19 @@ def test_known_model_names():  # pragma: lax no cover
 
     extra_names = ['test']
 
-    generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
+    # Sets, not sorted lists: an id an SDK-lag `Literal` bridges is generated twice once the SDK catches
+    # up and lists it too, and `KnownModelName` is a single flat `Literal`, which cannot repeat a member.
+    # Comparing lists would fail on that duplicate with both difference reports empty.
+    generated_names = set(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
-    known_names = sorted(known_model_names())
+    known_names = set(known_model_names())
 
     if generated_names != known_names:
         errors: list[str] = []
-        missing_names = set(generated_names) - set(known_names)
+        missing_names = generated_names - known_names
         if missing_names:
             errors.append(f'Missing names: {missing_names}')
-        extra_names = set(known_names) - set(generated_names)
+        extra_names = known_names - generated_names
         if extra_names:
             errors.append(f'Extra names: {extra_names}')
         raise AssertionError('\n'.join(errors))

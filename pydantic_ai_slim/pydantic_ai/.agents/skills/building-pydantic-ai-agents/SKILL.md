@@ -194,6 +194,8 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 ```
 
+For a custom capability hook that performs I/O under Temporal, DBOS, or Prefect, mark a fixed method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names, so keep it stable even if the Python method is renamed. For dynamically contributed handlers, return them from `get_durable_operations()` and invoke a typed handle with `ctx.durable_operation(self, name, handler)`. Always set a stable capability `id`; without a durability capability both forms call the original async handler directly. Arguments and results must be serializable like durable tool inputs and outputs.
+
 ### Define Agent from YAML Spec
 
 Use `Agent.from_file` to load agents from YAML or JSON — no Python agent construction code needed.
@@ -221,8 +223,9 @@ the tool loop for you. Stream input with `send_audio`/`send`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
 `PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
 `FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`RealtimeInputSpeechStartEvent`,
-`RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). Stop on `RealtimeTurnCompleteEvent`: the exchange is
-over, the model has said everything it is going to say, and it is the user's turn again.
+`RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). Use `RealtimeTurnCompleteEvent` as the exchange
+boundary, when generation and tool work are complete. This is not always the end of audible speech:
+on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -232,25 +235,36 @@ from pydantic_ai.messages import (
     SpeechPart,
     SpeechPartDelta,
 )
+from pydantic_ai.realtime import RealtimeSessionErrorEvent, RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def main(microphone_chunk: bytes):
-    settings = OpenAIRealtimeModelSettings(
-        openai_voice='alloy', turn_detection={'sensitivity': 'high'}
-    )
+    settings = OpenAIRealtimeModelSettings(openai_voice='alloy', turn_detection=False)
     async with agent.realtime(
         'openai:gpt-realtime', model_settings=settings
     ).session() as session:
         await session.send_audio(microphone_chunk)  # PCM16 bytes
+        await session.commit_audio()
+        await session.create_response()
+        # Input transcription can finish after the model's response.
+        turn_complete = user_turn_complete = False
         async for event in session:
             match event:
                 case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
                     ...  # play audio out
                 case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
-                    print('user said:', t)
+                    if t is not None:
+                        print('user said:', t)
+                    user_turn_complete = True
+                case RealtimeTurnCompleteEvent():
+                    turn_complete = True
+                case RealtimeSessionErrorEvent(message=message):
+                    raise RuntimeError(message)
+            if turn_complete and user_turn_complete:
+                break
 
     # A session builds ordinary ModelMessage history: hand it off to a text agent.
     notes = Agent('openai:gpt-5.2', instructions='Summarize.')

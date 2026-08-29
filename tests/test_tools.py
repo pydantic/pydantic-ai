@@ -124,6 +124,24 @@ Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:
     )
 
 
+def test_tool_ctx_last():
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError) as exc_info:
+
+        @agent.tool  # pyright: ignore[reportArgumentType]
+        def invalid_tool(first: int, last: str, ctx: RunContext) -> str:  # pragma: no cover
+            return f'{first} {last}'
+
+    assert str(exc_info.value) == snapshot(
+        """\
+Error generating schema for test_tool_ctx_last.<locals>.invalid_tool:
+  First parameter of tools that take context must be annotated with RunContext[...]
+  RunContext annotations can only be used as the first argument\
+"""
+    )
+
+
 async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     """Do foobar stuff, a lot.
 
@@ -1381,6 +1399,25 @@ def test_sync_prepare_tools_agent_wide():
 
     result = agent.run_sync('', deps=1)
     assert result.output == snapshot('{"foobar":"0"}')
+
+
+def test_tool_explicit_empty_description_suppresses_docstring():
+    """https://github.com/pydantic/pydantic-ai/issues/7670"""
+
+    def my_tool(x: int) -> int:
+        """Docstring that should not be sent to the model."""
+        return x
+
+    assert Tool(my_tool).tool_def.description == 'Docstring that should not be sent to the model.'
+    assert Tool(my_tool, description=None).tool_def.description == 'Docstring that should not be sent to the model.'
+    assert Tool(my_tool, description='').tool_def.description == ''
+    assert Tool(my_tool, description=' ').tool_def.description == ' '
+
+    test_model = TestModel()
+    agent = Agent(test_model, tools=[Tool(my_tool, description='')])
+    agent.run_sync('hello')
+    assert test_model.last_model_request_parameters is not None
+    assert test_model.last_model_request_parameters.function_tools[0].description == ''
 
 
 def test_function_tool_consistent_with_schema():
@@ -4782,10 +4819,10 @@ def test_return_schema_self_unbound():
 
     from typing_extensions import Self
 
-    from pydantic_ai._function_schema import _extract_return_schema_type
+    from pydantic_ai._function_schema import extract_return_schema_type
 
     # Pass Self directly as the annotation — no need for a real function with Self return
-    result = _extract_return_schema_type(Self, lambda: None)
+    result = extract_return_schema_type(Self, lambda: None)
     assert result is Any
 
 

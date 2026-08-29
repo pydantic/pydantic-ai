@@ -35,6 +35,7 @@ def _call_tool_operation(wrapped: FunctionToolset[AgentDepsT], base_config: Task
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
