@@ -12371,10 +12371,10 @@ async def test_anthropic_defer_loading_agent_run_parallel_batch_history_projects
     _assert_tool_result_adjacency(mapped)
 
 
-def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -> None:
+async def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -> None:
     """A part that answers no call (frontend-authored user text mixed into the tool-results
     request) keeps the exchange ahead of it, with the return rejoining that part."""
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
     model = AnthropicModel(
         'claude-sonnet-5', provider=AnthropicProvider(anthropic_client=cast(AsyncAnthropic, MockAnthropic()))
@@ -12400,6 +12400,13 @@ def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -
     assert isinstance(projected[2], ModelRequest)
     assert [type(part).__name__ for part in projected[2].parts] == ['ToolSearchReturnPart', 'UserPromptPart']
 
+    # the mapped wire request stays valid: the exchange's tool_use is answered by the
+    # tool_result leading the following message, with the user text trailing it
+    _, mapped = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        projected, _deferred_tools_params(), AnthropicModelSettings()
+    )
+    _assert_tool_result_adjacency(mapped)
+
     # a delta first in the request behaves the same when nothing precedes it
     projected = model.prepare_messages(
         [
@@ -12416,6 +12423,11 @@ def test_anthropic_defer_loading_exchange_precedes_non_tool_part_after_delta() -
     assert isinstance(projected[0].parts[0], ToolSearchCallPart)
     assert isinstance(projected[1], ModelRequest)
     assert [type(part).__name__ for part in projected[1].parts] == ['ToolSearchReturnPart', 'UserPromptPart']
+
+    _, mapped = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        projected, _deferred_tools_params(), AnthropicModelSettings()
+    )
+    _assert_tool_result_adjacency(mapped)
 
 
 def test_anthropic_defer_loading_parallel_batch_keeps_retry_prompt_sibling_before_synthesized_exchange() -> None:
