@@ -87,8 +87,8 @@ class OpenAIProvider(_OpenAICompatibleProvider):
         Args:
             base_url: The base url for the OpenAI requests. If not provided, the `OPENAI_BASE_URL` environment variable
                 will be used if available. Otherwise, defaults to OpenAI's base url.
-            api_key: The API key to use for authentication, if not provided, the `OPENAI_API_KEY` environment variable
-                will be used if available.
+            api_key: The API key to use for authentication. An async callable can provide a fresh key for each request.
+                If not provided, the `OPENAI_API_KEY` environment variable will be used if available.
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
