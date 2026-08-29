@@ -126,9 +126,11 @@ async def temporal_env(temporal_port: int) -> AsyncIterator[WorkflowEnvironment]
     # restricts `Path.home()` access.
     download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
     download_dest_dir.mkdir(parents=True, exist_ok=True)
+    # Leave `ui` off (the `start_local` default). With `ui=True` and no explicit `ui_port`, the dev
+    # server binds `port + 1000` without probing it first, and a bind failure there aborts the whole
+    # process — surfacing as `ConnectionRefused` on the healthy gRPC port. No test reads the UI.
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=temporal_port,
-        ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
         download_dest_dir=str(download_dest_dir),
     ) as env:

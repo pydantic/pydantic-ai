@@ -225,6 +225,8 @@ print(result.output)
 
 Instructions can also use [template strings](../agent-spec.md#template-strings) ([`TemplateStr('Hello {{name}}')`][pydantic_ai.template.TemplateStr]) for Handlebars-style templates rendered against the agent's [dependencies](../dependencies.md). In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete.
 
+Instructions from a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] reach the model as their own [instruction parts](../agent.md#instruction-parts), identified by `'capability:<capability id>'` — literal and computed alike, so an application that overrides that key controls everything the capability tells the model. To make one part addressable on its own, name it with [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], which keys it as `'capability:<capability id>:<name>'`. A capability without an `id` has no key for either.
+
 ## Providing model settings
 
 [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] returns [model settings](../agent.md#model-run-settings) as a dict or a callable for per-step settings.
@@ -564,11 +566,13 @@ See [Iterating Over an Agent's Graph](../agent.md#iterating-over-an-agents-graph
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, handler: `[`WrapModelRequestHandler`][pydantic_ai.capabilities.WrapModelRequestHandler]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Wrap the model call |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, error: Exception) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Handle model request errors (see [error hooks](#error-hooks)) |
 
-[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
+[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance. Mutate the context you were given, or return a `dataclasses.replace()` copy of it — either way, `model_id` and `streaming` carry over.
 
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
 
 `before_model_request` hooks see the full `request_context.messages` list, including any [message history](../message-history.md) passed to `agent.run()`, and can modify it.
+
+To change the [instructions](../agent.md#instruction-parts) for a request, rewrite `request_context.model_request_parameters.instruction_parts` — that's what the model is sent, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest] recorded in message history is re-rendered from it once the hooks have run, so history and traces show what was actually sent. Assigning to that message's `instructions` is not propagated back into the parts and does not reach the model.
 
 !!! note "Skip and chain behavior"
     All skip exceptions ([`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution]) short-circuit the hook chain: remaining capabilities' `before_*` hooks do not fire, and `after_*` hooks are not called for the skipped operation. A skip raised from `wrap_*` propagates immediately — inner capabilities' wrap hooks never execute.
@@ -831,6 +835,41 @@ Capabilities can resolve [deferred tool calls](../deferred-tools.md) — calls t
 Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output for the caller to handle.
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
+
+## Durable capability operations {#durable-capability-operations}
+
+A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.
+
+Runtime integrations receive these operations through the same typed backend as model and tool
+operations. See [Building a durable execution backend](../durable_execution/backends.md) when
+implementing an engine.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.models.test import TestModel
+
+
+class Summaries(AbstractCapability[None]):
+    id = 'summaries'
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        summary = await self.summarize(ctx, ['one', 'two'])
+        assert summary == '2 messages'
+
+    @durable_operation(name='summarize')
+    async def summarize(self, ctx: RunContext[None], messages: list[str]) -> str:
+        return f'{len(messages)} messages'
+
+
+agent = Agent(TestModel(), capabilities=[Summaries()])
+```
+
+Mark each operation method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names and must remain stable, while the Python method can be freely renamed. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
+
+Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
+
+The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
 
 ## Wrapping capabilities
 
