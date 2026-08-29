@@ -22,10 +22,10 @@ try:
     from openai.types.chat import chat_completion
 
     from .openai import (
+        _CHAT_FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
         OpenAIChatModel,
         OpenAIChatModelSettings,
         OpenAIStreamedResponse,
-        _CHAT_FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
         _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:  # pragma: no cover

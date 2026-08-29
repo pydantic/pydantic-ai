@@ -5,7 +5,6 @@ import re
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
@@ -16,6 +15,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 from .conftest import RequestCapture
 
