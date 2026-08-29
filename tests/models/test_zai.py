@@ -172,7 +172,7 @@ $$323 \\times 2 = 646$$\
     # Preserved thinking is only preserved if it is replayed verbatim: Z.AI requires the complete,
     # unmodified `reasoning_content` back, in the original order. Turn 2 resends turn 1's reasoning and
     # turn 3 resends both, so the replayed strings are exactly the `ThinkingPart` contents we parsed out.
-    thinking = [
+    first_thinking, second_thinking = [
         part.content for result in (first, second) for part in result.response.parts if isinstance(part, ThinkingPart)
     ]
     assert [
@@ -180,11 +180,15 @@ $$323 \\times 2 = 646$$\
         for body in request_capture.bodies('/chat/completions')
         for message in body['messages']
         if message['role'] == 'assistant'
-    ] == [thinking[0], thinking[0], thinking[1]]
+    ] == [first_thinking, first_thinking, second_thinking]
 
 
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str, request_capture: RequestCapture):
-    """Streaming carries the same thinking payload, and the streamed reasoning arrives as a `ThinkingPart`."""
+    """Streaming sends the same thinking payload, and Z.AI's `reasoning_content` deltas rebuild a `ThinkingPart`.
+
+    The streamed path has its own parser and its own finish-reason mapping (`ZaiStreamedResponse`), so it
+    gets its own recording rather than riding along on the non-streaming conversation.
+    """
     provider = ZaiProvider(api_key=zai_api_key, http_client=request_capture.client)
     agent = Agent(ZaiModel('glm-4.7', provider=provider), model_settings=ModelSettings(thinking=True))
 
@@ -371,7 +375,7 @@ async def test_zai_reasoning_effort(
 
     assert [
         (level, fields, result.response.parts)
-        for level, fields, result in zip(levels, zai_request_fields(request_capture), results)
+        for level, fields, result in zip(levels, zai_request_fields(request_capture), results, strict=True)
     ] == expected_exchanges
 
 
@@ -459,7 +463,7 @@ async def test_zai_non_standard_finish_reason(
 
     result = await Agent(model).run('Tell me something.')
 
-    # 4. the text produced before the non-standard finish reason is kept, not discarded
+    # The text produced before the non-standard finish reason is kept, not discarded.
     assert result.output == 'Partial answer.'
     assert result.response.finish_reason == expected_finish_reason
     assert (result.response.provider_details or {})['finish_reason'] == raw_finish_reason
