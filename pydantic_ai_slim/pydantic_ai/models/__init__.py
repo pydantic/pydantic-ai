@@ -2474,9 +2474,11 @@ def _synthesize_tool_availability_delta_messages(
     the model ran a search.
 
     The exchange spans a turn boundary — an assistant call, then its return — so a request holding
-    other parts alongside the delta has to be split at the delta's position. Emitting the whole
-    rebuilt request after the synthetic `ModelResponse` instead would hoist an assistant turn ahead
-    of a user prompt that originally preceded the delta, reordering the conversation.
+    other parts alongside the delta has to be split around it, and where the split falls matters:
+    a provider rejects any message between a tool call and the result answering it, so parts
+    answering the previous response's calls stay in the message right after it and the exchange
+    follows them. A part that answers no call still gets the exchange ahead of it, so an assistant
+    turn is never hoisted before a user prompt that originally preceded the delta.
     """
     transformed: list[ModelMessage] = []
     changed = False
@@ -2514,8 +2516,25 @@ def _synthesize_tool_availability_delta_messages(
         # Parts accumulated since the last split; flushed as their own `ModelRequest` before each
         # synthetic assistant turn so everything keeps the order it was authored in.
         pending: list[ModelRequestPart] = []
+        # Exchanges held back while the request still carries results answering the previous
+        # response's calls: a provider rejects any message between a tool call and the result
+        # answering it, so those results stay in the message right after it and each exchange
+        # follows them.
+        deferred: list[tuple[ToolSearchCallPart, ToolSearchReturnPart]] = []
         for part in message.parts:
             if not isinstance(part, ToolAvailabilityDeltaPart):
+                if deferred and not (
+                    isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name is not None
+                ):
+                    # A part answering no call ends the sibling run: the exchange goes out ahead
+                    # of it, with its return rejoining that part in one request.
+                    if pending:
+                        transformed.append(replace(message, parts=pending))
+                        pending = []
+                    for call_part, return_part in deferred:
+                        transformed.append(ModelResponse(parts=[call_part]))
+                        pending.append(return_part)
+                    deferred = []
                 pending.append(part)
                 continue
             added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
@@ -2538,19 +2557,19 @@ def _synthesize_tool_availability_delta_messages(
                     if tool_call_id not in synthesized_ids and tool_call_id not in history_call_ids:
                         break
             synthesized_ids.add(tool_call_id)
-            if pending:
-                transformed.append(replace(message, parts=pending))
-                pending = []
-            transformed.append(
-                ModelResponse(parts=[ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id)])
-            )
-            pending.append(
-                ToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': name} for name in added]},
-                    tool_call_id=tool_call_id,
+            deferred.append(
+                (
+                    ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id),
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': name} for name in added]},
+                        tool_call_id=tool_call_id,
+                    ),
                 )
             )
         if pending:
             transformed.append(replace(message, parts=pending))
+        for call_part, return_part in deferred:
+            transformed.append(ModelResponse(parts=[call_part]))
+            transformed.append(replace(message, parts=[return_part]))
 
     return transformed if changed else messages
