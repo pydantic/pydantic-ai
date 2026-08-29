@@ -11621,6 +11621,50 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     assert create_kwargs['betas'] == ['context-management-2025-06-27']
 
 
+async def test_anthropic_count_tokens_omits_container_upload(allow_model_requests: None):
+    """`count_tokens` must drop `container_upload` blocks that `_map_message` injects for
+    `CodeExecutionTool(files=...)`. Anthropic's token-counting endpoint 400s on file sources
+    (`File sources are not supported in the token counting endpoint.`), so
+    `UsageLimits(count_tokens_before_request=True)` is otherwise unusable with this feature.
+
+    The omitted blocks are a handful of tokens each; the real `/v1/messages` request still
+    sends them. Not a VCR test: cassette matchers aren't sensitive to `container_upload` in
+    the messages body, so we pin the count vs request payloads on the mock client.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7867
+    """
+    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    params = ModelRequestParameters(
+        native_tools=[
+            CodeExecutionTool(files=[UploadedFile(file_id='file_anthropic', provider_name='anthropic')]),
+        ]
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='sum column a')]),
+        ModelResponse(parts=[TextPart(content='42')]),
+        ModelRequest(parts=[UserPromptPart(content='now the mean')]),
+    ]
+
+    await m.count_tokens(messages, None, params)
+    await m.request(messages, None, params)
+
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    def container_uploads(kwargs: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            block
+            for msg in kwargs['messages']
+            for block in msg['content']
+            if block.get('type') == 'container_upload'
+        ]
+
+    assert container_uploads(count_tokens_kwargs) == []
+    assert container_uploads(create_kwargs) == [{'file_id': 'file_anthropic', 'type': 'container_upload'}]
+
+
 async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
     """`count_tokens` renders a tool-search replay turn with the same `tool_reference` wire shape
     as the real `/v1/messages` request, while still omitting the server-side `tool_search_tool_*`

@@ -1181,12 +1181,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         revealed_tool_order = _revealed_deferred_tool_order(messages, map_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
         # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions are
-        # what the endpoint rejects, so they're the one thing that has to differ from the real request.
+        # what the endpoint rejects, so they have to differ from the real request.
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
         _append_revealed_tool_params(tools, revealed_tool_order)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
+        # The endpoint also rejects `container_upload` file sources with a 400. Drop those blocks
+        # on this path only; `_map_message` still injects them on the real request. The omitted
+        # blocks are a handful of tokens each, so the count is a small underestimate rather than
+        # unusable with `CodeExecutionTool(files=...)`.
+        _drop_container_upload_blocks(anthropic_messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
         self._limit_cache_points(
@@ -3401,6 +3406,25 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     # Returned as-is, not copied: the caller attaches `cache_control` by mutating the block in place, so
     # it has to be the list the message actually holds.
     return content if isinstance(content, list) else []
+
+
+def _drop_container_upload_blocks(anthropic_messages: list[BetaMessageParam]) -> None:
+    """Drop `container_upload` blocks in place.
+
+    Anthropic's `count_tokens` endpoint rejects file sources with a 400, so these
+    blocks have to come off the count path even though the real request sends them.
+    """
+    for message in anthropic_messages:
+        content = message['content']
+        assert isinstance(content, list)
+        kept: list[BetaContentBlockParam] = []
+        for block in content:
+            # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
+            block_param = block
+            if is_str_dict(block) and block.get('type') == 'container_upload':
+                continue
+            kept.append(block_param)
+        message['content'] = kept
 
 
 def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901
