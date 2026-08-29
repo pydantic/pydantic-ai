@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import warnings
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from anyio.pytest_plugin import FreePortFactory
@@ -14,57 +14,20 @@ from pydantic_ai import (
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
-try:
-    from temporalio import workflow
+if TYPE_CHECKING:
     from temporalio.client import Client
     from temporalio.testing import WorkflowEnvironment
 
-    from pydantic_ai.durable_exec.temporal import LogfirePlugin, PydanticAIPlugin
-
-except ImportError:  # pragma: lax no cover
-    pytest.skip('temporal not installed', allow_module_level=True)
-
-
-if sys.version_info >= (3, 14):
-    pytest.skip(
-        'temporalio sandbox is incompatible with Python 3.14: '
-        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
-        '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
-        allow_module_level=True,
-    )
-
-try:
-    import logfire  # noqa: F401  # pyright: ignore[reportUnusedImport]
-except ImportError:  # pragma: lax no cover
-    pytest.skip('logfire not installed', allow_module_level=True)
-
-try:
-    from pydantic_ai.mcp import MCPToolset  # noqa: F401  # pyright: ignore[reportUnusedImport]
-except ImportError:  # pragma: lax no cover
-    pytest.skip('mcp not installed', allow_module_level=True)
-
-try:
-    from pydantic_ai.models.openai import OpenAIChatModel  # noqa: F401  # pyright: ignore[reportUnusedImport]
-except ImportError:  # pragma: lax no cover
-    pytest.skip('openai not installed', allow_module_level=True)
-
-
-with workflow.unsafe.imports_passed_through():
-    # Workaround for a race condition when running `logfire.info` inside an activity with attributes to serialize and pandas importable:
-    # AttributeError: partially initialized module 'pandas' has no attribute '_pandas_parser_CAPI' (most likely due to a circular import)
-    try:
-        import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
-    except ImportError:  # pragma: lax no cover
-        pass
-
-    # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
-
-    # Loads `vcr`, which Temporal doesn't like without passing through the import
-
-    # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
-    from ._shared import (
-        http_client,
-    )
+# Unlike the test modules and `_shared` beside it, this file carries no
+# `pytest.skip(..., allow_module_level=True)` requirement gate, and has to stay importable without
+# `temporalio`, `logfire`, `mcp` or `openai` and on Python 3.14. `pytest.skip` raises `Skipped`, a
+# `BaseException`; pytest imports the conftest of every command-line argument's directory up front in
+# `PytestPluginManager._set_initial_conftests`, which catches only `Exception`, so a gate here would
+# escape as a traceback with exit 1 on `pytest tests/durable_exec/temporal` instead of reporting a
+# skip. Naming a parent directory hides that, because the conftest is then imported during
+# collection, which does handle `Skipped`. The test modules' own gates are what report the skip, and
+# the fixtures below only run once those gates have passed, so they import their optional
+# dependencies when called.
 
 
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
@@ -93,6 +56,8 @@ def blockbuster_enabled() -> bool:
 # fixtures; the `temporal_env` teardown can make that loop unusable for later tests.
 @pytest.fixture(autouse=True, scope='session')
 def close_cached_httpx_client() -> Iterator[None]:
+    from ._shared import http_client
+
     try:
         yield
     finally:
@@ -119,6 +84,8 @@ def temporal_port(free_tcp_port_factory: FreePortFactory) -> int:
 
 @pytest.fixture(scope='module')
 async def temporal_env(temporal_port: int) -> AsyncIterator[WorkflowEnvironment]:
+    from temporalio.testing import WorkflowEnvironment
+
     # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
     # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
     # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
@@ -139,6 +106,10 @@ async def temporal_env(temporal_port: int) -> AsyncIterator[WorkflowEnvironment]
 
 @pytest.fixture
 async def client(temporal_env: WorkflowEnvironment, temporal_port: int) -> Client:
+    from temporalio.client import Client
+
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+
     return await Client.connect(
         f'localhost:{temporal_port}',
         plugins=[PydanticAIPlugin()],
@@ -147,6 +118,10 @@ async def client(temporal_env: WorkflowEnvironment, temporal_port: int) -> Clien
 
 @pytest.fixture
 async def client_with_logfire(temporal_env: WorkflowEnvironment, temporal_port: int) -> Client:
+    from temporalio.client import Client
+
+    from pydantic_ai.durable_exec.temporal import LogfirePlugin, PydanticAIPlugin
+
     return await Client.connect(
         f'localhost:{temporal_port}',
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
