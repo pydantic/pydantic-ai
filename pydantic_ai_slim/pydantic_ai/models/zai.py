@@ -47,9 +47,9 @@ _ZaiFinishReason = Literal[
     'model_context_window_exceeded',
     'network_error',
 ]
-"""The `finish_reason` values Z.AI documents, a superset of the OpenAI ones.
+"""The union of the OpenAI `finish_reason` values and the ones Z.AI documents on top of them.
 
-See [the Z.AI docs](https://docs.z.ai/api-reference/llm/chat-completion) for the full list.
+See [the Z.AI docs](https://docs.z.ai/api-reference/llm/chat-completion) for Z.AI's own list.
 """
 
 _ZAI_FINISH_REASON_MAP: dict[_ZaiFinishReason, FinishReason] = {
@@ -65,13 +65,13 @@ _ZAI_FINISH_REASON_MAP: dict[_ZaiFinishReason, FinishReason] = {
 class _ZaiChoice(chat_completion.Choice):
     """Wraps the OpenAI chat completion choice with Z.AI's wider set of finish reasons."""
 
-    finish_reason: _ZaiFinishReason  # type: ignore[reportIncompatibleVariableOverride]
+    finish_reason: _ZaiFinishReason  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
 class _ZaiChatCompletion(_ChatCompletion):
     """Wraps the OpenAI chat completion with Z.AI's choice type."""
 
-    choices: list[_ZaiChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    choices: list[_ZaiChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
 LatestZaiModelNames = Literal[

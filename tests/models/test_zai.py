@@ -543,10 +543,11 @@ async def test_zai_non_standard_finish_reason(
     `OpenAIChatModel._validate_completion` rejected the whole response and ended the run with
     `UnexpectedModelBehavior` (#7678). The raw string stays in `provider_details`.
 
-    Unit tests, because none of the three can be provoked on demand: Z.AI screens the *prompt* and
-    answers an over-long or disallowed one with an HTTP 400 (codes `1261` and `1301`) rather than a
-    finish reason, so these arise only from a mid-generation moderation hit, a context window
-    exhausted while generating, or a real transport fault.
+    Unit tests, because none of the three can be provoked on demand: the requests that should
+    trigger them come back as an HTTP 400 instead (`1261` for an over-long prompt, `1301` for
+    disallowed content), and a 120k-token prompt still finished with `stop`. They arrive as a
+    finish reason only when the condition develops while the response is being produced, which no
+    request can stage.
     """
     message = ChatCompletionMessage(role='assistant', content='Partial answer.')
     completion = chat.ChatCompletion.model_construct(
@@ -560,9 +561,10 @@ async def test_zai_non_standard_finish_reason(
 
     result = await Agent(model).run('Tell me something.')
 
-    response = cast(ModelResponse, result.all_messages()[-1])
-    assert response.finish_reason == expected_finish_reason
-    assert (response.provider_details or {})['finish_reason'] == raw_finish_reason
+    # 4. the text produced before the non-standard finish reason is kept, not discarded
+    assert result.output == 'Partial answer.'
+    assert result.response.finish_reason == expected_finish_reason
+    assert (result.response.provider_details or {})['finish_reason'] == raw_finish_reason
 
 
 @pytest.mark.parametrize(
@@ -602,9 +604,8 @@ async def test_zai_non_standard_finish_reason_stream(
     async with Agent(model).run_stream('Tell me something.') as result:
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['Partial ', 'Partial answer.'])
 
-    response = cast(ModelResponse, result.all_messages()[-1])
-    assert response.finish_reason == expected_finish_reason
-    assert (response.provider_details or {})['finish_reason'] == raw_finish_reason
+    assert result.response.finish_reason == expected_finish_reason
+    assert (result.response.provider_details or {})['finish_reason'] == raw_finish_reason
 
 
 async def test_zai_sensitive_without_content_raises_content_filter_error(allow_model_requests: None):
