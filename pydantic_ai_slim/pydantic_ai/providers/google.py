@@ -108,7 +108,7 @@ class GoogleProvider(BaseGoogleProvider):
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
