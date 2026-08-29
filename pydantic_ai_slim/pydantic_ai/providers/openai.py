@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
@@ -69,7 +70,7 @@ class OpenAIProvider(_OpenAICompatibleProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | None | Callable[[], Awaitable[str]] = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -77,7 +78,7 @@ class OpenAIProvider(_OpenAICompatibleProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | None | Callable[[], Awaitable[str]] = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
