@@ -82,6 +82,21 @@ app = agent.to_web(models=['anthropic:claude-sonnet-4-6'])
 !!! note "Memory Tool"
     The `memory` native tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.native_tools.MemoryTool] directly on the agent at construction time.
 
+
+## MCP Server Support
+
+You can attach [MCP toolsets](mcp/client.md) to the web UI using `toolsets`:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import load_mcp_toolsets
+
+agent = Agent('openai:gpt-5.2')
+toolsets = load_mcp_toolsets('mcp_servers.json')
+
+app = agent.to_web(toolsets=toolsets)
+```
+
 ## Extra Instructions
 
 You can pass extra instructions that will be included in each agent run:

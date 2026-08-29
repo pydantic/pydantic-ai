@@ -1003,164 +1003,6 @@ def test_model_label(model_name: str, expected: str):
     assert model.label == expected
 
 
-def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
-    """Test web command without agent creates generic agent."""
-    env.set('OPENAI_API_KEY', 'test')
-    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
-
-    assert cli(['web', '-m', 'openai:gpt-5', '-t', 'web_search'], prog_name='clai') == 0
-
-    mock_run_web.assert_called_once_with(
-        agent_path=None,
-        host='127.0.0.1',
-        port=7932,
-        models=['openai:gpt-5'],
-        tools=['web_search'],
-        instructions=None,
-        default_model='openai:gpt-5',
-        html_source=None,
-        allowed_hosts=[],
-    )
-
-
-def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
-    env.set('OPENAI_API_KEY', 'test')
-
-    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
-
-    test_agent = Agent(TestModel(custom_output_text='test'))
-    create_test_module(custom_agent=test_agent)
-
-    assert cli(['web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 0
-
-    mock_run_web.assert_called_once_with(
-        agent_path='test_module:custom_agent',
-        host='127.0.0.1',
-        port=7932,
-        models=[],
-        tools=[],
-        instructions=None,
-        default_model='openai:gpt-5',
-        html_source=None,
-        allowed_hosts=[],
-    )
-
-
-def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
-    """Test web command with multiple -m flags."""
-    env.set('OPENAI_API_KEY', 'test')
-
-    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
-
-    test_agent = Agent(TestModel(custom_output_text='test'))
-    create_test_module(custom_agent=test_agent)
-
-    assert (
-        cli(
-            [
-                'web',
-                '--agent',
-                'test_module:custom_agent',
-                '-m',
-                'openai:gpt-5',
-                '-m',
-                'anthropic:claude-sonnet-4-6',
-            ],
-            prog_name='clai',
-        )
-        == 0
-    )
-
-    mock_run_web.assert_called_once_with(
-        agent_path='test_module:custom_agent',
-        host='127.0.0.1',
-        port=7932,
-        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'],
-        tools=[],
-        instructions=None,
-        default_model='openai:gpt-5',
-        html_source=None,
-        allowed_hosts=[],
-    )
-
-
-def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
-    """Test web command with multiple -t flags."""
-    env.set('OPENAI_API_KEY', 'test')
-
-    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
-
-    test_agent = Agent(TestModel(custom_output_text='test'))
-    create_test_module(custom_agent=test_agent)
-
-    assert (
-        cli(
-            ['web', '--agent', 'test_module:custom_agent', '-t', 'web_search', '-t', 'code_execution'], prog_name='clai'
-        )
-        == 0
-    )
-
-    mock_run_web.assert_called_once_with(
-        agent_path='test_module:custom_agent',
-        host='127.0.0.1',
-        port=7932,
-        models=[],
-        tools=['web_search', 'code_execution'],
-        instructions=None,
-        default_model='openai:gpt-5',
-        html_source=None,
-        allowed_hosts=[],
-    )
-
-
-def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv):
-    """Test generic agent with custom instructions."""
-    env.set('OPENAI_API_KEY', 'test')
-
-    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
-
-    assert cli(['web', '-m', 'openai:gpt-5', '-i', 'You are a helpful coding assistant'], prog_name='clai') == 0
-
-    mock_run_web.assert_called_once_with(
-        agent_path=None,
-        host='127.0.0.1',
-        port=7932,
-        models=['openai:gpt-5'],
-        tools=[],
-        instructions='You are a helpful coding assistant',
-        default_model='openai:gpt-5',
-        html_source=None,
-        allowed_hosts=[],
-    )
-
-
-def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
-    """Test web command with custom host/port."""
-    env.set('OPENAI_API_KEY', 'test')
-
-    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
-
-    test_agent = Agent(TestModel(custom_output_text='test'))
-    create_test_module(custom_agent=test_agent)
-
-    assert (
-        cli(['web', '--agent', 'test_module:custom_agent', '--host', '0.0.0.0', '--port', '7932'], prog_name='clai')
-        == 0
-    )
-
-    mock_run_web.assert_called_once_with(
-        agent_path='test_module:custom_agent',
-        host='0.0.0.0',
-        port=7932,
-        models=[],
-        tools=[],
-        instructions=None,
-        default_model='openai:gpt-5',
-        html_source=None,
-        allowed_hosts=[],
-    )
-
-
 def test_run_web_command_agent_with_model(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
@@ -1444,6 +1286,248 @@ async def test_ask_agent_non_stream_forwards_run_kwargs(mocker: MockerFixture):
     assert messages == []
 
 
+def test_clai_web_answers_to_the_host_it_binds_to(mocker: MockerFixture, env: TestEnv):
+    """`--host <name>` implies answering to that name, so the URL the CLI prints actually works.
+
+    Without this the CLI contradicts itself: it prints `Open your browser at: http://devbox.example:7932`
+    and then rejects that exact `Host` with a `421`.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    mock_uvicorn = mocker.patch('uvicorn.run')
+    mock_create = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    assert cli(['web', '-m', 'openai:gpt-5', '--host', 'devbox.example'], prog_name='clai') == 0
+
+    assert mock_create.call_args.kwargs['allowed_hosts'] == ['devbox.example']
+    assert mock_uvicorn.call_args.kwargs['host'] == 'devbox.example'
+
+
+def test_clai_web_with_mcp_config(mocker: MockerFixture, env: TestEnv):
+    """Test web command with --mcp-config flag."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    assert cli(['web', '-m', 'openai:gpt-5', '--mcp-config', 'mcp_servers.json'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        mcp_config='mcp_servers.json',
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5'],
+        tools=[],
+        instructions=None,
+        default_model='openai:gpt-5',
+        html_source=None,
+        allowed_hosts=[],
+    )
+
+
+def test_run_web_command_mcp_config_empty_value(capfd: CaptureFixture[str], env: TestEnv):
+    """Test run_web_command errors when --mcp-config is empty string."""
+    env.set('OPENAI_API_KEY', 'test')
+    result = run_web_command(mcp_config='')
+    assert result == 1
+    assert '--mcp-config needs a path to a configuration file' in capfd.readouterr().out
+
+
+def test_run_web_command_mcp_config_load_error(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path):
+    """Test run_web_command errors gracefully when MCP config is invalid."""
+    env.set('OPENAI_API_KEY', 'test')
+    invalid_config = tmp_path / 'invalid_mcp.json'
+    invalid_config.write_text('not json')
+
+    result = run_web_command(mcp_config=str(invalid_config))
+    assert result == 1
+    assert 'Could not load MCP config' in capfd.readouterr().out
+
+
+def test_run_web_command_mcp_config_valid(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
+    """Test run_web_command loads toolsets from valid MCP config and passes them to create_web_app."""
+    import json
+
+    env.set('OPENAI_API_KEY', 'test')
+    config_file = tmp_path / 'mcp_servers.json'
+    config_file.write_text(
+        json.dumps({'mcpServers': {'temp': {'command': 'python', 'args': ['-m', 'tests.mcp_server']}}})
+    )
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    result = run_web_command(mcp_config=str(config_file))
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    call_kwargs = mock_create_app.call_args.kwargs
+    assert call_kwargs.get('toolsets') is not None
+    assert len(call_kwargs['toolsets']) == 1
+
+
+def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
+    """Test web command without agent creates generic agent."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    assert cli(['web', '-m', 'openai:gpt-5', '-t', 'web_search'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        mcp_config=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5'],
+        tools=['web_search'],
+        instructions=None,
+        default_model='openai:gpt-5',
+        html_source=None,
+        allowed_hosts=[],
+    )
+
+
+def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert cli(['web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        mcp_config=None,
+        host='127.0.0.1',
+        port=7932,
+        models=[],
+        tools=[],
+        instructions=None,
+        default_model='openai:gpt-5',
+        html_source=None,
+        allowed_hosts=[],
+    )
+
+
+def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with multiple -m flags."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(
+            [
+                'web',
+                '--agent',
+                'test_module:custom_agent',
+                '-m',
+                'openai:gpt-5',
+                '-m',
+                'anthropic:claude-sonnet-4-6',
+            ],
+            prog_name='clai',
+        )
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        mcp_config=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'],
+        tools=[],
+        instructions=None,
+        default_model='openai:gpt-5',
+        html_source=None,
+        allowed_hosts=[],
+    )
+
+
+def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with multiple -t flags."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(
+            ['web', '--agent', 'test_module:custom_agent', '-t', 'web_search', '-t', 'code_execution'], prog_name='clai'
+        )
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        mcp_config=None,
+        host='127.0.0.1',
+        port=7932,
+        models=[],
+        tools=['web_search', 'code_execution'],
+        instructions=None,
+        default_model='openai:gpt-5',
+        html_source=None,
+        allowed_hosts=[],
+    )
+
+
+def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv):
+    """Test generic agent with custom instructions."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    assert cli(['web', '-m', 'openai:gpt-5', '-i', 'You are a helpful coding assistant'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        mcp_config=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5'],
+        tools=[],
+        instructions='You are a helpful coding assistant',
+        default_model='openai:gpt-5',
+        html_source=None,
+        allowed_hosts=[],
+    )
+
+
+def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with custom host/port."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(['web', '--agent', 'test_module:custom_agent', '--host', '0.0.0.0', '--port', '7932'], prog_name='clai')
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        mcp_config=None,
+        host='0.0.0.0',
+        port=7932,
+        models=[],
+        tools=[],
+        instructions=None,
+        default_model='openai:gpt-5',
+        html_source=None,
+        allowed_hosts=[],
+    )
+
+
 def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
     """Test web command with --html-source flag."""
     env.set('OPENAI_API_KEY', 'test')
@@ -1454,6 +1538,7 @@ def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
 
     mock_run_web.assert_called_once_with(
         agent_path=None,
+        mcp_config=None,
         host='127.0.0.1',
         port=7932,
         models=['openai:gpt-5'],
@@ -1475,6 +1560,7 @@ def test_clai_web_with_allowed_hosts(mocker: MockerFixture, env: TestEnv):
 
     mock_run_web.assert_called_once_with(
         agent_path=None,
+        mcp_config=None,
         host='127.0.0.1',
         port=7932,
         models=['openai:gpt-5'],
@@ -1484,19 +1570,3 @@ def test_clai_web_with_allowed_hosts(mocker: MockerFixture, env: TestEnv):
         html_source=None,
         allowed_hosts=['ui.example.com', '*.corp.example'],
     )
-
-
-def test_clai_web_answers_to_the_host_it_binds_to(mocker: MockerFixture, env: TestEnv):
-    """`--host <name>` implies answering to that name, so the URL the CLI prints actually works.
-
-    Without this the CLI contradicts itself: it prints `Open your browser at: http://devbox.example:7932`
-    and then rejects that exact `Host` with a `421`.
-    """
-    env.set('OPENAI_API_KEY', 'test')
-    mock_uvicorn = mocker.patch('uvicorn.run')
-    mock_create = mocker.patch('pydantic_ai._cli.web.create_web_app')
-
-    assert cli(['web', '-m', 'openai:gpt-5', '--host', 'devbox.example'], prog_name='clai') == 0
-
-    assert mock_create.call_args.kwargs['allowed_hosts'] == ['devbox.example']
-    assert mock_uvicorn.call_args.kwargs['host'] == 'devbox.example'

@@ -5,6 +5,7 @@ import os
 import tempfile
 import threading
 from collections.abc import Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -15,6 +16,7 @@ import httpx2
 from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import AbstractToolset
 
 from ._hosts import HostValidationMiddleware, normalized_pattern
 from .api import BUNDLED_UI_SDK_VERSION, ModelsParam, create_api_app
@@ -165,6 +167,7 @@ async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     native_tools: Sequence[AbstractNativeTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
@@ -186,6 +189,7 @@ def create_web_app(
             - A dict mapping display labels to model names/instances
                 (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
             If not provided, the UI will have no model options.
+        toolsets: Optional sequence of toolsets to make available to the agent.
         native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
@@ -218,9 +222,17 @@ def create_web_app(
     # idempotent, so the middleware doing it again over the same list is a no-op.
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
 
+    @asynccontextmanager
+    async def lifespan(app: Starlette):
+        async with AsyncExitStack() as stack:
+            for toolset in toolsets or ():
+                await stack.enter_async_context(toolset)
+            yield
+
     api_app = create_api_app(
         agent=agent,
         models=models,
+        toolsets=toolsets,
         native_tools=native_tools,
         deps=deps,
         model_settings=model_settings,
@@ -233,7 +245,7 @@ def create_web_app(
     # hostname we don't answer to is misdirected whatever it asks for, and guarding every route
     # means a route added later is covered without anyone having to remember to opt it in.
     middleware = [Middleware(HostValidationMiddleware, allowed_hosts=allowed_hosts)]
-    app = Starlette(routes=routes, middleware=middleware)
+    app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""

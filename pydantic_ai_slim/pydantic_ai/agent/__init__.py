@@ -3884,6 +3884,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         *,
         models: ModelsParam = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
@@ -3913,6 +3914,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                   (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
+            toolsets: Optional sequence of toolsets to make available to the agent.
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
@@ -3953,6 +3955,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return create_web_app(
             self,
             models=models,
+            toolsets=toolsets,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
