@@ -36,6 +36,8 @@ from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
+    AgentInstructionSource,
+    InstructionId,
     InstructionPart,
     ModelResponseState,
     NativeToolCallPart,
@@ -1208,7 +1210,7 @@ Always respond with a JSON object that's compatible with this schema:
 Don't include any text or Markdown fencing before or after.
 """,
                 instruction_parts=[
-                    InstructionPart(content='Be kind'),
+                    InstructionPart(content='Be kind', id=InstructionId(AgentInstructionSource())),
                     InstructionPart(
                         content="""\
 
@@ -1318,7 +1320,13 @@ Don't include any text or Markdown fencing before or after.
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': [
-                            {'content': 'Be kind', 'dynamic': False, 'part_kind': 'instruction'},
+                            {
+                                'content': 'Be kind',
+                                'dynamic': False,
+                                'name': None,
+                                'id': 'agent',
+                                'part_kind': 'instruction',
+                            },
                             {
                                 'content': """\
 
@@ -1329,6 +1337,8 @@ Always respond with a JSON object that's compatible with this schema:
 Don't include any text or Markdown fencing before or after.
 """,
                                 'dynamic': False,
+                                'name': None,
+                                'id': None,
                                 'part_kind': 'instruction',
                             },
                         ],

@@ -13,6 +13,7 @@ from pydantic_ai.durable_exec._toolset import (
     call_dynamic_tool,
     get_dynamic_tools,
     unwrap_recorded_tool_call_result,
+    validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -40,9 +41,15 @@ def prefectify_dynamic_toolset(
         task_ctx = guard_task_enqueue(ctx)
         return await wrap_tool_call_result(call_dynamic_tool(wrapped, tool_name, tool_args, task_ctx))
 
+    @task
+    async def validate_args_task(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> Any:
+        task_ctx = guard_task_enqueue(ctx)
+        return await wrap_tool_call_result(validate_dynamic_tool_args(wrapped, tool_name, tool_args, task_ctx))
+
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
@@ -53,6 +60,20 @@ def prefectify_dynamic_toolset(
         # reachable under a custom `cache_policy` that omits `TASK_SOURCE`) holds the raw result.
         return unwrap_recorded_tool_call_result(result)
 
+    async def validate_args_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        *,
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
+    ) -> None:
+        merged_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
+        result = await validate_args_task.with_options(name=f'Validate Tool Args: {name}', **merged_config)(
+            name, tool_args, ctx
+        )
+        unwrap_recorded_tool_call_result(result)
+
     return DurableDynamicToolset(
         wrapped,
         # Prefect tasks do NOT degrade outside a flow (the full task engine runs, with
@@ -61,6 +82,7 @@ def prefectify_dynamic_toolset(
         in_durable_context=lambda: FlowRunContext.get() is not None,
         get_tools_operation=get_tools_operation,
         call_tool_operation=call_tool_operation,
+        validate_args_operation=validate_args_operation,
         resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, tool_task_config),
         lifecycle='enter-never',
         durable_config=base_config,

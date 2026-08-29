@@ -26,7 +26,7 @@ pip install clai
 clai
 ```
 
-## CLI Usage
+## CLI Usage {#cli-usage}
 
 <!-- clai/README.md links here for full docs -->
 
@@ -46,6 +46,10 @@ Then running `clai` will start an interactive session where you can chat with th
 - `/cp`: Copy the last response to clipboard
 - `/usage`: Show cumulative token usage for the session (turns, input, output, requests, tool calls); add `--json` for a single-line JSON object
 
+When streaming (the default), any tool the agent calls is shown as it runs and marked done once its
+result arrives, so you can follow a tool-using agent without leaving the terminal. Pass `--no-stream`
+to print only the final answer.
+
 ### CLI Options
 
 | Option | Description |
@@ -55,6 +59,7 @@ Then running `clai` will start an interactive session where you can chat with th
 | `-a`, `--agent` | Custom agent in `module:variable` format |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
 | `--no-stream` | Disable streaming from the model |
+| `--mcp-config` | Path to [MCP servers configuration file](mcp/client.md#loading-mcp-toolsets-from-configuration) (JSON, using the same `mcpServers` shape as Claude Desktop, Claude Code, and Cursor) |
 | `-l`, `--list-models` | List all available models and exit |
 | `--version` | Show version and exit |
 
@@ -67,6 +72,31 @@ clai --model anthropic:claude-sonnet-4-6
 ```
 
 (a full list of models available can be printed with `clai --list-models`)
+
+### MCP Servers
+
+You can connect to [MCP servers](mcp/client.md#loading-mcp-toolsets-from-configuration) using the `--mcp-config` flag with a JSON configuration file that uses the same `mcpServers` shape as Claude Desktop, Claude Code, and Cursor:
+
+```bash
+clai --mcp-config mcp_servers.json
+```
+
+!!! warning "Treat configuration files as trusted input"
+    A configuration file names executables to spawn as subprocesses and expands `${VAR}` references against the full process environment, so anyone who can write it can run arbitrary commands and read any environment variable. Only pass `--mcp-config` a file you control.
+
+```json {title="mcp_servers.json"}
+{
+  "mcpServers": {
+    "my-stdio-server": {
+      "command": "uvx",
+      "args": ["mcp_server"]
+    },
+    "my-http-server": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
 
 ### Custom Agents
 
@@ -110,6 +140,9 @@ async def main():
 ```
 
 _(You'll need to add `asyncio.run(main())` to run `main`)_
+
+Both run the same chat interface as `clai`, so an agent with tools shows each call as it runs and
+marks it done when the result arrives, exactly as described under [CLI Usage](#cli-usage).
 
 ### Message History
 

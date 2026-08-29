@@ -27,6 +27,7 @@ from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
+from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
@@ -40,6 +41,7 @@ __all__ = [
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
+    'TemporalOperationNamer',
     'PydanticAIWorkflow',
     'PydanticAIPayloadConverter',
 ]
