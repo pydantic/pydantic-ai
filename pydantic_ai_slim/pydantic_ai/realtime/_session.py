@@ -1314,8 +1314,14 @@ class RealtimeSession:
         # the user cut in; it's dropped when absent (a cancel without truncation).
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
 
-    async def _interrupt_at_playback(self, played_bytes: int) -> bool:
-        """Map a device playback position onto the current turn, flush unheard audio, and interrupt."""
+    async def _interrupt_at_playback(self, played_bytes: int, *, cancel: bool = True) -> bool:
+        """Map a device playback position onto the current turn, flush unheard audio, and interrupt.
+
+        `cancel=False` skips the client-side `CancelResponse`: the automatic barge-in path passes it
+        when the connection's configured VAD already cancels the response on speech onset
+        (`interrupts_response_on_speech`), where a client cancel racing the server's own can be
+        applied to the *next* response and silence the reply to the barge-in.
+        """
         if played_bytes < 0:
             raise UserError(f'`played_bytes` must be a non-negative playback position, not {played_bytes}.')
         if len(self._audio_taps) != 1:
@@ -1343,13 +1349,17 @@ class RealtimeSession:
             # Best effort on a model without output truncation (xAI): the unheard audio is still
             # flushed and the response cancelled; only the provider-side transcript sync is
             # unavailable.
-            await self._send_frame(CancelResponse())
+            if cancel:
+                await self._send_frame(CancelResponse())
             self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
             return True
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
         played_ms = max(0, playhead - self._turn_audio_start_bytes) * 1000 // (self.audio_output_sample_rate * 2)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
-        await self._send_frame(TruncateOutput(audio_end_ms=played_ms), CancelResponse())
+        await self._send_frame(
+            TruncateOutput(audio_end_ms=played_ms),
+            *([CancelResponse()] if cancel else []),
+        )
         self._pending_interrupted_at_ms = played_ms
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
@@ -1381,7 +1391,12 @@ class RealtimeSession:
         (tap,) = self._audio_taps
         if isinstance(event, RealtimeInputSpeechStartEvent):
             if self._profile.get('supports_interruption', False):
-                await self._interrupt_at_playback(tap.played_bytes)
+                # When the configured VAD already cancels the response server-side on speech onset,
+                # a client cancel racing it can land on the *next* response and silence the reply to
+                # the barge-in — so only the truncation is sent then.
+                await self._interrupt_at_playback(
+                    tap.played_bytes, cancel=not self._connection.interrupts_response_on_speech
+                )
         elif isinstance(event, RealtimeResponseInterruptedEvent):
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index

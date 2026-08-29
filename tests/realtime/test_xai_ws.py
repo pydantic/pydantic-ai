@@ -515,3 +515,46 @@ def test_profile_allow_seeding() -> None:
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
     )
+
+
+async def test_handle_barge_in_over_live_speech(
+    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path
+) -> None:
+    """`handle_barge_in=True` against Grok Voice: the provider owns the whole wire-side interruption.
+
+    xAI's default server VAD interrupts the response on speech onset, and the model supports no
+    output truncation — so a barge-in must put *nothing* on the wire: the session's job is only the
+    local flush that keeps stale audio out of the playback stream. In this recording the reply had
+    already completed server-side by the time the user spoke over it (generation outruns playback),
+    which is exactly when a client-side cancel would have been applied to the *next* response —
+    the session sent nothing, and both replies completed.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime(model).session(handle_barge_in=True) as session:
+        stream = session.stream_audio()
+        with anyio.fail_after(90):
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+            # Wait for the reply's audio to start flowing before speaking over it.
+            assert len(await anext(stream)) > 0
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+            turns_complete = 0
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turns_complete += 1
+                    if turns_complete == 2:
+                        break
+
+    # Nothing went out for the barge-in: no truncate (unsupported) and no cancel (the server
+    # already interrupts on speech; a client cancel racing it can kill the next reply instead).
+    assert sent_frames_containing(cassette, 'conversation.item.truncate') == []
+    assert sent_frames_containing(cassette, 'response.cancel') == []
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.state for response in responses] == snapshot(['complete', 'complete'])

@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.realtime import RealtimeModelProfile, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeModelProfile, RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -414,3 +414,43 @@ def test_profile_allow_seeding() -> None:
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
     )
+
+
+async def test_handle_barge_in_over_live_speech(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """`handle_barge_in=True` against Gemini Live: only the local flush is left to do.
+
+    Gemini reports no speech onset; it interrupts its own generation when the user speaks over it
+    and says so with `RealtimeResponseInterruptedEvent`. The session's half is purely local —
+    flushing buffered playback audio — so nothing barge-in-related goes out on the wire, and the
+    barged-in utterance still gets a reply.
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    # A long reply keeps the model mid-generation when the user speaks over it, so the recording
+    # actually captures the provider interrupting itself.
+    agent = Agent(instructions='Reply with several full sentences; be expansive.')
+    pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime(model).session(handle_barge_in=True) as session:
+        stream = session.stream_audio()
+        with anyio.fail_after(90):
+            for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
+                await session.send_audio(pcm[start : start + 3200])
+            # Wait for the reply's audio to start flowing before speaking over it.
+            assert len(await anext(stream)) > 0
+            for start in range(0, len(pcm), 3200):
+                await session.send_audio(pcm[start : start + 3200])
+            turns_complete = 0
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turns_complete += 1
+                    if turns_complete == 2:
+                        break
+
+    assert any(isinstance(event, RealtimeResponseInterruptedEvent) for event in events)
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert 'interrupted' in [response.state for response in responses]

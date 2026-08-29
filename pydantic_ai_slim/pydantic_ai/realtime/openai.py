@@ -83,6 +83,7 @@ from ._openai_protocol import (
     RealtimeHandshakeError,
     SemanticVAD,
     ServerVAD,
+    config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
     loads_obj,
@@ -357,11 +358,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         dial: Callable[[], Awaitable[ClientConnection]] | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
+        interrupts_response_on_speech: bool = False,
         model_name: str | None = None,
         model_name_getter: Callable[[], str | None] | None = None,
         observes_output_audio: bool = True,
     ) -> None:
         self._ws = ws
+        self._interrupts_response_on_speech = interrupts_response_on_speech
         self._model_name = model_name
         self._model_name_getter = model_name_getter
         # `dial` re-establishes a fully configured connection; with a `reconnect` policy it is used to
@@ -429,6 +432,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
+
+    @property
+    def interrupts_response_on_speech(self) -> bool:
+        return self._interrupts_response_on_speech
 
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the OpenAI Realtime API.
@@ -1246,6 +1253,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 dial=dial,
                 reconnect=settings.get('reconnect'),
                 input_transcription_enabled=transcription_enabled,
+                interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
                 model_name=server_model,
                 model_name_getter=model_name_getter,
             )

@@ -276,12 +276,14 @@ class FakeRealtimeConnection(RealtimeConnection):
         *,
         release: asyncio.Event | None = None,
         input_transcription_enabled: bool = True,
+        interrupts_response_on_speech: bool = False,
         model_name: str | None = None,
         reconnect_restores_in_flight_state: bool = True,
     ) -> None:
         self._events = events
         self._release = release
         self._input_transcription_enabled = input_transcription_enabled
+        self._interrupts_response_on_speech = interrupts_response_on_speech
         self._model_name = model_name
         self._reconnect_restores_in_flight_state = reconnect_restores_in_flight_state
         self.sent: list[RealtimeInput] = []
@@ -293,6 +295,10 @@ class FakeRealtimeConnection(RealtimeConnection):
     @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
+
+    @property
+    def interrupts_response_on_speech(self) -> bool:
+        return self._interrupts_response_on_speech
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
@@ -1259,8 +1265,8 @@ class _GatedRealtimeConnection(FakeRealtimeConnection):
     replay publishes everything before the test can get a word in.
     """
 
-    def __init__(self, first: list[RealtimeCodecEvent], second: list[RealtimeCodecEvent]) -> None:
-        super().__init__(first)
+    def __init__(self, first: list[RealtimeCodecEvent], second: list[RealtimeCodecEvent], **kwargs: Any) -> None:
+        super().__init__(first, **kwargs)
         self._second = second
         self.release = asyncio.Event()
 
@@ -1558,6 +1564,53 @@ async def test_handle_barge_in_respects_missing_interruption_support() -> None:
         _ = await drain_events(session)
 
         assert conn.sent == []
+
+
+async def test_handle_barge_in_skips_the_cancel_when_the_server_interrupts_on_speech() -> None:
+    """When the configured VAD already cancels the response on speech onset, only the truncation goes out.
+
+    A client cancel racing the server's own cancellation can be applied to the *next* response and
+    silence the reply to the barge-in (observed live against OpenAI's `interrupt_response: true`
+    server VAD), so the connection advertises the behavior and the automatic path defers to it.
+    """
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)],
+        [RealtimeInputSpeechStartEvent()],
+        interrupts_response_on_speech=True,
+    )
+    session = RealtimeSession(conn, _noop_runner, handle_barge_in=True)
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK  # `a` in flight, `b` buffered and unheard
+
+        conn.release.set()
+        _ = await drain_events(session)
+
+        assert conn.sent == [TruncateOutput(audio_end_ms=0)]
+        assert [chunk async for chunk in stream] == []
+
+
+async def test_handle_barge_in_sends_nothing_when_the_server_interrupts_without_truncation() -> None:
+    """Server-side interruption plus no output truncation (xAI defaults) leaves only the local flush."""
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)],
+        [RealtimeInputSpeechStartEvent()],
+        interrupts_response_on_speech=True,
+    )
+    session = RealtimeSession(
+        conn, _noop_runner, handle_barge_in=True, profile=_profile(supports_output_truncation=False)
+    )
+
+    async with session:
+        stream = session.stream_audio()
+        assert await anext(stream) == b'a' * _CHUNK
+
+        conn.release.set()
+        _ = await drain_events(session)
+
+        assert conn.sent == []
+        assert [chunk async for chunk in stream] == []
 
 
 async def test_handle_barge_in_flushes_on_provider_initiated_interruption() -> None:
