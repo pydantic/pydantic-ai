@@ -17,6 +17,7 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai import RetryFeedbackPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -3267,9 +3268,9 @@ class TestModelRetryFromHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Response was bad, please try again',
-                            tool_call_id=IsStr(),
+                            cause='model_retry',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3279,7 +3280,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
-                    usage=RequestUsage(input_tokens=66, output_tokens=4),
+                    usage=RequestUsage(input_tokens=62, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3374,9 +3375,9 @@ class TestModelRetryFromHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Response was bad, please try again',
-                            tool_call_id=IsStr(),
+                            cause='model_retry',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3434,9 +3435,9 @@ class TestModelRetryFromHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Short-circuit retry',
-                            tool_call_id=IsStr(),
+                            cause='model_retry',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3514,9 +3515,9 @@ class TestModelRetryFromHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Post-handler retry',
-                            tool_call_id=IsStr(),
+                            cause='model_retry',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3586,9 +3587,9 @@ class TestModelRetryFromHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Wrap says retry',
-                            tool_call_id=IsStr(),
+                            cause='model_retry',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3598,7 +3599,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second attempt')],
-                    usage=RequestUsage(input_tokens=63, output_tokens=4),
+                    usage=RequestUsage(input_tokens=59, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3678,9 +3679,9 @@ class TestModelRetryFromHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Model failed, please try again',
-                            tool_call_id=IsStr(),
+                            cause='model_retry',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3690,7 +3691,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='recovered response')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=2),
+                    usage=RequestUsage(input_tokens=61, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
