@@ -1,4 +1,4 @@
-"""Fixtures for the Temporal suite. Two things may never be done at module level in this file.
+"""Fixtures for the Temporal suite. Two things must never be done at module level in this file.
 
 **No requirement gate.** Unlike the test modules and `_shared` beside it, this file carries no
 `pytest.skip(..., allow_module_level=True)`, and has to stay importable without `temporalio`,
@@ -10,11 +10,16 @@ reporting a skip. Naming a parent directory hides it, because the conftest is th
 collection, which does handle `Skipped`. The test modules' own gates report the skip, and the
 fixtures below run only once those gates have passed, so they import what they need when called.
 
-**Nothing sandbox-sensitive.** `_shared`, `pandas` and the root `tests/conftest.py` (which loads
-`vcr`) are imported by the test modules inside their own
-`workflow.unsafe.imports_passed_through()` blocks. Importing any of them here would re-enter
-sandbox territory with no passthrough of its own, and the gate rule above forbids the `temporalio`
-import that a passthrough block would need.
+**Nothing sandbox-sensitive at module level.** `_shared`, `pandas` and the root `tests/conftest.py`
+(which loads `vcr`) are imported by the test modules inside their own
+`workflow.unsafe.imports_passed_through()` blocks. Importing any of them at module level here would
+re-enter sandbox territory with no passthrough of its own, and the gate rule above forbids the
+`temporalio` import that a passthrough block would need. A fixture body is the sanctioned place —
+see `close_cached_httpx_client` — because it runs in the main process at test time, never during the
+sandbox's re-import of this module.
+
+This is why the suite does not use `tests/conftest.py`'s `try_import()`, which is the repo's default
+for optional dependencies elsewhere: importing it would drag `vcr` in at module level.
 """
 
 from __future__ import annotations
