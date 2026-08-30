@@ -1070,13 +1070,14 @@ async def test_openai_responses_forcing_follows_thinking_state(
 
 
 @skip_if_no_openai
-async def test_openai_explicit_forcing_with_thinking_raises(allow_model_requests: None):
+@pytest.mark.parametrize('tool_choice', ['required', ['tool_a']], ids=['required', 'list'])
+async def test_openai_explicit_forcing_with_thinking_raises(allow_model_requests: None, tool_choice: ToolChoice):
     """An explicit forcing request can't be silently downgraded, so it raises while thinking is on."""
     m = OpenAIChatModel(
         'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
     )
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
-    settings: OpenAIChatModelSettings = {'tool_choice': 'required'}
+    settings: OpenAIChatModelSettings = {'tool_choice': tool_choice}
 
     with pytest.raises(UserError, match=r'does not support forcing tool use while thinking is enabled'):
         m._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
@@ -1096,7 +1097,10 @@ async def test_openai_tool_or_output_forcing_with_thinking_raises(allow_model_re
 
 
 @skip_if_no_openai
-async def test_openai_responses_explicit_forcing_with_thinking_raises(allow_model_requests: None):
+@pytest.mark.parametrize('tool_choice', ['required', ['tool_a']], ids=['required', 'list'])
+async def test_openai_responses_explicit_forcing_with_thinking_raises(
+    allow_model_requests: None, tool_choice: ToolChoice
+):
     """An explicit forcing request can't be silently downgraded on the Responses API path either."""
     from pydantic_ai.models.openai import OpenAIResponsesModel
 
@@ -1106,7 +1110,41 @@ async def test_openai_responses_explicit_forcing_with_thinking_raises(allow_mode
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
 
     with pytest.raises(UserError, match=r'does not support forcing tool use while thinking is enabled'):
-        m._get_responses_tool_choice({'tool_choice': 'required'}, params)  # pyright: ignore[reportPrivateUsage]
+        m._get_responses_tool_choice({'tool_choice': tool_choice}, params)  # pyright: ignore[reportPrivateUsage]
+
+
+@skip_if_no_openai
+async def test_openai_tool_or_output_forcing_without_required_support_raises(allow_model_requests: None):
+    """`ToolOrOutput` without direct output is explicit forcing, so unsupported models reject it."""
+    m = OpenAIChatModel(
+        'stub',
+        provider=OpenAIProvider(openai_client=MagicMock()),
+        profile=OpenAIModelProfile(openai_supports_tool_choice_required=False),
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
+    settings: OpenAIChatModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+
+    with pytest.raises(UserError, match=r'does not support forcing tool use\.$'):
+        m._get_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+
+@skip_if_no_openai
+async def test_openai_responses_tool_or_output_forcing_without_required_support_raises(
+    allow_model_requests: None,
+):
+    """`ToolOrOutput` without direct output is explicit forcing, so unsupported models reject it (Responses API)."""
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+    m = OpenAIResponsesModel(
+        'stub',
+        provider=OpenAIProvider(openai_client=MagicMock()),
+        profile=OpenAIModelProfile(openai_supports_tool_choice_required=False),
+    )
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
+    settings: OpenAIResponsesModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+
+    with pytest.raises(UserError, match=r'does not support forcing tool use\.$'):
+        m._get_responses_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
 
 @skip_if_no_openai
