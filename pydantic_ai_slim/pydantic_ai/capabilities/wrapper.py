@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -124,6 +124,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         new_self.__adopt_wrapped_identity()
         return new_self
 
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        self.wrapped._prepare_run_context(ctx)
+
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
@@ -133,6 +136,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return self.wrapped.get_instructions()
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        if type(self).get_instructions is not WrapperCapability.get_instructions:
+            relayed = self.wrapped._collect_instructions()
+            return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
+        # Pass through the wrapped capability's own attribution: a wrapper adopts the id of the
+        # capability it wraps, but a wrapper over a container has none to adopt and would
+        # otherwise flatten every leaf's contribution into one unaddressable part.
+        return self.wrapped._collect_instructions()
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()

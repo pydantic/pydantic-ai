@@ -1043,7 +1043,13 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'allow_text_output': False,
                         'allow_image_output': False,
                         'instruction_parts': [
-                            {'content': 'Here are some instructions', 'dynamic': False, 'part_kind': 'instruction'}
+                            {
+                                'content': 'Here are some instructions',
+                                'dynamic': False,
+                                'name': None,
+                                'id': 'agent',
+                                'part_kind': 'instruction',
+                            }
                         ],
                         'thinking': None,
                     }

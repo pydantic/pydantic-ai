@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '183'
+      - '110'
       content-type:
       - application/json
       host:
@@ -18,12 +18,8 @@ interactions:
       messages:
       - content: What is 2 + 2?
         role: user
-      model: glm-5.3
-      reasoning_effort: max
+      model: glm-4-32b-0414-128k
       stream: false
-      thinking:
-        clear_thinking: false
-        type: enabled
     uri: https://api.z.ai/api/paas/v4/chat/completions
   response:
     headers:
@@ -32,9 +28,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '995'
+      - '365'
       content-type:
       - application/json; charset=UTF-8
+      ga-traceid:
+      - f32c521ed349065db40c40326a0475b6
       strict-transport-security:
       - max-age=31536000; includeSubDomains
       transfer-encoding:
@@ -52,29 +50,17 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: 2 + 2 = 4
-          reasoning_content: |-
-            The user is asking a simple arithmetic question: What is 2 + 2?
-
-            The answer is 4. This is a basic addition fact that doesn't require any elaborate reasoning.
-
-            The question is extremely simple, so my response should be correspondingly brief and direct. There's no need for lengthy explanation, hedging, or unnecessary elaboration. A direct answer is best here.
-
-            I could just say "4" or "2 + 2 = 4". The latter is slightly more complete and clear. Either works. Given the simplicity, keeping it short is ideal.
+          content: 2 + 2 equals 4.
           role: assistant
-      created: 1787259738
-      id: 2026082105021459b8578d40894aa9
-      model: glm-5.3
+      created: 1788037042
+      id: 2026083004572282c9d5adad984a9d
+      model: glm-4-32b-0414-128k
       object: chat.completion
-      request_id: 2026082105021459b8578d40894aa9
+      request_id: 2026083004572282c9d5adad984a9d
       usage:
-        completion_tokens: 125
-        completion_tokens_details:
-          reasoning_tokens: 116
-        prompt_tokens: 20
-        prompt_tokens_details:
-          cached_tokens: 0
-        total_tokens: 145
+        completion_tokens: 10
+        prompt_tokens: 13
+        total_tokens: 23
     status:
       code: 200
       message: OK
@@ -87,7 +73,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '137'
+      - '149'
       content-type:
       - application/json
       host:
@@ -97,7 +83,7 @@ interactions:
       messages:
       - content: What is 2 + 2?
         role: user
-      model: glm-5.3
+      model: glm-4-32b-0414-128k
       stream: false
       thinking:
         clear_thinking: false
@@ -109,9 +95,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '977'
+      - '365'
       content-type:
       - application/json; charset=UTF-8
+      ga-traceid:
+      - 0c14db497dcb04c0dc3d20517664b8bc
       strict-transport-security:
       - max-age=31536000; includeSubDomains
       transfer-encoding:
@@ -129,31 +117,17 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: 2 + 2 = 4
-          reasoning_content: |-
-            The user is asking a simple arithmetic question: What is 2 + 2?
-
-            This is one of the most basic math questions. The answer is 4.
-
-            How should I format this? The question is extremely simple and deserves a direct, concise answer. There's no need for lengthy explanations, headers, bullet points, or markdown formatting. A single sentence or even just the number would suffice, though a brief complete sentence is more natural and conversational.
-
-            2 + 2 = 4
-
-            That's it. No need to overthink this.
+          content: 2 + 2 equals 4.
           role: assistant
-      created: 1787259742
-      id: 20260821050219787b1f0e32e04586
-      model: glm-5.3
+      created: 1788037043
+      id: 202608300457236f73f173721f4706
+      model: glm-4-32b-0414-128k
       object: chat.completion
-      request_id: 20260821050219787b1f0e32e04586
+      request_id: 202608300457236f73f173721f4706
       usage:
-        completion_tokens: 120
-        completion_tokens_details:
-          reasoning_tokens: 111
-        prompt_tokens: 20
-        prompt_tokens_details:
-          cached_tokens: 0
-        total_tokens: 140
+        completion_tokens: 10
+        prompt_tokens: 13
+        total_tokens: 23
     status:
       code: 200
       message: OK

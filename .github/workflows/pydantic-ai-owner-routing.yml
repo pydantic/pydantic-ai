@@ -1,40 +1,32 @@
 name: Semantic owner routing
 
 on:
-  issues:
-    types: [opened, reopened]
-  issue_comment:
-    types: [created]
-  # zizmor: ignore[dangerous-triggers] -- executable checkouts use the reusable workflow's trusted SHA
-  pull_request_target:
-    types: [opened, reopened, ready_for_review]
+  # Polling only: issues become routable once triage applies a priority label
+  # (`p:1-highest` / `p:2-high`), so per-event routing has nothing to act on.
   schedule:
     - cron: '25 */6 * * *'
     - cron: '40 7 * * *'
   workflow_dispatch:
   workflow_call:
     inputs:
-      legacy_recovery:
-        description: Route up to six recently active items from before the recovery epoch
+      community_recovery:
+        description: Route up to three unassigned items ignored for two weeks despite community interactions
         required: false
         type: boolean
         default: false
     secrets:
       PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
         required: true
+      # Optional: callers without a Logfire project simply skip telemetry.
+      LOGFIRE_TRIAGE_WRITE_TOKEN:
+        required: false
 
 permissions: {}
 
 jobs:
   select:
     name: Select routing batch
-    # Keep this cheap runner gate aligned with `_PARTICIPATION_OWNERS` in the routing policy.
-    if: >-
-      (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') &&
-      (github.event_name != 'issue_comment' ||
-      github.event.comment.user.login == 'adtyavrdhn' ||
-      github.event.comment.user.login == 'dsfaccini' ||
-      github.event.comment.user.login == 'DouweM')
+    if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -54,15 +46,26 @@ jobs:
           sparse-checkout: |
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_models.py
+            .github/scripts/triage_telemetry.py
           sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Select routing decisions
         id: select
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ROUTING_ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ROUTING_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
-          ROUTING_PARTICIPANT_LOGIN: ${{ github.event.comment.user.login }}
-          ROUTING_LEGACY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.legacy_recovery }}
+          ROUTING_COMMUNITY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          # Self-hosted Logfire; resolves from the calling repository's
+          # variables, and empty keeps the token's own routing.
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
         run: python .github/scripts/semantic_owner_router.py select
 
   route:
@@ -94,7 +97,17 @@ jobs:
           sparse-checkout: |
             .github/scripts/issue_pr_attention_monitor.py
             .github/scripts/semantic_owner_router.py
+            .github/scripts/triage_models.py
+            .github/scripts/triage_telemetry.py
           sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Revalidate and prepare canonical routing intent
         id: prepare
         env:
@@ -123,6 +136,8 @@ jobs:
           ROUTE_NUMBER: ${{ matrix.route.number }}
           ROUTE_OWNER: ${{ matrix.route.owner }}
           ROUTE_EVIDENCE: ${{ matrix.route.evidence }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
         run: >-
           python .github/scripts/semantic_owner_router.py assign
           --number "$ROUTE_NUMBER"
