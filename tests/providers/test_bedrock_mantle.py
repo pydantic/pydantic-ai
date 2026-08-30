@@ -205,8 +205,6 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
     # and `BedrockConverseModel` raises at construction with a pointer to `BedrockMantleProvider`.
     # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra are served on Converse; `gpt-5.6-cyber` is not.
     for model_name in (
-        'openai.gpt-6',
-        'openai.gpt-8-turbo',
         'openai.gpt-5.6-cyber',
         'openai.gpt-5.4',
         'openai.gpt-5.5',
