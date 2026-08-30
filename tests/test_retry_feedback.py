@@ -57,8 +57,13 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as openai_imports_successful:
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
+    from .models.test_openai import text_chunk
 
 anthropic_installed = pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 openai_installed = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
@@ -748,6 +753,60 @@ async def test_a_retry_opening_the_history_does_not_survive_compaction(
                 timestamp=IsDatetime(),
             ),
             ModelRequest(parts=[UserPromptPart(content='new turn', timestamp=IsDatetime())]),
+        ]
+    )
+
+
+@openai_installed
+@pytest.mark.parametrize('streamed', [False, True], ids=['model_request', 'model_request_stream'])
+async def test_feedback_reaching_a_direct_helper_stays_out_of_the_wire_system_run(
+    allow_model_requests: None, streamed: bool
+):
+    """The direct helpers hand `prepare_messages` a history nothing has cleaned.
+
+    `direct.model_request` and `direct.model_request_stream` call it with whatever they are given, so
+    two adjacent `ModelRequest`s survive into the render — a shape the agent path never produces,
+    because `_agent_graph._make_request` merges them first. The provider mappers then scan their own
+    mapped messages for the leading system-role run and splice the agent's instructions in at that
+    index, so a feedback part rendered into that run would sit in the standing prompt's position *and*
+    push `AGENT INSTRUCTIONS` behind it.
+
+    Asserted on the request body the client received, because that run is the mapper's own notion and
+    does not exist in the parts `prepare_messages` returns.
+    """
+    mock_client = (
+        MockOpenAI.create_mock_stream([text_chunk('ok', 'stop')])
+        if streamed
+        else MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    )
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='be terse')]),
+        ModelRequest(
+            parts=[RetryFeedbackPart(content='the answer has to be a number', cause='model_retry')],
+            instructions='AGENT INSTRUCTIONS',
+        ),
+    ]
+
+    if streamed:
+        async with model_request_stream(model, history) as stream:
+            async for _ in stream:
+                pass
+    else:
+        await model_request(model, history)
+
+    sent = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert [(m['role'], m['content']) for m in sent] == snapshot(
+        [
+            ('system', 'be terse'),
+            ('system', 'AGENT INSTRUCTIONS'),
+            (
+                'user',
+                """\
+<system>The response was not accepted:
+the answer has to be a number</system>\
+""",
+            ),
         ]
     )
 

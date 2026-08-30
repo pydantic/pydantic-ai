@@ -2413,26 +2413,42 @@ def _render_retry_feedback_messages(
     An operator's own `SystemPromptPart` sitting behind such a part is demoted with it, which is not a
     new call: on `main` a `RetryPromptPart` ahead of one already ends the run the same way.
 
-    Both halves read `message.parts` as authored, which is the same question
-    `_standing_system_prompt_count`'s own callers ask only because no two `ModelRequest`s are adjacent
-    by the time this runs: `_agent_graph._make_request` cleans the history before calling
-    `prepare_messages`. A second clean runs after, and its `_merge_consecutive_messages` concatenates
-    a synthesized request onto its neighbour — which cannot move a rendered feedback part to the front
-    of the first request today, because the only request this pipeline synthesizes carries a
-    tool-search return, and a feedback part that could have opened the first request has already been
-    degraded here. A synthesis that could put one there would have to re-derive the standing run after
-    that merge rather than here.
+    That run is tracked across *consecutive* requests, not within the first one, because adjacent
+    `ModelRequest`s do reach here: `direct.model_request`, `direct.model_request_stream` and
+    `Model.count_tokens` call `prepare_messages` with no `_clean_message_history` at all, so a
+    hand-built pair survives into the render. Only the agent path cleans first, in
+    `_agent_graph._make_request`, and the rule must not depend on which caller it got.
+
+    What that protects is a run the *provider mappers* compute for themselves: seven of them —
+    OpenAI Chat and Responses, Cohere, Mistral, Groq, HuggingFace, xAI — scan their mapped messages
+    for the leading system-role run and splice the agent's own instructions in at that index. A
+    feedback part rendered into that run is the standing prompt in all but name, and it pushes the
+    operator's instructions behind it.
+
+    A second `_clean_message_history` runs after this on the agent path, and its
+    `_merge_consecutive_messages` concatenates a synthesized request onto its neighbour — which cannot
+    move a rendered feedback part into the head of that run today, because the only request this
+    pipeline synthesizes carries a tool-search return, and a feedback part that could reach the run
+    has already been degraded here. A synthesis that could put one there would have to re-derive the
+    run after that merge rather than here.
     """
     transformed: list[ModelMessage] = []
     changed = False
-    is_first_request = True
+    standing_run_open = True
     for message in messages:
         if not isinstance(message, ModelRequest):
+            # An assistant turn ends the opening run of system messages on the wire.
+            standing_run_open = False
             transformed.append(message)
             continue
+
+        inside_standing_run = standing_run_open
+        authored_standing = _standing_system_prompt_count(message) if inside_standing_run else 0
+        # The run survives past this request only if the request held nothing but standing prompts;
+        # the first part that is not one ends it, for this request and every later one.
+        standing_run_open = inside_standing_run and authored_standing == len(message.parts)
         if not any(isinstance(part, RetryFeedbackPart) for part in message.parts):
             transformed.append(message)
-            is_first_request = False
             continue
 
         changed = True
@@ -2447,7 +2463,6 @@ def _render_retry_feedback_messages(
         # holds it out of its own: those parts are the agent's standing prompt *because* they open the
         # first request, and a tool result sorting ahead of them would take that position away and
         # with it the provider's top-level system field.
-        authored_standing = _standing_system_prompt_count(message) if is_first_request else 0
         head, tail = list(message.parts[:authored_standing]), list(message.parts[authored_standing:])
         tail.sort(key=_tool_results_first_sort_key)
         ordered = [*head, *tail]
@@ -2455,7 +2470,7 @@ def _render_retry_feedback_messages(
         # authored count stopped on isn't one, and the sort only promotes tool results ahead of it —
         # so this is still the one index whose part can extend the run by rendering as a system
         # message. Only the first request has a standing prompt to join.
-        standing_run_end = authored_standing if is_first_request else None
+        standing_run_end = authored_standing if inside_standing_run else None
 
         replacement_parts: list[ModelRequestPart] = []
         for index, part in enumerate(ordered):
@@ -2473,7 +2488,6 @@ def _render_retry_feedback_messages(
                     )
                 )
         transformed.append(replace(message, parts=replacement_parts))
-        is_first_request = False
 
     return transformed if changed else messages
 
