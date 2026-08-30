@@ -5610,6 +5610,49 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     )
 
 
+async def test_openai_provider_with_azure_client_uses_azure_behavior(allow_model_requests: None) -> None:
+    error = {
+        'code': 'content_filter',
+        'message': 'The content was filtered.',
+        'innererror': {
+            'code': 'ResponsibleAIPolicyViolation',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        },
+    }
+
+    client = AsyncAzureOpenAI(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://example.openai.azure.com/',
+        api_key='test',
+    )
+    try:
+        model = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=client))
+
+        assert model.system == 'openai'
+        assert model.profile.get('openai_chat_supports_document_input') is False
+        with pytest.raises(UserError, match="Azure's Chat Completions API does not support document input"):
+            await Agent(model).run([BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
+
+        response = httpx2.Response(
+            400,
+            request=httpx2.Request('POST', 'https://example.openai.azure.com/openai/deployments/gpt-5-mini'),
+            json={'error': error},
+        )
+        status_error = client._make_status_error_from_response(response)  # pyright: ignore[reportPrivateUsage]
+        with (
+            patch.object(client.chat.completions, 'create', AsyncMock(side_effect=status_error)),
+            pytest.raises(ContentFilterError) as exc_info,
+        ):
+            await Agent(model).run('bad prompt')
+    finally:
+        await client.close()
+
+    assert exc_info.value.body is not None
+    response = json.loads(exc_info.value.body)[0]
+    assert response['provider_name'] == 'openai'
+    assert response['provider_details']['content_filter_result'] == {'hate': {'filtered': True, 'severity': 'high'}}
+
+
 def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAIResponses.create_mock(
         APIStatusError(
