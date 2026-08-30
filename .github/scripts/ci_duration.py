@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-SCHEMA_VERSION = 1
+# 2: `runner_class` names the Ubicloud size and `job_family` distinguishes `test-durable-exec`.
+SCHEMA_VERSION = 2
 CI_WORKFLOW_FILE = 'ci.yml'
 REPORT_MARKER = '<!-- ci-duration-report -->'
 REPORT_LABEL = 'trigger:ci-duration-report'
@@ -24,6 +25,8 @@ BASELINE_MAIN_RUN_LIMIT = 30
 BASELINE_PR_RUN_LIMIT = 60
 BASELINE_COLLECTION_MAX_SECONDS = 90
 MIN_BASELINE_SAMPLES = 10
+# Keep above the number of tracked jobs so a full run renders every row.
+REPORT_ROW_LIMIT = 40
 WARNING_MIN_SECONDS = 60
 SLOW_THRESHOLD_MULTIPLIER = 1.25
 FAST_THRESHOLD_MULTIPLIER = 0.75
@@ -434,7 +437,7 @@ def step_to_json(step: StepRecord) -> JsonObject:
 
 
 def parse_job_matrix(job_name: str) -> tuple[str | None, str | None]:
-    match = re.fullmatch(r'test on (?P<python>[^ ]+) \((?P<extra>[^)]+)\)', job_name)
+    match = re.fullmatch(r'test(?: durable-exec)? on (?P<python>[^ ]+) \((?P<extra>[^)]+)\)', job_name)
     if match:
         return match.group('python'), match.group('extra')
     match = re.fullmatch(r'test examples on (?P<python>[^ ]+)', job_name)
@@ -446,22 +449,34 @@ def parse_job_matrix(job_name: str) -> tuple[str | None, str | None]:
 def parse_job_family(job_name: str) -> str:
     if job_name.startswith('test on '):
         return 'test'
+    # Its own family rather than part of `test`: `job_family` keys `is_tracked_test_job`, prefixes
+    # every signature, and is emitted as its own dimension in both the record and Logfire, so
+    # folding a different suite under the `test` label mislabels it in all three.
+    if job_name.startswith('test durable-exec on '):
+        return 'test-durable-exec'
     if job_name.startswith('test examples on '):
         return 'test-examples'
-    if job_name in {'lint', 'mypy', 'docs', 'coverage', 'check'}:
-        return job_name
     return job_name
 
 
 def is_tracked_test_job(job: JobRecord) -> bool:
-    return job.job_family == 'test'
+    return job.job_family in {'test', 'test-durable-exec'}
 
 
 def parse_runner_class(runner_group_name: str | None, runner_name: str | None, labels: list[JsonValue] | None) -> str:
-    label_values = [value for value in labels or [] if isinstance(value, str)]
+    label_values = [value.lower() for value in labels or [] if isinstance(value, str)]
     lower_values = ' '.join([runner_group_name or '', runner_name or '', *label_values]).lower()
     if 'depot' in lower_values:
         return 'depot'
+    # Keep the size in the class: the same job takes materially different times on different
+    # Ubicloud sizes, so a size-blind class pools those durations into one meaningless baseline.
+    # Read it off the labels only -- `runner_name` and `runner_group_name` are vendor-controlled, so
+    # matching the size anywhere in the joined string reads back whatever Ubicloud puts there.
+    # The branches below still match the joined string. They stay size-blind because no `ci.yml`
+    # job asks for more than one size of a GitHub runner, and none asks for a depot runner at all.
+    ubicloud_label = next((label for label in label_values if label.startswith('ubicloud')), None)
+    if ubicloud_label is not None:
+        return ubicloud_label
     if 'ubicloud' in lower_values:
         return 'ubicloud'
     if 'github actions' in lower_values or 'ubuntu' in lower_values:
@@ -563,7 +578,7 @@ def render_report(pr_number: int, head_sha: str, workflow: JsonObject, rows: lis
         '| Job | Duration | Baseline median | p75 | Delta | Status |',
         '|---|---:|---:|---:|---:|---|',
     ]
-    for row in sorted_rows[:20]:
+    for row in sorted_rows[:REPORT_ROW_LIMIT]:
         lines.append(
             '| '
             + ' | '.join(
@@ -578,8 +593,8 @@ def render_report(pr_number: int, head_sha: str, workflow: JsonObject, rows: lis
             )
             + ' |'
         )
-    if len(sorted_rows) > 20:
-        lines.append(f'| ... | {len(sorted_rows) - 20} more jobs omitted |  |  |  |  |')
+    if len(sorted_rows) > REPORT_ROW_LIMIT:
+        lines.append(f'| ... | {len(sorted_rows) - REPORT_ROW_LIMIT} more jobs omitted |  |  |  |  |')
     lines.extend(
         [
             '',
@@ -663,6 +678,7 @@ def emit_logfire(record: JsonObject) -> None:
                 'event': workflow.get('event'),
                 'base_branch': workflow.get('base_branch'),
                 'conclusion': workflow.get('conclusion'),
+                'schema_version': SCHEMA_VERSION,
             }
         ),
     )
@@ -703,6 +719,7 @@ def emit_logfire(record: JsonObject) -> None:
                             'matrix_extra': job_object.get('matrix_extra'),
                             'runner_class': job_object.get('runner_class'),
                             'conclusion': job_object.get('conclusion'),
+                            'schema_version': SCHEMA_VERSION,
                         }
                     ),
                 )
