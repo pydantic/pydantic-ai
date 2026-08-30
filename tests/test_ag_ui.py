@@ -1106,7 +1106,7 @@ async def test_tool_only_response_announces_its_assistant_message() -> None:
     The announcement leaves the reconstructed message set unchanged: the pinned reducer's
     `resolveOrCreateAssistantMessage` created that assistant message from `TOOL_CALL_START` alone
     (case 3), and now resolves the announced one instead (case 1):
-    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L53-L92
+    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts
     """
 
     async def local_weather(location: str) -> str:
@@ -1215,7 +1215,13 @@ async def test_tool_only_response_announces_its_assistant_message() -> None:
         ]
     )
     assert [part for message in replayed for part in message.parts] == snapshot(
-        [ToolCallPart(tool_name='local_weather', args='{"location": "Paris"}', tool_call_id=IsStr())]
+        [
+            ToolCallPart(
+                tool_name='local_weather',
+                args='{"location": "Paris"}',
+                tool_call_id=tool_call_start['toolCallId'],
+            )
+        ]
     )
 
 
@@ -5805,10 +5811,9 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
     resolving the tool call onto it. Building it without `content` would model the branch the
     reducer took before that announcement existed.
 
-    The pinned reducer creates a content-only `ToolMessage` for `TOOL_CALL_RESULT`:
-    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L439-L506
-    It then attaches `REASONING_ENCRYPTED_VALUE(subtype='message')` by message ID:
-    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts#L1130-L1174
+    The pinned reducer's `TOOL_CALL_RESULT` branch creates a content-only `ToolMessage`, and its
+    `REASONING_ENCRYPTED_VALUE` branch then attaches `subtype='message'` data by message ID:
+    https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts
     """
     start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
     result = next(event for event in events if event['type'] == 'TOOL_CALL_RESULT')
