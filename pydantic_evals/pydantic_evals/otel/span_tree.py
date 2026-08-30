@@ -104,7 +104,7 @@ class SpanNode:
 
     @property
     def duration(self) -> timedelta:
-        """Return the span's duration as a timedelta, or None if start/end not set."""
+        """Return the span's duration as a timedelta."""
         return self.end_timestamp - self.start_timestamp
 
     @property
@@ -326,7 +326,7 @@ class SpanNode:
         # Children conditions
         if (min_child_count := query.get('min_child_count')) and len(self.children) < min_child_count:
             return False
-        if (max_child_count := query.get('max_child_count')) and len(self.children) > max_child_count:
+        if (max_child_count := query.get('max_child_count')) is not None and len(self.children) > max_child_count:
             return False
         if (some_child_has := query.get('some_child_has')) and not any(
             child._matches_query(some_child_has) for child in self.children
@@ -351,12 +351,16 @@ class SpanNode:
         def pruned_descendants():
             stop_recursing_when = query.get('stop_recursing_when')
             return (
-                self._filter_descendants(lambda _: True, stop_recursing_when) if stop_recursing_when else descendants()
+                list(self._filter_descendants(lambda _: True, stop_recursing_when))
+                if stop_recursing_when
+                else descendants()
             )
 
         if (min_descendant_count := query.get('min_descendant_count')) and len(descendants()) < min_descendant_count:
             return False
-        if (max_descendant_count := query.get('max_descendant_count')) and len(descendants()) > max_descendant_count:
+        if (max_descendant_count := query.get('max_descendant_count')) is not None and len(
+            descendants()
+        ) > max_descendant_count:
             return False
         if (some_descendant_has := query.get('some_descendant_has')) and not any(
             descendant._matches_query(some_descendant_has) for descendant in pruned_descendants()
@@ -380,11 +384,15 @@ class SpanNode:
         @cache
         def pruned_ancestors():
             stop_recursing_when = query.get('stop_recursing_when')
-            return self._filter_ancestors(lambda _: True, stop_recursing_when) if stop_recursing_when else ancestors()
+            return (
+                list(self._filter_ancestors(lambda _: True, stop_recursing_when))
+                if stop_recursing_when
+                else ancestors()
+            )
 
         if (min_depth := query.get('min_depth')) and len(ancestors()) < min_depth:
             return False
-        if (max_depth := query.get('max_depth')) and len(ancestors()) > max_depth:
+        if (max_depth := query.get('max_depth')) is not None and len(ancestors()) > max_depth:
             return False
         if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
             ancestor._matches_query(some_ancestor_has) for ancestor in pruned_ancestors()

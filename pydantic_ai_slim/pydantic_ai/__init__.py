@@ -14,7 +14,7 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .capabilities import AgentCapability, CapabilityFunc
+from .capabilities import AgentCapability, Capability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -53,15 +53,18 @@ from .exceptions import (
 )
 from .format_prompt import format_as_xml
 from .messages import (
+    AgentInstructionSource,
     AgentStreamEvent,
     AudioFormat,
     AudioMediaType,
     AudioUrl,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityInstructionSource,
     CompactionPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
@@ -79,7 +82,9 @@ from .messages import (
     ImageFormat,
     ImageMediaType,
     ImageUrl,
+    InstructionId,
     InstructionPart,
+    InstructionSource,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -99,6 +104,8 @@ from .messages import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -113,6 +120,7 @@ from .messages import (
     ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
+    ToolsetInstructionSource,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -120,7 +128,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
+from .models import AbstractModel, ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     AdvisorTool,
@@ -225,12 +233,16 @@ __all__ = (
     'UsageLimitExceeded',
     'UserError',
     # messages
+    'AgentInstructionSource',
     'AgentStreamEvent',
     'AudioFormat',
     'AudioMediaType',
     'AudioUrl',
+    'SpeechPart',
+    'SpeechPartDelta',
     'BaseToolCallPart',
     'BaseToolReturnPart',
+    'BinaryAudio',
     'BinaryContent',
     'NativeToolCallPart',
     'NativeToolReturnPart',
@@ -253,7 +265,10 @@ __all__ = (
     'ImageMediaType',
     'ImageUrl',
     'BinaryImage',
+    'CapabilityInstructionSource',
+    'InstructionId',
     'InstructionPart',
+    'InstructionSource',
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
@@ -276,6 +291,7 @@ __all__ = (
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
+    'ToolsetInstructionSource',
     'ToolAvailabilityDeltaEvent',
     'ToolAvailabilityDeltaPart',
     'ThinkingPartDelta',
@@ -336,6 +352,7 @@ __all__ = (
     'XSearchTool',
     # capabilities
     'AgentCapability',
+    'Capability',
     'CapabilityFunc',
     # output
     'ToolOutput',
@@ -348,6 +365,7 @@ __all__ = (
     # format_prompt
     'format_as_xml',
     # models
+    'AbstractModel',
     'ModelRequestContext',
     'ModelResolutionContext',
     'ModelSelectionContext',

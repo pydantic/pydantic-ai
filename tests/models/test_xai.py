@@ -17,9 +17,9 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import timezone
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -60,11 +60,11 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
-from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     CachePoint,
+    FinishReason,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -99,13 +99,12 @@ from .mock_xai import (
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
-    from xai_sdk.proto import chat_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
         XaiModel,
         XaiModelSettings,
-        XaiStreamedResponse,
         _extract_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.xai import XaiProvider
@@ -3908,7 +3907,11 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     mock_usage = create_usage(
         prompt_tokens=50,
         completion_tokens=30,
-        server_side_tools_used=[usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH, usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH],
+        server_side_tools_used=[
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH,
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH,
+            usage_pb2.SERVER_SIDE_TOOL_ATTACHMENT_SEARCH,
+        ],
     )
     response = create_response(
         content='The answer based on web search',
@@ -3926,7 +3929,7 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
         RunUsage(
             input_tokens=50,
             output_tokens=30,
-            details={'server_side_tools_web_search': 2},
+            details={'server_side_tools_web_search': 2, 'server_side_tools_attachment_search': 1},
             requests=1,
             cost=Decimal('0.000025'),
         )
@@ -4854,6 +4857,7 @@ async def test_xai_include_settings(allow_model_requests: None):
         'xai_include_inline_citations': True,
         'xai_include_x_search_output': True,
         'xai_include_collections_search_output': True,
+        'xai_include_attachment_search_output': True,
         'xai_include_mcp_output': True,
     }
     result = await agent.run('Hello', model_settings=settings)
@@ -4875,6 +4879,7 @@ async def test_xai_include_settings(allow_model_requests: None):
                     chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
                 ],
             }
@@ -6042,28 +6047,27 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
 
 
 async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: None):
-    """Test handling of unknown tool types uses the function name."""
-    attachment_search_tool_call = chat_pb2.ToolCall(
-        id='attachment_001',
-        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
+    """Unknown server-side tool types should fall back to their function name."""
+    unknown_tool_call = chat_pb2.ToolCall(
+        id='unknown_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_INVALID,
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
         function=chat_pb2.FunctionCall(
-            name='attachment_search',
-            arguments='{"query": "my attachments"}',
+            name='custom_server_tool',
+            arguments='{"query": "test"}',
         ),
     )
 
-    response = create_mixed_tools_response([attachment_search_tool_call], text_content='Found your attachments.')
+    response = create_mixed_tools_response([unknown_tool_call], text_content='Completed the custom tool call.')
     mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
-    result = await agent.run('Search my attachments')
+    result = await Agent(model).run('Use the custom server tool')
 
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search my attachments', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Use the custom server tool', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6071,13 +6075,13 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
             ModelResponse(
                 parts=[
                     NativeToolCallPart(
-                        tool_name='attachment_search',
-                        args={'query': 'my attachments'},
-                        tool_call_id=IsStr(),
+                        tool_name='custom_server_tool',
+                        args={'query': 'test'},
+                        tool_call_id='unknown_001',
                         provider_name='xai',
-                        provider_details={'function_name': 'attachment_search'},
+                        provider_details={'function_name': 'custom_server_tool'},
                     ),
-                    TextPart(content='Found your attachments.'),
+                    TextPart(content='Completed the custom tool call.'),
                 ],
                 usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
@@ -6114,72 +6118,6 @@ content {
 }
 role: ROLE_USER
 """)
-
-
-async def test_stream_cancel(allow_model_requests: None):
-    stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
-    mock_client = MockXai.create_mock_stream([stream])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=2, output_tokens=1, cost=Decimal('9E-7')),
-                model_name='grok-4-fast-non-reasoning',
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id='grok-123',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-                state='interrupted',
-            ),
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_xai_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = XaiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='grok-4-fast-non-reasoning',
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _timestamp=datetime.now(timezone.utc),
-        _provider=cast(Any, type('ProviderStub', (), {'name': 'xai', 'base_url': 'https://api.x.ai/v1'})()),
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
 
 
 async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: None):
@@ -6236,6 +6174,49 @@ async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: No
     for m in assistant_msgs:
         for part in m.get('content', []):
             assert '<think>' not in part.get('text', '')
+
+
+@pytest.mark.parametrize('finish_reason', ['stop', 'length', 'tool_call', 'error'])
+async def test_xai_stream_finish_reason_matches_non_stream(allow_model_requests: None, finish_reason: FinishReason):
+    """Streamed and non-streamed responses must map the same xAI finish reason to the same value."""
+    mock_client = MockXai.create_mock([create_response(content='hello world', finish_reason=finish_reason)])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    non_stream_result = await Agent(m).run('')
+
+    stream = [get_grok_text_chunk('hello ', ''), get_grok_text_chunk('world', finish_reason)]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    async with Agent(m).run_stream('') as result:
+        await result.get_output()
+
+    assert result.response.finish_reason == non_stream_result.response.finish_reason == finish_reason
+
+
+async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_model_requests: None):
+    """Intermediate streaming chunks (REASON_INVALID) must not report a premature 'stop'."""
+    stream = [
+        get_grok_text_chunk('hello ', ''),
+        get_grok_text_chunk('world', ''),
+        get_grok_text_chunk('.', 'stop'),
+    ]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    finish_reasons: list[FinishReason | None] = []
+    async with agent.run_stream('') as result:
+        async for response in result.stream_response(debounce_by=None):
+            finish_reasons.append(response.finish_reason)
+
+    # Unset while the two intermediate chunks arrive, 'stop' from the finishing chunk onwards.
+    assert finish_reasons[:2] == [None, None]
+    assert all(reason == 'stop' for reason in finish_reasons[2:])
+
+
+def test_xai_finish_reason_proto_map_covers_all_enum_members():
+    """Every proto finish reason except REASON_INVALID ("not finished yet") must be mapped."""
+    unmapped = set(sample_pb2.FinishReason.values()) - set(xai_module._FINISH_REASON_PROTO_MAP)  # pyright: ignore[reportPrivateUsage]
+    assert unmapped == {sample_pb2.FinishReason.REASON_INVALID}
 
 
 # End of tests

@@ -2,6 +2,8 @@
 
 ## Install
 
+
+Snowflake Cortex rejects [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] with an error rather than ignoring it, so leave that setting unset on Snowflake models.
 To use [`SnowflakeModel`][pydantic_ai.models.snowflake.SnowflakeModel], you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `snowflake` optional group:
 
 ```bash
@@ -62,10 +64,10 @@ agent = Agent(model)
 ...
 ```
 
-You can also customize the [`SnowflakeProvider`][pydantic_ai.providers.snowflake.SnowflakeProvider] with a custom `base_url` (e.g. when connecting through [private connectivity](https://docs.snowflake.com/en/user-guide/private-snowflake-service)) or `httpx.AsyncClient`:
+You can also customize the [`SnowflakeProvider`][pydantic_ai.providers.snowflake.SnowflakeProvider] with a custom `base_url` (e.g. when connecting through [private connectivity](https://docs.snowflake.com/en/user-guide/private-snowflake-service)) or `httpx2.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.snowflake import SnowflakeModel

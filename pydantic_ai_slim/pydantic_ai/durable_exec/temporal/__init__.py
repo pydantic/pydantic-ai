@@ -27,6 +27,7 @@ from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
+from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
@@ -40,6 +41,7 @@ __all__ = [
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
+    'TemporalOperationNamer',
     'PydanticAIWorkflow',
     'PydanticAIPayloadConverter',
 ]
@@ -117,6 +119,12 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # e.g. a `gateway/anthropic:` or `anthropic:` model resolved lazily via `infer_model`.
             # Safe to pass through: a deterministic, read-only config lookup.
             'anthropic',
+            # The OpenAI SDK defers importing its large generated resource tree until a model constructor
+            # accesses `client.chat.completions` or `client.responses`. Without passthrough, Temporal reloads
+            # that tree in every isolated workflow sandbox. Pass through the whole SDK so resource classes and
+            # their base classes come from one coherent module graph. Pydantic AI does not use the SDK's global
+            # client configuration: it creates per-model clients and invokes their request methods in activities.
+            'openai',
             # The `google-genai` SDK lazily imports `google.auth` submodules (e.g.
             # `google.auth.aio.credentials`) while constructing its client, which Temporal flags as
             # "imported after initial workflow load" when a `gateway/google-cloud:` (or `google-*:`)
@@ -129,12 +137,14 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
             'numpy',
             'pandas',
-            # `response.cost()` lazily imports `genai_prices` (and its `httpx2` dependency) on first call.
-            # When cost is calculated inside a workflow, the sandbox re-imports that chain and `httpx2._models`
-            # subclasses `urllib.request.Request`, which is restricted unless `genai_prices`/`httpx2` are passed
+            # `response.cost()` lazily imports `genai_prices` (and its httpx2 dependencies) on first call.
+            # When cost is calculated or an httpx2-backed model is constructed inside a workflow, the sandbox
+            # re-imports that chain and touches restricted request/lock types unless these modules are passed
             # through alongside the rest of the HTTP stack.
             'genai_prices',
             'httpx2',
+            'httpcore2',
+            'truststore',
         ),
     )
 

@@ -1,25 +1,29 @@
 from __future__ import annotations as _annotations
 
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from . import ModelProfile
+
+if TYPE_CHECKING:
+    from ..realtime.profiles import RealtimeModelProfile
 
 GrokReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
 """Native xAI `reasoning_effort` values."""
 
 _GROK_BASIC_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'high'))
 _GROK_43_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'medium', 'high'))
-# Grok 4.5 accepts `low`/`medium`/`high` but rejects `none` (unlike Grok 4.3), so it always reasons.
-# Verified against the xAI API: `reasoning_effort='none'` returns 400 `This model does not support
-# 'reasoning_effort' value 'none'`. https://docs.x.ai/developers/models
+# Grok 4.5 and 4.6 accept `low`/`medium`/`high` but reject `none` (unlike Grok 4.3), so they always
+# reason. Verified against the xAI API for both: `reasoning_effort='none'` returns 400 `This model does
+# not support 'reasoning_effort' value 'none'`. https://docs.x.ai/developers/models
 _GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
 _GROK_43_REASONING_MODELS = frozenset(
     (
         'grok-4.3',
         'grok-4.3-latest',
-        # `grok-latest` is xAI's floating alias for the newest Grok model, which is currently Grok 4.3,
-        # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
+        # `grok-latest` is xAI's floating alias for the newest Grok model. It now serves Grok 4.6, which
+        # rejects `reasoning_effort='none'` under its own id, but the alias still takes all four values:
+        # xAI routes a `none` request on it to Grok 4.3 (live-verified). https://docs.x.ai/developers/models
         'grok-latest',
         # Retired text slugs that xAI redirects to Grok 4.3, so they accept its `reasoning_effort`
         # values. These exact six are the only slugs the retirement guide maps to Grok 4.3
@@ -37,6 +41,9 @@ _GROK_45_REASONING_MODELS = frozenset(
     (
         'grok-4.5',
         'grok-4.5-latest',
+        # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
+        # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
+        'grok-4.6',
         # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
         # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
         'grok-build-latest',
@@ -99,3 +106,24 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         grok_reasoning_efforts=grok_reasoning_efforts,
         supported_native_tools=supported_native_tools,
     )
+
+
+def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+    """Get the realtime model profile for an xAI Grok Voice model."""
+    return {
+        'supports_manual_turn_control': True,
+        'supports_interruption': True,
+        # Grok Voice always speaks: the API has no response-modality control, so an
+        # `output_modality='text'` session would silently come back as audio.
+        'supports_text_output': False,
+        'supports_session_seeding': True,
+        'supports_seeding_images': False,
+        'supports_seeding_audio': False,
+        # xAI puts `think` in the name of the voice models that take `reasoning.effort`, so match on
+        # that rather than pinning versions: `grok-voice-think-fast-2.0` shipped a week after 1.0,
+        # and a pinned list would have silently dropped reasoning for anyone who moved to it.
+        'supports_thinking': model_name == 'grok-voice-latest' or model_name.startswith('grok-voice-think-'),
+        'emits_input_speech_events': True,
+        'audio_input_sample_rate': 24000,
+        'audio_output_sample_rate': 24000,
+    }

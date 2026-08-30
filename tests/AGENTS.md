@@ -63,8 +63,9 @@ async def test_feature(model: Model, stream: bool, request: pytest.FixtureReques
     Use the `request` fixture to access test parameter values.
 
     Use the `vcr` to make assertions about the HTTP requests if needed.
-    Another creative way of, for instance, asserting headers, is to use a patched httpx client fixture.
-    This spares us the overhead of parsing cassette fields, so it is to be preferred whenever optimal.
+    To assert what the code actually sent — headers included — take the `request_capture` fixture
+    instead. It reads the wire rather than the recording, so it is preferred whenever a transport
+    can be injected.
     """
     model_name = request.node.callspec.params['model']
     expected = EXPECTATIONS[(model_name, stream)]
@@ -132,11 +133,18 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
+### Realtime WebSocket cassettes
+
+Realtime cassettes live in `tests/realtime/cassettes/<module>/<test>.yaml`. Record them with
+`uv run --env-file .env pytest --record-mode=rewrite <test>`; normal test runs replay them offline.
+Unlike HTTP VCR cassettes, they contain raw WebSocket frames, with secrets scrubbed and audio payloads
+truncated. The testing skill's `parse_cassette.py` is HTTP-only and does not apply to these cassettes.
+
 ### Asserting what goes out on the wire
 
 Four mechanisms, and they are not interchangeable — pick by what the test's claim is about.
 
-**An httpx request hook — the boundary tap, and the first reach.** Give the provider an `httpx.AsyncClient` built with `event_hooks={'request': [...]}` and assert on what the hook collected; see `test_anthropic_code_execution_tool_container_reuse` in `tests/models/test_anthropic.py`. Event hooks run inside `AsyncClient.send`, above the transport VCR patches, so the hook fires on replay too and observes the request the live code actually built — a field the code stops sending fails the assertion instead of hiding behind a frozen recording. It costs the cassette nothing: matching is untouched, so fields that legitimately vary stay free to vary, and it sees what a cassette will not, headers included. The only requirement is a transport you can inject into, which is every provider taking `http_client`; a provider on another transport taps its own send-time event for the same reason — see `_capture_bedrock_request_headers` in `tests/models/test_bedrock.py`, a botocore `before-send` handler.
+**An httpx request hook — the boundary tap, and the first reach.** Request the `request_capture` fixture from `tests/models/conftest.py`, route the provider through `request_capture.client`, and assert on `request_capture.body(path_suffix)`; see `test_anthropic_code_execution_tool_container_reuse` in `tests/models/test_anthropic.py`. For an Anthropic model the `anthropic_model` factory does the routing, so `anthropic_model('claude-sonnet-4-5', capture=True)` is the whole setup. The fixture's client is an `httpx2.AsyncClient` carrying an `event_hooks={'request': [...]}` recorder, and event hooks run inside `AsyncClient.send`, above the transport VCR patches, so the hook fires on replay too and observes the request the live code actually built — a field the code stops sending fails the assertion instead of hiding behind a frozen recording. It costs the cassette nothing: matching is untouched, so fields that legitimately vary stay free to vary, and it sees what a cassette will not, headers included (the cassette serializer strips `anthropic-*`, so the wire is the only place a test can assert beta gating). Snapshot a projection of the body rather than the body itself — `content_blocks`, `message_shape` and `cache_breakpoints`, also in `tests/models/conftest.py`, pin the fields a claim rests on without churning on unrelated conversation-shape changes. The only requirement is a transport you can inject into, which is every provider taking `http_client`; a provider on another transport taps its own send-time event for the same reason — see `_capture_bedrock_request_headers` in `tests/models/test_bedrock.py`, a botocore `before-send` handler.
 
 **Snapshot the request body — the review surface.** `single_request_body` in `tests/cassette_utils.py` decodes the request the *cassette* holds, so `assert single_request_body(vcr) == snapshot({...})` puts the whole outbound payload in the test body instead of leaving it buried in a long YAML. What it does not do is catch drift: the recording is frozen, so it keeps passing after the live code stops sending a field, and a recording can already disagree with what the code sends today. Its second job is at re-record time, where a changed payload surfaces as a snapshot diff. Where a hook is attached, snapshot what the hook captured instead — same review surface, and it is the request that is actually going out.
 
@@ -144,7 +152,7 @@ Four mechanisms, and they are not interchangeable — pick by what the test's cl
 
 **Capture the render — for claims no single exchange holds.** When the SDK client is mocked outright so nothing goes over the wire, or the claim is that two renderings are byte-identical rather than that one recorded request looked a certain way, capture what the adapter produces and assert against that; see `test_tool_availability_delta_and_the_tools_cache_section` in `tests/test_tool_availability_portability.py`, and `rendered_requests` in `tests/models/test_anthropic_mid_conversation_system.py` for the per-request form. Where the requests do go out over httpx, the boundary tap gets the same evidence without reaching into adapter internals.
 
-Default for a test that asserts an outbound field: attach the hook and assert on what it captured, snapshotting it when the whole payload is worth reviewing. Fall back to snapshotting the cassette body and matching on the field where no hook can be attached. Don't add field-by-field asserts alongside a snapshot — the snapshot already pins them.
+Default for a test that asserts an outbound field: take the capture fixture and assert on what it recorded, snapshotting a projection when the whole payload is worth reviewing. Fall back to snapshotting the cassette body and matching on the field where no hook can be attached. Don't add field-by-field asserts alongside a snapshot — the snapshot already pins them.
 
 ## Key Fixtures
 
@@ -152,6 +160,22 @@ Default for a test that asserts an outbound field: attach the hook and assert on
 
 #### Model requests
 - `allow_model_requests` - bypasses the default `ALLOW_MODEL_REQUESTS = False`
+
+#### Blocking-call detection
+- `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
+- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
+- Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
+- Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
+- Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
+- Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
+- Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
+- Each pytest worker configures one detector per exclusion set and activates it separately for each test.
+- CI enables BlockBuster in Python 3.13 slim, evals, and standard jobs, plus unique compatibility or live-provider jobs.
+- The all-extras job disables BlockBuster because its stack-inspection overhead exceeds the seven-minute CI budget. Rebenchmark after [BlockBuster #61](https://github.com/cbornet/blockbuster/pull/61) is released in a compatible version, and re-enable it if the job stays within seven minutes.
+- Other Python-version lanes disable BlockBuster because they repeat the same dependency set.
+- Lowest-version lanes disable BlockBuster to keep jobs within the seven-minute CI budget. This leaves dependency-version-specific blocking behavior outside CI detection.
+- Local targeted tests enable BlockBuster by default.
 
 #### The `model` fixture (use with `indirect=True`)
 
@@ -184,6 +208,22 @@ async def test_something(model: Model):
 #### SSRF protection for URL downloads
 - `disable_ssrf_protection_for_vcr` - required for VCR tests that download URL content (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl` with `force_download=True`)
 - An autouse guard raises a `RuntimeError` if a VCR test triggers SSRF validation without this fixture
+
+### From `models/conftest.py`
+
+Available to every test under `tests/models/`. See "Asserting what goes out on the wire" for when to reach for them.
+
+- `request_capture` - a `RequestCapture` whose `client` records every outbound request; read bodies with `.body(path_suffix)` / `.bodies(path_suffix)` and headers off `.headers`
+- `anthropic_model` - factory for `AnthropicModel`; `capture=True` routes it through `request_capture.client`
+  ```python
+  async def test_something(
+      allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+  ):
+      agent = Agent(anthropic_model('claude-sonnet-4-5', capture=True))
+      await agent.run('hello')
+      assert message_shape(request_capture.body('/v1/messages')) == snapshot([...])
+  ```
+- `content_blocks(body, block_type)`, `message_shape(body)`, `cache_breakpoints(body)` - plain functions, not fixtures; projections of a captured body to snapshot instead of the whole payload
 
 ## Assertion Helpers
 
@@ -222,7 +262,7 @@ async def test_something(model: Model):
 - Never reference line numbers in test docstrings or comments (`lines 872-873`, `L42`, `line 100`) — they go stale on the next edit to the referenced file. Describe the condition or behavior instead
 - When testing prompt caching, assert prefix stability, not just a cache hit — `cache_read_tokens > 0` only proves that some prefix was reused, not that the prefix you intended stayed stable as history grows; pin it by asserting the cacheable region (serialized leading blocks up to the breakpoint) is byte-identical across consecutive requests and/or that the cache read covers the full prior prefix, since a per-request injection or serialization that moves with history length silently busts the cache with no error
 - When you deprecate a public symbol (add `@deprecated`), add a test asserting the warning fires — a `pytest.warns(PydanticAIDeprecationWarning, match=...)` block whose `match` pins both the symbol name and the migration guidance — so the deprecation is protected against accidental removal or a message rewrite, and any executable docstring/doc example that constructs the symbol is marked `{test="skip"}` (it would otherwise fail under `filterwarnings=["error"]`)
-- Don't blanket-suppress `reportDeprecated` at file scope — no whole-file `# pyright: ignore` (or `# pyright: basic`) at the top of a file to kill every deprecation static-warning at once, since that also silences the next *unintended* use of a deprecated symbol in the file. Put `# pyright: ignore[reportDeprecated]` on each intentional call instead. (The runtime side is different and conventional: a module-level `warnings.filterwarnings('ignore', message=...)` scoped to one deprecation message, in a file that pervasively constructs the deprecated symbol it tests — see `test_temporal.py` / `test_prefect.py` — is fine, as long as a dedicated `pytest.warns` test still proves the deprecation fires.)
+- Don't blanket-suppress `reportDeprecated` at file scope — no whole-file `# pyright: ignore` (or `# pyright: basic`) at the top of a file to kill every deprecation static-warning at once, since that also silences the next *unintended* use of a deprecated symbol in the file. Put `# pyright: ignore[reportDeprecated]` on each intentional call instead. (The runtime side is different and conventional: a module-level `warnings.filterwarnings('ignore', message=...)` scoped to one deprecation message, in a file that pervasively constructs the deprecated symbol it tests — see `tests/durable_exec/temporal/test_agent.py` / `tests/durable_exec/test_prefect.py` — is fine, as long as a dedicated `pytest.warns` test still proves the deprecation fires.)
 
 ## Directory Structure
 

@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 
 from pydantic_ai.agent import Agent
@@ -57,12 +56,6 @@ def test_heroku_provider_need_api_key(env: TestEnv) -> None:
         HerokuProvider()
 
 
-def test_heroku_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = HerokuProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
 def test_heroku_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = HerokuProvider(openai_client=openai_client)
@@ -105,6 +98,23 @@ def test_heroku_model_profile_routes_thinking_capable_families():
     assert fallback.get('supports_thinking') is None
 
 
+@pytest.mark.parametrize('model_name', ['glm-4-7', 'glm-4-7-flash', 'GLM-4-7'])
+def test_heroku_glm_routes_to_zai_profile(model_name: str):
+    """GLM is a Z.AI family, so it must not inherit MoonshotAI's Kimi-only whitespace quirk.
+
+    Heroku spells the minor version with a hyphen, which `zai_model_profile`'s dotted prefixes don't
+    match, so `HerokuProvider.model_profile` normalizes it first. The uppercase case pins that the
+    normalization still applies to a mixed-case id, which only holds while `model_profile` lowercases
+    before dispatching.
+    """
+    provider = HerokuProvider(api_key='api-key')
+
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking') is True
+    assert profile.get('ignore_streamed_leading_whitespace') is None
+
+
 @pytest.mark.parametrize('model_name', ['kimi-k2-5', 'kimi-k2-thinking'])
 def test_heroku_kimi_reasoning_models_support_thinking(model_name: str):
     provider = HerokuProvider(api_key='api-key')
@@ -123,3 +133,15 @@ async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: Non
     assert result.output == snapshot(
         "The capital of France is Paris. It's not only the political capital but also a major cultural and economic hub in Europe, known for landmarks like the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral."
     )
+
+
+def test_heroku_mixed_case_model_name_profile_flags():
+    """Mixed-case model IDs must yield the same profile flags as their lowercase
+    equivalents so thinking settings are not silently dropped."""
+    provider = HerokuProvider(api_key='api-key')
+
+    deepseek = provider.model_profile('DeepSeek-R1')
+    assert deepseek is not None
+    assert deepseek.get('supports_thinking') is True
+    assert deepseek.get('thinking_always_enabled') is True
+    assert deepseek.get('ignore_streamed_leading_whitespace') is True

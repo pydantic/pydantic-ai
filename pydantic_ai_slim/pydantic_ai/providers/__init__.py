@@ -9,20 +9,23 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 import anyio
-import httpx
 from typing_extensions import Self, TypeVar
 
+from .._http import AsyncHTTPClient
 from ..exceptions import UserError
 from ..profiles import ModelProfile
+
+if TYPE_CHECKING:
+    from ..realtime import RealtimeModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
 
 _KEYLESS_HINT = (
     "To try Pydantic AI without an API key, use the built-in test model: `Agent('test')`. "
-    'See https://ai.pydantic.dev/testing/'
+    'See https://pydantic.dev/docs/ai/guides/testing/'
 )
 
 
@@ -30,7 +33,7 @@ def missing_api_key_error(message: str) -> UserError:
     """Build a [`UserError`][pydantic_ai.exceptions.UserError] for missing provider credentials.
 
     The provider-specific `message` (which environment variable to set or how to pass the key) is followed by a
-    hint pointing newcomers to the keyless [test model](https://ai.pydantic.dev/testing/), so a missing key never
+    hint pointing newcomers to the keyless [test model](https://pydantic.dev/docs/ai/guides/testing/), so a missing key never
     dead-ends the getting-started experience.
     """
     return UserError(f'{message} {_KEYLESS_HINT}')
@@ -50,9 +53,10 @@ class Provider(ABC, Generic[InterfaceClient]):
     """
 
     _client: InterfaceClient
-    _own_http_client: httpx.AsyncClient | None = None
-    _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
+    _own_http_client: AsyncHTTPClient | None = None
+    _http_client_factory: Callable[[], AsyncHTTPClient] | None = None
     _entered_count: int = 0
+    _model_id_namespace: str | None = None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -74,6 +78,11 @@ class Provider(ABC, Generic[InterfaceClient]):
         raise NotImplementedError()
 
     @property
+    def model_id_namespace(self) -> str:
+        """The namespace used to fully qualify model IDs routed through this provider."""
+        return self._model_id_namespace or self.name
+
+    @property
     @abstractmethod
     def base_url(self) -> str:
         """The base URL for the provider API."""
@@ -90,7 +99,12 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile | None:
+        """The realtime model profile for the named model, if available."""
+        return None
+
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         """Update the SDK client's internal HTTP client reference.
 
         Subclasses that manage their own HTTP client should override this to inject
@@ -191,6 +205,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .cohere import CohereProvider
 
         return CohereProvider
+    elif provider == 'crusoe':
+        from .crusoe import CrusoeProvider
+
+        return CrusoeProvider
     elif provider == 'xai':
         from .xai import XaiProvider
 

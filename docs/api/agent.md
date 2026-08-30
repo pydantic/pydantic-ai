@@ -7,6 +7,7 @@
             - AbstractAgent
             - WrapperAgent
             - AgentRetries
+            - AgentRealtime
             - AgentRun
             - AgentRunEvents
             - AgentRunResult

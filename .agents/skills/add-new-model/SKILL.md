@@ -124,15 +124,13 @@ If snapshot tests changed: `uv run pytest <file> --inline-snapshot=fix` then ver
 
 ## Step 8 — PR
 
-Terse, not botty. Structure:
+Follow the `pushing-commits-to-the-repo` skill for the title, body, template, and final metadata
+check. Keep the model-specific evidence concise:
 
 - One sentence: what model(s) were added.
-- Bulleted file list with one-line "what changed" per file.
 - "Verified via probe / mirror of #NNNN" — explicit about which changes were API-verified vs assumed-by-mirror.
 - Flag pre-existing latent bugs found but deliberately not fixed.
 - Link the prior add-model PR for context.
-
-Include the [PR template](.github/pull_request_template.md), fill in the issue number, and check the "AI generated code" box in the GitHub UI yourself — `gh pr create` cannot set it.
 
 ## Provider-specific landmines
 

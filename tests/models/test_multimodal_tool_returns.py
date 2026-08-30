@@ -14,7 +14,6 @@ The SUPPORT_MATRIX determines expected behavior for each (provider, file_type) p
 from __future__ import annotations
 
 import os
-import unittest.mock
 from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
@@ -954,6 +953,7 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
 async def test_uploaded_file_validation_error_in_tool_return(
     case: UploadedFileErrorCase,
     bedrock_provider: Any,
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that invalid UploadedFile in a tool return raises UserError before the API call."""
     provider = case.provider
@@ -977,12 +977,9 @@ async def test_uploaded_file_validation_error_in_tool_return(
         with pytest.raises(UserError, match=case.match):
             await m_bedrock._map_messages(messages, params, None)  # pyright: ignore[reportPrivateUsage]
     elif provider == 'google_vertex':
-        m_google = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+        m_google = GoogleModel('gemini-3-flash-preview', provider=vertex_client_google_provider)
         with pytest.raises(UserError, match=case.match):
-            with unittest.mock.patch.object(
-                type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
-            ):
-                await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
+            await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
     elif provider == 'openai_responses':
         m_openai = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
         with pytest.raises(UserError, match=case.match):
@@ -992,13 +989,15 @@ async def test_uploaded_file_validation_error_in_tool_return(
 
 
 @pytest.mark.skipif(not google_available(), reason='google dependencies not installed')
-async def test_uploaded_file_vertex_valid_gcs_uri() -> None:
-    """Test that a valid Vertex UploadedFile with gs:// URI maps correctly."""
-    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+async def test_uploaded_file_vertex_valid_gcs_uri(vertex_client_google_provider: GoogleProvider) -> None:
+    """Test that a valid Vertex UploadedFile with gs:// URI maps correctly.
+
+    The model is Vertex-backed via the client transport (not the provider name), matching #6792.
+    """
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_client_google_provider)
     file = UploadedFile(file_id='gs://bucket/path/file.pdf', provider_name='google-cloud', media_type='application/pdf')
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=file, tool_call_id='1')]),
     ]
-    with unittest.mock.patch.object(type(model), 'system', new_callable=lambda: property(lambda self: 'google-vertex')):
-        _, contents = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
     assert len(contents) == 1

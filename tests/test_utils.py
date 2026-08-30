@@ -22,6 +22,7 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
+    await_maybe,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
     format_inlined_text_file,
@@ -41,6 +42,16 @@ from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_await_maybe():
+    async def _coro() -> int:
+        return 1
+
+    # A plain (non-awaitable) value is returned unchanged.
+    assert await await_maybe(1) == 1
+    # A coroutine (however it was produced — e.g. a plain `def` returning one) is awaited.
+    assert await await_maybe(_coro()) == 1
 
 
 def test_get_first_param_type_annotation_type_error():
@@ -240,6 +251,45 @@ async def test_peekable_async_stream_aclose_cancels_in_flight_pull(peek_pull: bo
 
     assert followup_ran.is_set()
     assert not pull.cancelled()
+
+
+@pytest.mark.anyio
+async def test_peekable_async_stream_aclose_cancels_all_in_flight_pulls():
+    pull_started = anyio.Event()
+    source_closed = anyio.Event()
+    peek_done = anyio.Event()
+    next_done = anyio.Event()
+
+    async def source() -> AsyncIterator[int]:
+        try:
+            pull_started.set()
+            await anyio.sleep_forever()
+            yield 1  # pragma: no cover
+        finally:
+            source_closed.set()
+
+    stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
+
+    async def peek() -> None:
+        assert await stream.peek() is UNSET
+        peek_done.set()
+
+    async def pull() -> None:
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        next_done.set()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(peek)
+        await pull_started.wait()
+        task_group.start_soon(pull)
+        await anyio.sleep(0)
+        assert len(stream._pull_scopes) == 2  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(1):
+            await stream.aclose()
+            await source_closed.wait()
+            await peek_done.wait()
+            await next_done.wait()
 
 
 def test_run_until_complete_cleans_up_own_task_on_interrupt():

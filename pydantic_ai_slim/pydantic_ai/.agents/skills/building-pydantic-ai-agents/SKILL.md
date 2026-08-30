@@ -194,6 +194,8 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 ```
 
+For a custom capability hook that performs I/O under Temporal, DBOS, or Prefect, mark a fixed method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names, so keep it stable even if the Python method is renamed. For dynamically contributed handlers, return them from `get_durable_operations()` and invoke a typed handle with `ctx.durable_operation(self, name, handler)`. Always set a stable capability `id`; without a durability capability both forms call the original async handler directly. Arguments and results must be serializable like durable tool inputs and outputs.
+
 ### Define Agent from YAML Spec
 
 Use `Agent.from_file` to load agents from YAML or JSON — no Python agent construction code needed.
@@ -211,6 +213,96 @@ from pydantic_ai import Agent
 
 agent = Agent.from_file('agent.yaml')
 ```
+
+### Realtime (speech-to-speech) sessions
+
+For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure OpenAI,
+Gemini Live, or xAI Grok Voice), use
+`agent.realtime().session()` instead of `run()`. It reuses the agent's tools and instructions and runs
+the tool loop for you. Stream input with `send_audio`/`send`, and iterate the
+session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
+`PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
+`FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`RealtimeInputSpeechStartEvent`,
+`RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). Use `RealtimeTurnCompleteEvent` as the exchange
+boundary, when generation and tool work are complete. This is not always the end of audible speech:
+on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    PartDeltaEvent,
+    PartEndEvent,
+    SpeechPart,
+    SpeechPartDelta,
+)
+from pydantic_ai.realtime import RealtimeSessionErrorEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def main(microphone_chunk: bytes):
+    settings = OpenAIRealtimeModelSettings(openai_voice='alloy', turn_detection=False)
+    async with agent.realtime(
+        'openai:gpt-realtime', model_settings=settings
+    ).session() as session:
+        await session.send_audio(microphone_chunk)  # PCM16 bytes
+        await session.commit_audio()
+        await session.create_response()
+        # Input transcription can finish after the model's response.
+        turn_complete = user_turn_complete = False
+        async for event in session:
+            match event:
+                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
+                    ...  # play audio out
+                case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
+                    if t is not None:
+                        print('user said:', t)
+                    user_turn_complete = True
+                case RealtimeTurnCompleteEvent():
+                    turn_complete = True
+                case RealtimeSessionErrorEvent(message=message):
+                    raise RuntimeError(message)
+            if turn_complete and user_turn_complete:
+                break
+
+    # A session builds ordinary ModelMessage history: hand it off to a text agent.
+    notes = Agent('openai:gpt-5.2', instructions='Summarize.')
+    await notes.run(message_history=session.all_messages())
+```
+
+Key facts for building realtime agents:
+
+- **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
+  return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
+  are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
+  and xAI cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
+  history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
+  oldest evicted first) record.
+- **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
+  agent behind a tool, or hand off history afterwards.
+- **Check the model profile before calling profile-gated methods**: `model.profile` (a
+  `RealtimeModelProfile`, the realtime counterpart to `ModelProfile`) reports
+  `supports_manual_turn_control`, `supports_interruption`, `supports_image_input`,
+  `supports_output_truncation`, and `supports_session_seeding`. OpenAI and Azure OpenAI support all of these; Gemini
+  Live lacks `supports_manual_turn_control`, `supports_interruption`, and `supports_output_truncation`
+  (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+- **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
+  silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
+  `google_vad` only for finer provider-specific control; when present, they fully override the shared
+  setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
+  (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
+- **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
+  the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
+  `google_async_tool_calls=True` on a native-audio model).
+- **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
+  offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
+  resolved instructions and tools are baked in and the API key stays on the server — then attach a
+  control-plane **sideband** with `.session(provider_session=answer.session)`. The browser owns the
+  audio; the sideband session runs tools and builds history (its audio methods raise, and
+  `audio_retention` must stay `'transcript_only'`).
+
+See the [Realtime guide](https://pydantic.dev/docs/ai/realtime/overview/) for the full walkthrough.
 
 ## Task Routing Table
 

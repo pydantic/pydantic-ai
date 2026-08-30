@@ -6,6 +6,7 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
@@ -24,8 +25,8 @@ if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation
     from typing_extensions import Self
 
-    from pydantic_ai.messages import ModelMessage, ModelResponse
-    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
+    from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.settings import ModelSettings
 
@@ -281,13 +282,13 @@ def has_stale_message_json(
     return False
 
 
-def model_attributes(model: Model) -> dict[str, AttributeValue]:
+def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
+    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
     attributes: dict[str, AttributeValue] = {
-        GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
-        GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
-        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
     }
-    if base_url := model.base_url:
+    if base_url:
         try:
             parsed = urlparse(base_url)
             # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
@@ -303,10 +304,59 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
     return attributes
 
 
+def model_attributes(model: AbstractModel) -> dict[str, AttributeValue]:
+    return {
+        **provider_attributes(model.system, model.base_url),
+        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+    }
+
+
+def model_metric_attributes(
+    provider_name: str | None,
+    request_model: AttributeValue | None,
+    response_model: AttributeValue | None,
+) -> dict[str, AttributeValue]:
+    """Build the dimensions shared by classic and realtime per-response metrics."""
+    attributes: dict[str, AttributeValue] = {'gen_ai.operation.name': 'chat'}
+    if provider_name is not None:
+        attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE] = provider_name
+        attributes[GEN_AI_SYSTEM_ATTRIBUTE] = provider_name
+    if request_model is not None:
+        attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE] = request_model
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
+    return attributes
+
+
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
+    return {
+        'model_request_parameters': safe_to_json(_serialize_model_request_parameters(model_request_parameters)).decode()
+    }
+
+
+def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
+    """Serialize the parameters through their own schema, falling back to inference.
+
+    `serialize_any` infers a shape from the value, which reads a dataclass as its fields and so
+    loses whatever its class meant. `InstructionPart.id` is exactly that case: its source is a
+    class rather than a tagged field, so inference renders a toolset and a capability sharing an
+    `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
+    the same flat key it serializes to everywhere else.
+    """
+    try:
+        return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+    except Exception:  # pragma: no cover
+        # A tool definition carrying something unserializable must not take the span down with it.
+        return serialize_any(model_request_parameters)
+
+
+@cache
+def _model_request_parameters_adapter() -> TypeAdapter[ModelRequestParameters]:
+    from pydantic_ai.models import ModelRequestParameters
+
+    return TypeAdapter(ModelRequestParameters)
 
 
 def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
@@ -370,6 +420,41 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
         tool_definitions.append(tool_def)
 
     return tool_definitions
+
+
+def response_attributes(
+    response: ModelResponse,
+    response_model: AttributeValue | None,
+    price_calculation: PriceCalculation | None = None,
+) -> dict[str, AttributeValue]:
+    """Build the `gen_ai.response.*`, usage, and cost span attributes for a completed response.
+
+    Shared between the classic model-request span (`open_model_request_span`) and the realtime
+    session's per-turn `chat` span so the two paths report the same shape and can't drift.
+    `response_model` is set only when known (always the case for a classic request; a realtime
+    session may not know its model name).
+    """
+    attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
+    if price_calculation is not None:
+        attributes['operation.cost'] = float(price_calculation.total_price)
+    if response.provider_response_id is not None:
+        attributes['gen_ai.response.id'] = response.provider_response_id
+    if response.finish_reason is not None:
+        attributes['gen_ai.response.finish_reasons'] = [response.finish_reason]
+    return attributes
+
+
+def response_price_calculation(response: ModelResponse) -> PriceCalculation | None:
+    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`)."""
+    return best_effort_price(
+        response.usage,
+        model_name=response.model_name,
+        provider_api_url=response.provider_url,
+        provider_name=response.provider_name,
+        genai_request_timestamp=response.timestamp,
+    )
 
 
 class _FinishModelRequestSpan(Protocol):
@@ -453,26 +538,14 @@ def open_model_request_span(
                 price_calculation: PriceCalculation | None = None
 
                 def _record_metrics() -> None:
-                    metric_attributes = {
-                        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,
-                        GEN_AI_SYSTEM_ATTRIBUTE: system,
-                        'gen_ai.operation.name': operation,
-                        'gen_ai.request.model': request_model,
-                        'gen_ai.response.model': response_model,
-                    }
+                    metric_attributes = model_metric_attributes(system, request_model, response_model)
                     settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
 
                 record_metrics = _record_metrics
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                price_calculation = best_effort_price(
-                    response.usage,
-                    model_name=response.model_name,
-                    provider_api_url=response.provider_url,
-                    provider_name=response.provider_name,
-                    genai_request_timestamp=response.timestamp,
-                )
+                price_calculation = response_price_calculation(response)
 
                 if not span.is_recording():
                     return
@@ -485,16 +558,7 @@ def open_model_request_span(
                     message_json_cache=message_json_cache,
                 )
 
-                attributes_to_set: dict[str, Any] = {
-                    **response.usage.opentelemetry_attributes(),
-                    'gen_ai.response.model': response_model,
-                }
-                if price_calculation is not None:
-                    attributes_to_set['operation.cost'] = float(price_calculation.total_price)
-                if response.provider_response_id is not None:
-                    attributes_to_set['gen_ai.response.id'] = response.provider_response_id
-                if response.finish_reason is not None:
-                    attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                attributes_to_set = response_attributes(response, response_model, price_calculation)
                 if time_to_first_chunk is not None:
                     attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
@@ -551,7 +615,7 @@ def get_instructions(
     Falls back to reading `ModelRequest.instructions` from message history when
     `model_request_parameters` is not available (e.g. OTel span attributes).
     """
-    from pydantic_ai.messages import InstructionPart, ModelRequest
+    from pydantic_ai.messages import InstructionPart
     from pydantic_ai.models import Model
 
     if model_request_parameters:
@@ -560,13 +624,24 @@ def get_instructions(
             return InstructionPart.join(parts)
 
     # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
-    #
-    # Get instructions from the first ModelRequest found when iterating messages in reverse.
+    source = get_instructions_source(messages)
+    return source.instructions if source is not None else None
+
+
+def get_instructions_source(messages: Sequence[ModelMessage]) -> ModelRequest | None:
+    """The request in `messages` whose `instructions` are the ones in force for the current request.
+
+    Split out from `get_instructions` because the resume path needs the request itself, not just its
+    text: a `before_model_request` hook's rewrite has to land on the message that records the
+    instructions being echoed back, and stamping the wrong one would put instructions on a request
+    that was sent without any.
+    """
+    from pydantic_ai.messages import ModelRequest
+
+    # The first ModelRequest found when iterating messages in reverse.
     # In the case that a "mock" request was generated to include a tool-return part for a result tool,
     # we want to use the instructions from the second-to-most-recent request (which should correspond to the
     # original request that generated the response that resulted in the tool-return part).
-    instructions = None
-
     last_two_requests: list[ModelRequest] = []
     for message in reversed(messages):
         if isinstance(message, ModelRequest):
@@ -574,11 +649,10 @@ def get_instructions(
             if len(last_two_requests) == 2:
                 break
             if message.instructions is not None:
-                instructions = message.instructions
-                break
+                return message
 
-    # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-    if instructions is None and len(last_two_requests) == 2:
+    # If we don't have two requests, and we didn't already return one, there are definitely no instructions:
+    if len(last_two_requests) == 2:
         most_recent_request = last_two_requests[0]
         second_most_recent_request = last_two_requests[1]
 
@@ -597,9 +671,9 @@ def get_instructions(
         # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
 
         if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
-            instructions = second_most_recent_request.instructions
+            return second_most_recent_request
 
-    return instructions
+    return None
 
 
 def current_otel_traceparent() -> str | None:
@@ -635,6 +709,9 @@ class InstrumentationNames:
     # Deferral span attributes
     tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
     tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
+
+    # Set on tool spans for calls that failed before execution; absent on execution failures
+    tool_failure_stage_attr: ClassVar[str] = 'pydantic_ai.tool.failure_stage'
 
     @classmethod
     def for_version(cls, version: int) -> Self:

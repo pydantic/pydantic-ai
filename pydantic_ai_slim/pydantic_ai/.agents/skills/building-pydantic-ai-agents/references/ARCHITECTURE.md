@@ -183,8 +183,9 @@ Need deterministic, fast tests?
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
 | Snowflake Cortex | `snowflake:` | `snowflake:claude-sonnet-4-6` |
+| Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
 
-**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For truly custom providers, subclass `Model` or use `OpenAIChatModel` with a custom `base_url`.
+**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`.
 
 ### Tool Decorator Comparison
 
@@ -220,6 +221,7 @@ Need deterministic, fast tests?
 | Writing a CLI tool, script, or Jupyter notebook (no async) | `agent.run_sync()` |
 | Streaming final text word-by-word to a UI | `agent.run_stream()` |
 | Synchronous streaming for CLI tools or scripts (no async) | `agent.run_stream_sync()` |
+| Delegating to another agent from a tool or output function | `await agent.run()` in an `async def` function; the sync run methods cannot be used inside an agent run |
 | Receiving an async iterable of typed events (tool calls, results, final output) | `agent.run_stream_events()` |
 | Inspecting or modifying state between agent steps, human-in-the-loop approval | `agent.iter()` |
 

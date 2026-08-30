@@ -210,6 +210,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -478,7 +479,7 @@ def test_safe_to_json_falls_back_on_lone_surrogates():
 
 
 def test_instrumentation_settings_rejects_removed_version():
-    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, or 5'):
+    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, 5, or 6'):
         InstrumentationSettings(version=1)  # pyright: ignore[reportArgumentType]
 
 
@@ -546,6 +547,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -640,6 +642,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -741,6 +744,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -967,6 +971,74 @@ def test_messages_to_otel_message_parts_tool_availability_delta(include_content:
         [{'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate'}]
     )
     assert user_message['role'] == 'user'
+
+
+def test_messages_to_otel_messages_request_roles_v6():
+    """From version 6 a request splits into one message per role, in part order.
+
+    A tool return and a retry that answers a tool call both render as a `tool_call_response`, which
+    the GenAI semantic conventions put in a `tool` message. A retry that answers nothing renders as
+    text and reaches the model as user content, so it starts a new message.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be brief.'), UserPromptPart(content='Convert 10 EUR.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='convert', args={'amount': 10}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='convert', content='11 USD', tool_call_id='call_1'),
+                RetryPromptPart(content='Unknown currency.', tool_name='convert', tool_call_id='call_2'),
+                RetryPromptPart(content='Output did not validate.'),
+                UserPromptPart(content='Thanks.'),
+            ]
+        ),
+    ]
+    assert InstrumentationSettings(include_content=True, version=6).messages_to_otel_messages(messages) == snapshot(
+        [
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Be brief.'}]},
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'convert', 'arguments': {'amount': 10}}],
+            },
+            {
+                'role': 'tool',
+                'parts': [
+                    {'type': 'tool_call_response', 'id': 'call_1', 'name': 'convert', 'result': '11 USD'},
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'call_2',
+                        'name': 'convert',
+                        'result': """\
+Unknown currency.
+
+Fix the errors and try again.\
+""",
+                    },
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'text',
+                        'content': """\
+Validation feedback:
+Output did not validate.
+
+Fix the errors and try again.\
+""",
+                    },
+                    {'type': 'text', 'content': 'Thanks.'},
+                ],
+            },
+        ]
+    )
+
+    # Every earlier version keeps the tool results on `user`, in the single message they shared there.
+    settings = InstrumentationSettings(include_content=True)
+    assert [message['role'] for message in settings.messages_to_otel_messages(messages)] == snapshot(
+        ['system', 'user', 'assistant', 'user']
+    )
 
 
 def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent):
@@ -1354,6 +1426,7 @@ def test_messages_without_content(document_content: BinaryContent):
             parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
             timestamp=IsDatetime(),
         ),
+        ModelRequest(parts=[RetryPromptPart('retry_prompt_no_tool')], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart('simple text prompt')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
@@ -1383,6 +1456,7 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
+            {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'blob', 'mime_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'blob', 'mime_type': 'application/pdf'}]},
@@ -1447,6 +1521,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

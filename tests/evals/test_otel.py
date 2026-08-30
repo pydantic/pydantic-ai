@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pytest_mock import MockerFixture
@@ -12,7 +13,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
-    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
+    from pydantic_evals.otel.span_tree import AttributeValue, SpanNode, SpanQuery, SpanTree
 
 with try_import() as logfire_import_successful:
     import logfire
@@ -96,20 +97,42 @@ async def test_context_subtree_concurrent():
 
 
 @pytest.fixture
-async def span_tree() -> SpanTree:
-    """Fixture that creates a span tree with a predefined structure and attributes."""
-    # Create spans with a tree structure and attributes
-    with context_subtree() as tree:
-        with logfire.span('root', level='0'):
-            with logfire.span('child1', level='1', type='important'):
-                with logfire.span('grandchild1', level='2', type='important'):
-                    pass
-                with logfire.span('grandchild2', level='2', type='normal'):
-                    pass
-            with logfire.span('child2', level='1', type='normal'):
-                with logfire.span('grandchild3', level='2', type='normal'):
-                    pass
-    assert isinstance(tree, SpanTree)
+def span_tree() -> SpanTree:
+    """Build deterministic input for pure tree queries, which have no provider request to record with VCR.
+
+    Live Logfire/OTel capture is exercised separately by the `context_subtree` tests above.
+    """
+
+    def make_span(
+        name: str,
+        span_id: int,
+        parent_span_id: int | None,
+        start: int,
+        duration: int,
+        **attributes: AttributeValue,
+    ) -> SpanNode:
+        start_timestamp = datetime.fromtimestamp(start, tz=timezone.utc)
+        return SpanNode(
+            name=name,
+            trace_id=1,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            start_timestamp=start_timestamp,
+            end_timestamp=start_timestamp + timedelta(seconds=duration),
+            attributes=attributes,
+        )
+
+    tree = SpanTree()
+    tree.add_spans(
+        [
+            make_span('root', 1, None, 1, 11, level='0'),
+            make_span('child1', 3, 1, 2, 5, level='1', type='important'),
+            make_span('grandchild1', 5, 3, 3, 1, level='2', type='important'),
+            make_span('grandchild2', 7, 3, 5, 1, level='2', type='normal'),
+            make_span('child2', 9, 1, 8, 3, level='1', type='normal'),
+            make_span('grandchild3', 11, 9, 9, 1, level='2', type='normal'),
+        ]
+    )
     return tree
 
 
@@ -209,6 +232,11 @@ async def test_span_node_find_descendants(span_tree: SpanTree):
     child1_node = root_node.first_child(lambda node: node.name == 'child1')
     assert child1_node is not None
     assert child1_node.matches({'min_descendant_count': 2, 'max_descendant_count': 2})
+
+    grandchild1_node = root_node.first_descendant(lambda node: node.name == 'grandchild1')
+    assert grandchild1_node is not None
+    assert grandchild1_node.matches({'max_descendant_count': 0})
+    assert not root_node.matches({'max_descendant_count': 0})
 
 
 async def test_span_node_matches(span_tree: SpanTree):
@@ -442,6 +470,11 @@ async def test_span_tree_ancestors_methods():
     assert not leaf_node.matches({'min_depth': 3, 'max_depth': 3})
     assert not leaf_node.matches({'min_depth': 5, 'max_depth': 5})
 
+    root_node = tree.first(lambda node: node.name == 'root')
+    assert root_node is not None
+    assert root_node.matches({'max_depth': 0})
+    assert not leaf_node.matches({'max_depth': 0})
+
     assert [node.name for node in leaf_node.ancestors] == ['level3', 'level2', 'level1', 'root']
     assert leaf_node.matches({'some_ancestor_has': {'name_equals': 'level1'}})
     assert not leaf_node.matches({'some_ancestor_has': {'name_equals': 'level4'}})
@@ -461,6 +494,16 @@ async def test_span_tree_ancestors_methods():
     )
     assert leaf_node.matches(
         {'no_ancestor_has': {'name_matches_regex': 'root'}, 'stop_recursing_when': {'name_equals': 'level1'}}
+    )
+
+    # Pruned results are reused by each recursive condition and must be reusable
+    # collections rather than one-shot generators.
+    assert not leaf_node.matches(
+        {
+            'all_ancestors_have': {'name_matches_regex': 'level|root'},
+            'no_ancestor_has': {'name_equals': 'root'},
+            'stop_recursing_when': {'name_equals': 'never'},
+        }
     )
 
 
@@ -548,6 +591,104 @@ async def test_span_tree_descendants_methods():
     )
     assert root_node.matches(
         {'no_descendant_has': {'name_equals': 'leaf'}, 'stop_recursing_when': {'name_equals': 'level3'}}
+    )
+
+
+async def test_span_query_stop_recursing_when_with_multiple_conditions():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/7484.
+
+    When `stop_recursing_when` was present, the pruned descendants/ancestors were cached as a
+    generator rather than a list, so only the first descendant/ancestor condition in the query saw
+    any nodes and every later condition was evaluated against an (at least partially) exhausted
+    iterator: `no_*_has` and `all_*_have` passed vacuously, `some_*_has` failed vacuously.
+    """
+    with context_subtree() as tree:
+        with logfire.span('root', depth=0):
+            with logfire.span('level1', depth=1):
+                with logfire.span('level2', depth=2):
+                    with logfire.span('level3', depth=3):
+                        logfire.info('leaf', depth=4)
+    assert isinstance(tree, SpanTree)
+
+    root_node = tree.roots[0]
+    leaf_node = root_node.first_descendant(lambda node: node.name == 'leaf')
+    assert leaf_node is not None
+
+    # An inert prune (matching no node) must not change the result of any multi-condition query.
+    # `no_descendant_has` after another descendant condition: `level2` is a descendant, so this must fail.
+    query: SpanQuery = {
+        'all_descendants_have': {'has_attribute_keys': ['depth']},
+        'no_descendant_has': {'name_equals': 'level2'},
+    }
+    assert not root_node.matches(query)
+    assert not root_node.matches({**query, 'stop_recursing_when': {'name_equals': 'never-matches'}})
+
+    # `all_descendants_have` after another descendant condition: `leaf` does not contain `level`.
+    query = {
+        'some_descendant_has': {'name_equals': 'leaf'},
+        'all_descendants_have': {'name_contains': 'level'},
+    }
+    assert not root_node.matches(query)
+    assert not root_node.matches({**query, 'stop_recursing_when': {'name_equals': 'never-matches'}})
+
+    # Same on the ancestor side: `root` is an ancestor of the leaf, so this must fail.
+    query = {
+        'all_ancestors_have': {'has_attribute_keys': ['depth']},
+        'no_ancestor_has': {'name_equals': 'root'},
+    }
+    assert not leaf_node.matches(query)
+    assert not leaf_node.matches({**query, 'stop_recursing_when': {'name_equals': 'never-matches'}})
+
+    # `root` does not contain `level`.
+    query = {
+        'some_ancestor_has': {'name_equals': 'root'},
+        'all_ancestors_have': {'name_contains': 'level'},
+    }
+    assert not leaf_node.matches(query)
+    assert not leaf_node.matches({**query, 'stop_recursing_when': {'name_equals': 'never-matches'}})
+
+    # An effective prune applies to every condition in the query, not just the first: pruning at
+    # `level2` leaves `level1` and `level2`, so `no_descendant_has` must fail even though
+    # `some_descendant_has` already consumed past it.
+    assert not root_node.matches(
+        {
+            'some_descendant_has': {'name_equals': 'level2'},
+            'no_descendant_has': {'name_equals': 'level1'},
+            'stop_recursing_when': {'name_equals': 'level2'},
+        }
+    )
+    assert not leaf_node.matches(
+        {
+            'some_ancestor_has': {'name_equals': 'level2'},
+            'no_ancestor_has': {'name_equals': 'level3'},
+            'stop_recursing_when': {'name_equals': 'level2'},
+        }
+    )
+
+    # Splitting each condition into its own `and_` sub-query, each carrying its own prune,
+    # behaves identically to the combined queries above.
+    assert not root_node.matches(
+        {
+            'and_': [
+                {'some_descendant_has': {'name_equals': 'level2'}, 'stop_recursing_when': {'name_equals': 'level2'}},
+                {'no_descendant_has': {'name_equals': 'level1'}, 'stop_recursing_when': {'name_equals': 'level2'}},
+            ]
+        }
+    )
+    assert root_node.matches(
+        {
+            'and_': [
+                {'some_descendant_has': {'name_equals': 'level2'}, 'stop_recursing_when': {'name_equals': 'level2'}},
+                {'no_descendant_has': {'name_equals': 'level3'}, 'stop_recursing_when': {'name_equals': 'level2'}},
+            ]
+        }
+    )
+    assert root_node.matches(
+        {
+            'some_descendant_has': {'name_equals': 'level2'},
+            'no_descendant_has': {'name_equals': 'level3'},
+            'stop_recursing_when': {'name_equals': 'level2'},
+        }
     )
 
 
@@ -921,6 +1062,13 @@ async def test_span_query_child_count():
     assert parent_three.matches({'min_child_count': 2, 'max_child_count': 3})
     assert not parent_three.matches({'max_child_count': 2})
 
+    parent_no_children = tree.first(lambda node: node.name == 'parent_no_children')
+    parent_one_child = tree.first(lambda node: node.name == 'parent_one_child')
+    assert parent_no_children is not None
+    assert parent_one_child is not None
+    assert parent_no_children.matches({'max_child_count': 0})
+    assert not parent_one_child.matches({'max_child_count': 0})
+
     # Test with logical operators
     logical_query: SpanQuery = {
         'and_': [{'name_contains': 'parent'}, {'min_child_count': 1}],
@@ -968,7 +1116,7 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'To make use of the `span_tree` in an evaluator, you need to call '
         '`logfire.configure(...)` before running an evaluation. For more information, '
         'refer to the documentation at '
-        'https://ai.pydantic.dev/evals/#opentelemetry-integration.'
+        'https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
     )
 
 
