@@ -136,15 +136,15 @@ class ModelResponsePartsManager:
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
     def get_part(self, index: int) -> ManagedPart | None:
-        """Return the part at the unfiltered stream ``index``.
+        """Return the part at the unfiltered stream `index`.
 
-        Returns None while the part is still a dangling ``ToolCallPartDelta`` (a tool-call
+        Returns None while the part is still a dangling `ToolCallPartDelta` (a tool-call
         delta that never received a name and so was never promoted to a real part).
 
-        ``PartStartEvent.index`` values come from the unfiltered ``_parts`` space (see
-        :meth:`_append_part`), so a lookup by that index must NOT go through :meth:`get_parts`:
+        `PartStartEvent.index` values come from the unfiltered `_parts` space (see
+        `_append_part`), so a lookup by that index must NOT go through `get_parts`:
         the filtered list is shorter whenever a dangling delta exists, which returns
-        the wrong part for the index or raises ``IndexError`` past the end of the
+        the wrong part for the index or raises `IndexError` past the end of the
         filtered list.
         """
         if index < 0 or index >= len(self._parts):
