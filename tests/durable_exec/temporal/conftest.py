@@ -1,3 +1,22 @@
+"""Fixtures for the Temporal suite. Two things may never be done at module level in this file.
+
+**No requirement gate.** Unlike the test modules and `_shared` beside it, this file carries no
+`pytest.skip(..., allow_module_level=True)`, and has to stay importable without `temporalio`,
+`logfire`, `mcp` or `openai` and on Python 3.14. `pytest.skip` raises `Skipped`, a `BaseException`;
+pytest loads the conftest of every command-line argument's directory up front, from
+`PytestPluginManager._set_initial_conftests`, and `_importconftest` catches only `Exception` — so a
+gate here escapes as a traceback with exit 1 on `pytest tests/durable_exec/temporal` rather than
+reporting a skip. Naming a parent directory hides it, because the conftest is then imported during
+collection, which does handle `Skipped`. The test modules' own gates report the skip, and the
+fixtures below run only once those gates have passed, so they import what they need when called.
+
+**Nothing sandbox-sensitive.** `_shared`, `pandas` and the root `tests/conftest.py` (which loads
+`vcr`) are imported by the test modules inside their own
+`workflow.unsafe.imports_passed_through()` blocks. Importing any of them here would re-enter
+sandbox territory with no passthrough of its own, and the gate rule above forbids the `temporalio`
+import that a passthrough block would need.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -17,18 +36,6 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 if TYPE_CHECKING:
     from temporalio.client import Client
     from temporalio.testing import WorkflowEnvironment
-
-# Unlike the test modules and `_shared` beside it, this file carries no
-# `pytest.skip(..., allow_module_level=True)` requirement gate, and has to stay importable without
-# `temporalio`, `logfire`, `mcp` or `openai` and on Python 3.14. `pytest.skip` raises `Skipped`, a
-# `BaseException`; pytest imports the conftest of every command-line argument's directory up front in
-# `PytestPluginManager._set_initial_conftests`, which catches only `Exception`, so a gate here would
-# escape as a traceback with exit 1 on `pytest tests/durable_exec/temporal` instead of reporting a
-# skip. Naming a parent directory hides that, because the conftest is then imported during
-# collection, which does handle `Skipped`. The test modules' own gates are what report the skip, and
-# the fixtures below only run once those gates have passed, so they import their optional
-# dependencies when called.
-
 
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
