@@ -1835,39 +1835,21 @@ class RetryFeedbackPart:
         return _validation_error_description(self.content, include_input='none')
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
-        """Record the feedback as trace content.
+        """Record the stored feedback as trace content.
 
-        Below version 7 the same `content` is rendered the way the tool-less `RetryPromptPart` this
-        part replaced rendered it, framing sentence included. Versions 2-6 are released formats, and
-        this retry is content a consumer built on one of them reads today; building the legacy text
-        from `RetryPromptPart` itself is what keeps the two from drifting apart.
+        The feedback alone, the way [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]
+        records its own content: the sentence a model is shown is chosen per `cause` at
+        [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time, and belongs to the
+        request rather than to the history recorded here.
 
-        From version 7 the feedback is labelled with what it is and what caused it, then followed by
-        the feedback the part holds — the shape
-        [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] uses. The label
-        is span-side wording, deliberately not the sentence a model is shown: that one is chosen per
-        `cause` at request time and differs per provider, while the span records the history as it
-        stands before that. Something has to say which part this is, though. On `system` an unlabelled
-        message reads as an operator system prompt, and the legacy framing this version drops was
-        doing that job by accident — so the version that makes the role honest would otherwise
-        identify the message less well than the one it supersedes.
-
-        `cause` is recorded even under `include_content=False`. It is one of three fixed values
-        Pydantic AI chooses, never user, model or operator text, so it is exactly the structural
-        information that mode keeps — the same reason `ToolAvailabilityDeltaPart` keeps its tool
-        names there.
+        Only `pydantic_ai.all_messages` on the run span reaches this method, because that attribute is
+        built from the stored history. A model request span's `gen_ai.input.messages` is built after
+        `prepare_messages` has already replaced this part with a `SystemPromptPart`, so it shows the
+        rendered sentence at every instrumentation version.
         """
-        if settings.version < 7:
-            if not settings.include_content:
-                return [_otel_messages.TextPart(type='text')]
-            return [
-                _otel_messages.TextPart(type='text', content=RetryPromptPart(content=self.content).model_response())
-            ]
-
-        label = f'Retry feedback ({self.cause})'
         return [
             _otel_messages.TextPart(
-                type='text', content=f'{label}: {self.model_response()}' if settings.include_content else label
+                type='text', **{'content': self.model_response()} if settings.include_content else {}
             )
         ]
 

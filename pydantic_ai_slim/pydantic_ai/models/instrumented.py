@@ -77,7 +77,7 @@ class InstrumentationSettings:
     include_binary_content: bool = True
     include_content: bool = True
     include_model_request_parameters: bool = True
-    version: Literal[2, 3, 4, 5, 6, 7] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
 
     def __init__(
@@ -88,7 +88,7 @@ class InstrumentationSettings:
         include_binary_content: bool = True,
         include_content: bool = True,
         include_model_request_parameters: bool = True,
-        version: Literal[2, 3, 4, 5, 6, 7] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
     ):
         """Create instrumentation options.
@@ -132,17 +132,10 @@ class InstrumentationSettings:
                     as UNSET, since deferrals are control flow, not errors.
                 Version 6 is the same as version 5, but tool results are emitted in a message with
                     `role='tool'` rather than `role='user'`, which is the role the GenAI semantic
-                    conventions pair with the `tool_call_response` parts they carry. Opt in to it when
-                    your telemetry consumer keys on the message role; it is not the default.
-                Version 7 is the same as version 6, but a
-                    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] — the retry that
-                    answers no tool call — is emitted with `role='system'`, the voice it reaches the
-                    model in, and its text becomes `Retry feedback (<cause>): <feedback>` instead of
-                    the wording the tool-less `RetryPromptPart` it replaced was given. The
-                    `Retry feedback (<cause>)` label is emitted under `include_content=False` too,
-                    where versions 2-6 emit an empty text part. Versions 2-6 keep both the `user`
-                    role and the old wording. Opt in to it when your telemetry consumer is ready for
-                    the new role; it is not the default.
+                    conventions pair with the `tool_call_response` parts they carry, and retry feedback
+                    that answers no tool call moves from `role='user'` to `role='system'`, the voice it
+                    reaches the model in. Opt in to it when your telemetry consumer keys on the message
+                    role; it is not the default.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Defaults to True to prevent double-counting in observability backends that aggregate span
@@ -161,10 +154,10 @@ class InstrumentationSettings:
         self.include_content = include_content
         self.include_model_request_parameters = include_model_request_parameters
 
-        if version not in (2, 3, 4, 5, 6, 7):
-            raise ValueError('Instrumentation version must be one of 2, 3, 4, 5, 6, or 7.')
+        if version not in (2, 3, 4, 5, 6):
+            raise ValueError('Instrumentation version must be one of 2, 3, 4, 5, or 6.')
         # TODO(v3): remove instrumentation format versions 2, 3, and 4
-        # TODO(v3): default to instrumentation format version 7
+        # TODO(v3): default to instrumentation format version 6
         if version in (2, 3, 4):
             warnings.warn(
                 'Instrumentation format versions 2, 3, and 4 are deprecated; use `version=5` instead.',
@@ -429,11 +422,11 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
     keeps reading the role it was built for.
 
-    `RetryFeedbackPart` sits on that same boundary, for the same reason, one version later. From
-    version 7 on it gets `system`, because that is what it renders as: feedback that belongs to no
-    tool call reaches the model in the system voice, so the span shows the role the model actually
-    saw. Versions 2-6 keep it on `user` — 6 among them, because it shipped before this part existed
-    and a released version's meaning is fixed by what a consumer already reads from it.
+    `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it gets
+    `system`, because that is the voice it reaches the model in. Earlier versions keep it on `user`,
+    so a consumer written against them keeps reading the role it was built for. Only
+    `pydantic_ai.all_messages` moves either way: a request span records the history after
+    `prepare_messages` has already replaced the part with a `SystemPromptPart`.
 
     `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
     mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
@@ -444,7 +437,7 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `tool_call_response`.
     """
     if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart) or (
-        version >= 7 and isinstance(part, RetryFeedbackPart)
+        version >= 6 and isinstance(part, RetryFeedbackPart)
     ):
         return 'system'
     elif version >= 6 and (

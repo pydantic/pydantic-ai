@@ -297,7 +297,7 @@ Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI sy
 
 Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these versions to [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; use version 5 unless you are temporarily preserving an older telemetry pipeline.
 
-Versions 6 and 7 are opt-in: each moves messages you already receive onto a different role, so pass one explicitly once your telemetry consumer is ready for the new roles. Each builds on the one before it, so `version=7` also gives you version 6's change.
+Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
 
 #### Version 2 (deprecated)
 
@@ -350,18 +350,14 @@ Builds on version 5 by giving tool results the message role the [GenAI semantic 
 - Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
 - New (v6): it moves to a `{"role": "tool"}` message
 
-This applies to tool returns and to retries that answer a tool call. A retry that answers nothing stays on `user` here; version 7 is what moves it. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+This applies to tool returns and to retries that answer a tool call. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
 
-#### Version 7 (opt-in)
+Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call) — a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], the retry that answers no tool call — moves on the same version, for the same reason:
 
-Builds on version 6 by emitting Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call) — a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], the retry that answers no tool call — as what it is in the run, instead of as the tool-less [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] it replaced:
+- Old (v2-5): a text part inside a `{"role": "user"}` message
+- New (v6): it moves to a `{"role": "system"}` message, the voice the part reaches the model in
 
-- Old (v2-6): a text part inside a `{"role": "user"}` message, worded as that `RetryPromptPart` was — `Validation feedback:` ahead of a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] message, and `Fix the errors and try again.` after either kind of content
-- New (v7): it moves to a `{"role": "system"}` message, the voice the part reaches the model in, and its text becomes `Retry feedback (<cause>): <feedback>`
-
-The label is span-side wording, not what the model is shown: the sentence a model reads is chosen per [`cause`][pydantic_ai.messages.RetryFeedbackPart.cause] when the model renders the part, which is after the span records the message history, so — like a mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] — what you see is the part's own content, not the sentence built around it on the way out. The label is what tells a `system` message holding retry feedback apart from one holding your own system prompt, which is why version 7 adds it as it takes the framing away.
-
-[`cause`][pydantic_ai.messages.RetryFeedbackPart.cause] is one of three fixed values Pydantic AI chooses, so `Retry feedback (<cause>)` is emitted under [`include_content=False`](#excluding-prompts-and-completions) as well, where versions 2-6 emit a text part with nothing in it.
+That move shows up on `pydantic_ai.all_messages`, which records the stored message history. A model request span's `gen_ai.input.messages` records the history as sent, and by then the part has been rendered into a mid-conversation system prompt — or into `<system>`-tagged user text on a provider that takes no mid-conversation system message — so that attribute reads the same at every version. A tool-less [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] loaded from a history recorded before this part existed stays on `user`.
 
 ---
 
