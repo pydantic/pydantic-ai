@@ -1160,6 +1160,19 @@ class BedrockConverseModel(Model[BaseClient]):
         # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
         supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
 
+        # Whether this model's reasoning blocks round-trip: for these families (Anthropic, DeepSeek R1)
+        # thinking parts are re-sent as `reasoningContent`. Anthropic additionally signs every thinking
+        # block and enforces that the latest assistant message re-sends them unmodified — so there a
+        # block whose signature never arrived (the shape Bedrock's response/stream mapping leaves on a
+        # `ThinkingPart` when the signature is missing, i.e. `provider_name=None`) has no survivable wire
+        # form and is omitted instead of rewritten (see the `ThinkingPart` mapping below). DeepSeek R1's
+        # and Nova's reasoning is unsigned, so their tagged-text rewrite is accepted as-is.
+        send_back_thinking = profile.get('bedrock_send_back_thinking_parts', False)
+        enforces_thinking_integrity = profile.get('bedrock_thinking_variant', None) == 'anthropic'
+        last_model_response_index = max(
+            (i for i, message in enumerate(messages) if isinstance(message, ModelResponse)), default=None
+        )
+
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
         # Mistral and Llama require every `toolResult` for a tool-use turn to sit together in the message
@@ -1175,7 +1188,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 bedrock_messages.append({'role': 'user', 'content': [*deferred_media_content]})
                 deferred_media_content.clear()
 
-        for message in messages:
+        for index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
@@ -1300,15 +1313,12 @@ class BedrockConverseModel(Model[BaseClient]):
             elif isinstance(message, ModelResponse):
                 flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
+                is_latest_model_response = index == last_model_response_index
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
-                        if (
-                            item.provider_name == self.system
-                            and item.signature
-                            and profile.get('bedrock_send_back_thinking_parts', False)
-                        ):
+                        if item.provider_name == self.system and item.signature and send_back_thinking:
                             reasoning_content: ReasoningContentBlockOutputTypeDef
                             if item.id == 'redacted_content':
                                 reasoning_content = {
@@ -1322,6 +1332,22 @@ class BedrockConverseModel(Model[BaseClient]):
                                     }
                                 }
                             content.append({'reasoningContent': reasoning_content})
+                        elif is_latest_model_response and enforces_thinking_integrity and not item.provider_name:
+                            # An Anthropic thinking block whose signature never arrived has no survivable
+                            # wire form: the API rejects any modified thinking in the latest assistant
+                            # message, and without the signature the block can't be re-sent verbatim. The
+                            # tagged-text rewrite used for older history below is exactly the modification
+                            # that turns a recoverable retry into a permanent 400, so omit the block (a
+                            # turn left empty by this is dropped below) and make the omission observable.
+                            # See https://github.com/pydantic/pydantic-ai/issues/7908.
+                            warnings.warn(
+                                'Omitting a thinking block with no signature from the latest assistant message: '
+                                'this model requires thinking blocks in the latest assistant message to be re-sent '
+                                'unmodified, so sending the unsigned block in any form would be rejected. The '
+                                'request proceeds without it, and if this leaves that message empty it is dropped '
+                                'entirely. See https://github.com/pydantic/pydantic-ai/issues/7908',
+                                UserWarning,
+                            )
                         else:
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})

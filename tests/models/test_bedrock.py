@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import warnings
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
@@ -3566,6 +3567,331 @@ async def test_bedrock_tool_results_lead_multi_reveal_turn(
     *_, last_message = mock_converse.call_args.kwargs['messages']
     assert [next(iter(block)) for block in last_message['content']] == ['toolResult', 'toolResult', 'text', 'text']
     assert [block['toolResult']['toolUseId'] for block in last_message['content'][:2]] == ['tooluse_1', 'tooluse_2']
+
+
+ANTHROPIC_THINKING_MODEL = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+
+
+async def test_bedrock_unsigned_trailing_thinking_part_omitted(bedrock_provider: BedrockProvider):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/7908.
+
+    A thinking-only response whose signature delta never arrives (streaming leaves
+    `provider_name=None`) used to be re-sent on the output-validation retry rewritten as
+    `<thinking>` text — the one modification of the latest assistant message's thinking blocks
+    that Anthropic-on-Bedrock rejects with a deterministic 400, killing the run with no output.
+    The block is now omitted; the turn it empties is dropped, so the retry re-asks the original
+    prompt (the two user turns merge) instead of sending a payload the API can never accept.
+    """
+    model = BedrockConverseModel(ANTHROPIC_THINKING_MODEL, provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')], timestamp=IsDatetime()),
+        ModelResponse(parts=[ThinkingPart(content='weighing it up')], timestamp=IsDatetime()),
+        ModelRequest(parts=[RetryPromptPart(content='Please return text.')], timestamp=IsDatetime()),
+    ]
+
+    with pytest.warns(UserWarning, match='thinking block with no signature'):
+        _, bedrock_messages = await model._map_messages(history, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'hi'},
+                    {
+                        'text': """\
+Validation feedback:
+Please return text.
+
+Fix the errors and try again.\
+"""
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_unsigned_trailing_thinking_part_kept_beside_other_parts(bedrock_provider: BedrockProvider):
+    """A latest assistant message with real output alongside the unsigned thinking keeps that output.
+
+    The turn is no longer content-less, so it stays on the wire minus the block that cannot be
+    re-sent — the omission warning still fires.
+    """
+    model = BedrockConverseModel(ANTHROPIC_THINKING_MODEL, provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='weighing it up'),
+                ToolCallPart(tool_name='get_location', args={}, tool_call_id='tooluse_1'),
+            ],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(
+            parts=[RetryPromptPart(content='Please return text.')],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    with pytest.warns(UserWarning, match='thinking block with no signature'):
+        _, bedrock_messages = await model._map_messages(history, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'hi'}]},
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'tooluse_1', 'name': 'get_location', 'input': {}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': """\
+Validation feedback:
+Please return text.
+
+Fix the errors and try again.\
+"""
+                    }
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_unsigned_older_thinking_part_still_rewritten_as_text(bedrock_provider: BedrockProvider):
+    """Older-history thinking keeps the tagged-text fallback: the API only protects the *latest* assistant message."""
+    model = BedrockConverseModel(ANTHROPIC_THINKING_MODEL, provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')], timestamp=IsDatetime()),
+        ModelResponse(parts=[ThinkingPart(content='weighing it up')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='and then?')], timestamp=IsDatetime()),
+        ModelResponse(parts=[TextPart(content='done')], timestamp=IsDatetime()),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # the rewrite of older history is not an omission
+        _, bedrock_messages = await model._map_messages(history, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'hi'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'text': """\
+<thinking>
+weighing it up
+</thinking>\
+"""
+                    }
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'and then?'}]},
+            {'role': 'assistant', 'content': [{'text': 'done'}]},
+        ]
+    )
+
+
+async def test_bedrock_signed_trailing_thinking_part_sent_verbatim(bedrock_provider: BedrockProvider):
+    """A signed block from this provider is re-sent unmodified as `reasoningContent` — no warning."""
+    model = BedrockConverseModel(ANTHROPIC_THINKING_MODEL, provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='weighing it up', signature='ErUBCkYIBRgCKkD1qX9m', provider_name=model.system)
+            ],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(parts=[RetryPromptPart(content='Please return text.')], timestamp=IsDatetime()),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        _, bedrock_messages = await model._map_messages(history, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'hi'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'reasoningContent': {
+                            'reasoningText': {'text': 'weighing it up', 'signature': 'ErUBCkYIBRgCKkD1qX9m'}
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': """\
+Validation feedback:
+Please return text.
+
+Fix the errors and try again.\
+"""
+                    }
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_foreign_trailing_thinking_part_still_rewritten_as_text(bedrock_provider: BedrockProvider):
+    """A thinking part from another provider never reached this API, so its trailing rewrite is safe."""
+    model = BedrockConverseModel(ANTHROPIC_THINKING_MODEL, provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[ThinkingPart(content='foreign reasoning', provider_name='openai')],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(parts=[RetryPromptPart(content='Please return text.')], timestamp=IsDatetime()),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        _, bedrock_messages = await model._map_messages(history, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'hi'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'text': """\
+<thinking>
+foreign reasoning
+</thinking>\
+"""
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': """\
+Validation feedback:
+Please return text.
+
+Fix the errors and try again.\
+"""
+                    }
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_unsigned_trailing_thinking_part_rewritten_for_models_that_dont_send_back(
+    bedrock_provider: BedrockProvider,
+):
+    """Families that never re-send `reasoningContent` (Nova) have no integrity check to violate.
+
+    The unsigned trailing block keeps the tagged-text rewrite there — it is that family's only
+    transport back, not a modification the API will reject.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')], timestamp=IsDatetime()),
+        ModelResponse(parts=[ThinkingPart(content='weighing it up')], timestamp=IsDatetime()),
+        ModelRequest(parts=[RetryPromptPart(content='Please return text.')], timestamp=IsDatetime()),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        _, bedrock_messages = await model._map_messages(history, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'hi'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'text': """\
+<think>
+weighing it up
+</think>\
+"""
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': """\
+Validation feedback:
+Please return text.
+
+Fix the errors and try again.\
+"""
+                    }
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_unsigned_trailing_thinking_part_rewritten_for_deepseek(
+    bedrock_provider: BedrockProvider,
+):
+    """DeepSeek R1 thinking arrives unsigned even though the model re-sends reasoning blocks.
+
+    An unsigned trailing block is therefore normal history for it — the tagged-text rewrite is
+    accepted, and the Anthropic-integrity omission must not fire.
+    """
+    model = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')], timestamp=IsDatetime()),
+        ModelResponse(parts=[ThinkingPart(content='weighing it up')], timestamp=IsDatetime()),
+        ModelRequest(parts=[RetryPromptPart(content='Please return text.')], timestamp=IsDatetime()),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        _, bedrock_messages = await model._map_messages(history, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'hi'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'text': """\
+<think>
+weighing it up
+</think>\
+"""
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': """\
+Validation feedback:
+Please return text.
+
+Fix the errors and try again.\
+"""
+                    }
+                ],
+            },
+        ]
+    )
 
 
 async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
