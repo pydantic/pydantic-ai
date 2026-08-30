@@ -395,7 +395,7 @@ report = dataset.evaluate_sync(my_task)
 # Print to console
 report.print()
 """
-    Evaluation Summary: my_task
+Evaluation Summary: my_task
 ┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID  ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩

@@ -100,7 +100,7 @@ if __name__ == '__main__':
     # Print results
     report.print(include_input=True, include_output=True)
 """
-                            Evaluation Summary: to_title_case
+Evaluation Summary: to_title_case
 ┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID          ┃ Inputs               ┃ Outputs              ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
@@ -137,7 +137,7 @@ else:
 ## Expected Output
 
 ```
-                        Evaluation Summary: to_title_case
+Evaluation Summary: to_title_case
 ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID           ┃ Inputs               ┃ Outputs               ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩

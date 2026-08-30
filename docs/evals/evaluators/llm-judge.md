@@ -360,7 +360,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](
 report = recipe_dataset.evaluate_sync(transform_recipe)
 print(report)
 """
-     Evaluation Summary: transform_recipe
+Evaluation Summary: transform_recipe
 ┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID            ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
@@ -592,7 +592,7 @@ dataset = Dataset(
 report = dataset.evaluate_sync(my_task)
 report.print(include_reasons=True)
 """
-     Evaluation Summary: my_task
+Evaluation Summary: my_task
 ┏━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID  ┃ Assertions  ┃ Duration ┃
 ┡━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━┩

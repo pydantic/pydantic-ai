@@ -68,7 +68,7 @@ report = dataset.evaluate_sync(uppercase_text)
 # Print the results
 report.print()
 """
-        Evaluation Summary: uppercase_text
+Evaluation Summary: uppercase_text
 ┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID                ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
@@ -84,7 +84,7 @@ report.print()
 Output:
 
 ```
-                  Evaluation Summary: uppercase_text
+Evaluation Summary: uppercase_text
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID                 ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
