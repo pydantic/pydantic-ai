@@ -12507,7 +12507,7 @@ async def test_run_stream_max_output_tokens_raises_unexpected_model_behavior(all
 
     with pytest.raises(UnexpectedModelBehavior, match='token limit'):
         async with agent.run_stream('hello') as result:
-            await result.get_output()
+            await result.get_output()  # pragma: no cover — the error-terminated empty response raises on entry
 
 
 async def test_run_stream_content_filter_raises_content_filter_error(allow_model_requests: None):
@@ -12542,7 +12542,7 @@ async def test_run_stream_content_filter_raises_content_filter_error(allow_model
         ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
     ):
         async with agent.run_stream('hello') as result:
-            await result.get_output()
+            await result.get_output()  # pragma: no cover — the error-terminated empty response raises on entry
 
 
 async def test_agent_allows_none_output_after_tool():
