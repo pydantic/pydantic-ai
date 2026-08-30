@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, T
 import anyio
 import pydantic_core
 from pydantic import AnyUrl, Field, TypeAdapter
-from typing_extensions import Self, assert_never
+from typing_extensions import Self, TypedDict, assert_never
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
@@ -1082,7 +1082,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     @property
     def label(self) -> str:
         if self.id:
-            return super().label  # pragma: no cover
+            return super().label
         return repr(self)
 
     @property
@@ -1918,13 +1918,39 @@ def _expand_env_vars(value: Any) -> Any:
         return value
 
 
+class _MCPServerConfig(TypedDict, total=False):
+    """The keys `load_mcp_toolsets` reads from an `mcpServers` entry.
+
+    Unknown keys are ignored rather than rejected, so a configuration file shared with another MCP
+    client still loads. They are only ignored, never honoured: `disabled` does not skip a server,
+    and `type` does not select the transport — that is inferred from the URL.
+
+    Optional transport values accept explicit JSON `null` for compatibility with existing shared
+    MCP configuration files; loading treats those values the same as omission.
+    """
+
+    command: str
+    args: list[str] | None
+    env: dict[str, str] | None
+    cwd: str | None
+    url: str
+    headers: dict[str, str] | None
+
+
+class _MCPConfig(TypedDict):
+    mcpServers: dict[str, _MCPServerConfig]
+
+
+_MCP_CONFIG_ADAPTER = TypeAdapter(_MCPConfig)
+
+
 def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     """Load `MCPToolset`s from a configuration file.
 
-    The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Cursor, and the
-    MCP specification. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset],
-    wrapped in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name
-    as prefix to disambiguate tools across multiple servers.
+    The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Claude Code,
+    and Cursor. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset], wrapped
+    in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name as prefix
+    to disambiguate tools across multiple servers.
 
     Environment variables can be referenced in the configuration file using:
 
@@ -1938,31 +1964,30 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         A list of toolsets, one per server in the config file, each prefixed with the server name.
 
     Raises:
-        FileNotFoundError: If the configuration file does not exist.
-        ValidationError: If the configuration file does not match the schema.
-        ValueError: If an environment variable referenced in the configuration is not defined and
-            no default is provided.
+        OSError: If the configuration file does not exist (`FileNotFoundError`), or exists but
+            cannot be read — a directory, or a file without read permission.
+        ValidationError: If the configuration does not match the `mcpServers` shape above. This is
+            a `ValueError` subclass, so catching `ValueError` covers it too.
+        ValueError: If the file is not valid JSON, a server entry has neither `command` nor `url`,
+            or an environment variable referenced in the configuration is not defined and no
+            default is provided.
     """
     config_path = Path(config_path)
     if not config_path.exists():
         raise FileNotFoundError(f'Config file {config_path} not found')
 
     config_data = pydantic_core.from_json(config_path.read_bytes())
-    expanded_config_data = _expand_env_vars(config_data)
-    if not isinstance(expanded_config_data, dict):
-        raise ValueError(f'Expected JSON object at root of {config_path}, got {type(expanded_config_data).__name__}')
-    servers = cast(dict[str, Any], expanded_config_data).get('mcpServers')
-    if not isinstance(servers, dict):
-        raise ValueError(f'Expected `mcpServers` object in {config_path}')
+    # Expand before validating, so `${VAR}` references are checked as the values they resolve to.
+    config = _MCP_CONFIG_ADAPTER.validate_python(_expand_env_vars(config_data))
 
     toolsets: list[AbstractToolset[Any]] = []
-    for name, server in cast(dict[str, Any], servers).items():
+    for name, server in config['mcpServers'].items():
         if 'command' in server:
             transport = StdioTransport(
                 command=server['command'],
                 args=list(server.get('args') or []),
                 env=server.get('env'),
-                cwd=str(server['cwd']) if server.get('cwd') is not None else None,
+                cwd=server.get('cwd'),
             )
             toolset = MCPToolset(transport, id=name)
         elif 'url' in server:

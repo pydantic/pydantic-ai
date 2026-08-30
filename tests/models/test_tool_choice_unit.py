@@ -47,6 +47,8 @@ with try_import() as openai_available:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as google_available:
+    from google.genai import Client
+
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -770,8 +772,7 @@ def test_bedrock_prepare_request_thinking_auto_output_mode(supports_json_schema:
 @skip_if_no_google
 def test_google_auto_tuple_filters_tool_defs():
     """When resolve_tool_choice returns ('auto', [...]), Google filters tool_defs to only include allowed tools."""
-    mock_client = MagicMock()
-    provider = GoogleProvider(client=mock_client)
+    provider = GoogleProvider(client=Client(vertexai=False, api_key='mock-api-key'))
     m = GoogleModel('gemini-2.0-flash', provider=provider)
     params = ModelRequestParameters(
         function_tools=[make_tool('func')],
@@ -790,7 +791,7 @@ def test_google_auto_tuple_filters_tool_defs():
 
 @skip_if_no_google
 def test_google_allowed_function_names_ignore_unavailable_tools():
-    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
+    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=Client(vertexai=False, api_key='mock-api-key')))
     params = ModelRequestParameters(function_tools=[make_tool('get_time')], allow_text_output=False)
 
     with pytest.warns(UserWarning, match='not currently available'):
@@ -845,7 +846,7 @@ def test_google_native_tool_only_omits_function_calling_config(case: dict[str, A
     Asserted on the request shape directly rather than via VCR: a cassette replay can't catch a
     malformed request, since it replays a recorded response without re-validating against the API.
     """
-    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
+    m = GoogleModel(case['model'], provider=GoogleProvider(client=Client(vertexai=False, api_key='mock-api-key')))
 
     _, tool_config, _ = m._get_tool_config(case['request_parameters'], {})  # pyright: ignore[reportPrivateUsage]
 

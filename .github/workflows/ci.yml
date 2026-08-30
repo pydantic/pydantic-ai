@@ -12,6 +12,8 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
+  # Ubuntu's system interpreters are older and slower than uv's optimized managed builds.
+  UV_PYTHON_PREFERENCE: only-managed
 
 permissions:
   contents: read
@@ -68,6 +70,9 @@ jobs:
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_semantic_owner_router.py
+          .github/scripts/test_community_demand.py
+          .github/scripts/test_triage_telemetry.py
+          .github/scripts/test_feature_digest.py
           .github/scripts/test_agentic_workflow_guard.py
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
@@ -209,7 +214,8 @@ jobs:
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
+    # Route the all-extras cells to Ubicloud 8-core runners on same-repo PRs and pushes, or when
+    # opted in via the 'ci:fast' label; the other install variants stay on `ubuntu-latest`.
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     # `github.event.pull_request` is null on push/tag runs, so those need their own clause to
     # reach Ubicloud -- without it main and release runs silently fall back to `ubuntu-latest`.
@@ -222,7 +228,7 @@ jobs:
           || github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
-        && 'ubicloud-premium-4'
+        && 'ubicloud-premium-8'
         || 'ubuntu-latest'
       }}
     timeout-minutes: 20
@@ -230,6 +236,9 @@ jobs:
       fail-fast: false
       matrix:
         # `latest-versions-canary.yml` runs the endpoints of this list; update it alongside.
+        # Growing this or either other test matrix grows the tracked-job count that
+        # `REPORT_ROW_LIMIT` in `.github/scripts/ci_duration.py` must stay above, or the duration
+        # report truncates. That constant's comment enumerates all three.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
@@ -246,14 +255,6 @@ jobs:
       # Rebenchmark all-extras after https://github.com/cbornet/blockbuster/pull/61 is released
       # in a compatible version; enable it if the job stays within seven minutes.
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' && matrix.install.name != 'all-extras' }}
-      # Disables Temporal's workflow deadlock detector (temporalio reads this to set the
-      # per-activation budget to `None` instead of 2s). That budget is wall-clock, so it measures
-      # runner contention as readily as a blocking call: `tests/test_temporal.py`,
-      # `tests/test_prefect.py` and `tests/test_dbos.py` each pin an xdist group, putting three
-      # durable-execution servers on four vCPUs, and a descheduled workflow thread trips it as
-      # `TMPRL1101`. The cost: a genuine in-workflow blocking call now hangs to the job timeout
-      # instead of failing in 2s.
-      TEMPORAL_DEBUG: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -279,17 +280,6 @@ jobs:
         with:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
-
-      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
-      # tests/test_temporal.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
-      - name: cache Temporal dev-server binary
-        if: matrix.install.name == 'all-extras' && matrix.python-version != '3.14'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/temporal-dev-server
-          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
 
       # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
       # test model is on disk when the ST tests load it: the pinned revision is then
@@ -330,11 +320,27 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
-      # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
-      # instead of 4). `logical` uses all vCPUs; ~39% faster on premium-4, no-op
-      # on ubuntu-latest (already 4). See PR benchmark.
-      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+      # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
+      # *physical* cores while `logical` counts every vCPU, which is what Ubicloud's
+      # hyperthreaded runners want. `psutil` is not in `uv.lock` and `UV_FROZEN` pins CI to
+      # it, so both spellings resolve to the same count today; the flag is here for when
+      # that stops being true.
+      # Everything under `tests/durable_exec` is ignored here and runs in `test-durable-exec`
+      # instead: most of those tests pin xdist groups around real local servers, so the chains
+      # they form would otherwise be the critical-path floor of the all-extras cells -- the
+      # other install variants skip the suites at module level, for want of the engine packages.
+      # Its `lowest` leg proves the minimum `temporalio`/`dbos`/`prefect` bounds.
+      - run: >-
+          uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+          --ignore=tests/durable_exec
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+
+      # Merge this job's per-worker/per-subprocess data files into one before upload: the
+      # combine work runs in parallel across the matrix instead of serially in the `coverage`
+      # job, which would otherwise merge hundreds of files on the critical path.
+      - name: combine coverage files
+        run: uv run ${{ matrix.install.command }} coverage combine
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -345,9 +351,112 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+  # The durable-execution suites pin their tests to xdist groups sharing a real local server --
+  # one group per Temporal test module, one for DBOS, one for Prefect -- so inside the main
+  # matrix those groups dominate its critical path. Running the whole directory in its own job
+  # takes them off that path entirely; `--dist=loadgroup` still spreads the groups across this
+  # job's workers, and only the tests within one group run in sequence.
+  # New durable-exec tests land anywhere under `tests/durable_exec` and are picked up
+  # automatically. That whole directory is excluded from the main `test` matrix, so a test
+  # placed there runs only in this job, which sets `BLOCKBUSTER_ENABLED: false`. A test that
+  # needs blocking detection belongs elsewhere under `tests/`, where the `test` job turns it on
+  # for the 3.13 cells other than all-extras.
+  # The `lowest` resolution leg is the only place the declared minimum bounds
+  # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
+  test-durable-exec:
+    name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
+    # Ubicloud 4-core runners, gated like the `test` job above minus its all-extras clause:
+    # same-repo PRs, pushes, or the 'ci:fast' label, with 'ci:slow' forcing GitHub runners.
+    runs-on: >-
+      ${{
+        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
+        && (
+          github.event_name == 'push'
+          || github.event.pull_request.head.repo.full_name == github.repository
+          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
+        )
+        && 'ubicloud-premium-4'
+        || 'ubuntu-latest'
+      }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        resolution: [locked, lowest]
+    env:
+      CI: true
+      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
+      BLOCKBUSTER_ENABLED: false
+      # Disables Temporal's workflow deadlock detector (temporalio reads this to set the
+      # per-activation budget to `None` instead of 2s). That budget is wall-clock, so it
+      # measures runner contention as readily as a blocking call, and a descheduled workflow
+      # thread trips it as `TMPRL1101`. The cost: a genuine in-workflow blocking call now
+      # hangs to the job timeout instead of failing in 2s.
+      TEMPORAL_DEBUG: '1'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-suffix: durable-exec-${{ matrix.resolution }}
+
+      - run: mkdir .coverage
+
+      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
+      # tests/durable_exec/temporal/conftest.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
+      # Separate key per resolution: the lowest leg may resolve a different temporalio version
+      # wanting a different binary. A stale restored dir is safe because the SDK names the
+      # binary by its own version and re-downloads on a miss.
+      - name: cache Temporal dev-server binary
+        if: matrix.python-version != '3.14'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ matrix.resolution }}-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ matrix.resolution }}-
+
+      - name: install lowest resolution
+        if: matrix.resolution == 'lowest'
+        run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
+        env:
+          UV_FROZEN: "0"
+
+      # `--all-extras` matches the all-extras matrix cell these tests used to run in, so
+      # the module-level `try_import` skip-gating (logfire, mcp, openai, anthropic, ...)
+      # behaves identically and coverage combination stays complete. The lowest leg was
+      # synced above, so `--no-sync` there keeps its resolution.
+      - run: >-
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
+          coverage run -m pytest --durations=20 -n logical --dist=loadgroup
+          tests/durable_exec
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: >-
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
+          coverage combine
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          path: .coverage
+          include-hidden-files: true
+
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
-    # Use Ubicloud 4-core runners for maintainers or opted in via 'ci:fast' label
+    # Use Ubicloud 8-core runners on same-repo PRs and pushes, or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     # See the note on the `test` job for why push/tag runs need their own clause.
     runs-on: >-
@@ -358,7 +467,7 @@ jobs:
           || github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
-        && 'ubicloud-premium-4'
+        && 'ubicloud-premium-8'
         || 'ubuntu-latest'
       }}
     timeout-minutes: 20
@@ -372,8 +481,6 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
-      # See the note on the `test` job: same runner shape, same deadlock-detector false positives.
-      TEMPORAL_DEBUG: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -394,18 +501,6 @@ jobs:
         with:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
-
-      # See the matching step in the `test` job. Separate `lowest-` key: this job may resolve a
-      # different temporalio version than the frozen lockfile, wanting a different binary. A stale
-      # restored dir is safe because the SDK names the binary by its own version and re-downloads on a miss.
-      - name: cache Temporal dev-server binary
-        if: matrix.python-version != '3.14'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/temporal-dev-server
-          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-
 
       - run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
         env:
@@ -440,8 +535,18 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
-      - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+      # `-n logical` (see note on the `test` job).
+      # The durable-execution suites run in `test-durable-exec` (its `lowest` leg covers
+      # this resolution), keeping their grouped xdist chains off this job's critical path.
+      - run: >-
+          uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+          --ignore=tests/durable_exec
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: uv run --no-sync coverage combine
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
@@ -473,8 +578,8 @@ jobs:
 
       - run: >-
           uv run --no-sync pytest
-          tests/test_temporal.py::test_durability_rejects_unknown_activity_config_keys
-          tests/test_temporal.py::test_durability_coerces_activity_config_values
+          tests/durable_exec/temporal/test_durability.py::test_durability_rejects_unknown_activity_config_keys
+          tests/durable_exec/temporal/test_durability.py::test_durability_coerces_activity_config_values
 
   test-examples:
     name: test examples on ${{ matrix.python-version }}
@@ -544,6 +649,13 @@ jobs:
         env:
           COVERAGE_FILE: .coverage/.coverage.fastmcp-4
 
+      # See the matching step in the `test` job. Plain `uv run`: combining is
+      # environment-independent, so the FastMCP 4 `--with` overlay isn't needed.
+      - name: combine coverage files
+        run: uv run --all-extras --no-extra mcp-tasks --all-packages coverage combine
+        env:
+          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -563,12 +675,10 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [test, test-lowest-versions, test-fastmcp-4]
+    needs: [test, test-durable-exec, test-lowest-versions, test-fastmcp-4]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          # needed for diff-cover
-          fetch-depth: 0
           persist-credentials: false
 
       - name: get coverage files
@@ -591,13 +701,6 @@ jobs:
         env:
           COVERAGE_FILE: .coverage/.coverage
 
-      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-html
-          path: htmlcov
-          include-hidden-files: true
-
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
@@ -606,6 +709,7 @@ jobs:
       - mypy
       - docs-assets
       - test
+      - test-durable-exec
       - test-lowest-versions
       - test-temporal-latest
       - test-examples

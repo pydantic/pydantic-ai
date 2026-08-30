@@ -1,8 +1,4 @@
-"""Fallback subagent resolution of dynamic `native=` factories.
-
-These tests live here rather than in `test_capabilities.py`, which is already at the
-check-added-large-files 1MB limit.
-"""
+"""Fallback subagent resolution of dynamic `native=` factories."""
 
 from __future__ import annotations
 
