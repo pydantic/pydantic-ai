@@ -1656,10 +1656,10 @@ def _validation_error_description(
       neither is guaranteed model-free — `loc` is a model-chosen key for a mapping output or an
       `extra_forbidden` error, and a `value_error`'s `msg` carries whatever text the validator raised,
       which a `field_validator` commonly interpolates the offending value into. What that residue can
-      do is bounded rather than removed: `_wrap_in_system_tags` escapes a closing tag out of the whole
-      rendered string, so on a model with no mid-conversation system message it cannot end the
-      statement early. On one that takes a real system message there is no tag to break, and the text
-      sits in the system role — tracked at https://github.com/pydantic/pydantic-ai/issues/7806.
+      do is bounded rather than removed: `_render_retry_feedback` escapes a closing tag out of the
+      feedback it renders for a model with no mid-conversation system message, so it cannot end the
+      `<system>` statement early. On one that takes a real system message there is nothing to escape,
+      and the text sits in the system role — tracked at https://github.com/pydantic/pydantic-ai/issues/7806.
     """
     if include_input == 'all':
         exclude = {'__all__': {'ctx'}}
@@ -1835,9 +1835,39 @@ class RetryFeedbackPart:
         return _validation_error_description(self.content, include_input='none')
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Record the feedback as trace content.
+
+        Below version 7 the same `content` is rendered the way the tool-less `RetryPromptPart` this
+        part replaced rendered it, framing sentence included. Versions 2-6 are released formats, and
+        this retry is content a consumer built on one of them reads today; building the legacy text
+        from `RetryPromptPart` itself is what keeps the two from drifting apart.
+
+        From version 7 the feedback is labelled with what it is and what caused it, then followed by
+        the feedback the part holds — the shape
+        [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] uses. The label
+        is span-side wording, deliberately not the sentence a model is shown: that one is chosen per
+        `cause` at request time and differs per provider, while the span records the history as it
+        stands before that. Something has to say which part this is, though. On `system` an unlabelled
+        message reads as an operator system prompt, and the legacy framing this version drops was
+        doing that job by accident — so the version that makes the role honest would otherwise
+        identify the message less well than the one it supersedes.
+
+        `cause` is recorded even under `include_content=False`. It is one of three fixed values
+        Pydantic AI chooses, never user, model or operator text, so it is exactly the structural
+        information that mode keeps — the same reason `ToolAvailabilityDeltaPart` keeps its tool
+        names there.
+        """
+        if settings.version < 7:
+            if not settings.include_content:
+                return [_otel_messages.TextPart(type='text')]
+            return [
+                _otel_messages.TextPart(type='text', content=RetryPromptPart(content=self.content).model_response())
+            ]
+
+        label = f'Retry feedback ({self.cause})'
         return [
             _otel_messages.TextPart(
-                type='text', **{'content': self.model_response()} if settings.include_content else {}
+                type='text', content=f'{label}: {self.model_response()}' if settings.include_content else label
             )
         ]
 

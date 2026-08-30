@@ -7,7 +7,7 @@ from typing import Literal
 
 import pytest
 from opentelemetry.trace import NoOpTracerProvider
-from pydantic_core import to_json
+from pydantic_core import ErrorDetails, to_json
 
 from pydantic_ai import (
     AudioUrl,
@@ -480,7 +480,7 @@ def test_safe_to_json_falls_back_on_lone_surrogates():
 
 
 def test_instrumentation_settings_rejects_removed_version():
-    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, 5, or 6'):
+    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, 5, 6, or 7'):
         InstrumentationSettings(version=1)  # pyright: ignore[reportArgumentType]
 
 
@@ -978,12 +978,9 @@ def test_messages_to_otel_messages_request_roles_v6():
     """From version 6 a request splits into one message per role, in part order.
 
     A tool return and a retry that answers a tool call both render as a `tool_call_response`, which
-    the GenAI semantic conventions put in a `tool` message. A legacy retry that answers nothing
-    renders as text and reaches the model as user content, so it starts a new message, while a
-    `RetryFeedbackPart` reaches it in the system voice and takes `system`.
-
-    Every one of those roles is a changed value on telemetry versions 2-5 already emit, so each is
-    gated on version 6 and the earlier versions keep the single `user` message they shared.
+    the GenAI semantic conventions put in a `tool` message. A retry that answers nothing renders as
+    text and starts a new message — including a `RetryFeedbackPart`, which version 6 shipped without
+    and therefore leaves on `user` alongside the part it replaced. Version 7 is where that one moves.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content='Be brief.'), UserPromptPart(content='Convert 10 EUR.')]),
@@ -1033,11 +1030,19 @@ Output did not validate.
 
 Fix the errors and try again.\
 """,
-                    }
+                    },
+                    {
+                        'type': 'text',
+                        'content': """\
+Validation feedback:
+Output did not validate.
+
+Fix the errors and try again.\
+""",
+                    },
+                    {'type': 'text', 'content': 'Thanks.'},
                 ],
             },
-            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Output did not validate.'}]},
-            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Thanks.'}]},
         ]
     )
 
@@ -1045,6 +1050,176 @@ Fix the errors and try again.\
     settings = InstrumentationSettings(include_content=True)
     assert [message['role'] for message in settings.messages_to_otel_messages(messages)] == snapshot(
         ['system', 'user', 'assistant', 'user']
+    )
+
+
+def test_messages_to_otel_messages_retry_feedback_across_versions():
+    """A retry that answers no tool call, on each setting that renders it differently.
+
+    Instrumentation version 6 shipped in v2.32.0, before `RetryFeedbackPart` existed, so what a
+    consumer on 2-6 reads for one is what it read for the tool-less `RetryPromptPart` this part
+    replaced: `role='user'`, the `Validation feedback:` opener, the `Fix the errors and try again.`
+    close, and a nested error's `input` still echoed back.
+
+    Version 7 gives it the `system` role it reaches the model in, and with it a label naming the part
+    and its `cause` — without one a `system` message carrying bare feedback reads as an operator
+    system prompt, which is less than the legacy framing gave away. The label survives
+    `include_content=False`, where 2-6 emit a text part that says nothing at all.
+    """
+    errors: list[ErrorDetails] = [
+        {'type': 'missing', 'loc': ('answer',), 'msg': 'Field required', 'input': {'answr': 'oui'}},
+        {'type': 'string_type', 'loc': ('answer', 'text'), 'msg': 'Input should be a valid string', 'input': 42},
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                RetryFeedbackPart(content=errors, cause='validation_error'),
+                RetryFeedbackPart(content='Answer in French.', cause='model_retry'),
+            ]
+        ),
+    ]
+    settings_by_label: dict[str, InstrumentationSettings] = {
+        'v5': InstrumentationSettings(version=5),
+        'v6': InstrumentationSettings(version=6),
+        'v7': InstrumentationSettings(version=7),
+        'v5 without content': InstrumentationSettings(version=5, include_content=False),
+        'v7 without content': InstrumentationSettings(version=7, include_content=False),
+    }
+    by_settings = {label: settings.messages_to_otel_messages(messages) for label, settings in settings_by_label.items()}
+    assert by_settings == snapshot(
+        {
+            'v5': [
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'type': 'text',
+                            'content': """\
+2 validation errors:
+```json
+[
+  {
+    "type": "missing",
+    "loc": [
+      "answer"
+    ],
+    "msg": "Field required"
+  },
+  {
+    "type": "string_type",
+    "loc": [
+      "answer",
+      "text"
+    ],
+    "msg": "Input should be a valid string",
+    "input": 42
+  }
+]
+```
+
+Fix the errors and try again.\
+""",
+                        },
+                        {
+                            'type': 'text',
+                            'content': """\
+Validation feedback:
+Answer in French.
+
+Fix the errors and try again.\
+""",
+                        },
+                    ],
+                }
+            ],
+            'v6': [
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'type': 'text',
+                            'content': """\
+2 validation errors:
+```json
+[
+  {
+    "type": "missing",
+    "loc": [
+      "answer"
+    ],
+    "msg": "Field required"
+  },
+  {
+    "type": "string_type",
+    "loc": [
+      "answer",
+      "text"
+    ],
+    "msg": "Input should be a valid string",
+    "input": 42
+  }
+]
+```
+
+Fix the errors and try again.\
+""",
+                        },
+                        {
+                            'type': 'text',
+                            'content': """\
+Validation feedback:
+Answer in French.
+
+Fix the errors and try again.\
+""",
+                        },
+                    ],
+                }
+            ],
+            'v7': [
+                {
+                    'role': 'system',
+                    'parts': [
+                        {
+                            'type': 'text',
+                            'content': """\
+Retry feedback (validation_error): 2 validation errors:
+```json
+[
+  {
+    "type": "missing",
+    "loc": [
+      "answer"
+    ],
+    "msg": "Field required"
+  },
+  {
+    "type": "string_type",
+    "loc": [
+      "answer",
+      "text"
+    ],
+    "msg": "Input should be a valid string"
+  }
+]
+```\
+""",
+                        },
+                        {'type': 'text', 'content': 'Retry feedback (model_retry): Answer in French.'},
+                    ],
+                }
+            ],
+            'v5 without content': [{'role': 'user', 'parts': [{'type': 'text'}, {'type': 'text'}]}],
+            'v7 without content': [
+                {
+                    'role': 'system',
+                    'parts': [
+                        {'type': 'text', 'content': 'Retry feedback (validation_error)'},
+                        {'type': 'text', 'content': 'Retry feedback (model_retry)'},
+                    ],
+                }
+            ],
+        }
     )
 
 
