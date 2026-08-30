@@ -5,12 +5,12 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 from unittest.mock import AsyncMock
 
 import anyio
 import pytest
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from typing_extensions import Self
 
 if sys.version_info < (3, 11):
@@ -297,6 +297,19 @@ async def test_function_toolset_with_defaults_overridden():
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
         return a - b  # pragma: no cover
+
+
+async def test_function_toolset_field_description_satisfies_requirement():
+    toolset = FunctionToolset(require_parameter_descriptions=True)
+
+    @toolset.tool_plain
+    def add(value: Annotated[int, Field(description='The value to add')]) -> int:
+        return value  # pragma: no cover
+
+    tools = await toolset.get_tools(build_run_context(None))
+    schema = tools['add'].tool_def.parameters_json_schema
+    assert schema['properties']['value']['description'] == 'The value to add'
+    assert schema['required'] == ['value']
 
 
 async def test_prepared_toolset_sync_prepare_func():
