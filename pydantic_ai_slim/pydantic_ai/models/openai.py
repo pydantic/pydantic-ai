@@ -3842,6 +3842,22 @@ class OpenAIStreamedResponse(StreamedResponse):
     async def close_stream(self) -> None:
         await self._response.source.close()
 
+    def _update_usage(self, chunk: ChatCompletionChunk) -> None:
+        """Fold a chunk's usage into the running total.
+
+        With `openai_continuous_usage_stats` each chunk carries cumulative usage, so it
+        replaces rather than increments to avoid double-counting — but chunks without usage
+        map to all zeros, and replacing on those would wipe the running cumulative snapshot:
+        an interrupted stream (error/cancel before the final chunk) would then commit a zero
+        partial usage instead of the tokens actually consumed so far.
+        """
+        chunk_usage = self._map_usage(chunk)
+        if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
+            if chunk.usage is not None:
+                self._usage = chunk_usage
+        else:
+            self._usage += chunk_usage
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name, self._model_id_namespace):
             async for chunk in self._validate_response():
@@ -3852,13 +3868,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                         'timestamp': self._provider_timestamp,
                     }
 
-                chunk_usage = self._map_usage(chunk)
-                if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
-                    # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-                    # so we replace rather than increment to avoid double-counting.
-                    self._usage = chunk_usage
-                else:
-                    self._usage += chunk_usage
+                self._update_usage(chunk)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id

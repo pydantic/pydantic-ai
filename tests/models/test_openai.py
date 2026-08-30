@@ -6419,3 +6419,45 @@ def test_model_construction_preloads_lazy_dependencies():
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     process = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120, env=env)
     assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'
+
+
+async def test_stream_continuous_usage_stats_no_usage_chunk_keeps_cumulative(allow_model_requests: None):
+    """Regression: with continuous_usage_stats=True, a chunk carrying no usage maps to
+    all-zero RequestUsage — replacing on it wiped the running cumulative snapshot, so a
+    stream interrupted before the final chunk committed a zero partial usage instead of
+    the tokens actually consumed so far."""
+    stream = [
+        chunk_with_usage(
+            [ChoiceDelta(content='hello ', role='assistant')],
+            completion_tokens=5,
+            prompt_tokens=10,
+            total_tokens=15,
+        ),
+        # No usage on this chunk: the first chunk of some streams, moderation chunks, and
+        # gateways that only implement include_usage send these. (The `chunk()` helper
+        # defaults to a non-null usage, so this has to be stripped explicitly.)
+        text_chunk('world').model_copy(update={'usage': None}),
+        chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=10, prompt_tokens=10, total_tokens=20),
+        chunk_with_usage([], finish_reason='stop', completion_tokens=10, prompt_tokens=10, total_tokens=20),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
+    async with agent.run_stream('', model_settings=settings) as result:
+        usage_at_each_step: list[RequestUsage] = []
+        async for response in result.stream_response(debounce_by=None):
+            usage_at_each_step.append(response.usage)
+
+    # The usage-less chunk must leave the previous cumulative snapshot (10/5) in place —
+    # never zero — until the next cumulative chunk (10/10) replaces it.
+    assert usage_at_each_step == snapshot(
+        [
+            RequestUsage(input_tokens=10, output_tokens=5),
+            RequestUsage(input_tokens=10, output_tokens=5),
+            RequestUsage(input_tokens=10, output_tokens=10),
+            RequestUsage(input_tokens=10, output_tokens=10),
+            RequestUsage(input_tokens=10, output_tokens=10),
+        ]
+    )
