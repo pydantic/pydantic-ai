@@ -117,7 +117,7 @@ async def test_xsearch_callable_native_none_then_tool_still_raises(allow_model_r
         n += 1
         if n == 1:
             return None
-        return XSearchTool()
+        return XSearchTool()  # pragma: no cover
 
     outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
     agent = Agent(

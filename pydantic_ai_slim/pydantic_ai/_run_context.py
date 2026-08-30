@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
     from .models import AbstractModel
+    from .native_tools import AbstractNativeTool
     from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
     from .tool_manager import ToolManager
@@ -194,6 +195,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     recreated for each agent run and reconstructed identically on durable replay/recovery — not on
     the process-shared toolset instance, so whether a wrapper schedules its `get_tools` activity/step
     depends only on the run's own history and stays replay-deterministic.
+    """
+
+    _resolved_native_factories: dict[int, AbstractNativeTool | None] = field(default_factory=lambda: {}, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Per-run memo of `NativeToolFunc` results, keyed by `id(capability)`. Shared by reference
+    into every `RunContext` this run (see `build_run_context`) so a fallback subagent reuses
+    the outer native-path resolution, including a `None` omission, instead of invoking the
+    factory a second time.
     """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
