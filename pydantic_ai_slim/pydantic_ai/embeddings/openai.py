@@ -143,7 +143,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        embeddings = [item.embedding for item in response.data]
+        embeddings = [item.embedding for item in sorted(response.data, key=lambda e: e.index)]
 
         return EmbeddingResult(
             embeddings=embeddings,

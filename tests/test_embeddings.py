@@ -2306,3 +2306,30 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_embedding_batch_preserves_input_order():
+    from openai.types import Embedding
+    from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
+
+    out_of_order_response = CreateEmbeddingResponse(
+        data=[
+            Embedding(embedding=[0.2, 0.2], index=1, object='embedding'),
+            Embedding(embedding=[0.1, 0.1], index=0, object='embedding'),
+        ],
+        model='text-embedding-3-small',
+        object='list',
+        usage=Usage(prompt_tokens=2, total_tokens=2),
+    )
+
+    model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch(
+        'openai.resources.embeddings.AsyncEmbeddings.create',
+        AsyncMock(return_value=out_of_order_response),
+    ):
+        result = await model.embed(['first', 'second'], input_type='document')
+
+    assert result.embeddings[0] == [0.1, 0.1]
+    assert result.embeddings[1] == [0.2, 0.2]
