@@ -724,8 +724,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
-        Renders each `RetryFeedbackPart` as the `SystemPromptPart` that states, in the harness's own
-        voice, why the previous response couldn't be used.
+        Renders each `RetryFeedbackPart` into the statement of why the previous response couldn't be
+        used, in the harness's own voice: a `SystemPromptPart` where the profile takes a
+        mid-conversation system message, and the same `<system>`-tagged `UserPromptPart` an
+        operator's mid-conversation prompt degrades to where it doesn't.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
@@ -802,9 +804,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
-        messages = _render_retry_feedback_messages(messages)
+        supports_inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
+        messages = _render_retry_feedback_messages(
+            messages, supports_inline_system_prompts=supports_inline_system_prompts
+        )
 
-        if not self.profile.get('supports_inline_system_prompts', False):
+        if not supports_inline_system_prompts:
             messages = _wrap_non_leading_system_prompts(messages)
 
         return messages
@@ -2200,14 +2205,12 @@ exactly as written.
 def _wrap_in_system_tags(content: str) -> str:
     """Tag text as the harness speaking, for a channel with no system role of its own.
 
-    Every spelling of a closing tag inside `content` is escaped first, because not all of it is
-    operator-authored. Retry feedback drops the value the model sent, but a validation error's `loc`
-    is a key the model invented for a mapping output, and a `value_error`'s `msg` is whatever a
-    validator raised — commonly the offending value interpolated in. A tool-availability announcement
-    carries names a remote MCP server chose. An unescaped close would end the statement early and let
-    whatever follows read as if it stood outside it.
+    `content` goes in as written: an operator's system prompt is theirs, and rewriting it here would
+    change what every caller already sends. Text the model had a hand in is neutralized by whatever
+    renders it — `_render_retry_feedback` escapes closing tags out of the feedback it renders for
+    this channel — because only the renderer knows which of its text came from where.
     """
-    return f'<system>{_SYSTEM_CLOSE_TAG_OPENER.sub("&lt;", content)}</system>'
+    return f'<system>{content}</system>'
 
 
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -2216,9 +2219,6 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s
     question, and it is not simply "everything in the first request".
-
-    The wrapped content is not all operator-authored — `_wrap_in_system_tags` says which parts of it
-    aren't, and escapes every spelling of a closing tag before wrapping for that reason.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2235,14 +2235,12 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     for offset, msg in enumerate(messages[first_request_idx:]):
         start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
-            new_parts: list[ModelRequestPart] = []
-            for index, part in enumerate(msg.parts):
-                if index >= start and isinstance(part, SystemPromptPart):
-                    new_parts.append(
-                        UserPromptPart(content=_wrap_in_system_tags(part.content), timestamp=part.timestamp)
-                    )
-                else:
-                    new_parts.append(part)
+            new_parts = [
+                UserPromptPart(content=_wrap_in_system_tags(part.content), timestamp=part.timestamp)
+                if index >= start and isinstance(part, SystemPromptPart)
+                else part
+                for index, part in enumerate(msg.parts)
+            ]
             new_messages.append(replace(msg, parts=new_parts))
             changed = True
         else:
@@ -2344,13 +2342,22 @@ _RETRY_FEEDBACK_MODEL_RETRY = 'The response was not accepted:\n{feedback}'
 hook raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]."""
 
 
-def _render_retry_feedback(part: RetryFeedbackPart) -> str:
+def _render_retry_feedback(part: RetryFeedbackPart, *, escape_system_close_tags: bool = False) -> str:
     """State in the harness's own voice why the previous response couldn't be used.
 
     The per-`cause` wording lives here rather than on the part so the stored history stays
     model-neutral. `prepare_messages` renders this into a mid-conversation `SystemPromptPart`, and the
     UI adapters render the same string into their protocol's system-role message, so a transcript
     shows the feedback exactly as the model was shown it.
+
+    `escape_system_close_tags` belongs to the callers that `<system>`-tag the result, and every one
+    of them does both in one expression: the escape exists only because of that wrap. The feedback is
+    the part of the statement the model had a hand in — it drops the value the model sent, but a
+    validation error's `loc` is a key the model invented for a mapping output, and a `value_error`'s
+    `msg` is whatever a validator raised, commonly the offending value interpolated in — so a closing
+    tag left in there would end the statement early and let whatever follows read as if it stood
+    outside it. Text bound for a real system message is never escaped: there is no tag to break, and
+    mangling it would be visible to the model (https://github.com/pydantic/pydantic-ai/issues/7806).
     """
     if part.cause == 'validation_error':
         template = _RETRY_FEEDBACK_VALIDATION_ERROR
@@ -2360,10 +2367,13 @@ def _render_retry_feedback(part: RetryFeedbackPart) -> str:
         template = _RETRY_FEEDBACK_MODEL_RETRY
     else:
         assert_never(part.cause)
-    return template.format(feedback=part.model_response())
+    rendered = template.format(feedback=part.model_response())
+    return _SYSTEM_CLOSE_TAG_OPENER.sub('&lt;', rendered) if escape_system_close_tags else rendered
 
 
-def _render_retry_feedback_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _render_retry_feedback_messages(
+    messages: list[ModelMessage], *, supports_inline_system_prompts: bool
+) -> list[ModelMessage]:
     """Render harness retry feedback as a mid-conversation system message.
 
     A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] is retained model-neutrally in the
@@ -2373,38 +2383,64 @@ def _render_retry_feedback_messages(messages: list[ModelMessage]) -> list[ModelM
     the cached prefix ahead of it survives.
 
     On a model that takes a mid-conversation system message this lands as a real one, carrying the
-    operator authority the statement deserves; elsewhere `_wrap_non_leading_system_prompts` — which
-    runs after this — degrades it to `<system>`-tagged user text. Either way the model can tell it
-    apart from something a person wrote, which is what a `RetryPromptPart` rendered as bare user text
-    never allowed (https://github.com/pydantic/pydantic-ai/issues/6404).
+    operator authority the statement deserves; elsewhere it is degraded to the `<system>`-tagged user
+    text `_wrap_non_leading_system_prompts` gives an operator's own mid-conversation prompt. Either
+    way the model can tell it apart from something a person wrote, which is what a `RetryPromptPart`
+    rendered as bare user text never allowed (https://github.com/pydantic/pydantic-ai/issues/6404).
+
+    `supports_inline_system_prompts` is that same profile flag, resolved by the caller. Where it is
+    `False` this step also does the degrading, rather than leaving the rendered part for
+    `_wrap_non_leading_system_prompts` to pick up: the feedback is the one text here the model had a
+    hand in, so it is escaped as it is wrapped, in a single expression that cannot fire half of
+    itself. Position decides which parts that reaches, by the same rule the wrap uses — feedback
+    inside the first request's opening run of system parts is the run's standing prompt, which the
+    adapters hoist into the provider's own system field, so there is no tag around it to break out of
+    and it is left as written.
     """
-    # If a feedback part opens the first request — a hand-built `message_history`, an adapter load,
-    # or truncation promoting a never-sent request to first position — what it renders to counts as
-    # the run's standing system prompt, and hoists with it. All parts still precede the same
-    # assistant response, and the rendering is deterministic; no finer positional fidelity is
-    # required within one request.
+    # A feedback part can open the first request — a hand-built `message_history`, an adapter load, or
+    # truncation promoting a never-sent request to first position — and then hoists with the standing
+    # prompt. All parts still precede the same assistant response, and the rendering is deterministic;
+    # no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
+    is_first_request = True
     for message in messages:
-        if not isinstance(message, ModelRequest) or not any(
-            isinstance(part, RetryFeedbackPart) for part in message.parts
-        ):
+        if not isinstance(message, ModelRequest):
             transformed.append(message)
+            continue
+        if not any(isinstance(part, RetryFeedbackPart) for part in message.parts):
+            transformed.append(message)
+            is_first_request = False
             continue
 
         changed = True
-        replacement_parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if not isinstance(part, RetryFeedbackPart):
-                replacement_parts.append(part)
-                continue
-            replacement_parts.append(SystemPromptPart(content=_render_retry_feedback(part), timestamp=part.timestamp))
         # Anthropic requires the tool results answering the previous turn to open the message, so the
         # rendered feedback sorts to the back — the same normalization
         # `_announce_tool_availability_delta_messages` does after the same kind of replacement. A
-        # request can hold both: `_enqueue` accepts feedback alongside a tool return.
-        replacement_parts.sort(key=_tool_results_first_sort_key)
-        transformed.append(replace(message, parts=replacement_parts))
+        # request can hold both: `_enqueue` accepts feedback alongside a tool return. Sorting the
+        # authored parts rather than the rendered ones is equivalent — rendering never changes a
+        # part's sort key — and it makes each part's final position known while its origin still is.
+        ordered = sorted(message.parts, key=_tool_results_first_sort_key)
+        rendered_parts: list[ModelRequestPart] = [
+            SystemPromptPart(content=_render_retry_feedback(part), timestamp=part.timestamp)
+            if isinstance(part, RetryFeedbackPart)
+            else part
+            for part in ordered
+        ]
+        if not supports_inline_system_prompts:
+            # Degrade what the wrap step would have degraded, by its own rule, applied to the rendered
+            # shape it would have seen — `_standing_system_prompt_count` reads part types. Doing it
+            # here is what keeps the escape and the tag from disagreeing about a part: they are one
+            # expression, and the second render they cost is a `str.format` on a short string.
+            standing = _standing_system_prompt_count(replace(message, parts=rendered_parts)) if is_first_request else 0
+            for index, part in enumerate(ordered):
+                if index >= standing and isinstance(part, RetryFeedbackPart):
+                    rendered_parts[index] = UserPromptPart(
+                        content=_wrap_in_system_tags(_render_retry_feedback(part, escape_system_close_tags=True)),
+                        timestamp=part.timestamp,
+                    )
+        transformed.append(replace(message, parts=rendered_parts))
+        is_first_request = False
 
     return transformed if changed else messages
 

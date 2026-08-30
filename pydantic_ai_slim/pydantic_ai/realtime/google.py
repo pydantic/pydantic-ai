@@ -437,7 +437,8 @@ async def _seed_request_parts(
             # `<system>` tagging every model without a mid-conversation system message gets, which
             # is what keeps the model from reading it as something a person said
             # (https://github.com/pydantic/pydantic-ai/issues/6404).
-            parts.append(genai_types.Part(text=_wrap_in_system_tags(_render_retry_feedback(part))))
+            feedback = _wrap_in_system_tags(_render_retry_feedback(part, escape_system_close_tags=True))
+            parts.append(genai_types.Part(text=feedback))
         else:
             assert_never(part)
     return parts
