@@ -42,7 +42,12 @@ with try_import() as bedrock_available:
     from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -992,8 +997,6 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_re
 @skip_if_no_openai
 async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
     """`ToolOrOutput` single function tool on a no-forcing Responses model uses `allowed_tools` to preserve cache."""
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-
     mock_client = MagicMock()
     provider = OpenAIProvider(openai_client=mock_client)
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
@@ -1058,8 +1061,6 @@ async def test_openai_responses_forcing_follows_thinking_state(
     allow_model_requests: None, thinking: ThinkingLevel | None, expected_tool_choice: str
 ):
     """The Responses API path reads the same flag, since DeepSeek rejects forcing on both endpoints."""
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-
     m = OpenAIResponsesModel(
         'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
     )
@@ -1102,8 +1103,6 @@ async def test_openai_responses_explicit_forcing_with_thinking_raises(
     allow_model_requests: None, tool_choice: ToolChoice
 ):
     """An explicit forcing request can't be silently downgraded on the Responses API path either."""
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-
     m = OpenAIResponsesModel(
         'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
     )
@@ -1133,8 +1132,6 @@ async def test_openai_responses_tool_or_output_forcing_without_required_support_
     allow_model_requests: None,
 ):
     """`ToolOrOutput` without direct output is explicit forcing, so unsupported models reject it (Responses API)."""
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-
     m = OpenAIResponsesModel(
         'stub',
         provider=OpenAIProvider(openai_client=MagicMock()),
