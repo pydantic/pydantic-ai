@@ -16533,6 +16533,7 @@ async def test_incomplete_terminal_maps_finish_reason_streaming(allow_model_requ
 
     response = next(m for m in result.all_messages() if isinstance(m, ModelResponse))
     assert response.finish_reason == 'length'
+    assert response.provider_details is not None
     assert response.provider_details['finish_reason'] == 'max_output_tokens'
 
 
