@@ -6300,7 +6300,7 @@ async def test_send_audio_first_chunk_bad_rolls_back_turn_state() -> None:
 
     async with session:
         with pytest.raises(TypeError):
-            await session.send_audio(cast('AsyncIterator[bytes]', first_chunk_bad()))
+            await session.send_audio(first_chunk_bad())
 
         assert session._user_turn_active is False, 'bad chunk must roll the turn state back'  # pyright: ignore[reportPrivateUsage]
         assert len(session._input_audio) == 0  # pyright: ignore[reportPrivateUsage]
@@ -6327,7 +6327,7 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
 
     async with session:
         with pytest.raises(TypeError):
-            await session.send_audio(cast('AsyncIterator[bytes]', chunks()))
+            await session.send_audio(chunks())
 
         assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
         assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
