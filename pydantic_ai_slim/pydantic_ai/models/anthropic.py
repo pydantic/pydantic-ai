@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -94,6 +94,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._anthropic_containers import append_container_uploads, is_tool_result_only, should_retry_rejected_container
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
@@ -171,7 +172,6 @@ try:
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
         BetaContainerParams,
-        BetaContainerUploadBlockParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
@@ -993,52 +993,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             try:
                 return await create(container)
             except APIStatusError as e:
-                # Dropping the container and resending is Anthropic's own prescribed recovery for a
-                # container that cannot be reused: "Send the request again without the `container`
-                # parameter to get a new container." So the remedy here is the documented one, and
-                # what the docs do not pin down is the trigger — they say such a request "returns an
-                # error" without naming a status.
-                #
-                # What we measured is narrower than the docs describe, which is why the guard keys on
-                # 500. A request asking Anthropic to materialize a `container_upload` into an id it
-                # will not accept comes back 500 carrying the same generic `api_error` body any
-                # internal failure produces — not the 404 it gives for an id that never existed. The
-                # id we measured against was only days old, and the docs put the lifetime at 30 days
-                # with a checkpoint after ~5 minutes of inactivity and a restore on the next request
-                # inside that window, so it should have been restored rather than refused. That gap —
-                # documented-restorable, actually-refused, and refused untyped — is the upstream bug
-                # (https://github.com/pydantic/pydantic-ai/issues/7833). Do not call this expiry: the
-                # `expires_at` field is a shorter rolling value the docs warn does not report the
-                # 30-day limit, and reading it as the lifetime is what produced the wrong "~1h" story
-                # this comment used to tell. If Anthropic ever returns the typed error the docs imply,
-                # widen this guard to it and the 500 special case can go.
-                #
-                # Keying a retry on an opaque 500 is blunt, so the guard is narrow on purpose. It needs both
-                # halves of the shape that reproduces — an id *we* resolved from history, and uploads
-                # actually on the wire — so any other 500 raises untouched and costs nobody a second
-                # round trip. A container the caller set is never rewritten, whether they passed
-                # `{'skills': ...}` or a bare id: dropping one discards state they asked us to keep,
-                # and it would not self-heal, because `_get_container` prefers their setting over the
-                # fresh id the retry earns. A `pause_turn` id is preserved for a different reason —
-                # it belongs to the turn being resumed, and a fresh container would resume it without
-                # the state it is part-way through. The history-resolved id is the one that heals: a
-                # later reverse scan finds the new container, so one retry is enough rather than one
-                # per step. That healing needs a turn that actually runs code, since Anthropic only
-                # returns a `container` object on such a turn and `_process_response` records the id
-                # only when it does; until one lands, a resumed conversation pays this retry again.
-                #
-                # One retry, never a loop: if the retry fails, that error is what surfaces. That bound
-                # is ours alone — the client's own `max_retries` multiplies it, so the guarded shape
-                # is 6 attempts at the SDK default against a generic 500, and 2 against the one this
-                # targets, which carries `x-should-retry: false`.
-                if e.status_code != 500 or not container_from_history:
-                    raise
-                sends_container_uploads = any(
-                    is_str_dict(block) and block['type'] == 'container_upload'
-                    for message in anthropic_messages
-                    for block in message['content']
-                )
-                if not sends_container_uploads:
+                if not should_retry_rejected_container(
+                    status_code=e.status_code,
+                    container_from_history=container_from_history,
+                    messages=anthropic_messages,
+                ):
                     raise
                 return await create(None)
 
@@ -2259,67 +2218,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _anchor_system_messages(anthropic_messages)
 
         if pending_container_uploads:
-            # Append the uploads to every user message that can carry one. Two constraints pin that
-            # down, and no fixed set of positions satisfies both:
-            #
-            # - The server only materializes a `container_upload` that falls inside the turn it is
-            #   generating — everything after the last *completed* assistant response. A block
-            #   stranded in an earlier, finished turn is inert, so a history with more than one user
-            #   turn and no container to reuse comes up without the file, and the model reports it
-            #   missing (https://github.com/pydantic/pydantic-ai/issues/7775). Mid-turn the block
-            #   may sit further back and still count: a `tool_use`/`tool_result` exchange does not
-            #   end the turn, so a block on the prompt that opened it still materializes.
-            # - The blocks are recomputed from the static `CodeExecutionTool.files` config on every
-            #   request, so a message that carries them must carry them on every request too.
-            #   Tracking the tail would move the insertion point as history grows and silently bust
-            #   the cacheable prefix. "First and last" fails the same way: the message that was last
-            #   on one step loses its block on the next.
-            #
-            # Appending to every user message that can carry one satisfies both, and the one
-            # exclusion costs nothing: a message holding only `tool_result` blocks never opens a
-            # turn, so the prompt that did is already carrying the block inside the same turn.
-            #
-            # That exclusion is required, not just free. `_drop_unpaired_native_tool_calls` above
-            # keeps an unpaired native call precisely while every later message is a user turn of
-            # only `tool_result` blocks, because that is the one shape Anthropic accepts it in. This
-            # loop runs after that decision, so adding a block here would retroactively invalidate
-            # it and the next request is rejected with `bash_code_execution` tool use ... was found
-            # without ... — reachable whenever a function tool runs alongside this native tool. Both
-            # sides read that shape through `_is_tool_result_only` so they cannot drift apart.
-            #
-            # A history whose every user message is tool-result-only therefore sends no upload at
-            # all. Attaching one anyway is the rejection above, so this is the boundary rather than
-            # a gap to close.
-            #
-            # Each message gets its own block objects. They are equal, not shared: every later pass
-            # over this list mutates blocks in place (`_limit_cache_points` deletes `cache_control`,
-            # `_add_cache_control_to_last_cacheable_param` writes it), and one shared dict would
-            # smear such a write across every message at once. Nothing writes to an upload block
-            # today — `container_upload` is absent from `_ANTHROPIC_CACHEABLE_PARAM_TYPES`, so the
-            # cache walkers step past it — but that is the only reason, and adding the type to that
-            # set later would make sharing a silent cache bust of exactly the kind this comment
-            # exists to prevent.
-            #
-            # Cost is ~6 input tokens per block, growing with user turns rather than staying
-            # constant, though every block outside the current turn falls inside a prefix an earlier
-            # step already cached. The file still materializes exactly once. A synthetic anchor turn
-            # from `_anchor_system_messages` is a user message like any other and takes a block too,
-            # which keeps it prefix-stable. Anchors are rare rather than profile-gated: they need a
-            # mid-conversation system entry that lands with no user turn in front of it, on one of
-            # the models that honor inline system prompts.
-            for msg in anthropic_messages:
-                if msg['role'] == 'user':
-                    existing = msg['content']
-                    assert isinstance(existing, list)
-                    if _is_tool_result_only(existing):
-                        continue
-                    msg['content'] = [
-                        *existing,
-                        *(
-                            BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
-                            for file_id in pending_container_uploads
-                        ),
-                    ]
+            append_container_uploads(anthropic_messages, pending_container_uploads)
 
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -3514,23 +3413,13 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     return content if isinstance(content, list) else []
 
 
-def _is_tool_result_only(content: Sequence[BetaContentBlockParam]) -> bool:
-    """Whether a user message carries nothing but `tool_result` blocks.
-
-    Such a message answers an assistant turn rather than opening one, which is what makes it both
-    the one shape Anthropic accepts an unpaired native call in front of, and a message the
-    `container_upload` injection has to leave alone. Both callers depend on agreeing about that, so
-    they share this rather than each spelling it out.
-    """
-    return bool(content) and all(is_str_dict(block) and block['type'] == 'tool_result' for block in content)
-
-
 def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901
     """Drop native tool calls that Anthropic will reject without a rendered result.
 
     A result can arrive in a later response, or exist as a `NativeToolReturnPart` but fail to render.
     Anthropic accepts an unpaired native call only while every later message is a user turn containing
-    only concurrent client-tool results.
+    only concurrent client-tool results. That shape is `is_tool_result_only`, shared with the
+    `container_upload` injection so the two cannot drift.
     """
     returned_native_tool_call_ids: set[str] = set()
     for message in anthropic_messages:
@@ -3591,7 +3480,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
             message['content'] = kept
 
         suffix_is_tool_result_only = (
-            suffix_is_tool_result_only and message['role'] == 'user' and _is_tool_result_only(kept)
+            suffix_is_tool_result_only and message['role'] == 'user' and is_tool_result_only(kept)
         )
 
 

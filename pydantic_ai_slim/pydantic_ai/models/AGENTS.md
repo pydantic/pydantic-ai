@@ -36,6 +36,7 @@
 
 <!-- rule:9 -->
 - Place provider-specific code in `models/{provider}.py`, not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
+- Anthropic-only helpers with a long background live in `_anthropic_*.py` siblings (`_anthropic_containers.py`, `_anthropic_bedrock_count_tokens.py`) so a reader of `anthropic.py` is not forced through them
 
 A model should read reveal modes through `self.tool_deferral_mode` and
 `self.tool_addition_mode`, never directly from the corresponding profile keys. An adapter that
