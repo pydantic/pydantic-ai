@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelProfile, ModelRequestParameters
@@ -434,7 +435,8 @@ async def test_feedback_opening_the_first_request_is_not_the_standing_prompt(ant
     An operator prompt sitting *behind* the feedback is demoted with it, and that is not a new call:
     on `main` a `RetryPromptPart` ahead of one already ends the run the same way, leaving `system`
     empty and the operator's text `<system>`-tagged. An operator prompt *ahead* of the feedback still
-    hoists, which is the half that has to keep working.
+    hoists, which is the half that has to keep working — including when a tool result shares the
+    request and sorts ahead of everything that is not one.
     """
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     feedback = RetryFeedbackPart(content='the answer has to be a number', cause='model_retry')
@@ -499,6 +501,27 @@ the answer has to be a number</system>\
         AnthropicModelSettings(),
     )
     assert system == snapshot('be terse')
+
+    # A tool result outranks every other part in the sort, so holding the standing prompt out of that
+    # sort is what keeps it at the front. Checked against `RetryPromptPart` as well because that part
+    # reaches this position on `main` too: whatever the tool result does to the standing prompt, it
+    # has to do to both.
+    for alongside_a_tool_result in (RetryPromptPart(content='x'), feedback):
+        with_tool_result: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='be terse'),
+                    alongside_a_tool_result,
+                    ToolReturnPart(tool_name='t', content='r', tool_call_id='c1'),
+                ]
+            )
+        ]
+        system, _ = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+            model.prepare_messages(with_tool_result, ModelRequestParameters()),
+            ModelRequestParameters(),
+            AnthropicModelSettings(),
+        )
+        assert system == snapshot('be terse')
     assert messages == snapshot(
         [
             {

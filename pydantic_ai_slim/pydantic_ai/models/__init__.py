@@ -2412,6 +2412,16 @@ def _render_retry_feedback_messages(
 
     An operator's own `SystemPromptPart` sitting behind such a part is demoted with it, which is not a
     new call: on `main` a `RetryPromptPart` ahead of one already ends the run the same way.
+
+    Both halves read `message.parts` as authored, which is the same question
+    `_standing_system_prompt_count`'s own callers ask only because no two `ModelRequest`s are adjacent
+    by the time this runs: `_agent_graph._make_request` cleans the history before calling
+    `prepare_messages`. A second clean runs after, and its `_merge_consecutive_messages` concatenates
+    a synthesized request onto its neighbour — which cannot move a rendered feedback part to the front
+    of the first request today, because the only request this pipeline synthesizes carries a
+    tool-search return, and a feedback part that could have opened the first request has already been
+    degraded here. A synthesis that could put one there would have to re-derive the standing run after
+    that merge rather than here.
     """
     transformed: list[ModelMessage] = []
     changed = False
@@ -2432,11 +2442,20 @@ def _render_retry_feedback_messages(
         # request can hold both: `_enqueue` accepts feedback alongside a tool return. Sorting the
         # authored parts is equivalent to sorting the rendered ones, because rendering never changes a
         # part's sort key, and it settles each part's final index before anything is rendered.
-        ordered = sorted(message.parts, key=_tool_results_first_sort_key)
-        # Where the run of authored system prompts ends, and so the only index whose part can extend
-        # that run by rendering as a `SystemPromptPart`. Only the first request has a standing prompt
-        # to join.
-        standing_run_end = _standing_system_prompt_count(replace(message, parts=ordered)) if is_first_request else None
+        #
+        # The opening run of authored system prompts is held out of that sort, exactly as the sibling
+        # holds it out of its own: those parts are the agent's standing prompt *because* they open the
+        # first request, and a tool result sorting ahead of them would take that position away and
+        # with it the provider's top-level system field.
+        authored_standing = _standing_system_prompt_count(message) if is_first_request else 0
+        head, tail = list(message.parts[:authored_standing]), list(message.parts[authored_standing:])
+        tail.sort(key=_tool_results_first_sort_key)
+        ordered = [*head, *tail]
+        # `tail[0]` lands at exactly this index and is never a `SystemPromptPart` — the part the
+        # authored count stopped on isn't one, and the sort only promotes tool results ahead of it —
+        # so this is still the one index whose part can extend the run by rendering as a system
+        # message. Only the first request has a standing prompt to join.
+        standing_run_end = authored_standing if is_first_request else None
 
         replacement_parts: list[ModelRequestPart] = []
         for index, part in enumerate(ordered):
