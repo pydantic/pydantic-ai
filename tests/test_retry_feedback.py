@@ -26,6 +26,7 @@ from pydantic_ai._tool_execution import tool_bound_retry_part
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    CompactionPart,
     InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -54,7 +55,12 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
 anthropic_installed = pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+openai_installed = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 
 pytestmark = pytest.mark.anyio
 
@@ -255,7 +261,7 @@ async def test_a_closing_tag_in_the_feedback_cannot_end_the_system_statement():
 
 
 @anthropic_installed
-async def test_first_position_feedback_reaches_the_provider_tagged_and_escaped(anthropic_api_key: str):
+async def test_first_position_feedback_is_tagged_and_escaped_in_the_mapped_request(anthropic_api_key: str):
     """The position a `ModelRetry` message can reach the provider's own system field from.
 
     A validator's message renders verbatim, and `loc` / `msg` on a validation error carry text the
@@ -425,7 +431,10 @@ async def test_feedback_opening_the_first_request_is_not_the_standing_prompt(ant
     feedback authority over the rest of the run and rewrite the first cache section every turn, which
     is the routing `realtime/_openai_protocol.py` and `realtime/google.py` refuse for the same reason.
 
-    The operator's own opening prompt still hoists, which is the half that has to keep working.
+    An operator prompt sitting *behind* the feedback is demoted with it, and that is not a new call:
+    on `main` a `RetryPromptPart` ahead of one already ends the run the same way, leaving `system`
+    empty and the operator's text `<system>`-tagged. An operator prompt *ahead* of the feedback still
+    hoists, which is the half that has to keep working.
     """
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     feedback = RetryFeedbackPart(content='the answer has to be a number', cause='model_retry')
@@ -447,6 +456,34 @@ the answer has to be a number</system>\
 """,
                         'type': 'text',
                     },
+                    {'text': 'try again', 'type': 'text'},
+                ],
+            }
+        ]
+    )
+
+    behind_the_feedback: list[ModelMessage] = [
+        ModelRequest(parts=[feedback, SystemPromptPart(content='be terse'), UserPromptPart(content='try again')])
+    ]
+    system, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(behind_the_feedback, ModelRequestParameters()),
+        ModelRequestParameters(),
+        AnthropicModelSettings(),
+    )
+    assert system == snapshot('')
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': """\
+<system>The response was not accepted:
+the answer has to be a number</system>\
+""",
+                        'type': 'text',
+                    },
+                    {'text': '<system>be terse</system>', 'type': 'text'},
                     {'text': 'try again', 'type': 'text'},
                 ],
             }
@@ -642,6 +679,54 @@ def test_a_retry_answering_a_tool_call_cannot_carry_tool_less_feedback():
 
     with pytest.raises(RuntimeError, match=r'cannot carry a `RetryFeedbackPart`'):
         tool_bound_retry_part(error)
+
+
+@openai_installed
+@pytest.mark.parametrize(
+    'first_part',
+    [
+        pytest.param(RetryPromptPart(content='the answer has to be a number'), id='retry-prompt'),
+        pytest.param(
+            RetryFeedbackPart(content='the answer has to be a number', cause='model_retry'), id='retry-feedback'
+        ),
+    ],
+)
+async def test_a_retry_opening_the_history_does_not_survive_compaction(
+    first_part: ModelRequestPart, openai_api_key: str
+):
+    """Rendered feedback must not come back as the standing prompt on the far side of a compaction.
+
+    `_trim_messages_before_compaction` rebuilds the run's standing prompt through
+    `_standing_prompt_request`, which reads the first request's opening `SystemPromptPart`s — and,
+    like every caller of `_standing_system_prompt_count`, it reads them *as rendered*. Feedback
+    rendered as a real system message is therefore reconstructed and outlives the boundary that drops
+    the user prompt beside it, which is why first-position feedback is `<system>`-tagged user text on
+    every profile rather than only where the profile forces it. `gpt-5` takes a mid-conversation
+    system message, so it is the profile where that could go wrong.
+
+    Parametrized against `RetryPromptPart` because that is what this retry was on `main`: the trim has
+    to treat the new part exactly as it treated the old one.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[first_part, UserPromptPart(content='old turn')]),
+        ModelResponse(parts=[TextPart('t'), CompactionPart(content='summary so far', id='c1', provider_name='openai')]),
+        ModelRequest(parts=[UserPromptPart(content='new turn')]),
+    ]
+
+    trimmed = model._trim_before_compaction(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history, ModelRequestParameters())
+    )
+
+    assert trimmed == snapshot(
+        [
+            ModelResponse(
+                parts=[CompactionPart(content='summary so far', id='c1', provider_name='openai')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(parts=[UserPromptPart(content='new turn', timestamp=IsDatetime())]),
+        ]
+    )
 
 
 async def test_an_unrendered_feedback_part_reaching_a_model_directly_raises():
