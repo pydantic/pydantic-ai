@@ -227,8 +227,8 @@ def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
         assert BedrockProvider.model_profile(f'openai.{base_name}') is None
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
         assert {
-            'supports_json_schema_output': model.profile['supports_json_schema_output'],
-            'supports_thinking': model.profile['supports_thinking'],
+            'supports_json_schema_output': model.profile.get('supports_json_schema_output', False),
+            'supports_thinking': model.profile.get('supports_thinking', False),
             'bedrock_thinking_variant': model.profile.get('bedrock_thinking_variant'),
         } == snapshot(
             {
