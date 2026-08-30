@@ -12477,6 +12477,74 @@ async def test_agent_blank_text_response_token_limit(output_type: Any):
         await agent.run('hello')
 
 
+async def test_run_stream_max_output_tokens_raises_unexpected_model_behavior(allow_model_requests: None):
+    """A length-exhausted stream raises `UnexpectedModelBehavior` instead of silently finalizing `None`."""
+
+    pytest.importorskip('openai')
+    from openai.types import responses as resp
+    from openai.types.responses.response import IncompleteDetails
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, response_message
+
+    incomplete_response = response_message([])
+    incomplete_response.status = 'incomplete'
+    incomplete_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, output_type=str | None)
+
+    with pytest.raises(UnexpectedModelBehavior, match='token limit'):
+        async with agent.run_stream('hello') as result:
+            await result.get_output()
+
+
+async def test_run_stream_content_filter_raises_content_filter_error(allow_model_requests: None):
+    """A content-filtered stream raises `ContentFilterError`, matching the non-streaming path."""
+
+    pytest.importorskip('openai')
+    from openai.types import responses as resp
+    from openai.types.responses.response import IncompleteDetails
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, response_message
+
+    incomplete_response = response_message([])
+    incomplete_response.status = 'incomplete'
+    incomplete_response.incomplete_details = IncompleteDetails(reason='content_filter')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, output_type=str | None)
+
+    with pytest.raises(
+        ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
+    ):
+        async with agent.run_stream('hello') as result:
+            await result.get_output()
+
+
 async def test_agent_allows_none_output_after_tool():
     """Test that Agent(output_type=str | None) succeeds after tool call with no final text."""
     call_count = 0
