@@ -661,6 +661,42 @@ async def test_unloaded_deferred_error_hooks_are_skipped() -> None:
     assert capability.log == []
 
 
+async def test_hooks_subclass_overrides_are_not_skipped() -> None:
+    """A Hooks subclass that overrides wrap/error methods still runs them.
+
+    Registry-only `_has_*` checks would skip the override and call the model handler
+    directly.
+    """
+
+    class RecoveringHooks(Hooks):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            try:
+                return await handler(request_context)
+            except RuntimeError:
+                return ModelResponse(parts=[TextPart(content='hooks-wrapped-recovery')])
+
+    class RecoveringErrorHooks(Hooks):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='hooks-error-recovery')])
+
+    async def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failure')
+
+    wrapped = await Agent(FunctionModel(fail), capabilities=[RecoveringHooks()]).run('test')
+    assert wrapped.output == 'hooks-wrapped-recovery'
+
+    recovered = await Agent(FunctionModel(fail), capabilities=[RecoveringErrorHooks()]).run('test')
+    assert recovered.output == 'hooks-error-recovery'
+
+
 def _output_context() -> OutputContext:
     return OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
 
