@@ -25,7 +25,9 @@ BASELINE_MAIN_RUN_LIMIT = 30
 BASELINE_PR_RUN_LIMIT = 60
 BASELINE_COLLECTION_MAX_SECONDS = 90
 MIN_BASELINE_SAMPLES = 10
-# Keep above the number of tracked jobs so a full run renders every row.
+# Must stay above the number of tracked jobs so a full run renders every row: `no_baseline` sorts
+# into the truncated tail with `normal`, and every newly-minted signature starts there. Today's
+# `ci.yml` matrices give 5 pythons x (4 installs + lowest-versions) + 5 x 2 durable-exec = 35.
 REPORT_ROW_LIMIT = 40
 WARNING_MIN_SECONDS = 60
 SLOW_THRESHOLD_MULTIPLIER = 1.25
@@ -466,14 +468,14 @@ def is_tracked_test_job(job: JobRecord) -> bool:
 def parse_runner_class(runner_group_name: str | None, runner_name: str | None, labels: list[JsonValue] | None) -> str:
     label_values = [value.lower() for value in labels or [] if isinstance(value, str)]
     lower_values = ' '.join([runner_group_name or '', runner_name or '', *label_values]).lower()
+    # Only the Ubicloud class carries a size, because only Ubicloud is requested in two of them:
+    # every GitHub runner in `ci.yml` is `ubuntu-latest`, and no job asks for a depot runner at all.
     if 'depot' in lower_values:
         return 'depot'
     # Keep the size in the class: the same job takes materially different times on different
     # Ubicloud sizes, so a size-blind class pools those durations into one meaningless baseline.
     # Read it off the labels only -- `runner_name` and `runner_group_name` are vendor-controlled, so
     # matching the size anywhere in the joined string reads back whatever Ubicloud puts there.
-    # The branches below still match the joined string. They stay size-blind because no `ci.yml`
-    # job asks for more than one size of a GitHub runner, and none asks for a depot runner at all.
     ubicloud_label = next((label for label in label_values if label.startswith('ubicloud')), None)
     if ubicloud_label is not None:
         return ubicloud_label
@@ -715,6 +717,7 @@ def emit_logfire(record: JsonObject) -> None:
                             'base_branch': workflow.get('base_branch'),
                             'job_name': job_object.get('raw_name'),
                             'job_signature': job_object.get('job_signature'),
+                            'job_family': job_object.get('job_family'),
                             'matrix_python': job_object.get('matrix_python'),
                             'matrix_extra': job_object.get('matrix_extra'),
                             'runner_class': job_object.get('runner_class'),

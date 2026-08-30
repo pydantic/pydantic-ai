@@ -188,7 +188,7 @@ def test_render_report_uses_sticky_marker_and_threshold_context():
     'row_count,expect_omission',
     [(ci_duration.REPORT_ROW_LIMIT, False), (ci_duration.REPORT_ROW_LIMIT + 1, True)],
 )
-def test_render_report_row_limit_clears_a_full_run(row_count: int, expect_omission: bool):
+def test_render_report_truncates_only_past_the_row_limit(row_count: int, expect_omission: bool):
     workflow: ci_duration.JsonObject = {
         'duration_seconds': 840,
         'html_url': 'https://github.com/pydantic/pydantic-ai/actions/runs/1',

@@ -235,6 +235,8 @@ jobs:
       fail-fast: false
       matrix:
         # `latest-versions-canary.yml` runs the endpoints of this list; update it alongside.
+        # Growing any test matrix also grows the tracked-job count that `REPORT_ROW_LIMIT` in
+        # `.github/scripts/ci_duration.py` must stay above, or the duration report truncates.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
