@@ -79,7 +79,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
-    from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
+    from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
@@ -1720,10 +1720,8 @@ def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
     assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
-async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(
-    temporal_env: WorkflowEnvironment, temporal_port: int
-) -> None:
-    client = await Client.connect(f'localhost:{temporal_port}')
+async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_target: str) -> None:
+    client = await Client.connect(temporal_target)
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
