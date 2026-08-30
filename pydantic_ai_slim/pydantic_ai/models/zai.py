@@ -76,6 +76,7 @@ class _ZaiChatCompletion(_ChatCompletion):
 
 LatestZaiModelNames = Literal[
     'glm-5.3',
+    'glm-5.3-flash',
     'glm-5.2',
     'glm-5.1',
     'glm-5',
