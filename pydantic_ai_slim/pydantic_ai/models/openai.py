@@ -317,6 +317,9 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'completed': 'stop',
     'cancelled': 'error',
     'failed': 'error',
+    # A terminal `incomplete` status without `incomplete_details` still means the output
+    # was cut short, just with an unreported reason.
+    'incomplete': 'length',
 }
 
 
@@ -4105,6 +4108,26 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         background = bool((self.provider_details or {}).get('background'))
         self.state = _response_status_to_state(status, background=background)
 
+    def _record_terminal_finish_reason(self, response: responses.Response) -> None:
+        """Map a terminal response's finish reason, mirroring the non-streaming path.
+
+        Applied to all three terminal events (`completed`, `incomplete`, `failed`):
+        `incomplete_details.reason` takes precedence over the status (e.g.
+        `max_output_tokens` on a `response.incomplete` terminal → `length`), and the
+        refusal case skips the update. Without this, an `incomplete`/`failed` terminal
+        left `finish_reason=None`, silently losing the token-limit and content-filter
+        semantics the non-streaming path reports (and `_agent_graph` branches on).
+        """
+        raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
+
+        if raw_finish_reason:  # pragma: no branch
+            if not self._has_refusal:
+                self.provider_details = {
+                    **(self.provider_details or {}),
+                    'finish_reason': raw_finish_reason,
+                }
+                self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
     def _track_background(self, response: responses.Response) -> None:
         """Mark a background job so `cancel_suspended_response` can cancel it server-side.
 
@@ -4184,18 +4207,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._usage += self._map_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
                     self._set_state(chunk.response.status)
-
-                    raw_finish_reason = (
-                        details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
-                    )
-
-                    if raw_finish_reason:  # pragma: no branch
-                        if not self._has_refusal:
-                            self.provider_details = {
-                                **(self.provider_details or {}),
-                                'finish_reason': raw_finish_reason,
-                            }
-                            self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+                    self._record_terminal_finish_reason(chunk.response)
 
                     if chunk.response.moderation:
                         self.provider_details = {
@@ -4218,6 +4230,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseFailedEvent):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
+                    self._record_terminal_finish_reason(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -4237,6 +4250,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
+                    self._record_terminal_finish_reason(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                     if isinstance(chunk.item, responses.ResponseFunctionToolCall):

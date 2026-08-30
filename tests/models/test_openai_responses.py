@@ -16476,3 +16476,83 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
         }
     )
     assert json.loads(function_call['arguments']) == {INVALID_JSON_KEY: bad_args}
+
+
+async def test_incomplete_terminal_maps_finish_reason_streaming(allow_model_requests: None) -> None:
+    """Regression: `response.incomplete` / `response.failed` terminals used to leave
+    `finish_reason=None`, silently losing the token-limit and content-filter semantics the
+    non-streaming path reports and `_agent_graph` branches on (e.g. the empty-output +
+    `finish_reason='length'` "Model token limit exceeded" error)."""
+    from openai.types.responses.response import IncompleteDetails
+
+    base_response = response_message(
+        [
+            resp.ResponseOutputMessage(
+                id='msg_001',
+                type='message',
+                role='assistant',
+                status='incomplete',
+                content=[resp.ResponseOutputText(text='partial output', type='output_text', annotations=[])],
+            )
+        ]
+    ).model_copy(update={'status': 'incomplete', 'incomplete_details': IncompleteDetails(reason='max_output_tokens')})
+    stream = [
+        resp.ResponseOutputItemAddedEvent(
+            item=base_response.output[0],
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            delta='partial output',
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='partial output',
+            type='response.output_text.done',
+            sequence_number=3,
+            logprobs=[],
+        ),
+        resp.ResponseIncompleteEvent(response=base_response, type='response.incomplete', sequence_number=4),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.6-terra', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream_events('') as result:
+        _ = [event async for event in result]
+
+    response = next(m for m in result.all_messages() if isinstance(m, ModelResponse))
+    assert response.finish_reason == 'length'
+    assert response.provider_details['finish_reason'] == 'max_output_tokens'
+
+
+async def test_incomplete_terminal_empty_output_raises_token_limit_error(allow_model_requests: None) -> None:
+    """The downstream semantics the streaming finish_reason feeds: an empty output cut
+    short by the token limit must raise the explicit "Model token limit exceeded" error —
+    before the fix, the streaming path silently returned None output instead."""
+    from openai.types.responses.response import IncompleteDetails
+
+    base_response = response_message([]).model_copy(
+        update={'status': 'incomplete', 'incomplete_details': IncompleteDetails(reason='max_output_tokens')}
+    )
+    stream = [
+        resp.ResponseIncompleteEvent(response=base_response, type='response.incomplete', sequence_number=1),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.6-terra', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Model token limit'):
+        async with agent.run_stream_events('') as events:
+            _ = [event async for event in events]
