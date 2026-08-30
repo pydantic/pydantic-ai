@@ -30,8 +30,10 @@ Each message gets its own block objects. Later passes mutate blocks in place
 https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool#container-reuse
 
 The docs do not name the error. The shape we measured is 500 with a generic `api_error`
-body when a history-resolved id is paired with `container_upload` blocks — not the 404 a
-never-existed id returns. Containers expire 30 days after creation; after ~5 minutes of
+body (`Internal server error`) when a history-resolved id is paired with `container_upload`
+blocks — not the 404 a never-existed id returns. That body is the same envelope as any
+other Anthropic 500, so wording cannot distinguish this failure; the guard keys on the
+request shape instead. Containers expire 30 days after creation; after ~5 minutes of
 inactivity they are checkpointed and a request inside that window restores them.
 `expires_at` is a shorter rolling value that does not report the 30-day limit. A days-old
 id should have restored. That gap is https://github.com/pydantic/pydantic-ai/issues/7833.

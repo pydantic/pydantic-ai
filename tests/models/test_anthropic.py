@@ -1056,10 +1056,13 @@ async def test_anthropic_code_execution_files_500_with_uploads_drops_history_con
 async def test_anthropic_code_execution_files_append_to_every_user_message(allow_model_requests: None):
     """Pins the internal `_map_message` placement: uploads attach to *every* user message that can carry one (covering all of them reaches the turn being generated while keeping each byte-identical as history grows), and none are added when history has no user message.
 
+    Three user messages, not two: first-and-last is the same set as every-user-message on a
+    two-turn history, so a two-turn snapshot cannot catch a regression that only tags the ends.
+
     Not a VCR test: the recordings in `test_code_execution_files_vcr.py` do catch a placement
-    regression — they read the outbound request through the `request_capture` hook — but the
-    no-user-message branch is unreachable through an agent run, which needs a prompt, so asserting
-    the mapped messages directly is what covers it.
+    regression — they read the outbound request through the `request_capture` hook — but they
+    are all two-user-turn histories, and the no-user-message branch is unreachable through an
+    agent run, which needs a prompt, so asserting the mapped messages directly is what covers it.
     """
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
@@ -1075,6 +1078,8 @@ async def test_anthropic_code_execution_files_append_to_every_user_message(allow
             ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
             ModelResponse(parts=[TextPart(content='Previous response')]),
             ModelRequest(parts=[UserPromptPart(content='And now summarize it.')]),
+            ModelResponse(parts=[TextPart(content='Summary so far')]),
+            ModelRequest(parts=[UserPromptPart(content='Now the average.')]),
         ],
         parameters,
         AnthropicModelSettings(),
@@ -1094,6 +1099,14 @@ async def test_anthropic_code_execution_files_append_to_every_user_message(allow
                 'role': 'user',
                 'content': [
                     {'text': 'And now summarize it.', 'type': 'text'},
+                    {'file_id': 'file_anthropic', 'type': 'container_upload'},
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': 'Summary so far', 'type': 'text'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Now the average.', 'type': 'text'},
                     {'file_id': 'file_anthropic', 'type': 'container_upload'},
                 ],
             },
