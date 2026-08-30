@@ -6295,15 +6295,15 @@ async def test_send_audio_first_chunk_bad_rolls_back_turn_state() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, audio_retention='input_audio')
 
-    async def first_chunk_bad():
+    async def first_chunk_bad() -> AsyncIterator[bytes]:
         yield 123  # type: ignore[misc]
 
     async with session:
         with pytest.raises(TypeError):
-            await session.send_audio(first_chunk_bad())
+            await session.send_audio(cast('AsyncIterator[bytes]', first_chunk_bad()))
 
-        assert session._user_turn_active is False, 'bad chunk must roll the turn state back'
-        assert len(session._input_audio) == 0
+        assert session._user_turn_active is False, 'bad chunk must roll the turn state back'  # pyright: ignore[reportPrivateUsage]
+        assert len(session._input_audio) == 0  # pyright: ignore[reportPrivateUsage]
         assert conn.sent == [], 'nothing should have reached the connection'
 
         # With the state clean, a later (empty) turn boundary must not record
@@ -6321,16 +6321,16 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, audio_retention='input_audio')
 
-    async def chunks():
+    async def chunks() -> AsyncIterator[bytes]:
         yield b'good-bytes'
         yield 'not-bytes'  # type: ignore[misc]
 
     async with session:
         with pytest.raises(TypeError):
-            await session.send_audio(chunks())
+            await session.send_audio(cast('AsyncIterator[bytes]', chunks()))
 
-        assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'
-        assert bytes(session._input_audio) == b'good-bytes'
+        assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
+        assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
 
 
