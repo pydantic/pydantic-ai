@@ -324,8 +324,9 @@ jobs:
       # that stops being true.
       # Everything under `tests/durable_exec` is ignored here and runs in `test-durable-exec`
       # instead: most of those tests pin xdist groups around real local servers, so the chains
-      # they form would otherwise be the critical-path floor of this job. Its `lowest` leg
-      # proves the minimum `temporalio`/`dbos`/`prefect` bounds.
+      # they form would otherwise be the critical-path floor of the all-extras cells -- the
+      # other install variants skip the suites at module level, for want of the engine packages.
+      # Its `lowest` leg proves the minimum `temporalio`/`dbos`/`prefect` bounds.
       - run: >-
           uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
           --ignore=tests/durable_exec
@@ -354,9 +355,9 @@ jobs:
   # job's workers, and only the tests within one group run in sequence.
   # New durable-exec tests land anywhere under `tests/durable_exec` and are picked up
   # automatically. That whole directory is excluded from the main `test` matrix, so a test
-  # placed there runs only in this job, which sets `BLOCKBUSTER_ENABLED: false`. Blocking
-  # detection runs only in the `test` job's 3.13 cells, so a test that needs it belongs
-  # elsewhere under `tests/`.
+  # placed there runs only in this job, which sets `BLOCKBUSTER_ENABLED: false`. A test that
+  # needs blocking detection belongs elsewhere under `tests/`, where the `test` job turns it on
+  # for the 3.13 cells other than all-extras.
   # The `lowest` resolution leg is the only place the declared minimum bounds
   # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
   test-durable-exec:
@@ -531,9 +532,9 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
+      # `-n logical` (see note on the `test` job).
       # The durable-execution suites run in `test-durable-exec` (its `lowest` leg covers
-      # this resolution), keeping their serial xdist chains off this job's critical path.
+      # this resolution), keeping their grouped xdist chains off this job's critical path.
       - run: >-
           uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
           --ignore=tests/durable_exec
