@@ -546,8 +546,6 @@ class GoogleModel(Model[Client]):
             names = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
             return names | {self.system}
         # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
-        # This holds the accepted *names* still for such a provider; the transport branches above
-        # still follow its client, which is what makes them agree with each other for the first time.
         return frozenset({self.system})
 
     @cached_property

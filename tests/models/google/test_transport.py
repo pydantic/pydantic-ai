@@ -13,14 +13,17 @@ inspect the body — so a recording would replay green through a regression in e
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from types import SimpleNamespace
 
 import pytest
+from pytest_mock import MockerFixture
 
 from pydantic_ai import UploadedFile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UploadedFileProviderName, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.tools import ToolDefinition
 
 from ...conftest import try_import
 
@@ -51,8 +54,11 @@ async def test_google_cloud_client_in_google_provider_uses_cloud_service_tier_he
         model_request_parameters=ModelRequestParameters(),
     )
 
-    config_dict = cast(dict[str, Any], config)
-    assert config_dict['http_options']['headers']['X-Vertex-AI-LLM-Request-Type'] == 'dedicated'
+    http_options = config.get('http_options')  # pyright: ignore[reportUnknownMemberType]
+    assert http_options is not None
+    headers = http_options.get('headers')
+    assert headers is not None
+    assert headers['X-Vertex-AI-LLM-Request-Type'] == 'dedicated'
 
 
 async def test_google_cloud_service_tier_is_dropped_on_a_gemini_api_transport(
@@ -73,9 +79,78 @@ async def test_google_cloud_service_tier_is_dropped_on_a_gemini_api_transport(
         model_request_parameters=ModelRequestParameters(),
     )
 
-    config_dict = cast(dict[str, Any], config)
-    assert not any(header.startswith('X-Vertex-AI') for header in config_dict['http_options']['headers'])
-    assert 'service_tier' not in config_dict
+    http_options = config.get('http_options')  # pyright: ignore[reportUnknownMemberType]
+    assert http_options is not None
+    headers = http_options.get('headers')
+    assert headers is not None
+    assert not any(header.startswith('X-Vertex-AI') for header in headers)
+    assert 'service_tier' not in config
+
+
+def test_gemini_api_sets_include_server_side_tool_invocations_on_a_google_cloud_provider(
+    gla_client_google_cloud_provider: GoogleCloudProvider,
+) -> None:
+    """The Gemini Developer API flag is set even when `system` is `'google-cloud'`.
+
+    Newly reachable: a Gemini API client in `GoogleCloudProvider` used to skip the flag because
+    `system == 'google-cloud'`. Pins that transport, not name, drives the SET. Twin of
+    `test_google_gemini_api_sets_include_server_side_tool_invocations` on the agreeing construction.
+
+    Not a VCR test: the field is decided before the request is sent, and cassette matchers do not
+    inspect the body.
+    """
+    model = GoogleModel('gemini-3-pro-preview', provider=gla_client_google_cloud_provider)
+    assert model.system == 'google-cloud'
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
+    _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert tool_config is not None
+    assert tool_config.get('include_server_side_tool_invocations') is True
+
+
+async def test_count_tokens_forwards_tools_on_a_google_cloud_transport(
+    allow_model_requests: None,
+    vertex_client_google_provider: GoogleProvider,
+    mocker: MockerFixture,
+) -> None:
+    """Vertex `countTokens` extras follow the client, not `system == 'google'`.
+
+    Twin of `test_google_vertexai_count_tokens_forwards_native_tools` on the agreeing construction.
+    Not a VCR test: tools-forwarding is decided before the request is sent.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=vertex_client_google_provider)
+    assert m.system == 'google'
+    fake = mocker.AsyncMock(return_value=SimpleNamespace(total_tokens=1))
+    mocker.patch.object(m.client.aio.models, 'count_tokens', fake)
+
+    await m.count_tokens(
+        [ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        None,
+        ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    config = fake.call_args.kwargs['config']
+    assert config.get('tools') == [{'google_search': {}}]
+
+
+async def test_count_tokens_omits_tools_on_a_gemini_api_transport(
+    allow_model_requests: None,
+    gla_client_google_cloud_provider: GoogleCloudProvider,
+    mocker: MockerFixture,
+) -> None:
+    """Gemini API `countTokens` does not take Vertex extras, even when `system` is `'google-cloud'`."""
+    m = GoogleModel('gemini-2.5-flash', provider=gla_client_google_cloud_provider)
+    assert m.system == 'google-cloud'
+    fake = mocker.AsyncMock(return_value=SimpleNamespace(total_tokens=1))
+    mocker.patch.object(m.client.aio.models, 'count_tokens', fake)
+
+    await m.count_tokens(
+        [ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        None,
+        ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    config = fake.call_args.kwargs['config']
+    assert config.get('tools') is None
 
 
 GCS_URI = 'gs://bucket/doc.pdf'

@@ -9,6 +9,8 @@ import httpx2
 import pytest
 from pydantic import TypeAdapter
 
+from ..conftest import try_import
+
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
@@ -16,6 +18,12 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from tests.cassette_utils import CassetteContext
+
+with try_import() as google_imports:
+    from google.genai import Client
+
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
@@ -185,11 +193,7 @@ def vertex_client_google_provider() -> GoogleProvider:
     `system` stays `'google'` while the transport is Google Cloud (Vertex), so transport
     (not the provider name) must drive Vertex-vs-Gemini-API behavior.
     """
-    try:
-        from google.genai import Client
-
-        from pydantic_ai.providers.google import GoogleProvider
-    except ImportError:  # pragma: lax no cover
+    if not google_imports():  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     return GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1'))
@@ -203,11 +207,7 @@ def gla_client_google_cloud_provider() -> GoogleCloudProvider:
     short-circuits on `client=` before it would force `vertexai=True`, so the two disagree in this
     direction too and every transport branch has to follow the client rather than the name.
     """
-    try:
-        from google.genai import Client
-
-        from pydantic_ai.providers.google_cloud import GoogleCloudProvider
-    except ImportError:  # pragma: lax no cover
+    if not google_imports():  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     return GoogleCloudProvider(client=Client(vertexai=False, api_key='mock-api-key'))
