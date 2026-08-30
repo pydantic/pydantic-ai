@@ -1194,7 +1194,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
-    def _require_choice(self, response: chat.ChatCompletion) -> chat.Choice:
+    def _require_choice(self, response: chat.ChatCompletion) -> chat_completion.Choice:
         """Return the single choice of a validated completion.
 
         The SDK type has no min-length constraint on `choices`, and OpenAI-compatible gateways
