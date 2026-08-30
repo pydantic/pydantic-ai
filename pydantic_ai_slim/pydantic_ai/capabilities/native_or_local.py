@@ -104,6 +104,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         self.__post_init__()
 
     def __post_init__(self) -> None:
+        self._native_factory_results: dict[str, AbstractNativeTool | None] = {}
         if self.native is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both `native` and `local` cannot be False')
 
@@ -196,7 +197,18 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             return []
         # After __post_init__, native=True is resolved to an AbstractNativeTool instance
         assert not isinstance(self.native, bool)
+        if callable(self.native) and not isinstance(self.native, AbstractNativeTool):
+            return [self._memoized_native_factory]
         return [self.native]
+
+    async def _memoized_native_factory(self, ctx: RunContext[AgentDepsT]) -> AbstractNativeTool | None:
+        """Resolve `native` once per run so the fallback subagent can reuse the result."""
+        key = ctx.run_id or ''
+        if key not in self._native_factory_results:
+            native = self.native
+            assert callable(native) and not isinstance(native, AbstractNativeTool)
+            self._native_factory_results[key] = await await_maybe(native(ctx))
+        return self._native_factory_results[key]
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         local = self.local
@@ -248,7 +260,14 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             )
 
         async def resolve_native(ctx: RunContext[AgentDepsT]) -> _NativeToolT:
-            native_tool = await _resolve_native_tool(native_factory, ctx, tool_cls)
+            key = ctx.run_id or ''
+            cache = self._native_factory_results
+            if key in cache:
+                cached = cache[key]
+                native_tool = await _resolve_native_tool(cached, ctx, tool_cls)
+            else:
+                native_tool = await _resolve_native_tool(native_factory, ctx, tool_cls)
+                cache[key] = native_tool
             assert isinstance(native_tool, tool_cls)
             if not overrides:
                 return native_tool

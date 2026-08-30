@@ -67,6 +67,70 @@ async def test_xsearch_callable_native_config_is_used_by_fallback(allow_model_re
     assert seen_native_tools == [[XSearchTool(allowed_x_handles=['pydantic'], include_output=True)]]
 
 
+async def test_xsearch_callable_native_factory_invoked_once_on_fallback(allow_model_requests: None):
+    """The outer native-path resolution is reused by the fallback subagent."""
+    factory_calls: list[str] = []
+
+    def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='summary of recent tweets')])
+
+    inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})))
+
+    def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
+
+    def native_factory(ctx: RunContext[str]) -> XSearchTool:
+        factory_calls.append(ctx.deps)
+        return XSearchTool(allowed_x_handles=[ctx.deps])
+
+    outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+    agent = Agent[str, str](
+        outer_model,
+        deps_type=str,
+        capabilities=[XSearch(native=native_factory, fallback_model=inner_model)],
+    )
+
+    result = await agent.run('What is happening on X?', deps='pydantic')
+
+    assert result.output == 'done'
+    assert factory_calls == ['pydantic']
+
+
+async def test_xsearch_callable_native_none_then_tool_still_raises(allow_model_requests: None):
+    """A factory that omits on the outer resolution cannot later enable the fallback tool."""
+    n = 0
+
+    def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError(
+            'fallback model should not run when the native factory omitted the tool'
+        )  # pragma: no cover
+
+    inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})))
+
+    def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
+
+    def native_factory(ctx: RunContext[Any]) -> XSearchTool | None:
+        nonlocal n
+        n += 1
+        if n == 1:
+            return None
+        return XSearchTool()
+
+    outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+    agent = Agent(
+        outer_model,
+        capabilities=[XSearch(native=native_factory, fallback_model=inner_model)],
+    )
+
+    with pytest.raises(UserError, match='Native tool factory returned `None`'):
+        await agent.run('What is happening on X?')
+
+    assert n == 1
+
+
 async def test_xsearch_callable_native_pass_through_without_overrides():
     """A factory result is unchanged when the capability has no override fields."""
     factory_tool = XSearchTool(enable_image_understanding=True)
