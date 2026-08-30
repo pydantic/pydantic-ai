@@ -2389,58 +2389,50 @@ def _render_retry_feedback_messages(
     rendered as bare user text never allowed (https://github.com/pydantic/pydantic-ai/issues/6404).
 
     `supports_inline_system_prompts` is that same profile flag, resolved by the caller. Where it is
-    `False` this step also does the degrading, rather than leaving the rendered part for
+    `False` this step does the degrading itself, rather than leaving the rendered part for
     `_wrap_non_leading_system_prompts` to pick up: the feedback is the one text here the model had a
-    hand in, so it is escaped as it is wrapped, in a single expression that cannot fire half of
-    itself. Position decides which parts that reaches, by the same rule the wrap uses — feedback
-    inside the first request's opening run of system parts is the run's standing prompt, which the
-    adapters hoist into the provider's own system field, so there is no tag around it to break out of
-    and it is left as written.
+    hand in, so it is escaped as it is wrapped, in a single expression that cannot fire half of itself.
+
+    Nothing here is ever left for the standing prompt to collect. `_standing_system_prompt_count`
+    answers "which opening parts were authored before the run started", and a `RetryFeedbackPart`
+    never was — it answers one response. Since that count runs over the parts as authored, where the
+    feedback is not a `SystemPromptPart`, the run breaks at it and no feedback can fall inside it. The
+    degrading is therefore unconditional on this profile, which is what keeps the text out of the
+    provider's top-level system field: landing there would give one response's feedback standing
+    authority for the rest of the run and rewrite the first cache section on every turn, and it is the
+    same routing `realtime/_openai_protocol.py` and `realtime/google.py` refuse for the same reason.
     """
-    # A feedback part can open the first request — a hand-built `message_history`, an adapter load, or
-    # truncation promoting a never-sent request to first position — and then hoists with the standing
-    # prompt. All parts still precede the same assistant response, and the rendering is deterministic;
-    # no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
-    is_first_request = True
     for message in messages:
-        if not isinstance(message, ModelRequest):
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, RetryFeedbackPart) for part in message.parts
+        ):
             transformed.append(message)
-            continue
-        if not any(isinstance(part, RetryFeedbackPart) for part in message.parts):
-            transformed.append(message)
-            is_first_request = False
             continue
 
         changed = True
-        # Anthropic requires the tool results answering the previous turn to open the message, so the
-        # rendered feedback sorts to the back — the same normalization
-        # `_announce_tool_availability_delta_messages` does after the same kind of replacement. A
-        # request can hold both: `_enqueue` accepts feedback alongside a tool return. Sorting the
-        # authored parts rather than the rendered ones is equivalent — rendering never changes a
-        # part's sort key — and it makes each part's final position known while its origin still is.
-        ordered = sorted(message.parts, key=_tool_results_first_sort_key)
-        rendered_parts: list[ModelRequestPart] = [
-            SystemPromptPart(content=_render_retry_feedback(part), timestamp=part.timestamp)
-            if isinstance(part, RetryFeedbackPart)
-            else part
-            for part in ordered
-        ]
-        if not supports_inline_system_prompts:
-            # Degrade what the wrap step would have degraded, by its own rule, applied to the rendered
-            # shape it would have seen — `_standing_system_prompt_count` reads part types. Doing it
-            # here is what keeps the escape and the tag from disagreeing about a part: they are one
-            # expression, and the second render they cost is a `str.format` on a short string.
-            standing = _standing_system_prompt_count(replace(message, parts=rendered_parts)) if is_first_request else 0
-            for index, part in enumerate(ordered):
-                if index >= standing and isinstance(part, RetryFeedbackPart):
-                    rendered_parts[index] = UserPromptPart(
+        replacement_parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, RetryFeedbackPart):
+                replacement_parts.append(part)
+            elif supports_inline_system_prompts:
+                replacement_parts.append(
+                    SystemPromptPart(content=_render_retry_feedback(part), timestamp=part.timestamp)
+                )
+            else:
+                replacement_parts.append(
+                    UserPromptPart(
                         content=_wrap_in_system_tags(_render_retry_feedback(part, escape_system_close_tags=True)),
                         timestamp=part.timestamp,
                     )
-        transformed.append(replace(message, parts=rendered_parts))
-        is_first_request = False
+                )
+        # Anthropic requires the tool results answering the previous turn to open the message, so the
+        # rendered feedback sorts to the back — the same normalization
+        # `_announce_tool_availability_delta_messages` does after the same kind of replacement. A
+        # request can hold both: `_enqueue` accepts feedback alongside a tool return.
+        replacement_parts.sort(key=_tool_results_first_sort_key)
+        transformed.append(replace(message, parts=replacement_parts))
 
     return transformed if changed else messages
 

@@ -145,9 +145,15 @@ def tool_bound_retry_part(error: ToolRetryError) -> _messages.RetryPromptPart:
     the deferred-result branches, and output-tool validation all build their part from the call's own
     name and id — so it is never the tool-less `RetryFeedbackPart` that `ToolRetryError` also carries
     for output that had no call to answer.
+
+    The type system can't carry that invariant — `ToolRetryError.tool_retry` is the union of both —
+    so it is checked here rather than assumed. A raised error rather than an `assert`, because
+    `python -O` strips the statement and would let a part with no `tool_name` reach a caller that
+    reads one.
     """
     part = error.tool_retry
-    assert not isinstance(part, _messages.RetryFeedbackPart)
+    if isinstance(part, _messages.RetryFeedbackPart):
+        raise RuntimeError('A retry answering a tool call cannot carry a `RetryFeedbackPart`, which answers no call.')
     return part
 
 

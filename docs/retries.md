@@ -171,6 +171,8 @@ _(This example is complete, it can be run "as is")_
 
 The part reaches the model in Pydantic AI's own voice, not the user's: each model renders it as a mid-conversation system message, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation. Its [`cause`][pydantic_ai.messages.RetryFeedbackPart.cause] — `'validation_error'`, `'no_output'`, or `'model_retry'` — decides the wording, which is why the stored part carries none: the same history can be replayed against any model.
 
+What it never becomes is the run's standing prompt, wherever it ends up in the history — first, after trimming or [`ProcessHistory`](capabilities/process-history.md) filtering, included. The standing prompt is what you authored before the run started; feedback about one response is not that, and routing it to the provider's top-level system field would give it authority over every later turn and rewrite the cached prefix on each request.
+
 !!! warning "What goes in the system voice"
     The system channel is the highest-privilege text a model reads, so what lands there is worth knowing. Validation feedback renders **without** the offending values: the errors' `loc` names the field that failed, `msg` says why, and the value the model sent is dropped. (A tool-call retry still echoes its arguments, because that text is that call's own result rather than the system voice.)
 
