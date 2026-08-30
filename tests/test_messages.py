@@ -2865,3 +2865,21 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_empty_compaction_part_is_not_a_wire_boundary():
+    """Regression: an empty-string CompactionPart must not count as a wire boundary,
+    matching CompactionPart.has_content() semantics."""
+    from pydantic_ai.messages import _compaction_part_is_wire_boundary
+
+    empty = CompactionPart(content='', provider_name='anthropic')
+    none = CompactionPart(content=None, provider_name='anthropic')
+    real = CompactionPart(content='summary text', provider_name='anthropic')
+
+    assert not empty.has_content()
+    assert not none.has_content()
+    assert real.has_content()
+
+    assert not _compaction_part_is_wire_boundary(empty, 'anthropic')
+    assert not _compaction_part_is_wire_boundary(none, 'anthropic')
+    assert _compaction_part_is_wire_boundary(real, 'anthropic')
