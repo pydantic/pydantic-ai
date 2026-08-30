@@ -185,10 +185,6 @@ pydantic-handlebars = false
 genai-prices = false
 logfire = false
 logfire-api = false
-# Anthropic 1.0 is built on HTTPX2 and drops legacy HTTPX entirely.
-# TODO(dsfaccini): Remove after 2026-08-27 19:59 UTC. https://github.com/pydantic/pydantic-ai/issues/7658
-# This admits only the reviewed 1.0.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-08-20T19:58:59Z"
 
 [dependency-groups]
 dev = [

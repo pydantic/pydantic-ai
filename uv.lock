@@ -27,7 +27,6 @@ logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
-anthropic = "2026-08-20T19:58:59Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
