@@ -959,7 +959,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.vllm import VLLMProvider
 
 model = OpenAIChatModel(
-    'Qwen/Qwen3-32B',
+    'Qwen/Qwen3.8-27B',
     provider=VLLMProvider(base_url='http://localhost:8000/v1'),
 )
 agent = Agent(model)
@@ -974,7 +974,7 @@ With those environment variables set, you can instead reference the provider by 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('vllm:Qwen/Qwen3-32B')
+agent = Agent('vllm:Qwen/Qwen3.8-27B')
 
 result = agent.run_sync('What is the capital of France?')
 print(result.output)

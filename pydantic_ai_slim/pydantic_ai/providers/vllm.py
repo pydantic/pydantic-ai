@@ -14,6 +14,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -56,6 +57,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
             'command': cohere_model_profile,
             'c4ai-command': cohere_model_profile,
             'gpt-oss': harmony_model_profile,
+            'glm': zai_model_profile,
         }
 
         model_name = model_name.lower()
