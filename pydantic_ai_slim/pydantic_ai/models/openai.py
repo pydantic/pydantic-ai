@@ -3667,7 +3667,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
-                response_id = message.provider_response_id if response_from_same_provider else None
+                response_id = (
+                    message.provider_response_id
+                    if response_scoped_tool_call_ids and response_from_same_provider
+                    else None
+                )
             else:
                 assert_never(message)
         instructions = get_instructions(messages, model_request_parameters) or OMIT
