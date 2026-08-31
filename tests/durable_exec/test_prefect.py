@@ -160,6 +160,7 @@ except ImportError:  # pragma: lax no cover
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 
 def test_durability_codecs() -> None:
@@ -3345,6 +3346,39 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
         return first.output, second.output, fallback.output
 
     assert await run_agent() == ('tenant:acme', 'tenant:globex', 'success (no tool calls)')
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_manages_resolver_built_model_lifecycle(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    events: list[str] = []
+
+    class TrackingModel(LifecycleTrackingModel):
+        @asynccontextmanager
+        async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
+            events.append('stream')
+            async with super().request_stream(*args, **kwargs) as stream:
+                yield stream
+            events.append('stream_consumed')
+
+    agent = Agent(
+        'rebuilt',
+        name='durability_resolved_model_lifecycle',
+        capabilities=[
+            ResolveModelId(lambda ctx, model_id: TrackingModel(events, include_exit_exception=False)),
+            PrefectDurability(),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str, str]:
+        ordinary = (await agent.run('ordinary')).output
+        async with agent.run_stream('streamed') as result:
+            streamed = await result.get_output()
+        return ordinary, streamed
+
+    assert await run_agent() == ('ok', 'ok')
+    assert events == ['enter', 'request', 'exit', 'enter', 'stream', 'stream_consumed', 'exit']
 
 
 async def test_prefect_durability_alias_default_model() -> None:
