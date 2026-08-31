@@ -48,21 +48,20 @@ def find_sandbox_provider(
     """Return the sole active sandbox provider, rejecting ambiguous trees before side effects."""
     if not capability.has_sandbox_hooks:
         return None
-    capabilities = capabilities_by_id(capability)
-    capability_ids = {id(leaf): capability_id for capability_id, leaf in capabilities.items()}
     providers = [
-        leaf for leaf in leaf_capabilities(capability) if leaf.defer_loading is not True and leaf.has_sandbox_hooks
+        (capability_id, leaf)
+        for capability_id, leaf in capabilities_by_id(capability).items()
+        if leaf.defer_loading is not True and leaf.has_sandbox_hooks
     ]
     if len(providers) > 1:
-        provider_ids = [capability_ids[id(provider)] for provider in providers]
         raise UserError(
             f'Exactly one capability may provide sandbox hooks; found {len(providers)}: '
-            f'{", ".join(repr(provider_id) for provider_id in provider_ids)}.'
+            f'{", ".join(repr(provider_id) for provider_id, _ in providers)}.'
         )
     if not providers:
         return None
-    provider = providers[0]
-    return provider, capability_ids[id(provider)]
+    provider_id, provider = providers[0]
+    return provider, provider_id
 
 
 def find_sandbox_ref_connector(
