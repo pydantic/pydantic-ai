@@ -22,7 +22,7 @@ def _sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapa
         if leaf.defer_loading is True or id(leaf) in seen:
             return
         seen.add(id(leaf))
-        if leaf.has_sandbox_hooks:
+        if leaf._has_sandbox_hooks:  # pyright: ignore[reportPrivateUsage]
             suppliers.append(leaf)
 
     capability.apply(visit)

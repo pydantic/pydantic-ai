@@ -360,12 +360,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return wrapped if any_wrapped else None
 
     @property
-    def has_sandbox_hooks(self) -> bool:
-        return any(capability.has_sandbox_hooks for capability in self.capabilities)
+    def _has_sandbox_hooks(self) -> bool:
+        return any(capability._has_sandbox_hooks for capability in self.capabilities)
 
     @property
-    def has_get_sandbox(self) -> bool:
-        return any(capability.has_get_sandbox for capability in self.capabilities)
+    def _has_get_sandbox(self) -> bool:
+        return any(capability._has_get_sandbox for capability in self.capabilities)
 
     async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef | None) -> SandboxBackend | None:
         # Reversed for legacy refs resolved outside normal run setup. Agent runs validate that

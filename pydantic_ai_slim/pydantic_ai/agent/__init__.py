@@ -1767,7 +1767,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
                         sandbox_ref, _connect_sandbox_ref
                     )
-                elif sandbox_supplier.has_get_sandbox:
+                elif sandbox_supplier._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
 
                     async def _resolve_provider_sandbox(ref: SandboxRef | None) -> SandboxBackend:
                         assert ref is None
@@ -1813,7 +1813,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
                 if sandbox_ref is not None:
                     preparation_stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
-                if sandbox_ref is not None or sandbox_supplier.has_get_sandbox:
+                if sandbox_ref is not None or sandbox_supplier._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
                     assert sandbox_facade is not None
                     # Detach the live connection before releasing ownership of the environment.
                     preparation_stack.push_async_callback(_close_sandbox_connection, sandbox_facade)

@@ -46,12 +46,12 @@ def find_sandbox_provider(
     capability: AbstractCapability[AgentDepsT],
 ) -> tuple[AbstractCapability[AgentDepsT], str] | None:
     """Return the sole active sandbox provider, rejecting ambiguous trees before side effects."""
-    if not capability.has_sandbox_hooks:
+    if not capability._has_sandbox_hooks:  # pyright: ignore[reportPrivateUsage]
         return None
     providers = [
         (capability_id, leaf)
         for capability_id, leaf in capabilities_by_id(capability).items()
-        if leaf.defer_loading is not True and leaf.has_sandbox_hooks
+        if leaf.defer_loading is not True and leaf._has_sandbox_hooks  # pyright: ignore[reportPrivateUsage]
     ]
     if len(providers) > 1:
         raise UserError(
@@ -70,7 +70,7 @@ def find_sandbox_ref_connector(
     """Resolve and validate the capability that reconnects an explicit sandbox ref."""
     if ref.capability_id is None:
         resolved = find_sandbox_provider(capability)
-        if resolved is not None and resolved[0].has_get_sandbox:
+        if resolved is not None and resolved[0]._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
             return resolved[0]
         raise UserError(
             f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
@@ -88,7 +88,7 @@ def find_sandbox_ref_connector(
             f'Cannot reconnect sandbox {ref.sandbox_id!r} through deferred capability '
             f'{ref.capability_id!r}; deferred capabilities cannot provide the run sandbox.'
         )
-    if not match.has_get_sandbox:
+    if not match._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
         raise UserError(
             f'Cannot reconnect sandbox {ref.sandbox_id!r} through capability {ref.capability_id!r}: '
             'the capability does not implement `get_sandbox`.'

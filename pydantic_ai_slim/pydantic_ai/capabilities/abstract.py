@@ -571,7 +571,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     @property
-    def has_sandbox_hooks(self) -> bool:
+    def _has_sandbox_hooks(self) -> bool:
         """Whether this capability declares any part of the sandbox provider interface."""
         capability_type = type(self)
         return (
@@ -581,7 +581,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         )
 
     @property
-    def has_get_sandbox(self) -> bool:
+    def _has_get_sandbox(self) -> bool:
         """Whether this capability can provide a live sandbox without an acquired ref."""
         return type(self).get_sandbox is not AbstractCapability.get_sandbox
 

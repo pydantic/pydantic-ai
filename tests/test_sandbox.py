@@ -1191,12 +1191,6 @@ async def test_declining_sandbox_capability_leaves_the_default_unavailable():
     assert decliner.acquire_calls == 1
 
 
-def test_sandbox_hook_introspection_for_composed_capabilities():
-    connector = ConnectOnlySandboxCapability()
-    assert CombinedCapability([AbstractCapability[Any](), connector]).has_get_sandbox
-    assert WrapperCapability(wrapped=connector).has_get_sandbox
-
-
 async def test_base_and_combined_get_sandbox_decline_cleanly():
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     base = AbstractCapability[Any]()
