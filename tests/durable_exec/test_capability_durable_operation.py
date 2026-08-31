@@ -30,8 +30,8 @@ from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOp
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
@@ -201,6 +201,17 @@ class LifecycleModel(LifecycleTrackingModel):
             self.events.append('stream-exit')
 
 
+class RepeatingLifecycleModel(LifecycleTrackingModel):
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.events.append('request')
+        return ModelResponse(parts=[TextPart('from-tracked')])
+
+
 async def test_capability_operation_is_direct_outside_durable_context() -> None:
     events: list[str] = []
     built_models: list[LifecycleTrackingModel] = []
@@ -225,7 +236,7 @@ async def test_capability_operation_is_direct_outside_durable_context() -> None:
     assert not any('__capability__' in name for name, _ in durability.calls)
 
 
-async def test_capability_operation_dispatch_is_unchanged_inside_durable_context() -> None:
+async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
     events: list[str] = []
     built_models: list[LifecycleTrackingModel] = []
 
@@ -243,12 +254,66 @@ async def test_capability_operation_dispatch_is_unchanged_inside_durable_context
         capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), durability],
     )
 
-    with pytest.raises(UserError, match='was not registered with `RecordingDurability`'):
-        await agent.run('test')
+    assert (await agent.run('test')).output == 'from-tracked'
 
-    assert events == []
-    assert len(built_models) == 1
+    assert events == [
+        'tracked-enter',
+        'tracked-enter',
+        'request',
+        'tracked-exit:none',
+        'tracked-exit:none',
+    ]
+    assert len(built_models) == 2
     assert any('__capability__' in name for name, _ in durability.calls)
+
+
+async def test_capability_operation_registered_model_id_swap_does_not_manage_model() -> None:
+    events: list[str] = []
+    registered = LifecycleTrackingModel(events, event_prefix='registered-', custom_output_text='from-registered')
+    durability = RecordingDurability(models={'tracked': registered})
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='registered_capability_operation_model',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), durability],
+    )
+
+    assert (await agent.run('test')).output == 'from-registered'
+    assert events == ['request']
+
+
+async def test_repeated_capability_operation_model_id_swaps_close_each_model() -> None:
+    model_events: list[list[str]] = []
+
+    def resolve_model(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel | None:
+        if model_id != 'tracked':
+            return None
+        events: list[str] = []
+        model_events.append(events)
+        return RepeatingLifecycleModel(events, custom_output_text='from-tracked')
+
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='repeated_capability_operation_model',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), RecordingDurability()],
+    )
+
+    attempts = 0
+
+    @agent.output_validator
+    def retry_once(output: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ModelRetry('retry once')
+        return output
+
+    assert (await agent.run('test')).output == 'from-tracked'
+    assert model_events == [
+        ['enter', 'exit:none'],
+        ['enter', 'request', 'exit:none'],
+        ['enter', 'exit:none'],
+        ['enter', 'request', 'exit:none'],
+    ]
 
 
 @pytest.mark.parametrize(
