@@ -79,7 +79,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
-    from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
+    from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
@@ -746,6 +746,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'deps',  # passed separately to deserialize_run_context
         'agent',  # reattached after deserialize by deserialize_run_context
         'model',  # live Model instance, not serializable
+        '_model_id',  # carried separately by operations that rebuild ctx.model worker-side
         'tracer',  # live tracer, not serializable
         'tool_manager',  # live ToolManager, not serializable (documented on the field)
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
@@ -759,6 +760,8 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
+        '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
+        '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -1169,6 +1172,7 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model.model_name == 'gpt-5'
         assert temporal_model.system == 'openai'
         assert temporal_model.profile == infer_model_profile('openai:gpt-5')
+        assert temporal_model.profile.get('context_window') is not None
 
     # Anthropic profile inference includes WebSearchTool support
     with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
@@ -1717,10 +1721,8 @@ def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
     assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
-async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(
-    temporal_env: WorkflowEnvironment, temporal_port: int
-) -> None:
-    client = await Client.connect(f'localhost:{temporal_port}')
+async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_target: str) -> None:
+    client = await Client.connect(temporal_target)
     async with Worker(
         client,
         task_queue=TASK_QUEUE,

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import sys
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -70,6 +70,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The active model, which is a `RealtimeModel` during a realtime session."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    _model_id: str | None = field(default=None, repr=False)
+    """The model selection token used to resolve `model`, for internal durable transport."""
     usage_limits: UsageLimits | None = None
     """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run.
 
@@ -85,6 +87,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
+
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
@@ -175,6 +178,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent.
     A public API for emitting custom events is intentionally not exposed yet.
     """
+
+    _durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None = field(default=None, repr=False)
+    """Per-run durable capability operation dispatchers, for internal use only."""
+
+    _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
+    """Per-run capability instances used for durable recovery, for internal use only."""
 
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -273,6 +282,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     @property
+    def model_id(self) -> str | None:
+        """The identifier from which the run's active `model` was resolved.
+
+        This is `None` when the model was passed as an instance instead of being resolved from an
+        identifier. The property is read-only; Pydantic AI manages the selection token internally.
+        """
+        return self._model_id
+
+    @property
     @deprecated(
         '`capability_loaded` is deprecated, use `capability_active` instead: the value is `True` for an '
         'always-on capability that was never loaded.',
@@ -319,15 +337,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def context_window_used(self) -> float | None:
         """Fraction of the model's context window occupied as of the most recent model response.
 
-        Computed as the response's [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens]
-        (input — cached tokens included — plus output: everything the next request will resend) over
-        the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]. Useful to
-        trigger history compaction, e.g. in a
+        Computed as the latest response's reported
+        [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] (input, including cached tokens,
+        plus output) over the active model's
+        [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]. This estimates how full
+        the next request may be; history processing and newly added content can change its actual
+        size. Useful to trigger history compaction, e.g. in a
         [history processor](https://pydantic.dev/docs/ai/message-history#processing-message-history).
 
-        Returns `None` — never a misleading `0.0` — whenever the ratio is unknown: the model's
-        context window isn't known, no model response has been received yet, or the provider didn't
-        report usage.
+        Returns `None` — never a misleading `0.0` — when the ratio cannot be calculated. This
+        includes when the context window or usage is unknown, before the first model response, and
+        for a fallback model whose candidate models may have different context windows.
         """
         from .models import Model  # imported here because `models` imports `RunContext` at module level
 
@@ -338,7 +358,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         try:
             context_window = ctx_model.profile.get('context_window')
         except NotImplementedError:
-            # `FallbackModel.profile` raises it: which inner model serves the next request isn't known.
+            # A fallback model has no single profile because its candidate models may differ.
             return None
         if not context_window:
             return None

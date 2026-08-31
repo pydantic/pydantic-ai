@@ -9,11 +9,21 @@ import httpx2
 import pytest
 from pydantic import TypeAdapter
 
+from ..conftest import try_import
+
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from tests.cassette_utils import CassetteContext
+
+with try_import() as google_imports:
+    from google.genai import Client
+
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
@@ -174,3 +184,30 @@ def cassette_ctx(request: pytest.FixtureRequest, vcr: Cassette) -> CassetteConte
         test_module=test_module,  # pyright: ignore[reportUnknownArgumentType]
         test_dir=test_dir,
     )
+
+
+@pytest.fixture
+def vertex_client_google_provider() -> GoogleProvider:
+    """A Vertex-backed `genai.Client` wrapped in `GoogleProvider`, the construction from #6792.
+
+    `system` stays `'google'` while the transport is Google Cloud (Vertex), so transport
+    (not the provider name) must drive Vertex-vs-Gemini-API behavior.
+    """
+    if not google_imports():  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    return GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1'))
+
+
+@pytest.fixture
+def gla_client_google_cloud_provider() -> GoogleCloudProvider:
+    """A Gemini-Developer-API `genai.Client` wrapped in `GoogleCloudProvider`, the mirror of #6792.
+
+    `system` stays `'google-cloud'` while the transport is the Gemini Developer API. `__init__`
+    short-circuits on `client=` before it would force `vertexai=True`, so the two disagree in this
+    direction too and every transport branch has to follow the client rather than the name.
+    """
+    if not google_imports():  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    return GoogleCloudProvider(client=Client(vertexai=False, api_key='mock-api-key'))

@@ -452,7 +452,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None

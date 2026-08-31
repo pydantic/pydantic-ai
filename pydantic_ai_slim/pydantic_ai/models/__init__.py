@@ -297,14 +297,34 @@ class ModelRequestContext:
 
     Wrapping these parameters in a dataclass instead of a tuple makes the signature
     future-proof: new fields can be added without breaking existing implementations.
+
+    A [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook
+    returns a context, so modifying one is normally `dataclasses.replace(request_context, ...)`. Every
+    field is therefore settable through `replace()`, including `model_id` and `streaming`: the agent
+    graph sets those two immediately before calling the hook, and `replace()` re-initializes any
+    `init=False` field to its default, so declaring them that way silently zeroed both for any hook
+    that copied its context — costing a streamed run its `streaming` flag and a durable-execution
+    worker the selection token it re-resolves an aliased model from. They are still set by the graph
+    rather than by a caller; passing either to a fresh `ModelRequestContext` is not meaningful.
     """
 
     model: Model
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
-    model_request_parameters: ModelRequestParameters
 
-    model_id: str | None = field(default=None, init=False)
+    model_request_parameters: ModelRequestParameters
+    """The tool, output, and instruction configuration for this request.
+
+    [`instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts] is the source of
+    truth for the instructions in the agent flow: a
+    [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook that
+    rewrites them changes what the model receives, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+    recorded in message history is re-rendered from them afterwards, so history and traces keep showing
+    what was sent. Assigning to that message's `instructions` instead is not propagated back into the
+    parts, and so does not reach the model.
+    """
+
+    model_id: str | None = None
     """The model-name string this request's model was selected/resolved from, if any.
 
     This is the *selection* token — e.g. `'openai:gpt-5.6-sol'`, or an alias like `'tenant-x'` that a
@@ -319,7 +339,7 @@ class ModelRequestContext:
     resolved model — a model swapped in by a hook invalidates it.
     """
 
-    streaming: bool = field(default=False, init=False)
+    streaming: bool = False
     """Whether the agent loop expects to iterate the model response as a stream.
 
     Set for streamed runs — `run_stream()`, `run_stream_events()`, `iter()`'s node streaming — and
@@ -868,11 +888,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
              for this model.
-          3. The user's `profile=` argument — partial dict merged on top, OR a callable
+          3. A best-effort `context_window` value from
+             [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
+             partial user profile explicitly set the field (including to `None`).
+          4. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
-
-        When no layer sets `context_window`, it is filled in (best effort) from
-        [genai-prices](https://github.com/pydantic/genai-prices) data.
 
         After resolution we compute the intersection of the profile's `supported_native_tools`
         and the model class's implemented tools, ensuring `model.profile['supported_native_tools']`
@@ -884,20 +904,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             provider_profile = provider.model_profile(self.model_name) or {}
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
-        # Step 3: user override
+        # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
         user = self._profile
-        if user is None:
-            pass
-        elif callable(user):
-            # The callable form's result bypasses `merge_profile`, so translate deprecated key
-            # spellings here too.
-            resolved = _translate_legacy_profile_keys(user(resolved))
-        else:
-            # Partial dict — merge on top
-            resolved = merge_profile(resolved, user)
-
-        # Step 4: fill `context_window` from genai-prices when no profile layer set it
-        if resolved.get('context_window') is None:
+        context_window_set = 'context_window' in provider_profile or (
+            user is not None and not callable(user) and 'context_window' in user
+        )
+        if not context_window_set:
             try:
                 base_url = self.base_url
             except (AttributeError, UserError):
@@ -914,6 +926,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 context_window = lookup_context_window(model_name, provider_api_url=base_url, provider_name=system)
                 if context_window is not None:
                     resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
+
+        # Step 4: user override
+        if user is None:
+            pass
+        elif callable(user):
+            # The callable form's result bypasses `merge_profile`, so translate deprecated key
+            # spellings here too.
+            resolved = _translate_legacy_profile_keys(user(resolved))
+        else:
+            # Partial dict — merge on top
+            resolved = merge_profile(resolved, user)
 
         # Step 5: native tools intersection — profile's allowed tools & model's implemented tools
         model_supported = self.__class__.supported_native_tools()
@@ -1518,7 +1541,8 @@ def _suggest_known_model_id_from_provider_error(  # pyright: ignore[reportUnused
 def infer_model_profile(model: str) -> ModelProfile:
     """Infer the model profile from a model id string without constructing a provider.
 
-    Uses `Provider.model_profile` to look up the profile for the given model.
+    Uses `Provider.model_profile` to look up the profile for the given model, then fills an unset
+    `context_window` from genai-prices when available.
     Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
 
     Note: This returns the raw provider profile **without** intersecting with
@@ -1543,9 +1567,15 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+        profile = provider_class.model_profile(model_name) or ModelProfile()
     except (ValueError, UserError):
         return DEFAULT_PROFILE
+
+    if 'context_window' not in profile:
+        context_window = lookup_context_window(model_name, provider_name=provider)
+        if context_window is not None:
+            profile = merge_profile(profile, ModelProfile(context_window=context_window))
+    return profile or DEFAULT_PROFILE
 
 
 def infer_model(  # noqa: C901

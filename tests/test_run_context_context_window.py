@@ -9,18 +9,23 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage, RunUsage
-
-pytestmark = pytest.mark.anyio
 
 
 def _model_with_usage(context_window: int | None) -> FunctionModel:
@@ -98,8 +103,22 @@ def test_context_window_used_none_when_usage_not_reported():
     assert ctx.context_window_used is None
 
 
+def test_context_window_used_uses_latest_response():
+    """The most recent response's usage determines the ratio."""
+    ctx = RunContext(
+        deps=None,
+        model=FunctionModel(lambda messages, info: ModelResponse(parts=[]), profile=ModelProfile(context_window=1000)),
+        usage=RunUsage(),
+        messages=[
+            ModelResponse(parts=[TextPart('first')], usage=RequestUsage(input_tokens=100, output_tokens=50)),
+            ModelResponse(parts=[TextPart('second')], usage=RequestUsage(input_tokens=300, output_tokens=100)),
+        ],
+    )
+    assert ctx.context_window_used == 0.4
+
+
 def test_context_window_used_none_for_fallback_model():
-    """`None` for `FallbackModel`, which raises `NotImplementedError` instead of having its own profile."""
+    """`None` for `FallbackModel`, which has no single model profile of its own."""
     ctx = RunContext(deps=None, model=FallbackModel(TestModel()), usage=RunUsage())
     assert ctx.context_window_used is None
 
@@ -121,3 +140,34 @@ def test_context_window_used_none_for_non_request_response_model():
 
     ctx = RunContext(deps=None, model=model, usage=RunUsage())
     assert ctx.context_window_used is None
+
+
+def test_compaction_example_keeps_tool_call_with_mixed_resume_request():
+    """The documented turn boundary skips requests that mix a new prompt with a tool result."""
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first turn')]),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, 'call-1'), ToolCallPart('lookup', {}, 'call-2')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('lookup', 'result', 'call-1'),
+                RetryPromptPart('try again', tool_name='lookup', tool_call_id='call-2'),
+                UserPromptPart('also answer this'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('done')]),
+    ]
+
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, ModelRequest):
+            continue
+        has_user_prompt = any(isinstance(part, UserPromptPart) for part in message.parts)
+        has_tool_result = any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts)
+        if has_user_prompt and not has_tool_result:
+            compacted = messages[index:]
+            break
+    else:  # pragma: no cover
+        compacted = messages
+
+    assert compacted == messages

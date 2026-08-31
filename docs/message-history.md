@@ -699,7 +699,7 @@ loop all deliver enqueued messages.
       loop first — e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`. The
       drain isn't atomic against concurrent cross-thread appends.
 
-## Processing Message History
+## Processing Message History {#processing-message-history}
 
 Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy
 reasons (filtering out sensitive information), to save costs on tokens, to give less context to the LLM, or
@@ -862,12 +862,20 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messa
 !!! warning "Be careful when summarizing the message history"
     When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
 
-#### Compact When the Context Window Fills
+#### Compact when the context window fills {#compact-when-the-context-window-fills}
 
-The processors above rewrite history on every run. To only compact once the conversation actually approaches the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window], check [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]: the fraction of the window occupied as of the last response, or `None` when the window or the usage is unknown.
+The processors above rewrite history on every run. To wait until the conversation approaches the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window], check [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]. It returns the fraction of the window occupied after the latest response, or `None` when Pydantic AI cannot calculate it reliably.
 
 ```python {title="compact_when_window_fills.py"}
-from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    RetryPromptPart,
+    RunContext,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.capabilities import ProcessHistory
 
 
@@ -876,15 +884,27 @@ def compact_when_window_fills(
     messages: list[ModelMessage],
 ) -> list[ModelMessage]:
     used = ctx.context_window_used
-    if used is not None and used > 0.8:
-        return messages[-3:]  # Keep only the most recent turns
+    if used is None or used <= 0.8:
+        return messages
+
+    # Keep the most recent complete user turn, including any later tool calls and returns.
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, ModelRequest):
+            continue
+        has_user_prompt = any(isinstance(part, UserPromptPart) for part in message.parts)
+        has_tool_result = any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts)
+        if has_user_prompt and not has_tool_result:
+            return messages[index:]
     return messages
 
 
 agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(compact_when_window_fills)])
 ```
 
-The window size is filled in from [genai-prices](https://github.com/pydantic/genai-prices) data when the model is known there; for custom or local models, set it explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
+Treat `None` as unknown, not as an empty context window. It is returned before the first model response, when the model's window or response usage is unknown, and for a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] whose candidate models may have different window sizes. The example leaves history unchanged in these cases.
+
+Pydantic AI fills known window sizes from [genai-prices](https://github.com/pydantic/genai-prices). For a custom or local model, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 
 ### Testing History Processors
 
