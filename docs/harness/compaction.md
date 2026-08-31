@@ -347,6 +347,12 @@ Both prompt surfaces of the summary request are fields: `summary_prompt` is the 
 
 The summary call is a real request to the model, so its full usage -- tokens **and** the request itself -- is folded into the run's `ctx.usage`. This is deliberate: it keeps cost honest, keeps the request count consistent (a model request that did not count as one would be the surprise), and lets a `UsageLimits` request limit catch a runaway compaction. The nested run receives the other parent limits unchanged; the finite request limit is reduced by one so it cannot spend the slot already approved for the parent request. A run-request or iteration limiter will therefore see compaction calls among its requests.
 
+With a durable-execution capability attached, the summary call runs as a contributed durable
+operation, so replay uses the recorded summary instead of calling the model again. When `model` is
+not set, the operation uses the run's model. The capability carries a stable default `id`, which
+durable execution uses to recover the operation by the same identity. Overriding it with a custom
+value orphans recorded operations for in-flight workflows, so keep it fixed once a workflow is live.
+
 ## `WarnNearLimits`: warn instead of rewrite
 
 `WarnNearLimits` never edits history. As the run approaches a configured limit, it injects an URGENT (then CRITICAL) warning as a trailing user turn, so the model wraps up rather than having its context rewritten under it. Models tend to pay more attention to user messages than system messages, which is why the warning is a user turn. Previous warnings from this capability are stripped before deciding whether to inject a new one.
