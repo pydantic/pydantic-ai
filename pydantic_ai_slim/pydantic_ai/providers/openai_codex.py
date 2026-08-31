@@ -441,7 +441,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     Wraps the standard `OpenAIProvider` machinery pointed at the Codex backend, injecting Codex
     OAuth credentials instead of API keys. One provider instance carries one tenant's credentials
     (there is no process-global cache); construct one per user/credential set. The instance binds
-    its refresh lock to the first event loop that awaits a request — do not reuse across loops.
+    its refresh lock to the first event loop that awaits a request, so do not reuse it across loops.
 
     ```python {test="skip" lint="skip"}
     provider = OpenAICodexProvider(credential_source=YourCredentialStore(user_id))
@@ -608,7 +608,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         """Single-flight refresh after a 401 carrying `revision_used`.
 
         If another task already replaced the credentials since the failed request was sent, no
-        network refresh happens — the caller replays with the fresh set directly.
+        network refresh happens: the caller replays with the fresh set directly.
         """
         if self._revision != revision_used:
             return

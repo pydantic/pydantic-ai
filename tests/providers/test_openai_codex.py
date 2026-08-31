@@ -343,7 +343,7 @@ async def test_malformed_jwt_degrades_to_401_path(monkeypatch: pytest.MonkeyPatc
         response = await client.get('https://chatgpt.com/backend-api/codex/x')
 
     assert response.status_code == 200
-    assert len(mock.forms) == 1  # exactly one refresh — from the 401, not the unparsable hint
+    assert len(mock.forms) == 1  # exactly one refresh, from the 401, not the unparsable hint
     assert requests_seen == [old_bearer, 'Bearer access-new']  # original + one replay
 
 
@@ -628,7 +628,7 @@ async def test_non_expiry_401_does_not_loop(monkeypatch: pytest.MonkeyPatch):
 
     assert first.status_code == second.status_code == 401
     assert len(sends) == 4  # exactly two sends per request: original plus a single replay
-    assert len(mock.forms) == 2  # at most one refresh per request — never a loop
+    assert len(mock.forms) == 2  # at most one refresh per request, never a loop
 
 
 async def test_refresh_failure_surfaces_and_keeps_old_credentials(monkeypatch: pytest.MonkeyPatch):

@@ -31,7 +31,7 @@ The `'openai-codex:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mo
 
 Applications that log users in themselves (including multi-tenant ones) use [`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] for the authorization-code + PKCE handshake.
 
-The public Codex client pins its redirect URI to exactly `http://localhost:1455/auth/callback`, so every login completes on the user's own machine. [`exchange_code_from_callback()`][pydantic_ai.providers._oauth.OAuthFlow.exchange_code_from_callback] occupies that port for a moment to catch the redirect, then exchanges the code. A hosted web app cannot receive the callback directly; it runs this same flow from a component on the user's machine (or a tunnel to it) and sends the resulting credentials to the backend.
+The public Codex client pins its redirect URI to exactly `http://localhost:1455/auth/callback`, so every login completes on the user's own machine. [`exchange_code_from_callback()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code_from_callback] occupies that port for a moment to catch the redirect, then exchanges the code. A hosted web app cannot receive the callback directly; it runs this same flow from a component on the user's machine (or a tunnel to it) and sends the resulting credentials to the backend.
 
 Credentials outlive the login, so acquire them only when you have none stored:
 
@@ -68,6 +68,8 @@ Store them wherever your app keeps secrets, not in `~/.codex`, which belongs to 
 
 Access tokens expire and refresh tokens rotate, so the provider refreshes automatically. Where the rotated set goes depends on how you construct the provider.
 
+### In memory
+
 Passing `credentials` directly keeps everything in memory: fine for a script or a CLI, but the next process starts from the original set again.
 
 ```python
@@ -87,6 +89,8 @@ async def agent_for_user(user_id: str) -> Agent:
 async def credentials_for(user_id: str) -> OpenAICodexCredentials:
     ...  # the credentials you acquired above
 ```
+
+### In your own storage
 
 For anything longer-lived, give the provider an [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource]: your storage, two methods, no lifecycle logic.
 
