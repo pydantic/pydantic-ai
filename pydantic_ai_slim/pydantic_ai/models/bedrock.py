@@ -79,7 +79,11 @@ from pydantic_ai.models import (
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
-from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
+from pydantic_ai.profiles.anthropic import (
+    ANTHROPIC_SAMPLING_PARAMS,
+    ANTHROPIC_THINKING_BUDGET_MAP,
+    resolve_anthropic_effort,
+)
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -706,7 +710,32 @@ class BedrockConverseModel(Model[BaseClient]):
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
         # Pass unmerged model_settings; base class does its own merge
-        return super().prepare_request(model_settings, model_request_parameters)
+        prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if self.profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
+            filtered: ModelSettings = {**prepared_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            prepared_settings = filtered or None
+        return prepared_settings, model_request_parameters
+
+    def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
+        """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
+
+        `temperature` and `top_p` would reach `inferenceConfig` and unified `top_k` would reach
+        `additionalModelRequestFields`; all three are rejected with a 400 by the models that set
+        `anthropic_disallows_sampling_settings`. A user's own
+        `bedrock_additional_model_requests_fields` is deliberately left alone: it is the raw
+        escape hatch, so a value placed there is addressed to Bedrock directly.
+        """
+        dropped = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]
+        for setting in dropped:
+            model_settings.pop(setting, None)
+
+        if dropped:
+            warnings.warn(
+                f'Sampling parameters {dropped} are not supported by {self.model_name!r}. These settings will be ignored.',
+                UserWarning,
+                stacklevel=2,
+            )
 
     @property
     def _botocore_supports_strict_tool_param(self) -> bool:
