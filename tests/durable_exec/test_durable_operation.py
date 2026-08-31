@@ -278,6 +278,47 @@ async def test_mcp_tool_config_dispatches_durable_and_inline_calls(monkeypatch: 
     assert inline_call.await_count == 2
 
 
+async def test_discovery_can_run_inline_for_engine_without_journaling(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip('mcp')
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPToolset
+
+    class InlineDiscoveryDurability(JournalDurability):
+        engine_spec = replace(JournalDurability.engine_spec, journal_discovery=False)
+
+    dynamic_calls = 0
+
+    async def resolve_dynamic(ctx: RunContext[None]) -> FunctionToolset[None]:
+        nonlocal dynamic_calls
+        dynamic_calls += 1
+        return FunctionToolset()
+
+    durability = InlineDiscoveryDurability(name='agent')
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    dynamic = durability._build_dynamic_toolset(  # pyright: ignore[reportPrivateUsage]
+        DynamicToolset(resolve_dynamic, id='dynamic')
+    )
+
+    assert await dynamic.get_tools(ctx) == {}
+    assert dynamic_calls == 1
+
+    mcp_toolset = MCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', include_instructions=True
+    )
+    get_tools = AsyncMock(return_value={})
+    get_instructions = AsyncMock(return_value='instructions')
+    monkeypatch.setattr(mcp_toolset, 'get_tools', get_tools)
+    monkeypatch.setattr(mcp_toolset, 'get_instructions', get_instructions)
+    mcp = durability._build_mcp_toolset(mcp_toolset)  # pyright: ignore[reportPrivateUsage]
+
+    assert await mcp.get_tools(ctx) == {}
+    assert await mcp.get_instructions(ctx) == 'instructions'
+    get_tools.assert_awaited_once_with(ctx)
+    get_instructions.assert_awaited_once_with(ctx)
+    assert durability.calls == []
+
+
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport
