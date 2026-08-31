@@ -65,8 +65,8 @@ class DurabilityEngineSpec:
 
     journal_discovery: bool = True
     """Whether toolset discovery (`get_tools`/`get_instructions`) runs in its own durable unit.
-    Journal engines (Restate/Lambda/Absurd) journal it; Prefect deliberately runs discovery in
-    flow code (flow retries re-resolve anyway) and journals only tool calls."""
+    Durable engines normally journal discovery; integrations may disable it when discovery must
+    run in the durable container itself."""
 
     sequential_tools_in_durable_context: bool = False
     """Whether tool calls must run sequentially inside the durable container."""

@@ -35,6 +35,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     FunctionToolset,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -3135,6 +3136,115 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
         'Call Tool: function_tool',
         'Model Request: test',
     ]
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    task_names: list[str] = []
+
+    class RecordingMCPToolset(MCPToolset[object]):
+        async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
+            task_run_context = TaskRunContext.get()
+            assert task_run_context is not None
+            task_names.append(task_run_context.task.name)
+            tool_def = ToolDefinition(name='recorded')
+            return {'recorded': self.tool_for_tool_def(tool_def, ctx=ctx)}
+
+        async def get_instructions(self, ctx: RunContext[object]) -> InstructionPart:
+            task_run_context = TaskRunContext.get()
+            assert task_run_context is not None
+            task_names.append(task_run_context.task.name)
+            return InstructionPart(content='Server instructions', dynamic=False)
+
+    toolset = RecordingMCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        id='recording_mcp',
+        include_instructions=True,
+    )
+    agent = Agent(TestModel(), name='mcp_discovery', toolsets=[toolset], capabilities=[PrefectDurability()])
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    wrapped = durability._toolsets_by_id['recording_mcp']  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def discover() -> tuple[list[str], InstructionPart | None]:
+        tools = list(await wrapped.get_tools(ctx))
+        instructions = await wrapped.get_instructions(ctx)
+        assert isinstance(instructions, InstructionPart)
+        return tools, instructions
+
+    assert await discover() == (['recorded'], InstructionPart(content='Server instructions', dynamic=False))
+    assert task_names == ['Get MCP Tools: recording_mcp', 'Get MCP Instructions: recording_mcp']
+    assert ctx._mcp_tool_defs_cache == {  # pyright: ignore[reportPrivateUsage]
+        'recording_mcp': {'recorded': ToolDefinition(name='recorded')}
+    }
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_journals_dynamic_discovery(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    task_names: list[str] = []
+
+    def resolve(ctx: RunContext[object]) -> FunctionToolset[object]:
+        task_run_context = TaskRunContext.get()
+        assert task_run_context is not None
+        task_names.append(task_run_context.task.name)
+        return FunctionToolset(id='resolved')
+
+    agent = Agent(
+        TestModel(),
+        name='dynamic_discovery',
+        toolsets=[DynamicToolset(resolve, id='recording_dynamic')],
+        capabilities=[PrefectDurability()],
+    )
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    wrapped = durability._toolsets_by_id['recording_dynamic']  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    @flow
+    async def discover() -> dict[str, ToolsetTool[object]]:
+        return await wrapped.get_tools(ctx)
+
+    assert await discover() == {}
+    assert task_names == ['Discover Tools: recording_dynamic']
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_flow_retry_replays_dynamic_toolset_discovery(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    discovery_runs = 0
+
+    def resolve(ctx: RunContext[object]) -> FunctionToolset[object]:
+        nonlocal discovery_runs
+        discovery_runs += 1
+        return FunctionToolset(id='resolved')
+
+    agent = Agent(
+        TestModel(),
+        name='retry_discovery',
+        toolsets=[DynamicToolset(resolve, id='retry_discovery')],
+        capabilities=[PrefectDurability()],
+    )
+    durability = PrefectDurability.from_agent(agent)
+    assert durability is not None
+    wrapped = durability._toolsets_by_id['retry_discovery']  # pyright: ignore[reportPrivateUsage]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> None:
+        nonlocal attempts
+        attempts += 1
+        await wrapped.get_tools(ctx)
+        if attempts == 1:
+            raise RuntimeError('boom')
+
+    await flaky()
+    assert attempts == 2
+    assert discovery_runs == 1
 
 
 def test_prefect_durability_dynamic_capability_requires_id() -> None:
