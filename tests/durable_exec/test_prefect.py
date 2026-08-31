@@ -105,7 +105,7 @@ from pydantic_ai.realtime import (
     RealtimeSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
-from pydantic_ai.sandboxes import SandboxRef
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
@@ -2204,6 +2204,21 @@ def test_cache_policy_keys_the_run_context_tool_call_id_verbatim():
 
     assert key_for_history('pyd_ai_first') == key_for_history('pyd_ai_second')
     assert key_for_history('model-first') != key_for_history('model-second')
+
+
+def test_cache_policy_keys_provider_only_sandbox_identity():
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
+        raise AssertionError  # pragma: no cover
+
+    def key_for(capability_id: str) -> str | None:
+        sandbox = Sandbox._from_provider(capability_id, unused_resolver)  # pyright: ignore[reportPrivateUsage]
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), sandbox=sandbox)
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for('alpha') != key_for('beta')
 
 
 def test_cache_policy_excludes_non_serializable_metadata_and_validation_context():

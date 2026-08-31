@@ -167,6 +167,7 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
 
         async def before_run(self, ctx: RunContext[Any]) -> None:
             run_ids.append((ctx.run_id, ctx.conversation_id))
+            await ctx.sandbox.working_dir()
 
     @dataclass
     class ServeSandbox(AbstractCapability[Any]):

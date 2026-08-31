@@ -16,7 +16,8 @@ import pytest
 from pydantic_ai import Agent, RunContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
-from pydantic_ai.durable_exec._sandbox import contributes_sandbox
+from pydantic_ai.capabilities._sandbox import connect_sandbox_provider, find_sandbox_ref_connector
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox, guard_workflow_sandbox
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -39,6 +40,7 @@ from .sandbox_fakes import (
     AcquireOnlySandboxCapability,
     ConnectOnlySandboxCapability,
     DecliningSandboxCapability,
+    FakeSandboxHandle,
     FakeSandboxResult,
     LifecycleSandboxCapability,
 )
@@ -401,6 +403,34 @@ async def test_read_file_empty_shell_window_stays_bounded():
     assert window.has_more is False
     assert window.total_lines is None
     assert backend.fs.reads == []
+
+
+async def test_read_file_empty_window_without_filesystem_support():
+    class EmptyRunOnly(_RunOnlySandbox):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            return FakeSandboxResult(stdout='')
+
+    window = await Sandbox(EmptyRunOnly(FakeSandbox('empty-run-only'))).read_file('/missing', limit=1)
+
+    assert window.lines == ()
+
+
+async def test_shell_slice_without_trailing_newline():
+    backend = FakeSandbox('no-trailing-newline')
+    backend.fs.files['/workspace/file'] = b'one'
+
+    window = await Sandbox(backend).read_file('file', limit=2)
+
+    assert window.lines == ('one',)
+    assert window.total_lines == 1
 
 
 class _RunOnlySandbox:
@@ -798,6 +828,22 @@ async def test_sandbox_ref_connection_failure_is_chained():
     assert exc_info.value.__cause__ is error
 
 
+async def test_sandbox_ref_user_error_is_preserved():
+    class UserErrorConnector(AbstractCapability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            raise UserError('credentials are missing')
+
+    agent = Agent(_tool_call_then_text(), capabilities=[UserErrorConnector()])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        await ctx.sandbox.run(['true'])
+        return 'ok'  # pragma: no cover
+
+    with pytest.raises(UserError, match='credentials are missing'):
+        await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='broken'))
+
+
 async def test_sandbox_ref_wins_over_sandbox_supplier():
     class SupplierAndConnector(ConnectOnlySandboxCapability):
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
@@ -1102,6 +1148,98 @@ def test_sandbox_hook_introspection_for_composed_capabilities():
     connector = ConnectOnlySandboxCapability()
     assert CombinedCapability([AbstractCapability[Any](), connector]).has_get_sandbox
     assert WrapperCapability(wrapped=connector).has_get_sandbox
+
+
+async def test_base_and_combined_get_sandbox_decline_cleanly():
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    base = AbstractCapability[Any]()
+    assert await base.get_sandbox(ctx, None) is None
+
+    deferred = ConnectOnlySandboxCapability()
+    deferred.id = 'deferred'
+    deferred.defer_loading = True
+    declining = AbstractCapability[Any]()
+    connector = ConnectOnlySandboxCapability()
+    connector.id = 'connector'
+    combined = CombinedCapability([deferred, declining, connector])
+    backend = await combined.get_sandbox(ctx, SandboxRef(provider='fake', sandbox_id='combined'))
+    assert backend is not None and backend.sandbox_id == 'combined'
+
+    assert await CombinedCapability([deferred, declining]).get_sandbox(ctx, None) is None
+
+
+async def test_connect_provider_requires_exact_active_capability():
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    connector = ConnectOnlySandboxCapability()
+    connector.id = 'connector'
+
+    with pytest.raises(UserError, match='found 0'):
+        await connect_sandbox_provider(connector, ctx, 'missing')
+
+    connector.defer_loading = True
+    with pytest.raises(UserError, match='deferred capabilities cannot provide'):
+        await connect_sandbox_provider(connector, ctx, 'connector')
+
+
+def test_exact_ref_connector_must_implement_get_sandbox():
+    plain = AbstractCapability[Any]()
+    plain.id = 'plain'
+
+    with pytest.raises(UserError, match='does not implement `get_sandbox`'):
+        find_sandbox_ref_connector(
+            plain,
+            SandboxRef(provider='fake', sandbox_id='sandbox', capability_id='plain'),
+        )
+
+
+async def test_sandbox_test_fakes_reset_state():
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    assert FakeSandboxHandle('identity').sandbox_id == 'identity'
+
+    connector = ConnectOnlySandboxCapability()
+    await connector.get_sandbox(ctx, SandboxRef(provider='fake', sandbox_id='one'))
+    connector.reset()
+    assert connector.sandbox_ids == [] and connector.backends == []
+
+    acquirer = AcquireOnlySandboxCapability()
+    await acquirer.acquire_sandbox(ctx)
+    acquirer.reset()
+    assert acquirer.events == [] and acquirer.backends == [] and acquirer._created == 0  # pyright: ignore[reportPrivateUsage]
+
+    decliner = DecliningSandboxCapability()
+    decliner.acquire_calls = 1
+    decliner.reset()
+    assert decliner.acquire_calls == 0
+
+
+def test_durable_workflow_sandbox_guard():
+    with pytest.raises(UserError, match='contribution'):
+        guard_workflow_sandbox(
+            None,
+            [AcquireOnlySandboxCapability()],
+            static_contributes_sandbox=False,
+            contribution_error='contribution blocked',
+            live_error='live blocked',
+        )
+    with pytest.raises(UserError, match='live'):
+        guard_workflow_sandbox(
+            FakeSandbox('live'),
+            None,
+            static_contributes_sandbox=False,
+            contribution_error='contribution blocked',
+            live_error='live blocked',
+        )
+    ref = SandboxRef(provider='fake', sandbox_id='ref')
+    assert (
+        guard_workflow_sandbox(
+            ref,
+            None,
+            static_contributes_sandbox=False,
+            contribution_error='contribution blocked',
+            live_error='live blocked',
+        )
+        is ref
+    )
 
 
 async def test_lifecycle_capability_also_connects_ref_run_arguments():

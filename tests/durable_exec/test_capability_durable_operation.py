@@ -13,6 +13,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
+from pydantic_ai.capabilities._durable_operation import active_durable_operation, invoke_durable_operation
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
@@ -33,6 +34,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
@@ -87,6 +89,32 @@ pytestmark = pytest.mark.anyio
 requires_dbos = pytest.mark.skipif(not dbos_available, reason='DBOS is not installed')
 requires_prefect = pytest.mark.skipif(not prefect_available, reason='Prefect is not installed')
 requires_temporal = pytest.mark.skipif(not temporal_available, reason='Temporal is not installed')
+
+
+def test_base_hook_durable_operation_rejects_empty_name() -> None:
+    with pytest.raises(ValueError, match='must not be empty'):
+        base_hook_durable_operation('')
+
+
+async def test_active_run_context_operation_takes_precedence() -> None:
+    capability = AbstractCapability[Any]()
+    capability.id = 'capability'
+
+    async def operation(value: str) -> str:
+        return f'durable:{value}'
+
+    async def handler(value: str) -> str:
+        return f'local:{value}'  # pragma: no cover
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        _durable_operations={('capability', 'operation'): operation},
+    )
+
+    assert active_durable_operation(capability, 'operation', ctx) is operation
+    assert await invoke_durable_operation(capability, 'operation', ctx, handler, ('value',), {}) == 'durable:value'
 
 
 @pytest.fixture(autouse=True)
@@ -152,6 +180,25 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
 
 class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
+
+
+async def test_durable_sandbox_release_failure_is_logged_and_swallowed(caplog: pytest.LogCaptureFixture) -> None:
+    class FailingRelease(AbstractCapability[Any]):
+        id = 'sandbox'
+
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(provider='fake', sandbox_id='durable-sandbox')
+
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            raise RuntimeError('control plane unavailable')
+
+    with caplog.at_level('WARNING'):
+        result = await Agent(
+            TestModel(), name='durable_release', capabilities=[FailingRelease(), RecordingDurability()]
+        ).run('go')
+
+    assert result.output == 'success (no tool calls)'
+    assert 'platform idle timeout must reap it' in caplog.text
 
 
 class Operations(AbstractCapability[Any]):
