@@ -20,3 +20,5 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent)])
 The processor may be sync or async, and may optionally take a [`RunContext`][pydantic_ai.tools.RunContext] as its first argument to access dependencies and run state. Multiple `ProcessHistory` capabilities apply in registration order. Note that the processed messages *replace* the run's message history, so make a copy first if you need to keep the original.
 
 `ProcessHistory` is a thin wrapper around the [`before_model_request`](../hooks.md) lifecycle hook — hook that event directly for richer control, like short-circuiting the model call. See [Processing Message History](../message-history.md#processing-message-history) for the full guide, including summarization examples and interactions with [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages].
+
+To bound structured-output or tool retry streaks without writing a processor, use [`CompactRetryHistory`](compact-retry-history.md).

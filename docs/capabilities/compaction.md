@@ -31,6 +31,7 @@ To compact on any model, edit the message history yourself with a [history proce
 
 - [Keep only recent messages](../message-history.md#keep-only-recent-messages) — a zero-cost sliding window over the most recent turns.
 - [Summarize old messages](../message-history.md#summarize-old-messages) — use a (cheaper) model to condense older messages into a summary.
+- [Compact retry history](compact-retry-history.md) — keep only the last failed attempt and its retry prompt. This is opt-in; the default is to keep every attempt.
 
 ## Pydantic AI Harness
 

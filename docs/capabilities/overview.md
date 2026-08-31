@@ -146,6 +146,7 @@ Core also ships capabilities for customizing the agent loop itself, mostly for p
 | [Raise Content Filter Error](raise-content-filter-error.md) | Core | Raise [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] whenever a model response has `finish_reason='content_filter'` |
 | [Reinject System Prompt](reinject-system-prompt.md) | Core | Reinject the configured system prompt when the incoming message history is missing one |
 | [Process History](process-history.md) | Core | Wrap a [history processor](../message-history.md#processing-message-history) |
+| [Compact Retry History](compact-retry-history.md) | Core | Keep only the last failed attempt and retry prompt (opt-in; default history is unchanged) |
 | [Process Event Stream](process-event-stream.md) | Core | Forward [agent stream events](process-event-stream.md) to a handler function |
 
 The authoring primitives, [`Capability`][pydantic_ai.capabilities.Capability] for [bundling behavior without subclassing](#bundling-behavior-with-capability) and [`Toolset`][pydantic_ai.capabilities.Toolset] for wrapping an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset], are covered below. [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental, Harness)* serves any agent to editors like Zed over the [Agent Client Protocol](https://agentclientprotocol.com). Capabilities that can be declared in [YAML/JSON agent specs](../agent-spec.md#capability-spec-syntax) are listed there.

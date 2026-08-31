@@ -97,6 +97,8 @@ Good uses:
 - summarizing old messages
 - applying app-specific history policies
 
+To bound structured-output or tool retry streaks (keep only the last failed attempt and its retry prompt) without writing a processor, use `capabilities=[CompactRetryHistory()]`. This is opt-in; the default is to keep every attempt. See [Compact Retry History](https://pydantic.dev/docs/ai/capabilities/compact-retry-history/).
+
 ## Inject Messages Mid-Run
 
 Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqueue(...)` (from external code driving `agent.iter()`) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.

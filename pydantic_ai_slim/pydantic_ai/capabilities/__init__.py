@@ -36,6 +36,7 @@ from .abstract import (
 )
 from .capability import Capability
 from .combined import CombinedCapability
+from .compact_retry_history import CompactRetryHistory
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
@@ -74,6 +75,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        CompactRetryHistory,
         RaiseContentFilterError,
         ImageGeneration,
         IncludeToolReturnSchemas,
@@ -127,6 +129,7 @@ __all__ = [
     'RaiseContentFilterError',
     'Capability',
     'CAPABILITY_TYPES',
+    'CompactRetryHistory',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',

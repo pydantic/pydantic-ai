@@ -211,6 +211,7 @@ Need deterministic, fast tests?
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
 | `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
+| `CompactRetryHistory` | Keep only the last failed attempt and retry prompt (opt-in) | Yes |
 
 ### When to Use Each Agent Method
 
