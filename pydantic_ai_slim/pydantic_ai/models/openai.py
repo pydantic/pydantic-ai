@@ -1220,9 +1220,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         choice = response.choices[0]
 
-        # Moderation is a top-level field, so it's read here rather than in the choice-scoped
+        # Top-level response metadata is read here rather than in the choice-scoped
         # `_process_provider_details` hook that subclasses may override.
-        provider_details = self._process_provider_details(response) or {}
+        provider_details = _merge_service_tier(self._process_provider_details(response), response.service_tier) or {}
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
 
@@ -2465,6 +2465,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
         if response.created_at:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created_at)
+        provider_details = _merge_service_tier(provider_details, response.service_tier) or {}
         if response.conversation:
             provider_details['conversation_id'] = response.conversation.id
         if response.background:
@@ -3866,6 +3867,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if chunk.model:
                     self._model_name = chunk.model
 
+                self.provider_details = _merge_service_tier(self.provider_details, chunk.service_tier)
+
                 # The moderation chunk carries no choices, so this has to happen before the guard below.
                 if chunk.moderation:
                     self.provider_details = {
@@ -4152,6 +4155,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
                     # relies on it to cancel the server-side job.
                     self._track_background(chunk.response)
+                    self.provider_details = _merge_service_tier(self.provider_details, chunk.response.service_tier)
                 if (
                     isinstance(
                         chunk,
@@ -5058,6 +5062,12 @@ def _map_usage(
         # Extra field, not a declared `RequestUsage` attribute — `setattr` is how `__init__` sets extras.
         setattr(request_usage, 'output_reasoning_tokens', reasoning_tokens)
     return request_usage
+
+
+def _merge_service_tier(provider_details: dict[str, Any] | None, service_tier: str | None) -> dict[str, Any] | None:
+    if service_tier is None:
+        return provider_details
+    return {**(provider_details or {}), 'service_tier': service_tier}
 
 
 def _map_provider_details(
