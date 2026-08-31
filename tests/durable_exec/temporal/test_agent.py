@@ -2849,6 +2849,10 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
         agent=agent,
     )
     (call_tool_activity,) = temporal_toolset.durable_registrations
+    assert ActivityDefinition.must_from_callable(call_tool_activity).arg_types == [  # pyright: ignore[reportUnknownMemberType]
+        CallToolParams,
+        type(None),
+    ]
 
     async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
         raise AssertionError  # pragma: no cover
@@ -2865,7 +2869,7 @@ async def test_temporal_activity_closes_deferred_sandbox_connections():
                 name='use_sandbox',
                 tool_args={},
                 serialized_run_context=TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-                tool_def=None,
+                tool_def=toolset.tools['use_sandbox'].tool_def,
             ),
             None,
         )
