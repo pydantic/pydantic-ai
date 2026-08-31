@@ -175,8 +175,7 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
             return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> LocalSandbox | None:
-            if ref is None or ref.provider != 'local':
-                return None
+            assert ref is not None and ref.provider == 'local'
             return LocalSandbox(ref.sandbox_id)
 
     model = FunctionModel(simple_model_function)

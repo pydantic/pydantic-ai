@@ -2680,11 +2680,29 @@ def test_temporal_run_context_preserves_unavailable_sandbox_reason():
         _ = reconstructed.sandbox
 
 
+def test_temporal_run_context_does_not_serialize_connected_backend():
+    serialized = TemporalRunContext.serialize_run_context(
+        _sandbox_context(Sandbox.wrap(RecordingSandboxBackend('caller-owned')))
+    )
+
+    assert '_sandbox_state' not in serialized
+
+
 def test_temporal_run_context_deserializes_legacy_payload_without_sandbox_state():
     serialized = TemporalRunContext.serialize_run_context(
         _sandbox_context(Sandbox(UnavailableSandbox('not serialized')))
     )
     serialized.pop('_sandbox_state')
+
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+
+    with pytest.raises(UserError, match='not available inside a Temporal activity'):
+        _ = reconstructed.sandbox
+
+
+def test_temporal_run_context_ignores_empty_sandbox_state():
+    serialized = TemporalRunContext.serialize_run_context(_sandbox_context(Sandbox(UnavailableSandbox('ignored'))))
+    serialized['_sandbox_state'] = {}
 
     reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
 
