@@ -8,12 +8,11 @@ import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager
 from decimal import Decimal
-from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelSettings
+from pydantic_ai import Agent, ModelMessage, ModelSettings
 from pydantic_ai.capabilities import AbstractCapability, ResolveModelId, WrapperCapability, durable_operation
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
@@ -42,6 +41,8 @@ from pydantic_ai.models import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
+
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -161,49 +162,9 @@ class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
 
 
-class LifecycleModel(TestModel):
-    def __init__(
-        self,
-        events: list[str],
-        *,
-        fail: bool = False,
-        fail_exit: bool = False,
-        suppress_exit: bool = False,
-        model_name: str = 'lifecycle',
-    ) -> None:
-        super().__init__(custom_output_text='ok', model_name=model_name)
-        self.events = events
-        self.fail = fail
-        self.fail_exit = fail_exit
-        self.suppress_exit = suppress_exit
-
-    async def __aenter__(self) -> LifecycleModel:
-        self.events.append('model-enter')
-        return await super().__aenter__()
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool | None:
-        exception_name = exc_type.__name__ if exc_type is not None else 'none'
-        self.events.append(f'model-exit:{exception_name}')
-        await super().__aexit__(exc_type, exc_val, exc_tb)
-        if self.fail_exit:
-            raise ValueError('exit failed')
-        return self.suppress_exit
-
-    async def request(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        self.events.append('request')
-        if self.fail:
-            raise RuntimeError('request failed')
-        return await super().request(messages, model_settings, model_request_parameters)
+class LifecycleModel(LifecycleTrackingModel):
+    def __init__(self, events: list[str], **kwargs: Any) -> None:
+        super().__init__(events, event_prefix='model-', **kwargs)
 
     @asynccontextmanager
     async def request_stream(
@@ -303,8 +264,11 @@ async def test_durable_model_scope_does_not_manage_registered_models() -> None:
     assert (await agent.run('test')).output == 'ok'
     assert (await agent.run('test', model='registered')).output == 'ok'
 
+    async with agent.run_stream('test', model='registered') as result:
+        assert await result.get_output() == 'ok'
+
     assert default_events == ['request']
-    assert registered_events == ['request']
+    assert registered_events == ['request', 'stream-enter', 'stream-exit']
 
 
 async def test_durable_model_scope_manages_inferred_models(monkeypatch: pytest.MonkeyPatch) -> None:

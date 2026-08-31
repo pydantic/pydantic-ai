@@ -38,7 +38,11 @@ __all__ = [
 
 @asynccontextmanager
 async def managed_model_scope(model: Model, *, owned: bool) -> AsyncGenerator[Model]:
-    """Context-manage a model when the current durable unit owns it."""
+    """Context-manage a model when the current durable unit owns it.
+
+    The model's `__aexit__` return value is deliberately discarded, so it cannot
+    suppress an error raised by the durable unit's body.
+    """
     if not owned:
         yield model
         return

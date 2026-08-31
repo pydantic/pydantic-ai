@@ -12,7 +12,6 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from types import TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -126,6 +125,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -3063,32 +3063,9 @@ _dbos_alt_model = FunctionModel(_dbos_alt_model_fn, model_name='alt')
 _dbos_model_lifecycle_events: list[str] = []
 
 
-class _DBOSLifecycleModel(TestModel):
+class _DBOSLifecycleModel(LifecycleTrackingModel):
     def __init__(self) -> None:
-        super().__init__(custom_output_text='ok', model_name='lifecycle')
-
-    async def __aenter__(self) -> _DBOSLifecycleModel:
-        _dbos_model_lifecycle_events.append('model-enter')
-        return await super().__aenter__()
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool | None:
-        exception_name = exc_type.__name__ if exc_type is not None else 'none'
-        _dbos_model_lifecycle_events.append(f'model-exit:{exception_name}')
-        return await super().__aexit__(exc_type, exc_val, exc_tb)
-
-    async def request(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        _dbos_model_lifecycle_events.append('request')
-        return await super().request(messages, model_settings, model_request_parameters)
+        super().__init__(_dbos_model_lifecycle_events, event_prefix='model-')
 
     @asynccontextmanager
     async def request_stream(

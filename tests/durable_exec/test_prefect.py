@@ -160,6 +160,7 @@ except ImportError:  # pragma: lax no cover
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 
 def test_durability_codecs() -> None:
@@ -3352,19 +3353,7 @@ async def test_prefect_durability_manages_resolver_built_model_lifecycle(blockbu
     assert blockbuster_enabled is False
     events: list[str] = []
 
-    class TrackingModel(TestModel):
-        async def __aenter__(self) -> TrackingModel:
-            events.append('enter')
-            return await super().__aenter__()
-
-        async def __aexit__(self, *args: Any) -> bool | None:
-            events.append('exit')
-            return await super().__aexit__(*args)
-
-        async def request(self, *args: Any, **kwargs: Any) -> Any:
-            events.append('request')
-            return await super().request(*args, **kwargs)
-
+    class TrackingModel(LifecycleTrackingModel):
         @asynccontextmanager
         async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
             events.append('stream')
@@ -3376,7 +3365,7 @@ async def test_prefect_durability_manages_resolver_built_model_lifecycle(blockbu
         'rebuilt',
         name='durability_resolved_model_lifecycle',
         capabilities=[
-            ResolveModelId(lambda ctx, model_id: TrackingModel(custom_output_text='ok')),
+            ResolveModelId(lambda ctx, model_id: TrackingModel(events, include_exit_exception=False)),
             PrefectDurability(),
         ],
     )

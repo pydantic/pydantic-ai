@@ -64,6 +64,7 @@ from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
 from ..._inline_snapshot import snapshot
+from ...model_lifecycle_utils import LifecycleTrackingModel
 
 try:
     import temporalio.api.common.v1
@@ -1293,19 +1294,7 @@ async def test_temporal_model_request_outside_workflow():
 async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
 
-    class TrackingModel(TestModel):
-        async def __aenter__(self) -> TrackingModel:
-            events.append('enter')
-            return await super().__aenter__()
-
-        async def __aexit__(self, *args: Any) -> bool | None:
-            events.append('exit')
-            return await super().__aexit__(*args)
-
-        async def request(self, *args: Any, **kwargs: Any) -> Any:
-            events.append('request')
-            return await super().request(*args, **kwargs)
-
+    class TrackingModel(LifecycleTrackingModel):
         def request_stream(self, *args: Any, **kwargs: Any) -> Any:
             events.append('stream')
             return super().request_stream(*args, **kwargs)
@@ -1325,7 +1314,7 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
     )
 
     def infer_tracking_model(model_id: str, ctx: RunContext[object] | None) -> TrackingModel:
-        return TrackingModel(custom_output_text='ok')
+        return TrackingModel(events, include_exit_exception=False)
 
     monkeypatch.setattr(temporal_model, '_infer_model', infer_tracking_model)
     deps = object()
@@ -1369,32 +1358,27 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
 
 
 async def test_temporal_activity_does_not_manage_registered_models() -> None:
+    class TrackingModel(LifecycleTrackingModel):
+        def request_stream(self, *args: Any, **kwargs: Any) -> Any:
+            self.events.append('stream')
+            return super().request_stream(*args, **kwargs)
+
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            self.events.append('cancel')
+
+    async def handle_stream(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
     events: list[str] = []
-
-    class TrackingModel(TestModel):
-        # These two bodies never running is the assertion: a registered model keeps its external
-        # lifecycle owner, so the activity must not enter it. They record into `events` only so a
-        # regression shows up as a named entry rather than as a bare count.
-        async def __aenter__(self) -> TrackingModel:  # pragma: no cover
-            events.append('enter')
-            return await super().__aenter__()
-
-        async def __aexit__(self, *args: Any) -> bool | None:  # pragma: no cover
-            events.append('exit')
-            return await super().__aexit__(*args)
-
-        async def request(self, *args: Any, **kwargs: Any) -> Any:
-            events.append('request')
-            return await super().request(*args, **kwargs)
-
-    default = TrackingModel(custom_output_text='default')
-    registered = TrackingModel(custom_output_text='registered')
+    default = TrackingModel(events, include_exit_exception=False, custom_output_text='default')
+    registered = TrackingModel(events, include_exit_exception=False, custom_output_text='registered')
     temporal_model = TemporalModel(
         default,
         activity_name_prefix='test__registered_lifecycle',
         activity_config={'start_to_close_timeout': timedelta(seconds=60)},
         deps_type=object,
         models={'registered': registered},
+        event_stream_handler=handle_stream,
     )
     deps = object()
     ctx = RunContext[object](deps=deps, model=default, usage=RunUsage(), run_id='registered-lifecycle')
@@ -1405,11 +1389,31 @@ async def test_temporal_activity_does_not_manage_registered_models() -> None:
         serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
     )
 
-    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
     params.model_id = 'registered'
     await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+    assert events == ['request']
 
-    assert events == ['request', 'request']
+    events = []
+    registered.events = events
+    await ActivityEnvironment().run(
+        temporal_model.request_stream_activity,
+        params,
+        deps,  # pyright: ignore[reportArgumentType]
+    )
+    assert events == ['stream']
+
+    events = []
+    registered.events = events
+    await ActivityEnvironment().run(
+        temporal_model.cancel_suspended_response_activity,
+        _ModelCancelParams(
+            response=ModelResponse(parts=[TextPart('paused')], state='suspended'),
+            model_id='registered',
+            serialized_run_context=params.serialized_run_context,
+            deps=deps,
+        ),
+    )
+    assert events == ['cancel']
 
 
 async def test_temporal_model_cancel_suspended_response_outside_workflow():
