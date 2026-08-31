@@ -2216,6 +2216,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             stream = await self._responses_create(
                 messages, stream=True, model_settings=settings, model_request_parameters=model_request_parameters
             )
+            if isinstance(stream, ModelResponse):
+                # A handled rejection (e.g. an Azure content filter) arrives as a finished
+                # response, not a stream; same guard as `request_stream` below.
+                return stream
             async with stream:
                 streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
                 async for _ in streamed_response:

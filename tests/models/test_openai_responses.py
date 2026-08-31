@@ -15523,6 +15523,45 @@ async def test_background_streaming_continuation_without_created_event(allow_mod
     assert retrieve_kwargs[0]['starting_after'] == 5
 
 
+async def test_forced_stream_request_handles_model_response_from_responses_create(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """The stream-only drain in `request()` must return a handled `ModelResponse`, not enter it as a stream."""
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_requires_streaming=True),
+    )
+
+    returned_response = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='azure',
+        finish_reason='content_filter',
+        provider_details={'finish_reason': 'content_filter'},
+    )
+
+    async def mock_responses_create(
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        assert stream is True
+        return returned_response
+
+    monkeypatch.setattr(model, '_responses_create', mock_responses_create)
+
+    response = await model.request(
+        messages=[ModelRequest(parts=[UserPromptPart(content='bad prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert response is returned_response
+    assert response.finish_reason == 'content_filter'
+
+
 async def test_request_stream_handles_model_response_from_responses_create(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ):
