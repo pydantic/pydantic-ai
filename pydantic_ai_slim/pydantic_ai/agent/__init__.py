@@ -1549,8 +1549,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         preparation_stack = AsyncExitStack()
         await preparation_stack.__aenter__()
-        if (preparation_stack_holder := _preparation_stack_holder.get()) is not None:
-            preparation_stack_holder.append(preparation_stack)
+        preparation_stack_holder = _preparation_stack_holder.get()
+        assert preparation_stack_holder is not None
+        preparation_stack_holder.append(preparation_stack)
         await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
 
         @asynccontextmanager

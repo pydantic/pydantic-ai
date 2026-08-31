@@ -772,8 +772,10 @@ async def test_capability_connection_is_detached_without_terminating_sandbox(san
 async def test_caller_owned_backend_is_not_closed_by_run():
     close_calls: list[bool] = []
     backend = _ClosableFakeSandbox('direct', close_calls)
+    facade = Sandbox(backend)
 
-    await make_probe_agent([], capabilities=[]).run('go', sandbox=backend)
+    await make_probe_agent([], capabilities=[]).run('go', sandbox=facade)
+    await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
     assert close_calls == []
 
 

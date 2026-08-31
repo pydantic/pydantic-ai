@@ -170,12 +170,8 @@ async def test_connection_close_forwards_detach_but_blocks_termination():
 
 async def test_connection_close_ignores_unrelated_incompatible_close_method():
     class BackendWithUnrelatedClose(_FilesystemBackend):
-        def __init__(self) -> None:
-            super().__init__()
-            self.close_calls = 0
-
         async def close(self) -> None:
-            self.close_calls += 1
+            raise AssertionError('incompatible close must not be called')  # pragma: no cover
 
     backend = BackendWithUnrelatedClose()
     read_only = ReadOnlySandbox(backend)
@@ -186,8 +182,6 @@ async def test_connection_close_ignores_unrelated_incompatible_close_method():
     sandbox = Sandbox._from_provider('fake', connect)  # pyright: ignore[reportPrivateUsage]
     await sandbox.working_dir()
     await sandbox._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
-
-    assert backend.close_calls == 0
 
 
 async def test_filesystem_support_mirrors_wrapped_backend():

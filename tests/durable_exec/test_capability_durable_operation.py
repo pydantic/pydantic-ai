@@ -219,7 +219,7 @@ async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> Non
     agent = Agent(
         TestModel(),
         name='wrapped_sandbox',
-        capabilities=[WrapperCapability(wrapped=provider), RecordingDurability()],
+        capabilities=[WrapperCapability(wrapped=WrapperCapability(wrapped=provider)), RecordingDurability()],
     )
 
     await agent.run('go')

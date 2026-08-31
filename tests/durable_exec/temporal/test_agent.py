@@ -2852,6 +2852,43 @@ async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error
     assert backend.close_calls == 1
 
 
+async def test_temporal_activity_sandbox_close_attempts_all_and_raises_first_error():
+    close_order: list[str] = []
+
+    class FailingCloseBackend(RecordingSandboxBackend):
+        def __init__(self, name: str) -> None:
+            super().__init__(name)
+
+        async def close(self, *, terminate: bool) -> None:
+            close_order.append(self.sandbox_id)
+            raise RuntimeError(f'{self.sandbox_id} close failed')
+
+    backends = iter([FailingCloseBackend('first'), FailingCloseBackend('second')])
+
+    class Provider(Capability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            return next(backends)
+
+    agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
+
+    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
+        raise AssertionError  # pragma: no cover
+
+    sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match='second close failed'):
+        async with activity_sandbox_connection_scope():
+            for _ in range(2):
+                reconstructed = deserialize_run_context(
+                    TemporalRunContext,
+                    TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+                    deps=None,
+                    agent=agent,
+                )
+                await reconstructed.sandbox.run(['true'])
+
+    assert close_order == ['second', 'first']
+
+
 @pytest.mark.parametrize('failure', ['no_agent', 'decline', 'user', 'runtime'])
 async def test_temporal_run_context_provider_connection_failures_are_typed(failure: str):
     class Provider(Capability[Any]):
