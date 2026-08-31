@@ -79,14 +79,47 @@ def is_redefinition(existing: type, cls: type) -> bool:
     A re-run notebook cell, `importlib.reload`, a re-executed docs example, or the class recreation
     `@dataclass(slots=True)` performs replaces its registration; only genuinely distinct classes
     conflict.
-
-    A Temporal workflow sandbox re-executes application modules while sharing `pydantic_ai`'s
-    registries with the host process, so the sandbox's copy of an event class matches its host
-    original here and replaces the host's entry. Events then decode to whichever copy registered
-    last, and a host-side `isinstance` check (including `@on_event(MyEvent)` filtering) can be
-    `False` for an event of "the same" class. See `test_temporal_sandbox_event_registration`.
     """
     return existing.__module__ == cls.__module__ and existing.__qualname__ == cls.__qualname__
+
+
+_replay_isolation_guard: Callable[[], bool] | None = None
+
+
+def set_replay_isolation_guard(guard: Callable[[], bool]) -> None:
+    """Declare when class definitions are happening in an isolated re-execution of the app's modules.
+
+    A durable execution runtime may re-execute application modules in an isolated interpreter view
+    while sharing `pydantic_ai` itself with the host process — Temporal's workflow sandbox does
+    exactly this. The re-executed copy of an event class is a redefinition of the host's, so left
+    alone it would take over the registry, and the host would then decode payloads into a class its
+    own `isinstance` checks (including `@on_event(MyEvent)` filtering) don't recognize.
+
+    While `guard()` is true, redefinitions keep the class already registered as the family's
+    canonical one. Instances of the re-executed copy still serialize and validate normally: the
+    family schema canonicalizes them (see `event_family_schema`), so application code holds one
+    event class regardless of which side of the boundary it runs on.
+    """
+    global _replay_isolation_guard
+    _replay_isolation_guard = guard
+
+
+def keeps_canonical_registration() -> bool:
+    """Whether a redefinition right now should leave the existing registration in place."""
+    return _replay_isolation_guard is not None and _replay_isolation_guard()
+
+
+def _canonicalize(value: object, event_cls: type) -> Any:
+    """Rebuild a re-executed copy of `event_cls` as `event_cls` itself, so serialization stays exact.
+
+    Only a class the registry considers the same one (see `is_redefinition`) is converted. Such a
+    copy comes from re-executing the same module source, so it carries the same fields by
+    construction, and reading them off it by name is exact.
+    """
+    value_type = type(value)
+    if value_type is event_cls or not is_redefinition(event_cls, value_type):
+        return value
+    return event_cls(**{f.name: getattr(value, f.name) for f in dataclasses.fields(event_cls)})
 
 
 def guard_post_init(cls: type, base_post_init: Callable[[Any], None]) -> None:
@@ -199,9 +232,28 @@ def event_family_schema(
             raise UserError(  # pragma: no cover
                 f'Event class {event_cls.__qualname__} (registered as {tag!r}) must be a dataclass.'
             )
-        choices[tag] = handler.generate_schema(event_cls)
+        choices[tag] = _canonicalizing_schema(handler, event_cls)
     choices[_UNKNOWN_TAG] = unknown_schema
     return pydantic_core.core_schema.tagged_union_schema(choices, discriminator)
+
+
+def _canonicalizing_schema(handler: pydantic.GetCoreSchemaHandler, event_cls: type[Any]) -> Any:
+    """The event class's own schema, serializing a re-executed copy of it as the registered class.
+
+    Under a `set_replay_isolation_guard`, code on the isolated side holds its own copy of the class
+    while the registry keeps the host's. The copy is the same class by every meaning that matters
+    here — same module, same qualname, same fields — so serializing it as the registered one is
+    exact, and it's what lets both sides use the class they imported.
+    """
+
+    def serialize(value: Any, serializer: pydantic_core.core_schema.SerializerFunctionWrapHandler) -> Any:
+        return serializer(_canonicalize(value, event_cls))
+
+    return pydantic_core.core_schema.no_info_before_validator_function(
+        lambda value: value,
+        handler.generate_schema(event_cls),
+        serialization=pydantic_core.core_schema.wrap_serializer_function_ser_schema(serialize),
+    )
 
 
 def _gather_unknown_payload(

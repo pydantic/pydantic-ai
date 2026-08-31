@@ -320,8 +320,6 @@ Emitting events via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from a too
 
 Capability listeners registered with [`@on_event`][pydantic_ai.capabilities.on_event] run in workflow code rather than in a durable unit, so they re-run on every workflow replay and must be deterministic. Keep I/O in a durability `event_stream_handler=`, which runs in its own activity.
 
-What crosses the activity boundary is an event's `name` (or `kind`) and payload, not its class identity. The workflow sandbox re-executes application modules, so an event class defined in a module the sandbox runs registers a second copy of itself under the same tag, and activity-side code — including a durability `event_stream_handler` — can then receive events of that copy: the payload is intact and the event is typed, but `isinstance` against the class your handler imported is `False`. Match on the tag in code that runs activity-side, and define event classes in a module the [sandbox passes through](https://docs.temporal.io/develop/python/python-sdk-sandbox#passthrough-modules) so the class stays shared where you control it.
-
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 
 Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) follows the same split, with Temporal-specific consequences:

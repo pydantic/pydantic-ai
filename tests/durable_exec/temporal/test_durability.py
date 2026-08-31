@@ -67,7 +67,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import CapabilityEvent, UploadedFile
+from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -1585,11 +1585,10 @@ _emitted_handler_events: list[tuple[str, str, bool]] = []
 
 async def _capability_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
     async for event in stream:
-        # Matched on `kind`, not `isinstance(event, DurableCheckpointEvent)`: the workflow sandbox
-        # re-executes application modules, so the class object the payload decodes to isn't
-        # guaranteed to be this module's. `kind` and the payload are what cross the boundary.
-        if isinstance(event, CapabilityEvent) and event.kind == 'durability_test.checkpoint':
-            _emitted_handler_events.append((type(event).__name__, getattr(event, 'label', ''), activity.in_activity()))
+        # `isinstance` against the class this module imported, which is the point: the sandbox
+        # re-executes application modules, and the payload still validates into the host's class.
+        if isinstance(event, DurableCheckpointEvent):
+            _emitted_handler_events.append((type(event).__name__, event.label, activity.in_activity()))
 
 
 _capability_event_agent = Agent(
@@ -1616,11 +1615,10 @@ async def test_durability_capability_event_reaches_event_stream_handler_activity
     reaches the run's event stream and is dispatched to the durability handler in its own activity,
     where it has to survive the payload round trip rather than degrading to `UnknownCapabilityEvent`.
 
-    What crosses is the `kind` and the payload, not class identity: the workflow sandbox re-executes
-    application modules, and the sandbox's copy of an event class replaces the host's registration
-    (see `is_redefinition`), so which class object the payload validates into depends on what ran
-    first. The type name below still pins that it decoded typed rather than into the unknown
-    envelope.
+    Class identity survives too. The sandbox re-executes application modules, so the workflow side
+    holds its own copy of the event class, but `set_replay_isolation_guard` keeps the host's class
+    registered and the family schema canonicalizes the copy on the way out. The handler's own
+    `isinstance` check is what asserts it.
     """
     _emitted_handler_events.clear()
     async with Worker(

@@ -14,6 +14,7 @@ from dataclasses import replace
 from typing import Any
 
 from pydantic.errors import PydanticUserError
+from temporalio import workflow
 from temporalio.contrib.pydantic import PydanticPayloadConverter
 from temporalio.converter import DataConverter, DefaultPayloadConverter
 from temporalio.plugin import SimplePlugin
@@ -22,6 +23,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from pydantic_graph.exceptions import UnsupportedEventLoopError
 
+from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
@@ -56,6 +58,12 @@ try:
     import anyio._backends._trio  # pyright: ignore[reportUnusedImport]  # noqa: F401
 except ImportError:
     pass
+
+# The workflow sandbox re-executes application modules while `pydantic_ai` is passed through, so an
+# event class defined in a workflow module is redefined against the host's registry on every
+# validation cycle. Telling the registry to keep the host's class means workflow and activity code
+# both hold the class they imported, and `isinstance` works on either side of the boundary.
+set_replay_isolation_guard(workflow.unsafe.in_sandbox)
 
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:

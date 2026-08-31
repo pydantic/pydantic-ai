@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import textwrap
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +14,7 @@ import pydantic
 import pytest
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai._event_registry import set_replay_isolation_guard
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -411,6 +413,54 @@ def test_redefined_event_class_replaces_registration():
     assert second.name == 'redefined'
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     assert type(adapter.validate_python({'event_kind': 'custom', 'name': 'redefined', 'value': 1})) is type(second)
+
+
+def test_replay_isolation_keeps_the_canonical_event_class():
+    """A durable runtime re-executing app modules doesn't hand the host a class it can't recognize.
+
+    Temporal's workflow sandbox re-runs the module that defines an event class while sharing
+    `pydantic_ai` with the host process, so without this the sandbox's copy would take over the
+    registry and the host would decode payloads into a class its own `isinstance` checks miss.
+    Instances of the copy still serialize exactly, because the family schema canonicalizes them.
+    """
+
+    def define() -> Any:
+        @dataclass(kw_only=True)
+        class IsolatedEvent(CustomEvent):
+            value: int
+
+        return IsolatedEvent
+
+    host_cls = define()
+    isolated = True
+    set_replay_isolation_guard(lambda: isolated)
+    try:
+        copy_cls = define()
+        assert copy_cls is not host_cls
+        adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+
+        # The copy serializes as the registered class, without a `PydanticSerializationUnexpectedValue`.
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            wire = adapter.dump_python(copy_cls(value=1), mode='json')
+        assert wire == {
+            'name': 'isolated',
+            'tool_call_id': None,
+            'tool_name': None,
+            'event_kind': 'custom',
+            'value': 1,
+        }
+        # And validates back into the class the host imported, so `isinstance` holds on both sides.
+        assert isinstance(adapter.validate_python(wire), host_cls)
+
+        # Outside the isolated re-execution, a redefinition still replaces the registration.
+        isolated = False
+        assert isinstance(adapter.validate_python(wire), host_cls)
+        replacement = define()
+        assert type(pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent).validate_python(wire)) is replacement
+    finally:
+        set_replay_isolation_guard(lambda: False)
+        CUSTOM_EVENT_TYPES.pop('isolated', None)
 
 
 async def test_event_delivered_while_tool_still_running():

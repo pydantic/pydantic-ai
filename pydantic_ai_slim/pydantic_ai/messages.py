@@ -45,6 +45,7 @@ from ._event_registry import (
     guard_post_init as _guard_post_init,
     inject_tag_field as _inject_tag_field,
     is_redefinition as _is_redefinition,
+    keeps_canonical_registration as _keeps_canonical_registration,
     shadowed_envelope_fields as _shadowed_envelope_fields,
 )
 from ._instrumentation import redact_binary_content, serialize_any
@@ -4585,7 +4586,10 @@ class CustomEvent:
             raise TypeError(
                 f'Custom event {cls.__qualname__} declares field(s) reserved for the event envelope: {shadowed}.'
             )
-        CUSTOM_EVENT_TYPES[event_name] = cls
+        # A durable runtime that re-executes application modules in isolation keeps the class the
+        # host registered, so both sides hold the class they imported; see `event_family_schema`.
+        if existing is None or not _keeps_canonical_registration():
+            CUSTOM_EVENT_TYPES[event_name] = cls
         cls._registered_name = event_name
         # Redeclare `name` on the subclass so it defaults to (and always serializes as) the registered name.
         _inject_tag_field(cls, 'name', event_name)
@@ -4774,7 +4778,9 @@ class CapabilityEvent:
             raise TypeError(
                 f'Capability event {cls.__qualname__} declares field(s) reserved for the event envelope: {shadowed}.'
             )
-        CAPABILITY_EVENT_TYPES[event_kind] = cls
+        # See the matching note in `CustomEvent.__init_subclass__`.
+        if existing is None or not _keeps_canonical_registration():
+            CAPABILITY_EVENT_TYPES[event_kind] = cls
         cls._registered_kind = event_kind
         _inject_tag_field(cls, 'kind', event_kind)
 
