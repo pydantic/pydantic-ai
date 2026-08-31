@@ -1651,7 +1651,13 @@ _NON_POSITIVE_TIMEOUT_CALLS: list[Callable[[PlaywrightBrowserToolset[None]], Awa
 
 
 class TestPerCallTimeout:
-    async def test_navigate_override_reaches_every_playwright_operation(self) -> None:
+    async def test_navigate_override_reaches_every_playwright_operation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Every stage is handed what is *left* of the budget, counted from a real clock, so a run slow
+        # enough to cross a millisecond leaves the trailing stage on 1110. Freeze the clock: the claim
+        # here is that the override reaches every stage rather than any stage falling back to the
+        # capability default, and `test_override_reaches_each_playwright_call` is where the
+        # countdown itself is asserted.
+        monkeypatch.setattr('pydantic_ai_harness.playwright._toolset.monotonic', lambda: 0.0)
         page = _FakePage()
         result = await _toolset(page, screenshot_on_navigate=True).navigate('https://example.com/', timeout_ms=1111)
         assert isinstance(result, ToolReturn)
