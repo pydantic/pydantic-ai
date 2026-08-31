@@ -2658,6 +2658,17 @@ def test_temporal_run_context_preserves_run_id():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.run_id == 'run-123'
+    assert reconstructed.context_window_used is None
+
+    # Even if a custom activity context carries a model, the ratio stays unknown when it omits the
+    # full message history, as the default Temporal context does to keep activity payloads small.
+    reconstructed_with_model = TemporalRunContext(
+        deps=None,
+        model=TestModel(profile={'context_window': 100}),
+        usage=RunUsage(),
+        run_id='run-123',
+    )
+    assert reconstructed_with_model.context_window_used is None
 
 
 run_id_test_agent = Agent(TestModel(custom_output_text='ok'), name='run_id_test_agent')

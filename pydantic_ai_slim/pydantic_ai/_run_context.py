@@ -346,12 +346,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [history processor](https://pydantic.dev/docs/ai/message-history#processing-message-history).
 
         Returns `None` — never a misleading `0.0` — when the ratio cannot be calculated. This
-        includes when the context window or usage is unknown, before the first model response, and
-        for a fallback model whose candidate models may have different context windows.
+        includes when the context window, usage, or message history is unavailable, before the first
+        model response, and for a fallback model whose candidate models may have different context
+        windows.
         """
         from .models import Model  # imported here because `models` imports `RunContext` at module level
 
-        ctx_model = self.model
+        # Durable run contexts can omit live model state and message history at an activity boundary.
+        # Read both through `__dict__` so those documented unknown cases return `None` rather than
+        # triggering the subclass's unavailable-field error.
+        ctx_model = self.__dict__.get('model')
         if not isinstance(ctx_model, Model):
             # e.g. a realtime model, whose profile has no `context_window`
             return None
@@ -362,7 +366,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return None
         if context_window is None or context_window <= 0:
             return None
-        for message in reversed(self.messages):
+        messages: list[_messages.ModelMessage] | None = self.__dict__.get('messages')
+        if messages is None:
+            return None
+        for message in reversed(messages):
             if isinstance(message, _messages.ModelResponse):
                 tokens = message.usage.total_tokens
                 return tokens / context_window if tokens else None
