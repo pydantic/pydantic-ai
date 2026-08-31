@@ -880,6 +880,29 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return frozenset()
 
+    def _lookup_profile_context_window(
+        self, provider_profile: ModelProfile, user_profile: ModelProfileSpec | None
+    ) -> int | None:
+        """Look up an unset profile context window from genai-prices."""
+        if 'context_window' in provider_profile or (
+            user_profile is not None and not callable(user_profile) and 'context_window' in user_profile
+        ):
+            return None
+
+        try:
+            base_url = self.base_url
+        except (AttributeError, UserError):
+            # `base_url` may raise `UserError` (e.g. HuggingFace without one) or not be available
+            # yet when `profile` is first resolved inside a subclass `__init__` (e.g. Bedrock Mantle,
+            # whose client — which `base_url` reads — is only set after the profile is consulted).
+            base_url = None
+        try:
+            model_name, system = self.model_name, self.system
+        except AttributeError:
+            # Similarly unavailable on a partially initialized model (e.g. built via `__new__` in tests).
+            return None
+        return lookup_context_window(model_name, provider_api_url=base_url, provider_name=system)
+
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile.
@@ -906,26 +929,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
         user = self._profile
-        context_window_set = 'context_window' in provider_profile or (
-            user is not None and not callable(user) and 'context_window' in user
-        )
-        if not context_window_set:
-            try:
-                base_url = self.base_url
-            except (AttributeError, UserError):
-                # `base_url` may raise `UserError` (e.g. HuggingFace without one) or not be available
-                # yet when `profile` is first resolved inside a subclass `__init__` (e.g. Bedrock Mantle,
-                # whose client — which `base_url` reads — is only set after the profile is consulted).
-                base_url = None
-            try:
-                model_name, system = self.model_name, self.system
-            except AttributeError:
-                # Similarly unavailable on a partially initialized model (e.g. built via `__new__` in tests).
-                model_name = system = None
-            if model_name is not None:
-                context_window = lookup_context_window(model_name, provider_api_url=base_url, provider_name=system)
-                if context_window is not None:
-                    resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
+        context_window = self._lookup_profile_context_window(provider_profile, user)
+        if context_window is not None:
+            resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
 
         # Step 4: user override
         if user is None:
