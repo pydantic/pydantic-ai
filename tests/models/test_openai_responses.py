@@ -57,7 +57,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
 from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -3969,6 +3969,35 @@ async def test_response_scoped_tool_call_id_with_previous_response(allow_model_r
 
     request_kwargs = get_mock_responses_kwargs(mock_client)[0]
     assert (request_kwargs['previous_response_id'], request_kwargs['input']) == snapshot(
+        (
+            'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+            [{'type': 'function_call_output', 'call_id': 'call_0', 'output': 'result'}],
+        )
+    )
+
+    compact_kwargs: dict[str, Any] = {}
+
+    async def fake_compact(**kwargs: Any) -> CompactedResponse:
+        compact_kwargs.update(kwargs)
+        return CompactedResponse(
+            id='resp_compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp_1', encrypted_content='encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = fake_compact
+    await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=history,
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+    assert (compact_kwargs['previous_response_id'], compact_kwargs['input']) == snapshot(
         (
             'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
             [{'type': 'function_call_output', 'call_id': 'call_0', 'output': 'result'}],
@@ -13586,8 +13615,6 @@ async def test_openai_responses_compact_replants_standing_prompt(allow_model_req
         )
 
     model.client.responses.compact = fake_compact
-    from pydantic_ai.models import ModelRequestContext
-
     response = await model.compact_messages(
         ModelRequestContext(
             model=model, messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()

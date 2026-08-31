@@ -2137,6 +2137,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages,
             model_settings,
             model_request_parameters,
+            previous_response_id=previous_response_id,
             standing_prompt_retained=False,
         )
         if instructions_override is not None:
