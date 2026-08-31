@@ -594,6 +594,74 @@ def test_handle_text_deltas_with_think_tags():
     )
 
 
+def test_handle_text_deltas_with_think_tags_split_across_deltas():
+    """Thinking tags may be split across provider deltas without leaking into text parts."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ('<think>', '</think>')
+
+    assert list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags)) == []
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='nk>', thinking_tags=thinking_tags))
+    assert event == PartStartEvent(index=0, part=ThinkingPart(content=''))
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='reasoning', thinking_tags=thinking_tags))
+    assert event == PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='reasoning'))
+
+    assert list(manager.handle_text_delta(vendor_part_id='content', content='</thi', thinking_tags=thinking_tags)) == []
+    assert list(manager.handle_text_delta(vendor_part_id='content', content='nk>', thinking_tags=thinking_tags)) == []
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='answer', thinking_tags=thinking_tags))
+    assert event == PartStartEvent(index=1, part=TextPart(content='answer'))
+
+    assert list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags)) == []
+    events = list(
+        manager.handle_text_delta(
+            vendor_part_id='content', content='nk>more reasoning</think>final answer', thinking_tags=thinking_tags
+        )
+    )
+    assert events == [
+        PartStartEvent(index=2, part=ThinkingPart(content='')),
+        PartDeltaEvent(index=2, delta=ThinkingPartDelta(content_delta='more reasoning')),
+        PartStartEvent(index=3, part=TextPart(content='final answer')),
+    ]
+    assert manager.get_parts() == [
+        ThinkingPart(content='reasoning'),
+        TextPart(content='answer'),
+        ThinkingPart(content='more reasoning'),
+        TextPart(content='final answer'),
+    ]
+
+
+def test_handle_text_deltas_preserves_ordinary_thinking_tag_prefix():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ('<think>', '</think>')
+
+    assert list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags)) == []
+    event = next(
+        manager.handle_text_delta(vendor_part_id='content', content='s is ordinary text', thinking_tags=thinking_tags)
+    )
+    assert event == PartStartEvent(index=0, part=TextPart(content='<this is ordinary text'))
+    assert manager.get_parts() == [TextPart(content='<this is ordinary text')]
+
+
+def test_finalize_thinking_tags_preserves_partial_tags_at_end_of_stream():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ('<think>', '</think>')
+
+    event = next(
+        manager.handle_text_delta(vendor_part_id='content', content='ordinary <thi', thinking_tags=thinking_tags)
+    )
+    assert event == PartStartEvent(index=0, part=TextPart(content='ordinary '))
+    event = next(manager.finalize_thinking_tags())
+    assert event == PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='<thi'))
+    assert manager.get_parts() == [TextPart(content='ordinary <thi')]
+
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    list(manager.handle_text_delta(vendor_part_id='content', content='<think>reason</thi', thinking_tags=thinking_tags))
+    event = next(manager.finalize_thinking_tags())
+    assert event == PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</thi'))
+    assert manager.get_parts() == [ThinkingPart(content='reason</thi')]
+
+
 def test_handle_tool_call_deltas():
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 

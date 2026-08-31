@@ -1063,6 +1063,14 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
+            async def iterator_with_thinking_tag_flush(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
+                async for event in iterator:
+                    yield event
+                for event in self._parts_manager.finalize_thinking_tags():
+                    yield event
+
             async def iterator_with_cancel_guard(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
             ) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1095,7 +1103,9 @@ class StreamedResponse(ABC):
                         self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
-                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+                iterator_with_part_end(
+                    iterator_with_final_event(iterator_with_thinking_tag_flush(self._get_event_iterator()))
+                )
             )
         return self._event_iterator
 
