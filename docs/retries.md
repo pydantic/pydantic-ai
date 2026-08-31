@@ -38,6 +38,7 @@ assert wire_requests == 18
 
 settings = ModelSettings(timeout=10)  # per-request deadline, in seconds
 print(settings['timeout'] * wire_requests)  # 180 — size budgets for the worst case
+#> 180
 ```
 
 ## Transport retries
