@@ -39,6 +39,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     engine_spec = DurabilityEngineSpec(
         engine_name='Prefect',
         durable_unit_noun='task',
+        durable_unit_plural='tasks',
         durable_container_noun='flow',
         codec=IDENTITY_CODEC,  # object-passing: Prefect serializes/caches internally
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),

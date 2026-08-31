@@ -190,10 +190,12 @@ def test_durability_engine_spec_rejects_empty_nouns() -> None:
         UserError,
         match=(
             r'Invalid Test durability engine spec: `durable_unit_noun` must not be empty; '
-            r'`durable_container_noun` must not be empty\.'
+            r'`durable_unit_plural` must not be empty; `durable_container_noun` must not be empty\.'
         ),
     ):
-        DurabilityEngineSpec(engine_name='Test', durable_unit_noun='', durable_container_noun='')
+        DurabilityEngineSpec(
+            engine_name='Test', durable_unit_noun='', durable_unit_plural='', durable_container_noun=''
+        )
 
 
 def test_durability_bound_agent_and_default_model_id_accessors() -> None:
@@ -2971,21 +2973,60 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
         await run_agent()
 
 
-async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
-    """A toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_allows_hook_only_per_run_capabilities(blockbuster_enabled: bool) -> None:
+    """Prefect creates a task per call, so a per-run capability needs no pre-registration.
 
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so its tools would run un-tasked inside the flow.
+    Unlike Temporal and DBOS, whose backends register their durable units while binding, Prefect's
+    `CallableOperationBackend` builds the task inside `execute()`. There is no registration boundary
+    for a per-run capability to fall outside of, so hook-only capabilities are accepted here. One
+    that contributes an *executing* toolset is still rejected, by the toolset guard below.
     """
-    agent = Agent(TestModel(), name='durability_reject_per_run_cap', capabilities=[PrefectDurability()])
+    assert blockbuster_enabled is False
+    events: list[str] = []
+
+    class RecordingCapability(AbstractCapability[object]):
+        # `AbstractCapability`, not `Capability`: the latter always contributes a `FunctionToolset`
+        # (empty or not), which the runtime-toolset guard rejects on its own.
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            events.append('before_run')
+
+    agent = Agent(TestModel(), name='durability_per_run_hook_cap', capabilities=[PrefectDurability()])
 
     @flow
-    async def run_agent() -> None:
+    async def run_with_hook_capability() -> str:
+        return (await agent.run('Hello', capabilities=[RecordingCapability()])).output
+
+    @flow
+    async def run_with_instrumentation() -> str:
+        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_hook_capability() == snapshot('success (no tool calls)')
+    assert events == ['before_run']
+    assert await run_with_instrumentation() == snapshot('success (no tool calls)')
+
+
+async def test_prefect_durability_rejects_executing_toolset_from_per_run_capability() -> None:
+    """A per-run capability contributing an executing toolset is still rejected on Prefect.
+
+    The capability itself is fine (see above), but the toolset it contributes arrives after
+    `for_agent` wrapped the agent's toolsets, so `_reject_runtime_toolsets` catches the leaf.
+    """
+    agent = Agent(TestModel(), name='durability_per_run_cap_toolset', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
 
-    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed to '):
-        await run_agent()
+    with pytest.raises(UserError, match=r'FunctionToolset .*cannot be passed'):
+        await run_with_toolset_capability()
+
+
+async def test_prefect_durability_allows_per_run_capabilities_outside_flow() -> None:
+    """Outside a flow the capability is transparent, so per-run capabilities are fine."""
+    agent = Agent(TestModel(), name='durability_per_run_cap_outside_flow', capabilities=[PrefectDurability()])
+    result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+    assert result.output == snapshot('success (no tool calls)')
 
 
 def test_prefect_durability_rejects_duplicate_toolset_id() -> None:

@@ -4185,8 +4185,8 @@ def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
     return FunctionToolset()  # pragma: no cover
 
 
-async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) -> None:
-    """An executing toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
+    """Capabilities added per-run inside a workflow are rejected; `Instrumentation` is exempt.
 
     Construction-time capability toolsets are wrapped by `for_agent` (see the
     capability-contributed test above); a per-run capability's toolset arrives after that
@@ -4196,11 +4196,33 @@ async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) ->
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_agent() -> None:
+    async def run_with_toolset_capability() -> None:
         await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
 
-    with pytest.raises(UserError, match="DynamicToolset 'per_run_dynamic' cannot be passed"):
-        await run_agent()
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: Toolset. DBOS registers '
+            'durable steps when a capability is bound to the agent, before the workflow starts. A capability '
+            'added per-run therefore has no registered durable steps for the toolsets it contributes or its own '
+            '`@durable_operation` methods. Attach all capabilities at agent construction time so '
+            '`DBOSDurability.for_agent()` can register their durable steps.'
+        ),
+    ):
+        await run_with_toolset_capability()
+
+    @DBOS.workflow()
+    async def run_with_instrumentation() -> str:
+        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+
+
+async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos: DBOS) -> None:
+    """Outside a workflow the capability is transparent, so per-run capabilities are fine."""
+    agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])
+    result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+    assert result.output == snapshot('Echo: Hello')
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:
