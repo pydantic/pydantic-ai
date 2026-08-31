@@ -199,7 +199,7 @@ def _operation_label(operation_id: DurableOperationId) -> str | None:
 class CompatCapability(AbstractCapability[Any]):
     id = 'compat'
 
-    @durable_operation
+    @durable_operation('operation')
     async def operation(self, ctx: RunContext[Any]) -> None:
         pass
 

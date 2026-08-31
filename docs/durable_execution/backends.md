@@ -137,8 +137,11 @@ The backend config object implements the backend configuration protocol. Its pub
 [`OperationConfigRole`][pydantic_ai.durable_exec.OperationConfigRole] and a
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId]. Match the concrete ID variants
 when config differs by model, toolset, or operation. The role is a coarse config bucket: `'model'`,
-`'event'`, `'tool'`, or `'capability'`. The operation ID carries the fine-grained identity. The ID
-union represents the IDs available in the installed Pydantic AI version. Per-tool config can return
+`'event'`, `'tool'`, or `'capability'`. The operation ID carries the fine-grained identity. A
+capability operation ID includes the explicit name from `@durable_operation(name='...')`. That name
+is required because it becomes persisted compatibility data and must remain stable if the Python
+method is renamed. The ID union represents the IDs available in the installed Pydantic AI version.
+Per-tool config can return
 `False` to opt a function or dynamic tool out of a durable unit.
 MCP tools perform I/O and always run in their durable unit, so returning `False` for one raises a
 [`UserError`][pydantic_ai.exceptions.UserError].
