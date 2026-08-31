@@ -1218,10 +1218,16 @@ def prefect_test_server() -> Generator[None, None, None]:
     so this module-scoped harness enters and exits before that one starts. Renaming either
     module so this one sorts after test_prefect.py would nest two Prefect harnesses.
     """
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
-    with prefect_test_harness(server_startup_timeout=60):
-        yield
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
+        with prefect_test_harness(server_startup_timeout=60):
+            yield
 
 
 @requires_prefect
