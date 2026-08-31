@@ -178,6 +178,12 @@ You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQ
 
 To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `DBOSDurability`: it gets first crack at every string, and the resolver runs again inside the step with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
+### Capabilities at Runtime
+
+Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `DBOSDurability.for_agent()` can register their steps before the application starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered steps for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.
+
+Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or durable operations. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a workflow, please share your use case there. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+
 ### Streaming
 
 [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] and [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events] work inside a DBOS workflow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable step, and its events are replayed to the workflow after the step completes.
