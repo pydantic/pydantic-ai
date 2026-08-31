@@ -36,8 +36,8 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import MCPServerTool, WebSearchTool
 
 from ..._inline_snapshot import snapshot
-from ...conftest import try_import
-from ..conftest import AnthropicModelFactory, RequestCapture, message_shape
+from ...conftest import RequestCapture, try_import
+from ..conftest import AnthropicModelFactory, message_shape
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
