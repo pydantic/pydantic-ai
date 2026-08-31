@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
 
@@ -28,6 +28,10 @@ def _is_tuple(obj: Any) -> TypeGuard[tuple[Any, ...]]:
 
 def _is_toolset_tool(obj: Any) -> TypeGuard[ToolsetTool]:
     return isinstance(obj, ToolsetTool)
+
+
+def _is_tool_definition(obj: Any) -> TypeGuard[ToolDefinition]:
+    return isinstance(obj, ToolDefinition)
 
 
 def _is_run_context(obj: Any) -> TypeGuard[RunContext[object]]:
@@ -214,6 +218,11 @@ def _replace_toolset_tools(
     Recurses into containers for the same reason as [`_replace_run_context`][]: the durable base
     passes an operation's logical inputs as one `*args` tuple, so a `ToolsetTool` is not always a
     top-level parameter.
+
+    A dynamic toolset's tool call carries a bare `ToolDefinition` instead of a `ToolsetTool`
+    (`_DynamicCallToolCacheIdentity` projects `params.tool_def`), so those are projected too. Their
+    `metadata` is where per-tool config lives and may hold a live resource, which `hash_objects`
+    cannot serialize at all -- without the sentinel `compute_key` raises rather than degrading.
     """
 
     def project(value: Any) -> Any:
@@ -221,6 +230,8 @@ def _replace_toolset_tools(
             return _map_container(value, project)
         if _is_toolset_tool(value):
             return {'toolset': value.toolset.id, 'tool_def': _cacheable_value(value.tool_def)}
+        if _is_tool_definition(value):
+            return _cacheable_value(value)
         return value
 
     return {key: project(value) for key, value in inputs.items()}

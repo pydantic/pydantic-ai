@@ -64,6 +64,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    StreamedResponse,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -119,11 +120,12 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -974,14 +976,18 @@ async def test_capability_contributed_toolset_id_from_capability():
 
 async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """Two genuinely different MCP servers whose URLs derive the same id would silently collide on the
-    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools). The
-    DBOS wrapper guards against duplicate leaf ids at construction, telling the user to set explicit ids.
+    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools).
 
     Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
     check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
 
-    This isn't a VCR test: the collision is rejected during local `DBOSAgent` construction, before any
-    model or MCP request, so there's no network round-trip to record.
+    A plain `Agent` lets this through: it only rejects a shared id where the id has to become an
+    instruction key, and neither server has been connected to, so neither has contributed a block.
+    DBOS needs more — the id keys each server's step names whether or not it says anything to the
+    model — so its own leaf walk is what reports this, naming the toolset to change.
+
+    This isn't a VCR test: the collision is rejected during local construction, before any model or
+    MCP request, so there's no network round-trip to record.
     """
     with pytest.raises(
         UserError,
@@ -997,6 +1003,34 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
                 model,
                 name='colliding_capability_agent',
                 capabilities=[MCP(url='https://a.com/api'), MCP(url='https://a.com/v2/api')],
+            )
+        )
+
+
+async def test_nested_toolsets_with_colliding_id():
+    """DBOS reports the shape of the collision, not just that there is one.
+
+    Its guard walks the leaves, so it sees a duplicate however deeply the toolset tree nests it, and
+    names the `MCPToolset` the user has to change. The id keys the MCP server's step names across
+    the whole workflow, so DBOS needs it unique whether or not the server contributes instructions.
+    """
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+            "but more than one leaf toolset uses the id 'dup'. "
+            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+        ),
+    ):
+        DBOSAgent(  # pyright: ignore[reportDeprecated]
+            Agent(
+                model,
+                name='colliding_nested_agent',
+                toolsets=[
+                    CombinedToolset([MCPToolset('https://a.com/api', id='dup')]),
+                    MCPToolset('https://a.com/v2/api', id='dup'),
+                ],
             )
         )
 
@@ -3019,6 +3053,67 @@ def _dbos_alt_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
 # A module-level function (not a lambda): passing the instance to `agent.run(model=...)`
 # makes it part of the DBOS workflow's pickled arguments.
 _dbos_alt_model = FunctionModel(_dbos_alt_model_fn, model_name='alt')
+
+_dbos_model_lifecycle_events: list[str] = []
+
+
+class _DBOSLifecycleModel(LifecycleTrackingModel):
+    def __init__(self) -> None:
+        super().__init__(_dbos_model_lifecycle_events, event_prefix='model-')
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        _dbos_model_lifecycle_events.append('stream-enter')
+        try:
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed:
+                yield streamed
+        finally:
+            _dbos_model_lifecycle_events.append('stream-exit')
+
+
+def _resolve_dbos_lifecycle_model(_ctx: ModelResolutionContext[Any], _model_id: str) -> _DBOSLifecycleModel:
+    return _DBOSLifecycleModel()
+
+
+async def test_dbos_durability_context_manages_resolved_models(dbos: DBOS) -> None:
+    """Resolver-created models stay entered through ordinary and streamed DBOS steps."""
+    agent = Agent(
+        'lifecycle',
+        name='durability_resolved_model_lifecycle',
+        capabilities=[ResolveModelId(_resolve_dbos_lifecycle_model), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hello')).output
+
+    @DBOS.workflow()
+    async def stream_agent() -> str:
+        async with agent.run_stream('hello') as result:
+            return await result.get_output()
+
+    _dbos_model_lifecycle_events.clear()
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'ok'
+    assert _dbos_model_lifecycle_events == ['model-enter', 'request', 'model-exit:none']
+
+    _dbos_model_lifecycle_events.clear()
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await stream_agent() == 'ok'
+    assert _dbos_model_lifecycle_events == [
+        'model-enter',
+        'stream-enter',
+        'stream-exit',
+        'model-exit:none',
+    ]
 
 
 async def test_dbos_durability_runtime_registered_model(dbos: DBOS) -> None:

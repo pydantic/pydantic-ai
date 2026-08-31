@@ -8,7 +8,7 @@ import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .. import _utils
-from .._instructions import prepare_instructions
+from .._instructions import AgentInstructions, normalize_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
@@ -80,7 +80,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
         id: str | None = None,
-        instructions: str | SystemPromptFunc[AgentDepsT] | Sequence[str | SystemPromptFunc[AgentDepsT]] | None = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
     ):
         """Build a new function toolset.
 
@@ -120,7 +120,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
             instructions: Instructions for this toolset that are automatically included in the model request.
-                Can be a string, a function (sync or async, with or without `RunContext`), or a sequence of these.
+                Can be a string, an [`InstructionPart`][pydantic_ai.messages.InstructionPart] declaring the
+                part's [`name`][pydantic_ai.messages.InstructionPart.name] and whether it is
+                [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], a function (sync or async, with
+                or without `RunContext`), or a sequence of these.
         """
         self.max_retries = max_retries
         self.timeout = timeout
@@ -135,9 +138,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self._defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
-        self._instructions: list[str | SystemPromptRunner[AgentDepsT]] = []
-        if instructions is not None:
-            self._instructions.extend(prepare_instructions(instructions))
+        # A part is kept whole rather than reduced to its text, because it carries the author's
+        # declared `name` and its `dynamic` flag -- the flag that decides whether the part falls inside
+        # the cacheable prefix, so toolset collection preserves the part rather than reducing it to text.
+        self._instructions: list[str | InstructionPart | SystemPromptRunner[AgentDepsT]] = [
+            instruction
+            if isinstance(instruction, (str, InstructionPart))
+            else SystemPromptRunner[AgentDepsT](instruction)
+            for instruction in normalize_instructions(instructions)
+        ]
 
         self.tools = {}
         for tool in tools:
@@ -600,12 +609,17 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         if not self._instructions:
             return None
         parts: list[InstructionPart] = []
-        for func in self._instructions:
-            if isinstance(func, str):
-                if func.strip():
-                    parts.append(InstructionPart(content=func, dynamic=False))
+        for instruction in self._instructions:
+            if isinstance(instruction, InstructionPart):
+                # No blank check: `normalize_toolset_instructions` drops whitespace-only parts on
+                # every path out of a toolset, so repeating it here would be a branch nothing can
+                # tell apart.
+                parts.append(instruction)
+            elif isinstance(instruction, str):
+                if instruction.strip():
+                    parts.append(InstructionPart(content=instruction, dynamic=False))
             else:
-                result = await func.run(ctx)
+                result = await instruction.run(ctx)
                 if result and result.strip():
                     parts.append(InstructionPart(content=result, dynamic=True))
         return parts or None

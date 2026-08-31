@@ -351,7 +351,9 @@ class SpanNode:
         def pruned_descendants():
             stop_recursing_when = query.get('stop_recursing_when')
             return (
-                self._filter_descendants(lambda _: True, stop_recursing_when) if stop_recursing_when else descendants()
+                list(self._filter_descendants(lambda _: True, stop_recursing_when))
+                if stop_recursing_when
+                else descendants()
             )
 
         if (min_descendant_count := query.get('min_descendant_count')) and len(descendants()) < min_descendant_count:
@@ -382,7 +384,11 @@ class SpanNode:
         @cache
         def pruned_ancestors():
             stop_recursing_when = query.get('stop_recursing_when')
-            return self._filter_ancestors(lambda _: True, stop_recursing_when) if stop_recursing_when else ancestors()
+            return (
+                list(self._filter_ancestors(lambda _: True, stop_recursing_when))
+                if stop_recursing_when
+                else ancestors()
+            )
 
         if (min_depth := query.get('min_depth')) and len(ancestors()) < min_depth:
             return False

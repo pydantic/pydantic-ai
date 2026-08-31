@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import copy
 import gc
+import re
 import uuid
 import weakref
-from collections.abc import Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
+from pydantic_ai import Agent, ModelMessage, ModelSettings
+from pydantic_ai.capabilities import AbstractCapability, ResolveModelId, WrapperCapability, durable_operation
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
@@ -30,10 +32,17 @@ from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import (
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    StreamedResponse,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
+
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -153,6 +162,129 @@ class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
 
 
+class LifecycleModel(LifecycleTrackingModel):
+    def __init__(self, events: list[str], **kwargs: Any) -> None:
+        super().__init__(events, event_prefix='model-', **kwargs)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        self.events.append('stream-enter')
+        try:
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed:
+                yield streamed
+        finally:
+            self.events.append('stream-exit')
+
+
+@pytest.mark.parametrize(
+    ('stream', 'fail', 'expected_events'),
+    [
+        (False, False, ['model-enter', 'request', 'model-exit:none']),
+        (True, False, ['model-enter', 'stream-enter', 'stream-exit', 'model-exit:none']),
+        (False, True, ['model-enter', 'request', 'model-exit:RuntimeError']),
+    ],
+)
+async def test_durable_model_scope_manages_rebuilt_model_lifecycle(
+    stream: bool, fail: bool, expected_events: list[str]
+) -> None:
+    """A worker-built model stays entered for its whole operation and exits on failure."""
+    events: list[str] = []
+
+    def resolve_model(_ctx: ModelResolutionContext[Any], _model_id: str) -> LifecycleModel:
+        return LifecycleModel(events, fail=fail)
+
+    agent = Agent(
+        'lifecycle',
+        name=f'rebuilt_model_lifecycle_{stream}_{fail}',
+        capabilities=[ResolveModelId(resolve_model), RecordingDurability()],
+    )
+
+    if fail:
+        with pytest.raises(RuntimeError, match='request failed'):
+            await agent.run('test')
+    elif stream:
+        async with agent.run_stream('test') as result:
+            assert await result.get_output() == 'ok'
+    else:
+        assert (await agent.run('test')).output == 'ok'
+
+    assert events == expected_events
+
+
+async def test_durable_model_scope_does_not_suppress_body_error() -> None:
+    events: list[str] = []
+    model = LifecycleModel(events, fail=True, suppress_exit=True)
+    agent = Agent(
+        'lifecycle',
+        name='rebuilt_model_suppressed_exit',
+        capabilities=[ResolveModelId(lambda ctx, model_id: model), RecordingDurability()],
+    )
+
+    with pytest.raises(RuntimeError, match='request failed'):
+        await agent.run('test')
+
+    assert events == ['model-enter', 'request', 'model-exit:RuntimeError']
+
+
+async def test_durable_model_scope_surfaces_teardown_error() -> None:
+    events: list[str] = []
+    model = LifecycleModel(events, fail=True, fail_exit=True)
+    agent = Agent(
+        'lifecycle',
+        name='rebuilt_model_failed_exit',
+        capabilities=[ResolveModelId(lambda ctx, model_id: model), RecordingDurability()],
+    )
+
+    with pytest.raises(ValueError, match='exit failed'):
+        await agent.run('test')
+
+    assert events == ['model-enter', 'request', 'model-exit:RuntimeError']
+
+
+async def test_durable_model_scope_does_not_manage_registered_models() -> None:
+    """The agent owner remains responsible for default and `models=` instances."""
+    default_events: list[str] = []
+    registered_events: list[str] = []
+    default = LifecycleModel(default_events, model_name='default')
+    registered = LifecycleModel(registered_events, model_name='registered')
+    agent = Agent(
+        default,
+        name='registered_model_lifecycle',
+        capabilities=[RecordingDurability(models={'registered': registered})],
+    )
+
+    assert (await agent.run('test')).output == 'ok'
+    assert (await agent.run('test', model='registered')).output == 'ok'
+
+    async with agent.run_stream('test', model='registered') as result:
+        assert await result.get_output() == 'ok'
+
+    assert default_events == ['request']
+    assert registered_events == ['request', 'stream-enter', 'stream-exit']
+
+
+async def test_durable_model_scope_manages_inferred_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model inferred inside the worker has the same owned lifecycle as a resolver-built model."""
+    events: list[str] = []
+
+    def infer_lifecycle_model(_model_id: str) -> LifecycleModel:
+        return LifecycleModel(events)
+
+    monkeypatch.setattr('pydantic_ai.durable_exec._base.infer_model', infer_lifecycle_model)
+    agent = Agent('test', name='inferred_model_lifecycle', capabilities=[RecordingDurability()])
+
+    assert (await agent.run('test')).output == 'ok'
+    assert events == ['model-enter', 'request', 'model-exit:none']
+
+
 class Operations(AbstractCapability[Any]):
     id = 'operations'
 
@@ -164,7 +296,7 @@ class Operations(AbstractCapability[Any]):
     async def before_run(self, ctx: RunContext[Any]) -> None:
         self.result = await self._calculate(ctx, *self.arguments[0], **self.arguments[1])
 
-    @durable_operation
+    @durable_operation('calculate')
     async def _calculate(
         self,
         ctx: RunContext[Any],
@@ -181,7 +313,7 @@ class Operations(AbstractCapability[Any]):
 class DurableBeforeModelRequest(AbstractCapability[Any]):
     id = 'before_model'
 
-    @durable_operation
+    @durable_operation('before_model_request')
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
@@ -197,7 +329,7 @@ class CustomModelRequestOperation(AbstractCapability[Any]):
     ) -> ModelRequestContext:
         return await self.rewrite_request(ctx, request_context)
 
-    @durable_operation
+    @durable_operation('rewrite_request')
     async def rewrite_request(self, ctx: RunContext[Any], request: ModelRequestContext) -> ModelRequestContext:
         request.messages = [ModelRequest(parts=[UserPromptPart('custom replacement')])]
         return request
@@ -210,7 +342,7 @@ class ModelReplacingBeforeModelRequest(AbstractCapability[Any]):
         self.model = model
         self.model_id = model_id
 
-    @durable_operation
+    @durable_operation('before_model_request')
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
@@ -223,7 +355,7 @@ class RenamedContextBeforeModelRequest(AbstractCapability[Any]):
     id = 'renamed_before_model'
 
     # Only the declared context parameter name is inspected; dispatch would duplicate other hook tests.
-    @durable_operation
+    @durable_operation('before_model_request')
     async def before_model_request(  # pyright: ignore[reportIncompatibleMethodOverride] # pragma: no cover
         self, run_context: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext: ...
@@ -244,23 +376,23 @@ class ContextPositions(AbstractCapability[Any]):
             await self._summarize(['one', 'two'], ctx, previous_summary='previous'),
         ]
 
-    @durable_operation
+    @durable_operation('ctx_first')
     async def ctx_first(self, ctx: RunContext[Any], value: str) -> str:
         return f'{value}:{ctx.model.model_name}'
 
-    @durable_operation
+    @durable_operation('ctx_last')
     async def ctx_last(self, value: str, ctx: RunContext[Any]) -> str:
         return f'{value}:{ctx.model.model_name}'
 
-    @durable_operation
+    @durable_operation('ctx_keyword_only')
     async def ctx_keyword_only(self, value: str, *, ctx: RunContext[Any]) -> str:
         return f'{value}:{ctx.model.model_name}'
 
-    @durable_operation
+    @durable_operation('no_ctx')
     async def no_ctx(self, value: str) -> str:
         return value
 
-    @durable_operation
+    @durable_operation('summarize')
     async def _summarize(
         self, messages: list[str], ctx: RunContext[Any], *, previous_summary: str | None = None
     ) -> str:
@@ -282,7 +414,7 @@ class PerRunOperation(AbstractCapability[Any]):
     async def before_run(self, ctx: RunContext[Any]) -> None:
         await self.operation(ctx)
 
-    @durable_operation
+    @durable_operation('operation')
     async def operation(self, ctx: RunContext[Any]) -> None:
         self.calls += 1
 
@@ -300,7 +432,7 @@ class TenantScopedOperation(AbstractCapability[str]):
     async def before_run(self, ctx: RunContext[str]) -> None:
         self.observations.append(await self.read_tenant(ctx))
 
-    @durable_operation
+    @durable_operation('read_tenant')
     async def read_tenant(self, ctx: RunContext[str]) -> str:
         return self.tenant
 
@@ -315,7 +447,7 @@ class ModelReadingOperation(AbstractCapability[Any]):
     async def before_run(self, ctx: RunContext[Any]) -> None:
         self.result = await self.read_model(ctx)
 
-    @durable_operation
+    @durable_operation('read_model')
     async def read_model(self, ctx: RunContext[Any]) -> bool:
         return ctx.model is self.expected
 
@@ -329,7 +461,7 @@ class UsageOperation(AbstractCapability[Any]):
     async def before_run(self, ctx: RunContext[Any]) -> None:
         await self.record_nested_usage(ctx)
 
-    @durable_operation
+    @durable_operation('record_nested_usage')
     async def record_nested_usage(self, ctx: RunContext[Any]) -> None:
         self.calls += 1
         await Agent(TestModel(custom_output_text='summary')).run('summarize', usage=ctx.usage)
@@ -454,7 +586,7 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
 
 def test_decorated_capability_requires_explicit_stable_id() -> None:
     class MissingId(AbstractCapability[Any]):
-        @durable_operation
+        @durable_operation('operation')
         async def operation(self, ctx: RunContext[Any]) -> None:
             pass
 
@@ -509,7 +641,7 @@ def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
 
     invalid.__name__ = hook
 
-    decorated = durable_operation(invalid)
+    decorated = durable_operation(hook)(invalid)
     capability_type = type('Invalid', (AbstractCapability,), {'id': 'invalid', hook: decorated})
     with pytest.raises(UserError, match=f'`{hook}`'):
         Agent(TestModel(), name='invalid', capabilities=[capability_type(), RecordingDurability()])
@@ -518,7 +650,7 @@ def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
 def test_base_hook_override_is_automatically_registered() -> None:
     class TierOneBase(AbstractCapability[Any]):
         # Registration, not execution, is the behavior under test.
-        @base_hook_durable_operation
+        @base_hook_durable_operation('provision')
         async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
     class TierOne(TierOneBase):
@@ -538,7 +670,7 @@ async def test_inherited_base_hook_hook_is_not_registered_or_dispatched() -> Non
         def __init__(self) -> None:
             self.provisioned = False
 
-        @base_hook_durable_operation
+        @base_hook_durable_operation('provision')
         async def provision(self, ctx: RunContext[Any]) -> None:
             self.provisioned = True
 
@@ -582,7 +714,7 @@ def test_unannotated_parameter_is_rejected_at_bind() -> None:
         id = 'unannotated'
 
         # Binding rejects the missing annotation before this handler can be dispatched.
-        @durable_operation  # pyright: ignore[reportUnknownArgumentType]
+        @durable_operation('operation')
         async def operation(  # pragma: no cover
             self,
             ctx: RunContext[Any],
@@ -738,18 +870,58 @@ async def test_registered_model_replacement_is_stable_on_journal_replay() -> Non
     assert [result.output for result in results] == ['restricted', 'restricted']
 
 
+def test_durable_operation_requires_explicit_name() -> None:
+    async def operation() -> None:
+        pass
+
+    message = (
+        '`durable_operation` requires an explicit operation name because it becomes persisted compatibility data '
+        "and must not change when the function is renamed. Use `@durable_operation(name='operation_name')`."
+    )
+    with pytest.raises(TypeError, match='^' + re.escape(message) + '$'):
+        durable_operation(operation)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize('name', ['', None])
+def test_durable_operation_rejects_invalid_name(name: Any) -> None:
+    if name == '':
+        with pytest.raises(ValueError, match=re.escape('`durable_operation` name must not be empty')):
+            durable_operation(name)
+    else:
+        with pytest.raises(TypeError, match=re.escape('`durable_operation` name must be a string, got NoneType')):
+            durable_operation(name)
+
+
+def test_durable_operation_name_is_independent_of_function_name() -> None:
+    class Renamed(AbstractCapability[Any]):
+        id = 'renamed'
+
+        @durable_operation(name='operation')
+        async def renamed_function(self, ctx: RunContext[Any]) -> None:
+            pass
+
+    declarations = collect_capability_operations(Renamed())
+    assert set(declarations) == {'operation'}
+    assert (
+        JournalOperationNamer('agent').operation_name(
+            CapabilityOperationId('renamed', operation=next(iter(declarations)))
+        )
+        == 'agent__capability__renamed.operation'
+    )
+
+
 def test_sync_non_hook_operation_is_rejected_by_decorator() -> None:
     def operation() -> None:
         pass
 
     with pytest.raises(TypeError, match='can only decorate async methods'):
-        durable_operation(operation)  # pyright: ignore[reportArgumentType]
+        durable_operation('operation')(operation)  # pyright: ignore[reportArgumentType]
 
 
 def test_base_hook_base_and_duplicate_override_paths() -> None:
     class Base(AbstractCapability[Any]):
         # Collection behavior is tested without dispatching any of these declarations.
-        @base_hook_durable_operation
+        @base_hook_durable_operation('operation')
         async def operation(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
 
         sentinel = True
@@ -809,7 +981,7 @@ def test_two_run_context_parameters_are_rejected_at_bind() -> None:
     class DuplicateContext(AbstractCapability[Any]):
         id = 'duplicate_context'
 
-        @durable_operation
+        @durable_operation('operation')
         async def operation(self, first: RunContext[Any], second: RunContext[Any]) -> None:
             pass
 
@@ -824,7 +996,7 @@ async def test_two_model_request_context_parameters_are_rejected_at_bind() -> No
     class DuplicateModelRequestContext(AbstractCapability[Any]):
         id = 'duplicate_model_request_context'
 
-        @durable_operation
+        @durable_operation('operation')
         async def operation(self, first: ModelRequestContext, second: ModelRequestContext) -> ModelRequestContext:
             return first
 
@@ -849,7 +1021,7 @@ def test_variadic_run_context_is_rejected_for_durable_operation() -> None:
     class VariadicContext(AbstractCapability[Any]):
         id = 'variadic_context'
 
-        @durable_operation
+        @durable_operation('operation')
         async def operation(self, *ctx: RunContext[Any]) -> None:
             pass
 
@@ -861,7 +1033,7 @@ async def test_variadic_model_request_context_is_rejected_for_durable_operation(
     class VariadicModelRequestContext(AbstractCapability[Any]):
         id = 'variadic_model_request_context'
 
-        @durable_operation
+        @durable_operation('operation')
         async def operation(self, *request_context: ModelRequestContext) -> ModelRequestContext:
             return request_context[0]
 
@@ -1162,9 +1334,30 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
     assert capability.calls == 1
 
 
+@pytest.fixture(scope='module')
+def prefect_test_server() -> Generator[None, None, None]:
+    """Run the module's Prefect flow tests against an isolated test server.
+
+    The implicit ephemeral server uses the shared default PREFECT_HOME and a short
+    connect timeout that flakes on slow CI runners; the test harness gives an isolated
+    database and a 60s startup budget, mirroring tests/durable_exec/test_prefect.py.
+
+    Ordering constraint: these tests share the 'prefect' xdist group with
+    tests/durable_exec/test_prefect.py, whose harness fixture is session-scoped and
+    autouse, so once entered it stays entered for the rest of the worker. Today this
+    module collects first purely because it sorts alphabetically ahead of test_prefect.py,
+    so this module-scoped harness enters and exits before that one starts. Renaming either
+    module so this one sorts after test_prefect.py would nest two Prefect harnesses.
+    """
+    from prefect.testing.utilities import prefect_test_harness
+
+    with prefect_test_harness(server_startup_timeout=60):
+        yield
+
+
 @requires_prefect
 @pytest.mark.xdist_group(name='prefect')
-async def test_prefect_capability_operation_end_to_end() -> None:
+async def test_prefect_capability_operation_end_to_end(prefect_test_server: None) -> None:
     capability = Operations()
     agent = Agent(TestModel(), name='prefect_operations', capabilities=[capability, PrefectDurability()])
 
@@ -1179,7 +1372,9 @@ async def test_prefect_capability_operation_end_to_end() -> None:
 
 @requires_prefect
 @pytest.mark.xdist_group(name='prefect')
-async def test_prefect_capability_operation_cache_identity_includes_context_and_model() -> None:
+async def test_prefect_capability_operation_cache_identity_includes_context_and_model(
+    prefect_test_server: None,
+) -> None:
     class CacheIdentityOperation(AbstractCapability[str]):
         id = 'cache_identity'
 
@@ -1189,7 +1384,7 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
         async def before_run(self, ctx: RunContext[str]) -> None:
             await self.read_context(ctx, 1)
 
-        @durable_operation
+        @durable_operation('read_context')
         async def read_context(self, ctx: RunContext[str], value: int) -> None:
             self.calls.append((ctx.deps, ctx.model.model_name))
 

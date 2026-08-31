@@ -160,6 +160,7 @@ except ImportError:  # pragma: lax no cover
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ..model_lifecycle_utils import LifecycleTrackingModel
 
 
 def test_durability_codecs() -> None:
@@ -2314,6 +2315,37 @@ def test_cache_policy_projects_nested_run_context_and_tool():
     assert key_for('acme', 'tool') != key_for('acme', 'other')
 
 
+def test_cache_policy_projects_a_bare_tool_definition_in_the_inputs():
+    """A dynamic tool call's cache identity carries a bare `ToolDefinition`, which also needs projecting.
+
+    `_FunctionCallToolCacheIdentity` projects a `ToolsetTool`, which the policy replaces with its
+    value identity, but `_DynamicCallToolCacheIdentity` carries `params.tool_def` directly. A
+    `ToolDefinition`'s `metadata` is where per-tool config lives, so it can hold a live resource --
+    a `TaskConfig` carrying a `cache_policy`, or anything else a user put there -- and hashing one
+    raw fails outright with `Unable to create hash` instead of falling back to the sentinel.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(tool_name: str) -> str | None:
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        tool_def = ToolDefinition(
+            name=tool_name,
+            metadata={'prefect': TaskConfig(cache_policy=PrefectAgentInputs()), 'live': threading.Lock()},
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'unit_name': 'unit', 'args': (tool_name, {}, ctx, tool_def)},
+            flow_parameters={},
+        )
+
+    # Hashable at all -- this is what regresses when the bare definition isn't projected.
+    assert key_for('tool') is not None
+    assert key_for('tool') == key_for('tool')
+    # And still discriminating: the sentinel replaces only the unhashable parts.
+    assert key_for('tool') != key_for('other')
+
+
 async def test_cache_policy_with_tuples():
     """Test that cache policy handles tuples with timestamps correctly."""
     cache_policy = PrefectAgentInputs()
@@ -3365,6 +3397,39 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
     assert await run_agent() == ('tenant:acme', 'tenant:globex', 'success (no tool calls)')
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_manages_resolver_built_model_lifecycle(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    events: list[str] = []
+
+    class TrackingModel(LifecycleTrackingModel):
+        @asynccontextmanager
+        async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
+            events.append('stream')
+            async with super().request_stream(*args, **kwargs) as stream:
+                yield stream
+            events.append('stream_consumed')
+
+    agent = Agent(
+        'rebuilt',
+        name='durability_resolved_model_lifecycle',
+        capabilities=[
+            ResolveModelId(lambda ctx, model_id: TrackingModel(events, include_exit_exception=False)),
+            PrefectDurability(),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str, str]:
+        ordinary = (await agent.run('ordinary')).output
+        async with agent.run_stream('streamed') as result:
+            streamed = await result.get_output()
+        return ordinary, streamed
+
+    assert await run_agent() == ('ok', 'ok')
+    assert events == ['enter', 'request', 'exit', 'enter', 'stream', 'stream_consumed', 'exit']
+
+
 async def test_prefect_durability_alias_default_model() -> None:
     """An agent whose *default* model is an alias only a `ResolveModelId` capability can resolve.
 
@@ -3673,7 +3738,7 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
             await self.record(ctx, 'same')
             await self.record(ctx, 'same')
 
-        @durable_operation
+        @durable_operation('record')
         async def record(self, ctx: RunContext[object], value: str) -> None:
             nonlocal calls
             calls += 1

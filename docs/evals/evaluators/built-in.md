@@ -40,6 +40,9 @@ dataset = Dataset(
 **Notes:**
 
 - Skips evaluation if `expected_output` is `None` (returns empty dict `{}`)
+- Because of that skip, a case whose expected output *is* `None` records no assertion at
+  all, so it passes whatever the task returns. To assert that the output is `None`, use
+  [`Equals(value=None)`](#equals), which takes the value explicitly.
 - Uses Python's `==` operator, so works with any comparable types
 - For structured data, considers nested equality
 
