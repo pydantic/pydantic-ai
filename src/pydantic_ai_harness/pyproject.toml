@@ -171,6 +171,11 @@ bump = true
 # repeats the floor slim declares: `anthropic>=1` is the HTTPX2 generation, and the
 # `pydantic-ai-slim` floor above is the release built on it, so both halves of that pair resolve
 # together under every resolution mode. Move this floor whenever that one moves.
+#
+# This has to stay here, under `[tool.uv]`, even though uv warns on every invocation that `uv.toml`
+# shadows it: uv 0.12.1 reads `override-dependencies` only from the workspace root's `pyproject.toml`.
+# Moved into `uv.toml` it silences the warning and stops applying, and resolution then fails outright
+# on browser-use's exact pins.
 override-dependencies = ['anthropic>=1.0.0', 'openai>=2.45.0']
 
 
