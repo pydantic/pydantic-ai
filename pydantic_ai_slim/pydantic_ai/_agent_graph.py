@@ -2357,8 +2357,6 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     selection_ctx = models.ModelSelectionContext(
         agent=agent,
         deps=ctx.deps.user_deps,
-        run_id=ctx.state.run_id,
-        conversation_id=ctx.state.conversation_id,
         model=ctx.deps.model,
         run_step=ctx.state.run_step,
         # The current request has already been appended, but selection describes the model

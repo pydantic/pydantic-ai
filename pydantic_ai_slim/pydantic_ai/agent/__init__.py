@@ -1596,8 +1596,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     run_step=1,
                     messages=list(message_history) if message_history else [],
                     usage=usage,
-                    run_id=state.run_id,
-                    conversation_id=state.conversation_id,
                 )
                 model_used, model_id = await self._evaluate_model_contribution(
                     model_contribution,

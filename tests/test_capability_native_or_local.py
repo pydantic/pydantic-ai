@@ -2040,12 +2040,10 @@ class TestGetModelHook:
         second = FunctionModel(finish, settings={'max_tokens': 123})
         selected_steps: list[int] = []
         selection_history_lengths: list[int] = []
-        selection_ids: list[tuple[str | None, str | None]] = []
 
         def select(ctx: ModelSelectionContext[int]) -> Model:
             selected_steps.append(ctx.run_step)
             selection_history_lengths.append(len(ctx.messages))
-            selection_ids.append((ctx.run_id, ctx.conversation_id))
             ctx.messages.clear()  # The selection context must not expose mutable graph state.
             assert ctx.deps == 42
             return first if ctx.run_step == 1 else second
@@ -2065,9 +2063,6 @@ class TestGetModelHook:
         assert result.output == 'done'
         assert selected_steps == [1, 2]
         assert selection_history_lengths == [0, 2]
-        expected_ids = (result.all_messages()[0].run_id, result.all_messages()[0].conversation_id)
-        assert selection_ids == [expected_ids, expected_ids]
-        assert all(run_id is not None and conversation_id is not None for run_id, conversation_id in selection_ids)
 
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock
