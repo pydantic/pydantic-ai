@@ -39,13 +39,12 @@ _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
 # Applied only by the community-demand sweep; scripts trust the label.
 COMMUNITY_LABEL = 'community-backed'
-# Assigned priority or community-backed issues are kept in the attention queue
-# by `reconcile`; the owner is pinged once *they* have been inactive past the
-# window. Community chatter neither suppresses nor hastens the reminder.
+# Assigned P1/P2 issues are kept in the attention queue by `reconcile`; the
+# owner is pinged once *they* have been inactive past the window. Community
+# demand may still open the assignment gate, but does not interrupt owners.
 _REMINDER_SLAS = {
     'p:1-highest': dt.timedelta(days=3),
     'p:2-high': dt.timedelta(days=5),
-    COMMUNITY_LABEL: dt.timedelta(days=7),
 }
 _SLA_MARK_LIMIT = 10
 _RESURFACE_AFTER = dt.timedelta(days=7)
@@ -106,7 +105,7 @@ _LABELS = {
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
     _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
-    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this; it routes and reminds like a priority issue'),
+    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this; it opens the assignment routing gate'),
 }
 _SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _SEARCH_SUMMARY_QUERY = """
@@ -1087,6 +1086,9 @@ def _reconcile_item(
         return f'#{number}: completed after the item was closed', None
     if _finish_delivery_receipt(client, repo, number, labels, events, transition):
         return f'#{number}: finished delivered channel escalation', None
+    if current_stage == 1 and not labels.intersection(_REMINDER_SLAS):
+        _complete(client, repo, number, labels)
+        return f'#{number}: completed after losing reminder priority', None
     current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
     for label in labels.intersection(_STAGE_LABELS):
         if label != current_stage_label:
@@ -1131,11 +1133,9 @@ def _queue_stage_notice(
     if current_stage == 1 and now - transition_at < _sla_for(labels):
         return None
     if current_stage == 0:
-        # Only assigned priority or community-backed issues enter the
-        # interrupt pipeline: anything else the triage agent marks stays
-        # tracked, visible in the Monday digest, and silent. Items already
-        # pinged before the cutover finish their lifecycle rather than
-        # stranding at stage 1.
+        # Only assigned P1/P2 issues enter the interrupt pipeline: anything
+        # else the triage agent marks stays tracked, visible in the Monday
+        # digest, and silent.
         if not labels.intersection(_REMINDER_SLAS):
             return None
         # Items reach stage 0 from several lanes (the reminder sweep, agent
@@ -1245,7 +1245,7 @@ def _owner_quiet_since(timeline: Sequence[dict[str, Any]], owners: Sequence[str]
 def _mark_assigned_reminders(
     client: GitHubClient, repo: str, *, slot: int, now: dt.datetime
 ) -> tuple[list[str], list[str]]:
-    """Keep every assigned priority or community-backed issue inside the attention queue.
+    """Keep every assigned P1/P2 issue inside the attention queue.
 
     An issue is marked once its owner has gone quiet past the label's window
     (`_owner_quiet_since` — the same activity rule acknowledgment uses), so
