@@ -462,6 +462,13 @@ navigation:
           - page: "Process Event Stream"
             path: "capabilities/process-event-stream.md"
             slug: "capabilities/process-event-stream"
+      - section: "Interfaces"
+        slug: ""
+        contents:
+          - page: "Channels"
+            path: "channels.md"
+            source: "harness"
+            slug: "harness/channels"
       - page: "Examples"
         path: "examples.md"
         source: "harness"
