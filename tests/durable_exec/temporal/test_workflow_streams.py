@@ -461,6 +461,13 @@ async def test_workflow_stream_event_handler_is_composable() -> None:
     assert result.output == 'done'
 
 
+@pytest.mark.parametrize('batch_interval', [timedelta(0), timedelta(milliseconds=-1)])
+def test_workflow_stream_event_handler_rejects_non_positive_batch_interval(batch_interval: timedelta) -> None:
+    """The guard runs before any provider request, so a VCR recording would add no coverage."""
+    with pytest.raises(UserError, match='Workflow Stream batch interval must be greater than zero'):
+        workflow_stream_event_handler('agent_events', batch_interval=batch_interval)
+
+
 async def test_workflow_stream_event_handler_rejects_standalone_activity() -> None:
     handler = workflow_stream_event_handler('agent_events')
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='standalone-run')

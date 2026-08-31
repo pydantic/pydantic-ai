@@ -61,7 +61,10 @@ def workflow_stream_event_handler(
             A model stream emits a `PartDeltaEvent` per token, so filtering (e.g. dropping deltas) can
             significantly reduce the number of durable batches.
         batch_interval: How often the client flushes buffered events to the workflow. Defaults to 100ms.
+            Must be greater than zero.
     """
+    if batch_interval <= timedelta(0):
+        raise UserError('The Workflow Stream batch interval must be greater than zero.')
 
     async def handler(run_context: RunContext[AgentDepsT], stream: Any) -> None:
         if not activity.in_activity():

@@ -208,7 +208,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 `PartDeltaEvent` per token, so filtering (e.g. dropping deltas) can significantly reduce
                 the number of durable batches. Only affects publishing, not `event_stream_handler`.
             event_stream_batch_interval: How often the Workflow Stream client flushes buffered events
-                to the workflow when `event_stream_topic` is set. Defaults to 100ms.
+                to the workflow when `event_stream_topic` is set. Defaults to 100ms and must be greater
+                than zero.
             name: Unique agent name used in the Temporal activity names. Defaults to the agent's
                 `name` when the capability is bound.
             deps_type: The type of the agent's dependencies, needed for Temporal
