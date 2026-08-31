@@ -750,7 +750,7 @@ def test_bedrock_meta_llama3():
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_deepseek_r1():
     """`bedrock_send_back_thinking_parts=True` applied for `r1` models via separate function."""
-    profile = BedrockProvider.model_profile('deepseek.deepseek-r1-v1:0')
+    profile = BedrockProvider.model_profile('us.deepseek.r1-v1:0')
     assert _normalize(profile) == snapshot(
         {
             'supports_thinking': True,
@@ -1399,14 +1399,7 @@ def test_cerebras_qwen_reasoning():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
-            'openai_unsupported_model_settings': (
-                'frequency_penalty',
-                'logit_bias',
-                'presence_penalty',
-                'parallel_tool_calls',
-                'service_tier',
-                'openai_service_tier',
-            ),
+            'openai_unsupported_model_settings': ('logit_bias',),
         }
     )
 
@@ -1418,14 +1411,7 @@ def test_cerebras_llama_non_reasoning():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'openai_unsupported_model_settings': (
-                'frequency_penalty',
-                'logit_bias',
-                'presence_penalty',
-                'parallel_tool_calls',
-                'service_tier',
-                'openai_service_tier',
-            ),
+            'openai_unsupported_model_settings': ('logit_bias',),
         }
     )
 
@@ -1754,6 +1740,26 @@ def test_vercel_xai_grok():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+        }
+    )
+
+
+def test_vercel_groq_gpt_oss():
+    """Vercel routes `groq/...` through `groq_model_profile` (#7550).
+
+    The suffix after the first `/` keeps its own `openai/gpt-oss` prefix, which is what
+    `groq_model_profile` gates on.
+    """
+    from pydantic_ai.providers.vercel import VercelProvider
+
+    profile = VercelProvider.model_profile('groq/openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': True,
         }
     )
 

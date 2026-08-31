@@ -28,12 +28,6 @@ from ..toolsets import AbstractToolset
 RuntimeToolsetKind = Literal['function', 'mcp', 'dynamic']
 """A leaf toolset kind that a durable execution engine may need to reject when passed per-run."""
 
-_KIND_LABELS: dict[RuntimeToolsetKind, str] = {
-    'function': 'FunctionToolset',
-    'mcp': 'MCPToolset',
-    'dynamic': 'DynamicToolset',
-}
-
 
 def cancellation_token_unsupported_error(engine: str) -> UserError:
     """The error raised when a same-process cancellation token meets a durable execution boundary."""
@@ -89,7 +83,7 @@ def reject_unsupported_runtime_toolsets(
     if not toolsets:
         return
 
-    found: set[RuntimeToolsetKind] = set()
+    bad_toolsets: dict[RuntimeToolsetKind, list[AbstractToolset[Any]]] = {}
 
     def collect(leaf: AbstractToolset[Any]) -> None:
         kind = _runtime_toolset_kind(leaf)
@@ -100,13 +94,20 @@ def reject_unsupported_runtime_toolsets(
             if leaf.tools and all((tool.metadata or {}).get(tool_config_key) is False for tool in leaf.tools.values()):
                 return
         if kind in unsupported_kinds:
-            found.add(kind)
+            bad_toolsets.setdefault(kind, []).append(leaf)
 
     for toolset in toolsets:
         toolset.apply(collect)
 
-    if found:
-        labels = ', '.join(_KIND_LABELS[kind] for kind in sorted(found))
+    if bad_toolsets:
+        offenders: list[str] = []
+        for kind in sorted(bad_toolsets):
+            for toolset in bad_toolsets[kind]:
+                label = toolset.label
+                if kind == 'mcp' and not toolset.id and label == repr(toolset):
+                    label = 'MCPToolset'
+                offenders.append(label)
+        offenders_text = ', '.join(offenders)
         opt_out = (
             f" Async tools that don't need durable wrapping can opt out with "
             f'metadata={{{tool_config_key!r}: False}} to be allowed at runtime.'
@@ -114,7 +115,7 @@ def reject_unsupported_runtime_toolsets(
             else ''
         )
         raise UserError(
-            f'{labels} cannot be passed to `run(toolsets=...)` at runtime with {engine}, because toolsets '
+            f'{offenders_text} cannot be passed to `run(toolsets=...)` at runtime with {engine}, because toolsets '
             'that execute their own tools or resolve dynamically must be registered for durable execution '
             'when the agent is constructed. Pass them to the agent constructor instead. Non-executing '
             f'toolsets like `ExternalToolset` can be passed at runtime.{opt_out}'

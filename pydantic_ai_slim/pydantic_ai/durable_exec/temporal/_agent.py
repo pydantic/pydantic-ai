@@ -85,7 +85,7 @@ def _merge_activity_config(base: ActivityConfig, override: ActivityConfig) -> Ac
     return merged
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
     event: _messages.AgentStreamEvent
@@ -476,7 +476,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -631,7 +631,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -780,7 +780,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -947,7 +947,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1151,7 +1151,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/overview/) for this run, merged with the agent's configured capabilities.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:

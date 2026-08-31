@@ -192,7 +192,7 @@ def _reject_unloaded_capability_reveals(
             and (capability_id := toolset_tool.tool_def.capability_id) is not None
             and run_ctx is not None
             and capability_id != activating_capability_id
-            and capability_id not in run_ctx.available_capability_ids
+            and capability_id not in run_ctx.active_capability_ids
         ):
             raise exceptions.UserError(
                 f'`ToolReturn.tools` cannot reveal {name!r}: it belongs to capability '

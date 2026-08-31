@@ -86,6 +86,30 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_5_2.get('supports_thinking') is True
     assert profile_5_2.get('zai_supports_reasoning_effort') is True
 
+    # GLM-5.3 always reasons, no longer supports disabling thinking, and only accepts a subset of the
+    # unified effort levels, so it carries an effort mapping.
+    profile_5_3 = provider.model_profile('glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
+    assert profile_5_3 is not None
+    assert profile_5_3.get('supports_thinking') is True
+    assert profile_5_3.get('thinking_always_enabled') is True
+    assert profile_5_3.get('zai_supports_reasoning_effort') is True
+    assert profile_5_3.get('zai_reasoning_effort_mapping') == {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}
+    assert profile_5_2.get('zai_reasoning_effort_mapping') is None
+
+    # `glm-5.3-flash` inherits the whole GLM-5.3 profile from the shared prefix.
+    profile_5_3_flash = provider.model_profile('glm-5.3-flash')
+    zai_model_profile_mock.assert_called_with('glm-5.3-flash')
+    assert profile_5_3_flash == profile_5_3
+
+    # `glm-5.1` reasons and can still be told not to, and predates per-request effort.
+    profile_5_1 = provider.model_profile('glm-5.1')
+    zai_model_profile_mock.assert_called_with('glm-5.1')
+    assert profile_5_1 is not None
+    assert profile_5_1.get('supports_thinking') is True
+    assert profile_5_1.get('thinking_always_enabled', False) is False
+    assert profile_5_1.get('zai_supports_reasoning_effort', False) is False
+
     profile_air = provider.model_profile('glm-4.5-air')
     zai_model_profile_mock.assert_called_with('glm-4.5-air')
     assert profile_air is not None

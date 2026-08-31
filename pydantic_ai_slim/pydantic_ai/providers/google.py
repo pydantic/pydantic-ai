@@ -131,7 +131,10 @@ class GoogleProvider(BaseGoogleProvider):
         Args:
             api_key: The [API key](https://ai.google.dev/gemini-api/docs/api-key) to
                 use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
-            client: A pre-initialized client to use.
+            client: A pre-initialized client to use. Stored as-is, so a client built for Google Cloud
+                (`Client(vertexai=True, ...)`, or its current spelling `Client(enterprise=True, ...)`)
+                is used on that transport even though `name` stays `'google'`. `GoogleModel` reads the
+                transport off the client rather than the provider name, so it routes correctly either way.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Gemini API.
             retry_options: HTTP retry options for transient errors (429, 5xx, etc.).

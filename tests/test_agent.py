@@ -8664,6 +8664,7 @@ def test_instructions_during_run():
             timestamp=IsNow(tz=timezone.utc),
             instructions="""\
 You are a helpful assistant.
+
 Your task is to greet people.\
 """,
             run_id=IsStr(),
@@ -9334,13 +9335,13 @@ def test_override_toolsets():
     def foo() -> str:
         return 'Hello from foo'
 
-    available_tools: list[list[str]] = []
-    available_tools_property: list[set[str]] = []
+    prepared_tool_names: list[list[str]] = []
+    available_tool_names: list[set[str]] = []
 
     async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        nonlocal available_tools
-        available_tools.append([tool_def.name for tool_def in tool_defs])
-        available_tools_property.append(ctx.available_tool_names)
+        nonlocal prepared_tool_names
+        prepared_tool_names.append([tool_def.name for tool_def in tool_defs])
+        available_tool_names.append(ctx.available_tool_names)
         return tool_defs
 
     agent = Agent('test', toolsets=[foo_toolset], capabilities=[PrepareTools(prepare_tools)])
@@ -9350,8 +9351,8 @@ def test_override_toolsets():
         return 'Hello from baz'
 
     result = agent.run_sync('Hello')
-    assert available_tools[-1] == snapshot(['baz', 'foo'])
-    assert available_tools_property[-1] == {'baz', 'foo'}
+    assert prepared_tool_names[-1] == snapshot(['baz', 'foo'])
+    assert available_tool_names[-1] == {'baz', 'foo'}
     assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo"}')
 
     bar_toolset = FunctionToolset()
@@ -9362,21 +9363,21 @@ def test_override_toolsets():
 
     with agent.override(toolsets=[bar_toolset]):
         result = agent.run_sync('Hello')
-    assert available_tools[-1] == snapshot(['baz', 'bar'])
+    assert prepared_tool_names[-1] == snapshot(['baz', 'bar'])
     assert result.output == snapshot('{"baz":"Hello from baz","bar":"Hello from bar"}')
 
     with agent.override(toolsets=[]):
         result = agent.run_sync('Hello')
-    assert available_tools[-1] == snapshot(['baz'])
+    assert prepared_tool_names[-1] == snapshot(['baz'])
     assert result.output == snapshot('{"baz":"Hello from baz"}')
 
     result = agent.run_sync('Hello', toolsets=[bar_toolset])
-    assert available_tools[-1] == snapshot(['baz', 'foo', 'bar'])
+    assert prepared_tool_names[-1] == snapshot(['baz', 'foo', 'bar'])
     assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo","bar":"Hello from bar"}')
 
     with agent.override(toolsets=[]):
         result = agent.run_sync('Hello', toolsets=[bar_toolset])
-    assert available_tools[-1] == snapshot(['baz'])
+    assert prepared_tool_names[-1] == snapshot(['baz'])
     assert result.output == snapshot('{"baz":"Hello from baz"}')
 
 
@@ -9418,11 +9419,11 @@ def test_toolset_factory():
     def foo() -> str:
         return 'Hello from foo'
 
-    available_tools: list[str] = []
+    prepared_tool_names: list[str] = []
 
     async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        nonlocal available_tools
-        available_tools = [tool_def.name for tool_def in tool_defs]
+        nonlocal prepared_tool_names
+        prepared_tool_names = [tool_def.name for tool_def in tool_defs]
         return tool_defs
 
     toolset_creation_counts: dict[str, int] = defaultdict(int)
@@ -9457,7 +9458,7 @@ def test_toolset_factory():
     run_result = agent.run_sync('Hello')
 
     assert run_result._state.run_step == 3  # pyright: ignore[reportPrivateUsage]
-    assert len(available_tools) == 3
+    assert len(prepared_tool_names) == 3
     assert toolset_creation_counts == snapshot(
         defaultdict(int, {'via_toolsets_arg': 3, 'via_toolset_decorator': 3, 'via_toolset_decorator_for_entire_run': 1})
     )
@@ -10278,8 +10279,10 @@ async def test_wrapper_agent():
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
         output_type=Foo,
+        validation_context={'tenant': 'acme'},
     )
     wrapper_agent = WrapperAgent(agent)
+    assert wrapper_agent.validation_context == agent.validation_context == {'tenant': 'acme'}
     assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model
@@ -10320,6 +10323,15 @@ async def test_wrapper_agent():
     assert run.result.output == snapshot(Foo(a=0, b='a'))
     assert test_model.last_model_request_parameters is not None
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
+
+
+def test_wrapper_agent_validation_context_defaults_to_none():
+    class CustomAgent(WrapperAgent[object, str]):
+        def _get_validation_context(self) -> Any | Callable[[RunContext[object]], Any]: return AbstractAgent._get_validation_context(self)  # fmt: skip  # pragma: no branch
+
+    wrapper = WrapperAgent(WrapperAgent(CustomAgent(Agent('test', deps_type=object))))
+
+    assert wrapper.validation_context is None
 
 
 async def test_abstract_agent_system_prompt_parts_default_is_empty():
@@ -11357,7 +11369,7 @@ def test_override_instructions_sequence_mixed_types():
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
     req = message(messages, ModelRequest)
-    assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
+    assert req.instructions == 'OVERRIDE1\n\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
     assert 'BASE' not in req.instructions
 
 
