@@ -864,7 +864,7 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messa
 
 #### Compact when the context window fills {#compact-when-the-context-window-fills}
 
-The processors above rewrite history on every run. To wait until the conversation approaches the model's [`context_window`][pydantic_ai.models.Model.context_window], check [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]. It returns the fraction of the window occupied after the latest response, or `None` when Pydantic AI cannot calculate it reliably.
+The processors above rewrite history on every run. To wait until the conversation approaches the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window], check [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]. It returns the fraction of the window occupied after the latest response, or `None` when Pydantic AI cannot calculate it reliably.
 
 ```python {title="compact_when_window_fills.py"}
 from pydantic_ai import (

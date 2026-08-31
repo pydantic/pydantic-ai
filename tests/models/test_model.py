@@ -573,11 +573,9 @@ async def test_model_default_async_context_returns_model() -> None:
 def test_profile_context_window_from_genai_prices():
     """`Model.profile` fills `context_window` from genai-prices when no profile layer sets it."""
     with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
-        model = infer_model('openai:gpt-5')
-        context_window = model.profile.get('context_window')
+        context_window = infer_model('openai:gpt-5').profile.get('context_window')
 
     assert context_window is not None
-    assert model.context_window == context_window
     # Compare against a direct genai-prices query so the test doesn't pin a data value.
     _, model_info = get_snapshot().find_provider_model(
         'gpt-5', provider=None, provider_id='openai', provider_api_url=None

@@ -947,16 +947,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return resolved
 
-    @property
-    def context_window(self) -> int | None:
-        """The model's context window from its resolved profile, if known."""
-        try:
-            context_window = self.profile.get('context_window')
-        except NotImplementedError:
-            # A fallback model has no single profile because its candidate models may differ.
-            return None
-        return context_window if context_window is not None and context_window > 0 else None
-
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
         if item.provider_name != self.system:
