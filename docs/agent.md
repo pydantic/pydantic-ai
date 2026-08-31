@@ -1425,6 +1425,27 @@ There are two ways to declare a name, depending on what the part is:
 - **A function** is named where it is registered: [`@agent.instructions(name=...)`][pydantic_ai.agent.Agent.instructions], [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions].
 - **Literal text** carries its name on the text itself, by passing an [`InstructionPart`][pydantic_ai.messages.InstructionPart] anywhere instructions are accepted — `Agent(instructions=...)`, `Capability(instructions=...)`, `FunctionToolset(instructions=...)`, or a `get_instructions()` implementation on a [capability](capabilities/custom.md) or [toolset](toolsets.md#building-a-custom-toolset). The part also decides whether it counts as [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], which is what keeps it outside the cacheable prefix (see [prompt caching](models/anthropic.md#prompt-caching)), and a part is always kept whole rather than merged with its neighbours.
 
+#### Instructions written as a function, fixed for the run
+
+A part is [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic] when the agent recomputes it per request, and that decides which side of the provider's cache breakpoint it lands on (see [prompt caching](models/anthropic.md#prompt-caching)). An instruction function is dynamic by default, because usually that is what a function is for.
+
+Sometimes it isn't. Reaching for a function to *write* fixed text — composing it from a template, reading it out of a config file, looping over feature flags — pushes that text behind the breakpoint for every request of every run, when nothing about it changes. Pass `static=True` to say so:
+
+```python {title="static_instructions.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.6-sol', deps_type=str)
+
+
+@agent.instructions(name='style', static=True)
+def style_guide() -> str:
+    return '\n'.join(f'- {rule}' for rule in ('Be concise.', 'Cite sources.'))
+```
+
+The block then sorts into the cacheable prefix, and the function is called **once per run** rather than once per model request — which is what makes the first part honest, since a block that claimed the prefix while being recomputed each step would move the prefix under a static label.
+
+"Fixed for the run" is the whole contract, so a static function may read [`RunContext`][pydantic_ai.tools.RunContext] for anything that does not change mid-run, `deps` above all. Don't reach for it when the text depends on [`run_step`][pydantic_ai.tools.RunContext.run_step], the message history, or the time.
+
 Because a part's id is stable across runs, an application that stores instruction configuration elsewhere (say, a UI where a user edits the instructions an MCP server contributes) can key that configuration on the id instead of on the part's position or wording, both of which change as the agent evolves.
 
 A source key is what everything else is built from, so it keeps its meaning permanently: giving more sources ids later can only add keys, never change what an existing key addresses.

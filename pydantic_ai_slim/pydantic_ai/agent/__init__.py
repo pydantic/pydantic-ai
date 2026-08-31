@@ -2192,7 +2192,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
+        self, /, *, name: str | None = None, static: bool = False
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -2201,6 +2201,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        static: bool = False,
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function.
 
@@ -2233,6 +2234,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 `'agent:<name>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
                 application can address this part specifically, where the bare `'agent'` key addresses
                 the agent's literal instructions. See [instruction parts](../agent.md#instruction-parts).
+            static: Whether the text this function returns is fixed for a run. A function is treated as
+                [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic] by default, which sorts its
+                block after the provider's cache breakpoint. Pass `static=True` when you reach for a
+                function to *write* fixed text — building it from a template, a config file, a loop over
+                feature flags — rather than to recompute it: the block then sorts into the cacheable
+                prefix, and the function is called once for the run instead of once per model request.
+                Do not pass it for text that depends on anything that changes mid-run, such as
+                [`ctx.run_step`][pydantic_ai.tools.RunContext.run_step] or the time.
         """
         if name is not None:
             _instructions.validate_instruction_name(name)
@@ -2244,7 +2253,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
             self._instructions.append(
-                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True)
+                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=not static)
             )
             return func_
 

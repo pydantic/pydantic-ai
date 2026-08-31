@@ -119,7 +119,17 @@ async def resolve_sourced_instructions(
             group_key = sourced.id
             group.append(InstructionPart(content=content, id=sourced.id))
         else:
-            if content := await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context):
+            # A function the author declared static is called once for the run and its answer reused,
+            # because a block that sorts into the cacheable prefix while being recomputed every request
+            # is a cache trap rather than a cache win.
+            cache = run_context._static_instruction_cache  # pyright: ignore[reportPrivateUsage]
+            if sourced.dynamic or instruction not in cache:
+                content = await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context)
+                if not sourced.dynamic:
+                    cache[instruction] = content
+            else:
+                content = cache[instruction]
+            if content:
                 part = InstructionPart(content=content, name=sourced.name, id=sourced.id, dynamic=sourced.dynamic)
                 if group:
                     pending_parts.append(part)

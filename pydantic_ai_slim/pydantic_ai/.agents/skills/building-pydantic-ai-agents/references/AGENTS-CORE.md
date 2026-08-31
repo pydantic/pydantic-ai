@@ -61,6 +61,14 @@ def add_user_name(ctx: RunContext[str]) -> str:
     return f"The user's name is {ctx.deps}."
 ```
 
+An instructions function is treated as recomputed per request, which keeps its text outside the provider's cacheable prefix. Pass `static=True` when the function only *composes* text that is fixed for the run — from a template, a config file, a loop over feature flags. The block then joins the cacheable prefix and the function is called once per run instead of once per model request. It may still read `RunContext` for anything that does not change mid-run, `deps` above all; do not use it for text that depends on `run_step`, the message history, or the time.
+
+```python
+@agent.instructions(name='style', static=True)
+def style_guide() -> str:
+    return '\n'.join(f'- {rule}' for rule in ('Be concise.', 'Cite sources.'))
+```
+
 Use `@agent.tool` when the tool needs `RunContext`. Use `@agent.tool_plain` when it does not.
 
 ## Define Agents Declaratively with Specs

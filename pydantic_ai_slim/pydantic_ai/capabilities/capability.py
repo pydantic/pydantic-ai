@@ -309,7 +309,7 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
+        self, /, *, name: str | None = None, static: bool = False
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -318,6 +318,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         /,
         *,
         name: str | None = None,
+        static: bool = False,
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 
@@ -347,6 +348,10 @@ class Capability(AbstractCapability[AgentDepsT]):
                 [`id`][pydantic_ai.capabilities.AbstractCapability.id] — without one there is no source
                 key to qualify the name against, so the part stays unaddressable. See
                 [instruction parts](../agent.md#instruction-parts).
+            static: Whether the text this function returns is fixed for a run. See
+                [`Agent.instructions`][pydantic_ai.Agent.instructions]: the block sorts into the
+                provider's cacheable prefix and the function is called once for the run rather than
+                once per model request.
         """
         if name is not None:
             validate_instruction_name(name)
@@ -360,7 +365,7 @@ class Capability(AbstractCapability[AgentDepsT]):
                     func_,
                     name=name,
                     id=InstructionId(source, name=name) if source is not None else None,
-                    dynamic=True,
+                    dynamic=not static,
                 )
             )
             return func_

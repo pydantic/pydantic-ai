@@ -343,6 +343,14 @@ class GraphAgentState:
     exposed as the private `_mcp_tool_defs_cache` field. Recreated per run and reconstructed
     identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
     `get_tools` scheduling replay-deterministic."""
+    static_instruction_cache: dict[Any, str | None] = dataclasses.field(default_factory=dict[Any, 'str | None'])
+    """Per-run answers of instruction functions registered with `static=True`, keyed by the function.
+
+    Shared by reference into every `RunContext` this run (see `build_run_context`), where it is exposed
+    as the private `_static_instruction_cache` field. That reference is what makes "called once per
+    run" true across the several model requests a run makes; recreating it per run is what keeps a
+    function reading `deps` correct in the next run. Reconstructed identically on durable
+    replay/recovery, so a replayed run calls each static function once, as the original did."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -2410,15 +2418,16 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        _static_instruction_cache=ctx.state.static_instruction_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
     # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
-    # `_mcp_tool_defs_cache` (see the invariant on `GraphAgentDeps.loaded_capability_ids`). Never
-    # add any of them as a `replace` kwarg — forking the object would silently break in-step
-    # capability loads / tool reveals / message enqueues / cancellation / event delivery /
-    # tool-defs caching.
+    # `_mcp_tool_defs_cache`, `_static_instruction_cache` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
+    # the object would silently break in-step capability loads / tool reveals / message enqueues /
+    # cancellation / event delivery / tool-defs caching / static instruction caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
