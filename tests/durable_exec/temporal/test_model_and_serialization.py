@@ -49,7 +49,13 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     UserError,
 )
-from pydantic_ai.messages import CustomEvent, UploadedFile
+from pydantic_ai.messages import (
+    CUSTOM_EVENT_TYPES,
+    CapabilityEvent,
+    CustomEvent,
+    UnknownCustomEvent,
+    UploadedFile,
+)
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestParameters,
@@ -785,6 +791,11 @@ class TemporalProgressEvent(CustomEvent, name='temporal_progress'):
     pass
 
 
+@dataclass(kw_only=True)
+class TemporalCapabilityProgressEvent(CapabilityEvent, namespace='temporal_test', name='progress'):
+    pass
+
+
 async def test_temporal_run_context_rejects_emit_event():
     """Emitting a custom event from a tool (inside an activity) raises a clear error.
 
@@ -799,6 +810,72 @@ async def test_temporal_run_context_rejects_emit_event():
         UserError, match='Emitting events from a tool or event stream handler is not supported under Temporal yet'
     ):
         await reconstructed.emit(TemporalProgressEvent())
+
+
+async def test_temporal_run_context_rejects_emit_capability_event():
+    """A capability's own tool runs in an activity too, so its `CapabilityEvent` is rejected as well."""
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    reconstructed = TemporalRunContext.deserialize_run_context(TemporalRunContext.serialize_run_context(ctx), deps=None)
+
+    with pytest.raises(UserError, match='includes a capability emitting a `CapabilityEvent` from one of its own tools'):
+        await reconstructed.emit(TemporalCapabilityProgressEvent())
+
+
+async def test_payload_converter_rebuilds_adapter_when_an_event_class_registers_late() -> None:
+    """An adapter built before an event class was imported doesn't outlive its registration.
+
+    `event_family_schema` snapshots the registry, so a memoized adapter over a hint containing
+    `AgentStreamEvent` would keep decoding a later-registered class's events as `UnknownCustomEvent`
+    for the life of the worker, making decoding depend on import order.
+    """
+    temporal_payload_converter._type_adapter.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    temporal_payload_converter.type_adapter(AgentStreamEvent)  # primed before the class below exists
+
+    @dataclass(kw_only=True)
+    class LateEvent(CustomEvent, name='temporal_late_registration'):
+        done: int
+
+    try:
+        payload = TypeAdapter[AgentStreamEvent](AgentStreamEvent).dump_python(LateEvent(done=1), mode='json')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            decoded = temporal_payload_converter.type_adapter(AgentStreamEvent).validate_python(payload)
+        assert isinstance(decoded, LateEvent)
+        assert decoded.done == 1
+    finally:
+        CUSTOM_EVENT_TYPES.pop('temporal_late_registration', None)
+
+
+async def test_unknown_custom_event_recovers_across_workers() -> None:
+    """A worker without the defining module keeps the payload intact for one that has it.
+
+    This is the documented cross-worker contract: an event that reaches a worker before (or without)
+    its module being imported degrades to `UnknownCustomEvent` rather than failing, and re-serializes
+    to the same wire bytes so the next hop recovers the typed event.
+    """
+
+    @dataclass(kw_only=True)
+    class CrossWorkerEvent(CustomEvent, name='temporal_cross_worker'):
+        step: str
+
+    emitting_worker = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = emitting_worker.dump_json(CrossWorkerEvent(step='one'))
+
+    CUSTOM_EVENT_TYPES.pop('temporal_cross_worker')
+    unaware_worker = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    with pytest.warns(UserWarning, match="Unknown event name 'temporal_cross_worker'"):
+        degraded = unaware_worker.validate_json(wire)
+    assert isinstance(degraded, UnknownCustomEvent)
+    assert degraded.data == {'step': 'one'}
+    forwarded = unaware_worker.dump_json(degraded)
+
+    CUSTOM_EVENT_TYPES['temporal_cross_worker'] = CrossWorkerEvent
+    try:
+        recovered = TypeAdapter[AgentStreamEvent](AgentStreamEvent).validate_json(forwarded)
+        assert isinstance(recovered, CrossWorkerEvent)
+        assert recovered.step == 'one'
+    finally:
+        CUSTOM_EVENT_TYPES.pop('temporal_cross_worker', None)
 
 
 # Multi-Model Support Tests
@@ -1658,12 +1735,12 @@ async def test_pydantic_ai_payload_converter_reuses_more_than_128_type_adapters(
     hints = [type(f'Result{i}', (BaseModel,), {'__annotations__': {'v': int}}) for i in range(129)]
 
     for hint in hints:
-        temporal_payload_converter._type_adapter(hint)  # pyright: ignore[reportPrivateUsage]
+        temporal_payload_converter.type_adapter(hint)
 
     misses_after_warmup = temporal_payload_converter._type_adapter.cache_info().misses  # pyright: ignore[reportPrivateUsage]
     for _ in range(3):
         for hint in hints:
-            temporal_payload_converter._type_adapter(hint)  # pyright: ignore[reportPrivateUsage]
+            temporal_payload_converter.type_adapter(hint)
 
     assert temporal_payload_converter._type_adapter.cache_info().misses == misses_after_warmup  # pyright: ignore[reportPrivateUsage]
 

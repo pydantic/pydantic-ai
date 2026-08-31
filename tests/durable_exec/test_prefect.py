@@ -30,6 +30,8 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    CapabilityEvent,
+    CustomEvent,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -3701,6 +3703,97 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
 
     # Outside a flow the tool runs inline and enqueueing keeps working.
     await agent.run('run')
+
+
+@dataclass(kw_only=True)
+class PrefectToolProgressEvent(CustomEvent, name='prefect_tool_progress'):
+    attempt: int
+
+
+@dataclass(kw_only=True)
+class PrefectCheckpointEvent(CapabilityEvent, namespace='prefect_test', name='checkpoint'):
+    label: str
+
+
+async def test_prefect_task_wrapped_tool_emit_is_not_replayed() -> None:
+    """`ctx.emit()` inside a durable task is a side effect of running it, not part of its result.
+
+    Unlike `ctx.enqueue()`, which is rejected because dropping it would change what the model sees,
+    an emitted event only notifies observers, so it's allowed. This pins what that costs: on a flow
+    retry the tool's recorded result is replayed without re-running the body, so the flow-level
+    observer sees the tool's call and result events again but not the event the tool emitted.
+    """
+    attempts = 0
+    tool_bodies: list[str] = []
+    observed: list[str] = []
+
+    toolset = FunctionToolset[object](id='emit_replay_toolset')
+
+    @toolset.tool
+    async def emit_progress(ctx: RunContext[object]) -> str:
+        tool_bodies.append(ctx.tool_name or '')
+        await ctx.emit(PrefectToolProgressEvent(attempt=attempts))
+        return 'ok'
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, PrefectToolProgressEvent):
+                observed.append(f'attempt {event.attempt}')
+
+    agent = Agent(
+        TestModel(),
+        name='emit_replay_agent',
+        toolsets=[toolset],
+        capabilities=[ProcessEventStream(observe), PrefectDurability[object]()],
+    )
+
+    @flow(retries=1)
+    async def flaky() -> None:
+        nonlocal attempts
+        attempts += 1
+        await agent.run('go')
+        # Fail after the agent run, so the retry has the tool task's result to replay.
+        if attempts == 1:
+            raise RuntimeError('boom')
+
+    await flaky()
+    assert attempts == 2
+    # One of the two attempts ran the tool body; the other completed on its replayed result. The
+    # `emit` lives in that body, so the event reached the observer once, not once per attempt.
+    assert tool_bodies == ['emit_progress']
+    assert len(observed) == 1
+
+
+async def test_prefect_flow_level_emit_reaches_durable_handler() -> None:
+    """An event emitted from flow-level code (a capability hook) reaches the durable handler."""
+    seen: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, PrefectCheckpointEvent):
+                seen.append(f'{event.label}:{TaskRunContext.get() is not None}')
+
+    class EmittingCapability(AbstractCapability[object]):
+        id = 'prefect_emitter'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            await ctx.emit(PrefectCheckpointEvent(label='start'))
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='prefect_flow_emit',
+        capabilities=[EmittingCapability(), PrefectDurability[object](event_stream_handler=handler)],
+    )
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    await run_agent()
+
+    # Delivered once, inside the handler's own durable task.
+    assert seen == ['start:True']
 
 
 async def test_prefect_non_streaming_model_request_rejects_enqueue() -> None:

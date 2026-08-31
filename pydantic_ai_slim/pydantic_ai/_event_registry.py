@@ -31,6 +31,47 @@ _UNKNOWN_TAG = '__unknown__'
 RESERVED_EVENT_TAGS = frozenset({_UNKNOWN_TAG})
 """Tags the family schema uses for its synthetic choices; no event class may register under them."""
 
+_registry_version = 0
+
+
+class EventRegistry(dict[str, Any]):
+    """One event family's tag-to-class registry, versioned so schema caches can detect staleness.
+
+    `event_family_schema` snapshots the registry it builds from, so a schema built before a class
+    registered keeps degrading that class's events to the unknown envelope. That's correct for a
+    schema built once and thrown away, but a consumer that memoizes adapters for the life of a
+    process (e.g. Temporal's payload converter) would keep serving the stale one, making decoding
+    depend on import order. Such consumers key their memo on `event_registry_version()`, which every
+    mutation here bumps, so a later registration rebuilds the adapter instead.
+    """
+
+    def __setitem__(self, tag: str, event_cls: Any) -> None:
+        super().__setitem__(tag, event_cls)
+        _bump_registry_version()
+
+    def __delitem__(self, tag: str) -> None:
+        super().__delitem__(tag)
+        _bump_registry_version()
+
+    def pop(self, tag: str, /, *default: Any) -> Any:
+        popped = super().pop(tag, *default)
+        _bump_registry_version()
+        return popped
+
+
+def _bump_registry_version() -> None:
+    global _registry_version
+    _registry_version += 1
+
+
+def event_registry_version() -> int:
+    """A counter bumped whenever any [`EventRegistry`][] changes.
+
+    Cache keys that include this are invalidated by a registration, so an adapter built before an
+    event class was imported isn't reused after it is.
+    """
+    return _registry_version
+
 
 def is_redefinition(existing: type, cls: type) -> bool:
     """Whether `cls` is the same class as `existing` being defined again.
@@ -38,6 +79,12 @@ def is_redefinition(existing: type, cls: type) -> bool:
     A re-run notebook cell, `importlib.reload`, a re-executed docs example, or the class recreation
     `@dataclass(slots=True)` performs replaces its registration; only genuinely distinct classes
     conflict.
+
+    A Temporal workflow sandbox re-executes application modules while sharing `pydantic_ai`'s
+    registries with the host process, so the sandbox's copy of an event class matches its host
+    original here and replaces the host's entry. Events then decode to whichever copy registered
+    last, and a host-side `isinstance` check (including `@on_event(MyEvent)` filtering) can be
+    `False` for an event of "the same" class. See `test_temporal_sandbox_event_registration`.
     """
     return existing.__module__ == cls.__module__ and existing.__qualname__ == cls.__qualname__
 

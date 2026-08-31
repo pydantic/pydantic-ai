@@ -221,6 +221,8 @@ A durability `event_stream_handler=` and a separately registered `ProcessEventSt
 
 A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs flow-side against replayed model events.
 
+Events emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from inside a durable task — including a [capability event](../capabilities/overview.md#capability-events) emitted by a capability's own tool — are delivered when the task actually runs, and are *not* re-emitted when its recorded result is replayed on a flow retry or cache hit. Like a log line written inside a task, an emitted event is a side effect of running the task rather than part of its recorded result. Emit from flow-level code, such as a [capability](../capabilities/overview.md) hook, if a listener must see the event on every attempt. Capability listeners registered with [`@on_event`][pydantic_ai.capabilities.on_event] run in flow code rather than in a task, so they re-run on a flow retry and must be deterministic; keep I/O in a durability `event_stream_handler=`, which runs in its own task. Unlike [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], which is rejected inside a task because dropping it would change what the model sees, a missed event only means an observer wasn't notified.
+
 Because the model stream is consumed inside the task, cancelling it from the flow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 
 [`CancellationToken`][pydantic_ai.CancellationToken] and [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] are same-process cancellation handles and cannot cross the Prefect durable boundary; cancel the Prefect flow instead.

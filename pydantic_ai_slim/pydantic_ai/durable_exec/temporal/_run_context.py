@@ -178,12 +178,15 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
         Tools and event stream handlers run inside activities where the run's event stream isn't
         reachable, so events emitted there can't currently flow back into the stream; raising beats
-        silently dropping them. Events emitted workflow-side (e.g. from capability hooks) work as usual.
+        silently dropping them. This covers a capability's own tools emitting a `CapabilityEvent`,
+        which run in activities like any other tool. Events emitted workflow-side (e.g. from
+        capability hooks) work as usual.
         """
         raise UserError(
             'Emitting events from a tool or event stream handler is not supported under Temporal yet, as '
-            'they run inside activities that cannot reach the run event stream. Emit events from capability '
-            'hooks, which run in the workflow, instead.'
+            'they run inside activities that cannot reach the run event stream. This includes a capability '
+            'emitting a `CapabilityEvent` from one of its own tools. Emit events from capability hooks, '
+            'which run in the workflow, instead.'
         )
 
     @classmethod

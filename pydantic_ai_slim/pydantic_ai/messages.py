@@ -40,6 +40,7 @@ from pydantic_ai._cost import calculate_price_for_usage
 from . import _otel_messages, _utils
 from ._event_registry import (
     RESERVED_EVENT_TAGS as _RESERVED_EVENT_TAGS,
+    EventRegistry as _EventRegistry,
     event_family_schema as _event_family_schema,
     guard_post_init as _guard_post_init,
     inject_tag_field as _inject_tag_field,
@@ -4473,7 +4474,7 @@ HandleResponseEvent = Annotated[
 """An event yielded when handling a model response, indicating tool calls and results."""
 
 
-CUSTOM_EVENT_TYPES: dict[str, type[CustomEvent]] = {}
+CUSTOM_EVENT_TYPES: dict[str, type[CustomEvent]] = _EventRegistry()
 """Registry of [`CustomEvent`][pydantic_ai.messages.CustomEvent] subclasses, keyed by their `name`.
 
 Subclasses register automatically when their class is defined, so an event type is only
@@ -4643,7 +4644,7 @@ Derived from the unknown-envelope class so it always matches the declared event 
 """
 
 
-CAPABILITY_EVENT_TYPES: dict[str, type[CapabilityEvent]] = {}
+CAPABILITY_EVENT_TYPES: dict[str, type[CapabilityEvent]] = _EventRegistry()
 """Registry of [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] subclasses, keyed by `kind`."""
 
 
