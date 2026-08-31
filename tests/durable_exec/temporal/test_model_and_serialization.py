@@ -1372,11 +1372,14 @@ async def test_temporal_activity_does_not_manage_registered_models() -> None:
     events: list[str] = []
 
     class TrackingModel(TestModel):
-        async def __aenter__(self) -> TrackingModel:
+        # These two bodies never running is the assertion: a registered model keeps its external
+        # lifecycle owner, so the activity must not enter it. They record into `events` only so a
+        # regression shows up as a named entry rather than as a bare count.
+        async def __aenter__(self) -> TrackingModel:  # pragma: no cover
             events.append('enter')
             return await super().__aenter__()
 
-        async def __aexit__(self, *args: Any) -> bool | None:
+        async def __aexit__(self, *args: Any) -> bool | None:  # pragma: no cover
             events.append('exit')
             return await super().__aexit__(*args)
 
