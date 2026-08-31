@@ -296,6 +296,34 @@ async def test_capability_operation_registered_model_id_swap_does_not_manage_mod
     assert events == ['request']
 
 
+async def test_resolved_request_model_records_are_released_with_their_models() -> None:
+    built_models: list[LifecycleTrackingModel] = []
+    durability = RecordingDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='released_capability_operation_model',
+        capabilities=[
+            ModelIdReplacingBeforeModelRequest(),
+            ResolveModelId(_tracked_model_resolver(built_models)),
+            durability,
+        ],
+    )
+
+    await agent.run('test')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    records = bound._resolved_request_models  # pyright: ignore[reportPrivateUsage]
+    assert records
+
+    # The record outlives the request it was made for, so it has to be released with its model
+    # rather than accumulating one entry per swapped request for the life of the agent.
+    built_models.clear()
+    gc.collect()
+
+    assert records == {}
+
+
 async def test_repeated_capability_operation_model_id_swaps_close_each_model() -> None:
     built_models: list[LifecycleTrackingModel] = []
     resolve_model = _tracked_model_resolver(built_models, model_type=RepeatingLifecycleModel)
