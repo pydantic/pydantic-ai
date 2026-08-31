@@ -70,8 +70,7 @@ class ContainerFilesystem:
 class DockerSandbox:
     provider = 'docker'
 
-    def __init__(self, *, image: str = 'python:3.13', sandbox_id: str = 'container-0123456789ab'):
-        self.image = image
+    def __init__(self, *, sandbox_id: str = 'container-0123456789ab'):
         self._sandbox_id = sandbox_id
         self.fs = ContainerFilesystem()
 
@@ -113,10 +112,6 @@ class DockerSandbox:
         return '/workspace'
 
 
-def make_docker_sandbox(image: str = 'python:3.13') -> DockerSandbox:
-    return DockerSandbox(image=image)
-
-
 class SandboxClient:
     """A fictional provider SDK client used by the sandbox capability examples."""
 
@@ -124,7 +119,7 @@ class SandboxClient:
     def from_environment(cls) -> SandboxClient:
         return cls()
 
-    async def create(self) -> DockerSandbox:
+    async def create(self, *, idempotency_key: str | None = None) -> DockerSandbox:
         return DockerSandbox()
 
     async def connect(self, sandbox_id: str) -> DockerSandbox:
@@ -132,11 +127,6 @@ class SandboxClient:
 
     async def destroy(self, sandbox_id: str) -> None:
         pass
-
-
-async def open_sandbox(provider: str, sandbox_id: str) -> DockerSandbox:
-    assert provider == DockerSandbox.provider
-    return DockerSandbox(sandbox_id=sandbox_id)
 
 
 if TYPE_CHECKING:

@@ -983,10 +983,16 @@ async def model_logic(  # noqa: C901
                     )
                 ]
             )
-        elif m.content == 'Profile the script and fix the hot spot.':
-            return ModelResponse(parts=[TextPart('Optimized the hot loop; the profile is clean now.')])
         elif m.content == 'Summarize data.csv in the working directory.':
-            return ModelResponse(parts=[TextPart('data.csv has columns a and b with a single row: 1, 2.')])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='read_workspace_file',
+                        args={'path': 'data.csv'},
+                        tool_call_id='pyd_ai_tool_call_id',
+                    )
+                ]
+            )
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
@@ -1040,6 +1046,9 @@ async def model_logic(  # noqa: C901
         assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
         if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
             return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'read_workspace_file':
+        assert m.content == 'a,b\n1,2\n'
+        return ModelResponse(parts=[TextPart('data.csv has columns a and b with a single row: 1, 2.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)
