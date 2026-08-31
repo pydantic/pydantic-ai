@@ -145,6 +145,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     _reasoning_started: bool = False
     _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
+    _started_message_id: str | None = None
+    """The message ID a `TEXT_MESSAGE_START` has been emitted for.
+
+    Compared against `message_id` rather than cleared per response: `before_response` mints a new ID,
+    so a value left over from an earlier response can never read as started.
+    """
     _error: bool = False
     _cancelled_run: bool = False
 
@@ -268,6 +274,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             message_id = self.message_id
         else:
             message_id = self.new_message_id()
+            self._started_message_id = message_id
             yield TextMessageStartEvent(message_id=message_id)
 
         if part.content:  # pragma: no branch
@@ -337,6 +344,17 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     ) -> AsyncIterator[BaseEvent]:
         tool_call_id = tool_call_id or part.tool_call_id
         parent_message_id = self.message_id
+
+        if self._started_message_id != parent_message_id:
+            # `handle_text_start` is the only other site that starts a message, so a response with
+            # no text before its first tool call would name a parent no event in the stream carries.
+            # A client can still synthesize that message for itself, but its ID then matches nothing
+            # the server emitted, so a conversation echoed back can't be told apart from new input.
+            # The message carries no text, so it is closed straight away: the AG-UI client's event
+            # verifier rejects `RUN_FINISHED` while a text message is still open.
+            self._started_message_id = parent_message_id
+            yield TextMessageStartEvent(message_id=parent_message_id)
+            yield TextMessageEndEvent(message_id=parent_message_id)
 
         yield ToolCallStartEvent(
             tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=parent_message_id

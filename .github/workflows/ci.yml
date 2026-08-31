@@ -214,7 +214,8 @@ jobs:
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    # Use Ubicloud 8-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
+    # Route the all-extras cells to Ubicloud 8-core runners on same-repo PRs and pushes, or when
+    # opted in via the 'ci:fast' label; the other install variants stay on `ubuntu-latest`.
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     # `github.event.pull_request` is null on push/tag runs, so those need their own clause to
     # reach Ubicloud -- without it main and release runs silently fall back to `ubuntu-latest`.
@@ -235,6 +236,9 @@ jobs:
       fail-fast: false
       matrix:
         # `latest-versions-canary.yml` runs the endpoints of this list; update it alongside.
+        # Growing this or either other test matrix grows the tracked-job count that
+        # `REPORT_ROW_LIMIT` in `.github/scripts/ci_duration.py` must stay above, or the duration
+        # report truncates. That constant's comment enumerates all three.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
@@ -251,10 +255,6 @@ jobs:
       # Rebenchmark all-extras after https://github.com/cbornet/blockbuster/pull/61 is released
       # in a compatible version; enable it if the job stays within seven minutes.
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' && matrix.install.name != 'all-extras' }}
-      # `sys.monitoring`-based tracing: much lower overhead than the default C tracer, but
-      # it can only measure branch coverage on Python 3.14+. On older versions coverage
-      # falls back with a `no-sysmon` warning, so gate it to 3.14 rather than set it globally.
-      COVERAGE_CORE: ${{ matrix.python-version == '3.14' && 'sysmon' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -320,14 +320,16 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
-      # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
-      # instead of 4). `logical` uses all vCPUs; ~39% faster on premium-4, no-op
-      # on ubuntu-latest (already 4). See PR benchmark.
-      # The durable-execution suites are ignored here and run in `test-durable-exec` instead:
-      # each pins a single xdist group around a real server, so their serial chain would
-      # otherwise be the critical-path floor of the all-extras jobs. Its `lowest` leg
-      # proves the minimum `temporalio`/`dbos`/`prefect` bounds.
+      # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
+      # *physical* cores while `logical` counts every vCPU, which is what Ubicloud's
+      # hyperthreaded runners want. `psutil` is not in `uv.lock` and `UV_FROZEN` pins CI to
+      # it, so both spellings resolve to the same count today; the flag is here for when
+      # that stops being true.
+      # Everything under `tests/durable_exec` is ignored here and runs in `test-durable-exec`
+      # instead: most of those tests pin xdist groups around real local servers, so the chains
+      # they form would otherwise be the critical-path floor of the all-extras cells -- the
+      # other install variants skip the suites at module level, for want of the engine packages.
+      # Its `lowest` leg proves the minimum `temporalio`/`dbos`/`prefect` bounds.
       - run: >-
           uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
           --ignore=tests/durable_exec
@@ -349,16 +351,22 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
-  # The durable-execution suites (Temporal, DBOS, Prefect) each pin all their tests to one
-  # xdist group sharing a real local server, so inside the main matrix they form a serial
-  # chain that dominates the all-extras critical path. Running them in their own job takes
-  # them off that path entirely; serial execution is fine here because nothing waits on it.
-  # New durable-exec tests land in these three files and are picked up automatically.
+  # The durable-execution suites pin their tests to xdist groups sharing a real local server --
+  # one group per Temporal test module, one for DBOS, one for Prefect -- so inside the main
+  # matrix those groups dominate its critical path. Running the whole directory in its own job
+  # takes them off that path entirely; `--dist=loadgroup` still spreads the groups across this
+  # job's workers, and only the tests within one group run in sequence.
+  # New durable-exec tests land anywhere under `tests/durable_exec` and are picked up
+  # automatically. That whole directory is excluded from the main `test` matrix, so a test
+  # placed there runs only in this job, which sets `BLOCKBUSTER_ENABLED: false`. A test that
+  # needs blocking detection belongs elsewhere under `tests/`, where the `test` job turns it on
+  # for the 3.13 cells other than all-extras.
   # The `lowest` resolution leg is the only place the declared minimum bounds
-  # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips these files.
+  # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
   test-durable-exec:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
-    # See the note on the `test` job for the runner selection logic.
+    # Ubicloud 4-core runners, gated like the `test` job above minus its all-extras clause:
+    # same-repo PRs, pushes, or the 'ci:fast' label, with 'ci:slow' forcing GitHub runners.
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
@@ -387,8 +395,6 @@ jobs:
       # thread trips it as `TMPRL1101`. The cost: a genuine in-workflow blocking call now
       # hangs to the job timeout instead of failing in 2s.
       TEMPORAL_DEBUG: '1'
-      # See the note on the `test` job: sysmon can only measure branches on 3.14+.
-      COVERAGE_CORE: ${{ matrix.python-version == '3.14' && 'sysmon' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -450,7 +456,7 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
-    # Use Ubicloud 8-core runners for maintainers or opted in via 'ci:fast' label
+    # Use Ubicloud 8-core runners on same-repo PRs and pushes, or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     # See the note on the `test` job for why push/tag runs need their own clause.
     runs-on: >-
@@ -475,8 +481,6 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
-      # See the note on the `test` job: sysmon can only measure branches on 3.14+.
-      COVERAGE_CORE: ${{ matrix.python-version == '3.14' && 'sysmon' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -531,9 +535,9 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
+      # `-n logical` (see note on the `test` job).
       # The durable-execution suites run in `test-durable-exec` (its `lowest` leg covers
-      # this resolution), keeping their serial xdist chains off this job's critical path.
+      # this resolution), keeping their grouped xdist chains off this job's critical path.
       - run: >-
           uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
           --ignore=tests/durable_exec

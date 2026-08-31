@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequen
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from functools import cache, cached_property
 from pathlib import Path
 from types import ModuleType
@@ -66,6 +67,7 @@ T = TypeVar('T')
 
 __all__ = (
     'IsDatetime',
+    'IsDecimal',
     'IsFloat',
     'IsNow',
     'IsStr',
@@ -110,6 +112,7 @@ if TYPE_CHECKING:
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsDecimal(*args: Any, **kwargs: Any) -> Decimal: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
@@ -118,7 +121,10 @@ if TYPE_CHECKING:
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
 else:
-    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsStr
+    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
+
+    class IsDecimal(IsNumeric[Decimal]):
+        allowed_types = Decimal
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -609,7 +615,7 @@ try:
         logfire.shutdown(flush=False)
         # `test_examples.py` runs doc snippets that call the process-global `logfire.instrument_httpx()`,
         # which patches httpx via OTel and is never torn down. Reset it so it can't leak request spans
-        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
+        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `tests/durable_exec/temporal` snapshots).
         if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
             _httpx_instrumentor.uninstrument()
         # The worker's main-thread OTel context also persists across tests: an `attach` without a

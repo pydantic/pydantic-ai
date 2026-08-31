@@ -983,7 +983,10 @@ def test_reconcile_queues_channel_escalation_without_advancing_before_delivery()
 
 
 def test_reconcile_retries_preexisting_pending_escalation():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, *monitor._STAGE_LABELS])})
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, *monitor._STAGE_LABELS, 'p:1-highest'], assignees=['alice'])}
+    )
+    client.permissions['alice'] = 'write'
     notices: list[monitor.Notice] = []
 
     assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
@@ -1223,9 +1226,10 @@ def test_reconcile_marks_assigned_priority_issues_for_attention():
     assert monitor._ACTION_LABEL not in {label['name'] for label in client.items[8]['labels']}
 
 
-def test_non_priority_attention_items_never_ping():
-    """Only assigned p:1/p:2/community-backed issues may interrupt a maintainer in Slack."""
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['alice'])})
+@pytest.mark.parametrize('extra_labels', [[], [monitor.COMMUNITY_LABEL]])
+def test_non_priority_attention_items_never_ping(extra_labels: list[str]):
+    """Only assigned P1/P2 issues may interrupt a maintainer in Slack."""
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, *extra_labels], assignees=['alice'])})
     client.permissions = {'alice': 'write'}
     notices: list[monitor.Notice] = []
 
@@ -1254,13 +1258,23 @@ def test_priority_reminder_windows_follow_the_label():
         return [notice['number'] for notice in notices]
 
     # The window measures the *owner's* quiet, from their own last comment.
-    # Four days: past the 3-day p:1 window, inside the 5-day p:2 window and
-    # the 7-day community window. A breached item is marked and pinged in the
-    # same pass.
+    # Four days is past the 3-day P1 window and inside the 5-day P2 window. A
+    # breached item is marked and pinged in the same pass.
     assert queued(7, 'p:1-highest', 4) == [7]
     assert queued(9, 'p:2-high', 4) == []
-    assert queued(11, monitor.COMMUNITY_LABEL, 4) == []
-    assert queued(11, monitor.COMMUNITY_LABEL, 8) == [11]
+
+
+def test_non_priority_pinged_item_stands_down_before_escalation():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL], assignees=['alice'])})
+    client.permissions['alice'] = 'write'
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == (
+        ['#7: completed after losing reminder priority'],
+        [],
+    )
+    assert notices == []
+    assert {label['name'] for label in client.items[7]['labels']} == set()
 
 
 def test_community_chatter_neither_suppresses_nor_hastens_the_owner_reminder():
@@ -2193,7 +2207,15 @@ def test_recent_activity_delays_the_next_reminder():
 
 
 def test_maintainer_comment_completes_the_request():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
+    client = FakeClient(
+        {
+            7: item(
+                7,
+                labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, 'p:1-highest'],
+                assignees=[monitor._FALLBACK_OWNER],
+            )
+        }
+    )
     client.timelines[7] = [
         {
             'event': 'labeled',
@@ -2557,7 +2579,10 @@ def test_bot_triggered_mention_event_is_not_an_acknowledgement():
 
 
 def test_latest_stage_transition_restarts_the_sla_clock():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, 'p:1-highest'], assignees=['alice'])}
+    )
+    client.permissions['alice'] = 'write'
     client.timelines[7] = [
         {
             'event': 'labeled',
