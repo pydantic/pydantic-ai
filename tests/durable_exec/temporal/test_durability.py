@@ -560,6 +560,11 @@ def test_durability_temporal_activities():
     assert len(bound.temporal_activities) == 6
 
 
+def test_durability_temporal_registrations_before_binding():
+    """An unbound capability has no Temporal registrations."""
+    assert TemporalDurability().temporal_registrations == []
+
+
 def test_durability_temporal_activities_with_toolsets():
     """temporal_activities includes toolset activities for agent's toolsets."""
     agent = Agent(
@@ -578,7 +583,7 @@ def test_durability_temporal_activities_rejects_omitting_child_workflows():
     """Direct activity registration must fail before a worker can omit required workflows."""
 
     async def child_tool() -> str:
-        return 'done'
+        return 'done'  # pragma: no cover
 
     toolset = FunctionToolset(id='child_tools')
     toolset.add_function(

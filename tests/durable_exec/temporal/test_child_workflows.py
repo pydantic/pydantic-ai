@@ -16,14 +16,108 @@ from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 from temporalio.workflow import ChildWorkflowCancellationType, ChildWorkflowConfig
 
 from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 
 from ._shared import TASK_QUEUE
 
 pytestmark = pytest.mark.anyio
 
 CHILD_WORKFLOW_TYPE = 'agent__child_workflow_agent__toolset__child_workflow_tools__call_tool__child_workflow'
+
+
+async def test_child_workflow_metadata_validation() -> None:
+    async def async_tool() -> str:
+        return 'async'  # pragma: no cover
+
+    def sync_tool() -> str:
+        return 'sync'  # pragma: no cover
+
+    validation_toolset = FunctionToolset[None](id='validation_tools')
+    validation_toolset.add_function(
+        async_tool,
+        metadata={'temporal': {'child_workflow': ChildWorkflowConfig(), 'summary': 'invalid'}},
+    )
+    validation_toolset.add_function(
+        sync_tool,
+        metadata={'temporal': {'child_workflow': ChildWorkflowConfig()}},
+    )
+    validation_agent = Agent(
+        TestModel(),
+        name='child_workflow_validation',
+        deps_type=type(None),
+        toolsets=[validation_toolset],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(validation_agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await validation_toolset.get_tools(ctx)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape("Tool 'async_tool' has invalid Temporal metadata: `child_workflow` must be the only key."),
+    ):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('function', toolset_id='validation_tools'), tools['async_tool'], 'async_tool'
+        )
+
+    tools['async_tool'].tool_def.metadata = {'temporal': {'child_workflow': ChildWorkflowConfig()}}
+    with pytest.raises(
+        UserError, match=re.escape('Temporal child workflows are only supported for function tool calls.')
+    ):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('mcp', toolset_id='validation_tools'), tools['async_tool'], 'async_tool'
+        )
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Temporal metadata for tool 'sync_tool' selects a child workflow, but non-async tools cannot run in "
+            'workflow code. Make the tool function async instead.'
+        ),
+    ):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('function', toolset_id='validation_tools'), tools['sync_tool'], 'sync_tool'
+        )
+
+
+async def test_child_workflow_metadata_rejects_invalid_config() -> None:
+    async def child_tool() -> str:
+        return 'done'  # pragma: no cover
+
+    validation_toolset = FunctionToolset[None](id='invalid_config_tools')
+    validation_toolset.add_function(
+        child_tool,
+        metadata={
+            'temporal': {
+                'child_workflow': ChildWorkflowConfig(unknown_option=True),  # pyright: ignore[reportCallIssue]
+            }
+        },
+    )
+    validation_agent = Agent(
+        TestModel(),
+        name='invalid_child_workflow_config',
+        deps_type=type(None),
+        toolsets=[validation_toolset],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(validation_agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await validation_toolset.get_tools(ctx)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape("Invalid Temporal `ChildWorkflowConfig` in tool 'child_tool' metadata:"),
+    ):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('function', toolset_id='invalid_config_tools'), tools['child_tool'], 'child_tool'
+        )
 
 
 @activity.defn
