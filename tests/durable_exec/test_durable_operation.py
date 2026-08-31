@@ -273,6 +273,98 @@ async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -
     assert batches == [[events[0]], events[1:]]
 
 
+async def test_event_stream_dispatch_ignores_spurious_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    event_type = asyncio.Event
+
+    class SpuriousEvent(event_type):
+        first_wait = True
+
+        async def wait(self) -> Literal[True]:
+            if self.first_wait:
+                self.first_wait = False
+                return True
+            return await super().wait()
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    durability = JournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        await asyncio.sleep(0)
+        yield event
+
+    with monkeypatch.context() as patch:
+        patch.setattr(asyncio, 'Event', SpuriousEvent)
+        assert [
+            item
+            async for item in durability._batched_event_stream(ctx, stream())  # pyright: ignore[reportPrivateUsage]
+        ] == [event]
+
+
+async def test_event_stream_dispatch_propagates_handler_failure_and_closes_stream() -> None:
+    stream_closed = False
+    handler_error = RuntimeError('handler failed')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        raise handler_error
+
+    durability = JournalDurability(event_stream_handler=handler)
+    events = _tool_events(2)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tasks_before = asyncio.all_tasks()
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        nonlocal stream_closed
+        try:
+            for event in events:
+                yield event
+        finally:
+            stream_closed = True
+
+    with pytest.raises(RuntimeError, match='handler failed') as exc_info:
+        async for _ in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
+            pass
+
+    await asyncio.sleep(0)
+    assert exc_info.value is handler_error
+    assert stream_closed
+    assert asyncio.all_tasks() == tasks_before
+
+
+async def test_event_stream_dispatch_propagates_producer_failure_and_closes_stream() -> None:
+    stream_closed = False
+    producer_error = RuntimeError('producer failed')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    durability = JournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        nonlocal stream_closed
+        try:
+            yield event
+            raise producer_error
+        finally:
+            stream_closed = True
+
+    received: list[AgentStreamEvent] = []
+    with pytest.raises(RuntimeError, match='producer failed') as exc_info:
+        async for item in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
+            received.append(item)
+
+    assert exc_info.value is producer_error
+    assert received == [event]
+    assert stream_closed
+
+
 async def test_event_stream_batching_preserves_model_delta_backpressure() -> None:
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         pass
@@ -286,6 +378,8 @@ async def test_event_stream_batching_preserves_model_delta_backpressure() -> Non
         for delta in ('world', '!'):
             yield PartDeltaEvent(index=0, delta=TextPartDelta(delta))
             part.content += delta
+            if delta == 'world':
+                yield _tool_events(1)[0]
 
     observed_deltas: list[str] = []
 
