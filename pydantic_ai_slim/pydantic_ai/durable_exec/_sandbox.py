@@ -34,8 +34,8 @@ def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
 
     The deprecated durable-agent wrappers reject sandbox-contributing capabilities up front:
     running the supplier's lifecycle hooks would be I/O in workflow code, and the wrappers
-    have no way to route it into a durable unit. `TemporalDurability` does; see
-    Generic contributed-operation dispatch is deliberately absent from these deprecated wrappers.
+    have no way to route it into a durable unit. Generic contributed-operation dispatch is
+    deliberately absent from these deprecated wrappers.
     """
     return bool(_sandbox_suppliers(capability))
 

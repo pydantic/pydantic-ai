@@ -41,8 +41,9 @@ approval, command restrictions, output limits, and path policy in the tool layer
 Sandbox resolution happens before capability and toolset `for_run`:
 
 1. The `sandbox=` run argument: a caller-owned live backend or a serializable `SandboxRef`.
-2. A capability's `acquire_sandbox` contribution. The latest supplier in the resolved chain
-   wins; deferred capabilities are not consulted; returning `None` falls through.
+2. One active capability's `acquire_sandbox` contribution. More than one sandbox-contributing
+   capability is ambiguous and raises before any hook runs; deferred capabilities are not
+   consulted; returning `None` falls through.
 3. The framework default: `UnavailableSandbox` with attachment instructions.
 
 A capability supplies a sandbox through three lifecycle hooks; only the serializable
