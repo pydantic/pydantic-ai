@@ -876,7 +876,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
 
 
 def compact_when_window_fills(
@@ -899,7 +899,11 @@ def compact_when_window_fills(
     return messages
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(compact_when_window_fills)])
+agent = Agent(
+    'openai:gpt-5.2',
+    system_prompt='You are a helpful assistant.',
+    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+)
 ```
 
 Treat `None` as unknown, not as an empty context window. It is returned before the first model response, when the model's window or response usage is unknown, and for a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] whose candidate models may have different window sizes. The example leaves history unchanged in these cases.
