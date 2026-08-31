@@ -251,7 +251,14 @@ jobs:
             command: "--all-extras --no-extra mcp-tasks"
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape on
+      # 3.14, where coverage uses the faster sys.monitoring core, plus the 3.10 all-extras endpoint for
+      # version-specific branches. The other cells still run every applicable test without duplicate coverage.
+      COLLECT_COVERAGE: >-
+        ${{
+          matrix.python-version == '3.14'
+          || (matrix.python-version == '3.10' && matrix.install.name == 'all-extras')
+        }}
       # Rebenchmark all-extras after https://github.com/cbornet/blockbuster/pull/61 is released
       # in a compatible version; enable it if the job stays within seven minutes.
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' && matrix.install.name != 'all-extras' }}
@@ -330,9 +337,18 @@ jobs:
       # they form would otherwise be the critical-path floor of the all-extras cells -- the
       # other install variants skip the suites at module level, for want of the engine packages.
       # Its `lowest` leg proves the minimum `temporalio`/`dbos`/`prefect` bounds.
-      - run: >-
-          uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
-          --ignore=tests/durable_exec
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START=./pyproject.toml
+            runner=(coverage run -m pytest)
+          else
+            unset COVERAGE_PROCESS_START
+            runner=(pytest)
+          fi
+          uv run ${{ matrix.install.command }} "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+            --ignore=tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -340,11 +356,13 @@ jobs:
       # combine work runs in parallel across the matrix instead of serially in the `coverage`
       # job, which would otherwise merge hundreds of files on the critical path.
       - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         run: uv run ${{ matrix.install.command }} coverage combine
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
       - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -386,7 +404,12 @@ jobs:
         resolution: [locked, lowest]
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Python 3.10 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
+      COLLECT_COVERAGE: >-
+        ${{
+          matrix.python-version == '3.12'
+          || ((matrix.python-version == '3.10' || matrix.python-version == '3.14') && matrix.resolution == 'locked')
+        }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
       # Disables Temporal's workflow deadlock detector (temporalio reads this to set the
@@ -432,15 +455,24 @@ jobs:
       # the module-level `try_import` skip-gating (logfire, mcp, openai, anthropic, ...)
       # behaves identically and coverage combination stays complete. The lowest leg was
       # synced above, so `--no-sync` there keeps its resolution.
-      - run: >-
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
-          coverage run -m pytest --durations=20 -n logical --dist=loadgroup
-          tests/durable_exec
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START=./pyproject.toml
+            runner=(coverage run -m pytest)
+          else
+            unset COVERAGE_PROCESS_START
+            runner=(pytest)
+          fi
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       # See the matching step in the `test` job.
       - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         run: >-
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-extras --no-extra mcp-tasks' }}
           coverage combine
@@ -448,6 +480,7 @@ jobs:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -477,7 +510,8 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Python 3.14's sys.monitoring coverage core is substantially cheaper than the legacy tracer.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
@@ -538,19 +572,30 @@ jobs:
       # `-n logical` (see note on the `test` job).
       # The durable-execution suites run in `test-durable-exec` (its `lowest` leg covers
       # this resolution), keeping their grouped xdist chains off this job's critical path.
-      - run: >-
-          uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
-          --ignore=tests/durable_exec
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START=./pyproject.toml
+            runner=(coverage run -m pytest)
+          else
+            unset COVERAGE_PROCESS_START
+            runner=(pytest)
+          fi
+          uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+            --ignore=tests/durable_exec
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
       # See the matching step in the `test` job.
       - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         run: uv run --no-sync coverage combine
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
       - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.python-version }}-lowest-versions
@@ -646,6 +691,7 @@ jobs:
           coverage run -m pytest
           tests/test_mcp.py
           tests/models/test_mcp_sampling.py
+          tests/test_conftest.py
         env:
           COVERAGE_FILE: .coverage/.coverage.fastmcp-4
 
