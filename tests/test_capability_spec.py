@@ -3224,7 +3224,11 @@ async def test_custom_init_capability_can_initialize_metadata_without_post_init(
 
 
 async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at_run() -> None:
-    """Ids that only collide after construction escape the eager check, so run registration still rejects them."""
+    """Ids that only collide after construction escape the eager check, so run registration still rejects them.
+
+    Two *different* classes under one id can never be combined: no one class can say how they
+    compose, so this is rejected outright rather than offered to `combine`.
+    """
 
     @dataclass
     class FirstCap(AbstractCapability):
@@ -3239,7 +3243,7 @@ async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at
     agent = Agent(TestModel(), capabilities=[first, second])
     second.id = 'same'  # collision introduced after construction
 
-    with pytest.raises(UserError, match="Capability id 'same' is used by multiple capabilities"):
+    with pytest.raises(UserError, match="Capability id 'same' is used by capabilities of different types"):
         await agent.run('hi')
 
 

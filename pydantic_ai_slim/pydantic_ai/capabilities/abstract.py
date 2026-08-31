@@ -19,7 +19,7 @@ from pydantic_ai._instructions import (
     sourced_instruction,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityInstructionSource,
@@ -282,6 +282,55 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
     override is optional and only adds routing context to the load catalog.
     """
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Combine capabilities that resolved to the same `id` into the one the run will use.
+
+        Two capabilities under one `id` name the same thing, so exactly one of them can be what
+        that `id` refers to. Rather than guessing, the run asks the class how its own instances
+        compose, once per duplicated `id`, with every instance in application order.
+
+        The default raises: for most capabilities a repeat is a mistake — the same one added twice,
+        or two that were meant to be told apart — and a run-local id assigned by position instead
+        would be neither predictable nor stable. Capabilities whose repeats *do* have a meaning
+        override this:
+
+        - A single-purpose capability composes by **last wins**, which is what makes
+          `agent.run(capabilities=[Thinking(effort='high')])` override an agent-level `Thinking`:
+
+            ```python {noqa="F821" test="skip"}
+            @classmethod
+            def combine(
+                cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]
+            ) -> AbstractCapability[AgentDepsT]:
+                return capabilities[-1]
+            ```
+
+        - A capability that bundles others merges them, so two bundles sharing a member contribute
+          it once.
+
+        Only reached by capabilities that have an `id` at all: an
+        [`id`][pydantic_ai.capabilities.AbstractCapability.id] of `None` means "however many of
+        these you like", and those are told apart by the run instead.
+
+        Args:
+            capabilities: The two or more capabilities sharing an `id`, in application order.
+                All are instances of `cls`; a shared `id` across *different* classes is always
+                rejected, since no one class can say how it composes.
+
+        Returns:
+            The single capability the `id` refers to for this run.
+
+        Raises:
+            UserError: By default, naming the `id` and how to resolve the duplication.
+        """
+        raise UserError(
+            f'Capability id {capabilities[0].id!r} is used by {len(capabilities)} capabilities. '
+            f'Pass a distinct `id` to each, or `id=None` to have the run tell them apart. '
+            f'To define how repeated {cls.__name__} capabilities compose, override '
+            f'`{cls.__name__}.combine()`.'
+        )
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
@@ -1297,3 +1346,60 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     leaves: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(leaves.append)
     return leaves
+
+
+def combine_duplicate_capabilities(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+    """Resolve capabilities sharing an `id` in a tree down to one each, via `AbstractCapability.combine`.
+
+    Runs once over the whole composed tree rather than per layer, so wherever two capabilities meet
+    — both on the agent, both passed to one run, or one of each — the same rule applies and the same
+    `combine` decides. `agent.run(capabilities=[Thinking(effort='high')])` overriding an agent-level
+    `Thinking` is then not a special case but the ordinary meaning of two capabilities under one id.
+
+    Keeping both is not an option: `_build_run_capabilities` maps the id to exactly one of them, so
+    the other would go on contributing tools and instructions while nothing could name it —
+    `resolve_capability_id` wouldn't find it, and it would be missing from
+    `RunContext.active_capability_ids`.
+
+    Rewrites the tree in place with
+    [`visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace] rather than
+    rebuilding it from the flat leaf list, which would drop the nesting and re-add a container's
+    children beside the wrapper that already contributes them.
+
+    Capabilities with `id=None` are left alone: the run tells those apart itself.
+    """
+    by_id: dict[str, list[AbstractCapability[AgentDepsT]]] = {}
+    for leaf in leaf_capabilities(capability):
+        if leaf.id is not None:
+            by_id.setdefault(leaf.id, []).append(leaf)
+
+    # The combined capability takes the last occurrence's place, so what survives keeps the position
+    # the run's last word on that id had; the earlier occurrences are removed.
+    replacements: dict[int, AbstractCapability[AgentDepsT] | None] = {}
+    for capability_id, duplicates in by_id.items():
+        if len(duplicates) == 1:
+            continue
+        for duplicate in duplicates[:-1]:
+            replacements[id(duplicate)] = None
+        replacements[id(duplicates[-1])] = _combine_duplicates(capability_id, duplicates)
+
+    if not replacements:
+        return capability
+    combined = capability.visit_and_replace(lambda cap: replacements.get(id(cap), cap))
+    # Every duplicated id keeps one occurrence, so the tree can never be emptied.
+    assert combined is not None, 'combining duplicate capabilities cannot empty the tree'
+    return combined
+
+
+def _combine_duplicates(
+    capability_id: str, duplicates: Sequence[AbstractCapability[AgentDepsT]]
+) -> AbstractCapability[AgentDepsT]:
+    """Ask the shared class how its instances compose, or reject a class-crossing `id`."""
+    types = {type(duplicate) for duplicate in duplicates}
+    if len(types) > 1:
+        names = ', '.join(sorted(cls.__name__ for cls in types))
+        raise UserError(
+            f'Capability id {capability_id!r} is used by capabilities of different types ({names}). '
+            'Ids identify one capability within a run, so give each a distinct `id`.'
+        )
+    return duplicates[-1].combine(duplicates)
