@@ -6,7 +6,7 @@ environment cannot safely exist, and applications can pass one deliberately to d
 default local sandbox with a policy-specific explanation.
 
 It implements the process-start and filesystem opt-ins natively so every operation surfaces
-the configured reason instead of raising `NotImplementedError` at the facade.
+the configured reason instead of raising `NotImplementedError` in the `Sandbox` API.
 """
 
 from __future__ import annotations

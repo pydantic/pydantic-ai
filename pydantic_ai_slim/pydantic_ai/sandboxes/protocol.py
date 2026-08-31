@@ -5,15 +5,15 @@ that an agent run can execute commands in and read/write files of. Backends impl
 small [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol (command execution and
 working-directory reporting); each additional capability (filesystem, background processes,
 streaming) is a separate optional `Supports*` protocol, so a backend implements exactly the
-parts its platform supports. Tools and capabilities consume sandboxes through the read-only
-[`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] facade; identity and lifecycle
+parts its platform supports. Tools and capabilities use the read-only
+[`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] object; identity and lifecycle
 are covered in the [sandbox documentation](../sandbox.md).
 
 Contracts every implementation must honor (the rest are on the relevant members):
 
 - **One environment.** `run` executes against the same filesystem that `fs` exposes: a file
-  written through either is visible to the other. Consumers (including the
-  [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade) rely on this to serve file operations
+  written through either is visible to the other. Consumers (including
+  [`Sandbox`][pydantic_ai.sandboxes.Sandbox]) rely on this to serve file operations
   through whichever of the two paths is cheaper.
 - **Results are honest.** `exit_code` is the real process exit code; a non-zero exit is a
   normal result, not an exception. Infrastructure failures raise; they are never disguised as
@@ -186,8 +186,8 @@ class SandboxFilesystem(Protocol):
 
     All paths are absolute POSIX paths; use
     [`Sandbox.resolve`][pydantic_ai.sandboxes.Sandbox.resolve] to turn model-supplied
-    relative paths into absolute ones first. The backend SPI is bytes-only: decoding policy lives
-    in the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade's text helpers.
+    relative paths into absolute ones first. The filesystem API is bytes-only: decoding policy
+    lives in the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] text helpers.
 
     Operations on a path that does not exist raise the builtin `FileNotFoundError`: backends
     translate their SDK's own missing-file exception.
@@ -226,7 +226,7 @@ class SandboxFilesystem(Protocol):
 class SupportsFilesystem(Protocol):
     """Optional native filesystem access for a sandbox backend.
 
-    Checked via `isinstance` by the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade;
+    Checked via `isinstance` by [`Sandbox`][pydantic_ai.sandboxes.Sandbox];
     [`Sandbox.fs`][pydantic_ai.sandboxes.Sandbox.fs] raises `NotImplementedError` when the
     backend does not implement this.
     """
@@ -241,7 +241,7 @@ class SupportsFilesystem(Protocol):
 class SupportsStart(Protocol):
     """Optional native background-process support for a sandbox backend.
 
-    Checked via `isinstance` by the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade.
+    Checked via `isinstance` by [`Sandbox`][pydantic_ai.sandboxes.Sandbox].
     """
 
     async def start(

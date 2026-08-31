@@ -79,7 +79,7 @@ class ReadOnlySandbox:
             self.fs: SandboxFilesystem = _ReadOnlyFilesystem(wrapped.fs)
 
     def _backend_for_internal_read(self) -> SandboxBackend:
-        """Return the unrestricted backend for the facade's fixed, non-mutating read command."""
+        """Return the unrestricted backend for the fixed, non-mutating read command."""
         return self._wrapped
 
     @property

@@ -498,8 +498,8 @@ agent = Agent('openai:gpt-5.2', capabilities=[WholeRunTimer()])
 
 `wrap_entire_run` runs on the shared agent-level capability before `for_run`, model resolution,
 and sandbox resolution. Its `ctx.sandbox` is the raw `SandboxBackend`, `SandboxRef`, or `None`
-run argument, not the assembled facade; use `wrap_run` for sandbox operations. It cannot alter
-control flow, and suppressing the run's exception is
+run argument, not the run's assembled `Sandbox` object; use `wrap_run` for sandbox operations.
+It cannot alter control flow, and suppressing the run's exception is
 reported as a [`UserError`][pydantic_ai.exceptions.UserError]. See
 [`AbstractCapability.wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run]
 for the full contract.

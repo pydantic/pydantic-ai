@@ -1,26 +1,17 @@
 # Sandboxes
 
-Every run exposes a concrete `Sandbox` facade at `ctx.sandbox`. By default it is an
-`UnavailableSandbox`: every operation raises `UserError` with instructions for attaching a real
-environment. Execution is always an explicit opt-in; no run silently touches the host.
-
-`LocalSandbox` executes host subprocesses and isolates nothing. Pass it explicitly
-(`agent.run(..., sandbox=LocalSandbox())`) only for trusted development and tests. Attach a
-container, VM, or remote backend for untrusted execution.
-
-## Use the attached facade
-
-Tools use `ctx.sandbox` directly:
+Use a sandbox when an agent needs a workspace for commands and files. Attach an environment to
+the run, then use `ctx.sandbox` inside tools:
 
 ```python
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, LocalSandbox, RunContext
 
 agent = Agent('openai:gpt-5.2')
 
 
 @agent.tool
-async def execute(ctx: RunContext[None], command: str) -> str:
-    result = await ctx.sandbox.run(command, shell=True, timeout=30)
+async def execute(ctx: RunContext[None], command: list[str]) -> str:
+    result = await ctx.sandbox.run(command, timeout=30)
     return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
 
 
@@ -30,24 +21,46 @@ async def read_file(ctx: RunContext[None], path: str, offset: int = 1, limit: in
     window = await ctx.sandbox.read_file(path, offset=offset, limit=limit)
     suffix = '\n[more lines available]' if window.has_more else ''
     return window.text + suffix
+
+
+async def main() -> None:
+    async with LocalSandbox() as sandbox:
+        await agent.run('Inspect the project and fix the failing test.', sandbox=sandbox)
 ```
 
-`Sandbox.fs` requires the backend to implement `SupportsFilesystem` and `Sandbox.start`
-requires `SupportsStart`; both raise `NotImplementedError` when the backend omits them. Keep
-approval, command restrictions, output limits, and path policy in the tool layer.
+The same tools work with a container, VM, or remote sandbox. Only the attached environment
+changes.
 
-## Resolution and lifecycle
+`LocalSandbox` runs host subprocesses and isolates nothing. Use it only for trusted development
+and tests. Attach an isolated backend before running untrusted code.
 
-Sandbox resolution happens before capability and toolset `for_run`:
+Sandbox access is opt-in. Without an attached environment, operations raise `UserError` with
+instructions for attaching one; Pydantic AI never silently uses the host. Keep approval, command
+restrictions, output limits, and path rules in the tool layer.
 
-1. The `sandbox=` run argument: a caller-owned live backend or a serializable `SandboxRef`.
-2. One active capability's `acquire_sandbox` contribution. More than one sandbox-contributing
-   capability is ambiguous and raises before any hook runs; deferred capabilities are not
-   consulted; returning `None` falls through.
-3. The framework default: `UnavailableSandbox` with attachment instructions.
+## Choose the environment
 
-A capability supplies a sandbox through three lifecycle hooks; only the serializable
-`SandboxRef` is held by the run, and the live connection is (re)established on first use:
+- Pass a live backend or `SandboxRef` through `sandbox=` for one run. The caller owns its
+  lifecycle, and this explicit value wins over capability-provided sandboxes.
+- Add one sandbox capability to provision or connect environments automatically.
+- Pass `UnavailableSandbox(reason=...)` to disable execution with an application-specific
+  explanation.
+
+Tools always call the same `ctx.sandbox` methods. `fs` needs a backend with
+`SupportsFilesystem`, while `start()` needs `SupportsStart`; unsupported operations raise
+`NotImplementedError`.
+
+## Manage sandbox lifecycle with a capability
+
+A capability can create an environment for each run, reconnect an existing one, share a warm
+environment, or manage a pool. It does this through three hooks:
+
+- `acquire_sandbox`: provision, select, or check out an environment once per run.
+- `get_sandbox`: open a connection when an operation first needs it; reconnect, never create.
+- `release_sandbox`: destroy, return, or detach the environment after a run that acquired a ref.
+
+When acquisition returns a `SandboxRef`, the run stores only that serializable identity. The
+live connection opens on first use:
 
 ```python
 from dataclasses import dataclass
@@ -63,7 +76,7 @@ class MySandboxCapability(AbstractCapability[Any]):
     client: Any  # your provider's SDK client; credentials stay here, never in the ref
 
     async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-        """Acquire for this run by provisioning, checking out, or selecting; None declines."""
+        """Acquire for this run by provisioning, checking out, or selecting."""
         sandbox = await self.client.create()
         return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
 
@@ -78,6 +91,9 @@ class MySandboxCapability(AbstractCapability[Any]):
         await self.client.destroy(ref.sandbox_id)
 ```
 
+For durable execution, construct the capability with a stable ID, for example
+`MySandboxCapability(client, id='my-sandbox')`, so workers can route the ref back to it.
+
 The same hooks cover every lifecycle: per-run (as above), warm (acquisition returns the held
 backend's ref, no release override), pooled per conversation (acquisition checks out by
 `ctx.conversation_id` and release checks it back in), already-live (only `get_sandbox` is
@@ -86,7 +102,7 @@ and serves `SandboxRef` run arguments). With a ref run argument, `acquire_sandbo
 caller owns the lifecycle) but `get_sandbox` still connects. Exactly one active capability may
 define sandbox hooks; ambiguity raises before any acquisition side effect.
 
-The handle is present on every `RunContext`, including capability and toolset `for_run` hooks
+`ctx.sandbox` is present on every `RunContext`, including capability and toolset `for_run` hooks
 and initial metadata factories.
 
 To replace the default reason with an application policy, explicitly pass:
@@ -127,7 +143,7 @@ separate registration.
   attached to the agent. Framework-acquired refs also carry the owning capability's stable ID
   for exact reconnection and release routing.
 
-Either way tools keep calling `await ctx.sandbox.run(...)`; the deferred facade connects once
+Either way tools keep calling `await ctx.sandbox.run(...)`; the `Sandbox` object connects once
 on its first operation inside the engine's I/O boundary. Do not call sandbox operations in
 Temporal workflow code (connecting is I/O), and wrap effectful DBOS sandbox tools as steps.
 Live backends are rejected inside durable containers, and `LocalSandbox` is intentionally not

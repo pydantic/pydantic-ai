@@ -1,8 +1,8 @@
-"""The user-facing sandbox facade.
+"""The user-facing sandbox API.
 
 Sandbox backends implement the small
 [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol and typically also
-[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]. This facade owns
+[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]. The `Sandbox` object owns
 model-facing semantics such as decoding and windowed file reads. Capabilities and user tools
 consume it through [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
 """
@@ -100,7 +100,7 @@ class _DeferredFilesystem:
 class Sandbox:
     """Rich sandbox interface exposed to tools and capabilities.
 
-    The facade forwards the backend's required methods and adds filesystem access, path
+    `Sandbox` forwards the backend's required methods and adds filesystem access, path
     resolution, and uniform text and windowed-file helpers. Use
     [`backend`][pydantic_ai.sandboxes.Sandbox.backend] to reach provider-specific
     functionality.
@@ -133,12 +133,12 @@ class Sandbox:
 
     @classmethod
     def wrap(cls, value: SandboxBackend) -> Sandbox:
-        """Wrap `value`, returning an existing facade unchanged."""
+        """Wrap `value`, returning an existing `Sandbox` unchanged."""
         return value if isinstance(value, Sandbox) else cls(value)
 
     @classmethod
     def _from_ref(cls, ref: SandboxRef, resolver: _SandboxResolver) -> Sandbox:
-        """Create a facade that connects to `ref` through `resolver` on its first operation."""
+        """Create a `Sandbox` that connects to `ref` through `resolver` on its first operation."""
         sandbox = cls.__new__(cls)
         sandbox._initialize(
             backend=None,
@@ -155,7 +155,7 @@ class Sandbox:
         capability_id: str,
         resolver: Callable[[SandboxRef | None], Awaitable[SandboxBackend]],
     ) -> Sandbox:
-        """Create a facade that asks one capability for a backend connection on first use."""
+        """Create a `Sandbox` that asks one capability for a backend connection on first use."""
         sandbox = cls.__new__(cls)
         sandbox._initialize(backend=None, ref=None, capability_id=capability_id, resolver=resolver, close_backend=True)
         return sandbox
@@ -171,7 +171,7 @@ class Sandbox:
         return self._capability_id if self._backend is None and self._ref is None else None
 
     def _is_framework_default(self) -> bool:
-        """Whether this facade contains the framework's implicit unavailable placeholder."""
+        """Whether this `Sandbox` contains the framework's implicit unavailable placeholder."""
         from ._policy import is_default_sandbox_backend
 
         return is_default_sandbox_backend(self._backend)
@@ -231,7 +231,7 @@ class Sandbox:
         return self._backend
 
     async def _close_connected_backend(self) -> None:
-        """Detach a connection opened by this facade without terminating its sandbox."""
+        """Detach the connection opened by this `Sandbox` without terminating the environment."""
         if not self._close_backend:
             return
         async with self._connect_lock:
@@ -336,7 +336,7 @@ class Sandbox:
         `limit` is `None`, the window extends through EOF. `limit` bounds returned lines, not
         bytes or characters: a single line may be arbitrarily large, and a backend without a
         usable in-sandbox `sed` command may transfer the whole file through its filesystem API
-        before the facade applies the line window.
+        before `Sandbox` applies the line window.
 
         This is a model-facing view: content is decoded as UTF-8 with U+FFFD replacement for
         undecodable bytes. Use [`read_text`][pydantic_ai.sandboxes.Sandbox.read_text] for

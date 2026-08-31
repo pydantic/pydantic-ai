@@ -1,4 +1,4 @@
-"""Sandbox facade, backend protocols, and implementations."""
+"""Sandbox API, backend protocols, and implementations."""
 
 from .local import LocalSandbox
 from .protocol import (
