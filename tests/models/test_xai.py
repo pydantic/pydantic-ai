@@ -63,9 +63,9 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     CachePoint,
     FinishReason,
-    ModelResponseStreamEvent,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -5028,7 +5028,7 @@ async def test_xai_stream_interleaved_text_part_lifecycle_events(allow_model_req
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=str | None, capabilities=[NativeTool(WebSearchTool())])
 
-    events: list[ModelResponseStreamEvent] = []
+    events: list[AgentStreamEvent] = []
     async with agent.iter(user_prompt='What is the weather?') as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node):
