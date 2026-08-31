@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
 from weakref import ref
@@ -106,7 +106,7 @@ from ._toolset import (
     validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, unwrap_model
+from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
 
 _T = TypeVar('_T')
 
@@ -676,13 +676,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         with self._durable_run_context_scope(run_context) as ctx:
             model = await self._resolve_model_for_request(model_id, ctx)
             registered, _ = self._registered_model_id(model)
-            async with AsyncExitStack() as stack:
-                if not registered:
-                    model = await stack.enter_async_context(model)
-                ctx.model = model
+            async with managed_model_scope(model, owned=not registered) as active_model:
+                ctx.model = active_model
                 if isinstance(ctx, _RestrictedRunContext):
                     ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
-                yield model, ctx
+                yield active_model, ctx
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""

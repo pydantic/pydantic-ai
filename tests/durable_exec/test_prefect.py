@@ -3347,6 +3347,51 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
     assert await run_agent() == ('tenant:acme', 'tenant:globex', 'success (no tool calls)')
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_durability_manages_resolver_built_model_lifecycle(blockbuster_enabled: bool) -> None:
+    assert blockbuster_enabled is False
+    events: list[str] = []
+
+    class TrackingModel(TestModel):
+        async def __aenter__(self) -> TrackingModel:
+            events.append('enter')
+            return await super().__aenter__()
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            events.append('exit')
+            return await super().__aexit__(*args)
+
+        async def request(self, *args: Any, **kwargs: Any) -> Any:
+            events.append('request')
+            return await super().request(*args, **kwargs)
+
+        @asynccontextmanager
+        async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
+            events.append('stream')
+            async with super().request_stream(*args, **kwargs) as stream:
+                yield stream
+            events.append('stream_consumed')
+
+    agent = Agent(
+        'rebuilt',
+        name='durability_resolved_model_lifecycle',
+        capabilities=[
+            ResolveModelId(lambda ctx, model_id: TrackingModel(custom_output_text='ok')),
+            PrefectDurability(),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str, str]:
+        ordinary = (await agent.run('ordinary')).output
+        async with agent.run_stream('streamed') as result:
+            streamed = await result.get_output()
+        return ordinary, streamed
+
+    assert await run_agent() == ('ok', 'ok')
+    assert events == ['enter', 'request', 'exit', 'enter', 'stream', 'stream_consumed', 'exit']
+
+
 async def test_prefect_durability_alias_default_model() -> None:
     """An agent whose *default* model is an alias only a `ResolveModelId` capability can resolve.
 

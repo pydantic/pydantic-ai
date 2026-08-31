@@ -162,10 +162,20 @@ class ReplayingDurability(RecordingDurability):
 
 
 class LifecycleModel(TestModel):
-    def __init__(self, events: list[str], *, fail: bool = False, model_name: str = 'lifecycle') -> None:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        fail: bool = False,
+        fail_exit: bool = False,
+        suppress_exit: bool = False,
+        model_name: str = 'lifecycle',
+    ) -> None:
         super().__init__(custom_output_text='ok', model_name=model_name)
         self.events = events
         self.fail = fail
+        self.fail_exit = fail_exit
+        self.suppress_exit = suppress_exit
 
     async def __aenter__(self) -> LifecycleModel:
         self.events.append('model-enter')
@@ -179,7 +189,10 @@ class LifecycleModel(TestModel):
     ) -> bool | None:
         exception_name = exc_type.__name__ if exc_type is not None else 'none'
         self.events.append(f'model-exit:{exception_name}')
-        return await super().__aexit__(exc_type, exc_val, exc_tb)
+        await super().__aexit__(exc_type, exc_val, exc_tb)
+        if self.fail_exit:
+            raise ValueError('exit failed')
+        return self.suppress_exit
 
     async def request(
         self,
@@ -243,6 +256,36 @@ async def test_durable_model_scope_manages_rebuilt_model_lifecycle(
         assert (await agent.run('test')).output == 'ok'
 
     assert events == expected_events
+
+
+async def test_durable_model_scope_does_not_suppress_body_error() -> None:
+    events: list[str] = []
+    model = LifecycleModel(events, fail=True, suppress_exit=True)
+    agent = Agent(
+        'lifecycle',
+        name='rebuilt_model_suppressed_exit',
+        capabilities=[ResolveModelId(lambda ctx, model_id: model), RecordingDurability()],
+    )
+
+    with pytest.raises(RuntimeError, match='request failed'):
+        await agent.run('test')
+
+    assert events == ['model-enter', 'request', 'model-exit:RuntimeError']
+
+
+async def test_durable_model_scope_surfaces_teardown_error() -> None:
+    events: list[str] = []
+    model = LifecycleModel(events, fail=True, fail_exit=True)
+    agent = Agent(
+        'lifecycle',
+        name='rebuilt_model_failed_exit',
+        capabilities=[ResolveModelId(lambda ctx, model_id: model), RecordingDurability()],
+    )
+
+    with pytest.raises(ValueError, match='exit failed'):
+        await agent.run('test')
+
+    assert events == ['model-enter', 'request', 'model-exit:RuntimeError']
 
 
 async def test_durable_model_scope_does_not_manage_registered_models() -> None:
