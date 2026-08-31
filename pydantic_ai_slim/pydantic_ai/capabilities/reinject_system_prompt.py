@@ -76,8 +76,8 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             # never holds `RealtimeModelSettings`.
             model_settings=cast('ModelSettings | None', ctx.model_settings),
         )
-        request_context.messages = tuple(
-            _reinject_system_prompt(request_messages, sys_parts, replace_existing=self.replace_existing)
+        request_context.messages = _reinject_system_prompt(
+            request_messages, sys_parts, replace_existing=self.replace_existing
         )
         ctx.messages[:] = _reinject_system_prompt(
             persistent_messages, sys_parts, replace_existing=self.replace_existing

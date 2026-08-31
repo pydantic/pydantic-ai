@@ -570,6 +570,8 @@ See [Iterating Over an Agent's Graph](../agent.md#iterating-over-an-agents-graph
 
 [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance. Mutate the context you were given, or return a `dataclasses.replace()` copy of it — either way, `model_id` and `streaming` carry over.
 
+After the handler reaches the provider boundary, `request_context.usage_responses` contains the response objects whose usage the agent committed for that lifecycle. Accounting and telemetry capabilities should use this tuple instead of assuming the response returned by an outer hook is still the billable provider response. It can contain multiple entries when a continuation emitted partial billable output before an error hook recovered; treat it as read-only.
+
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
 
 `before_model_request` hooks see the full `request_context.messages` list, including any [message history](../message-history.md) passed to `agent.run()`, and can modify it.

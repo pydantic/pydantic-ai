@@ -1226,8 +1226,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = sr.get()
             _handler_response = response
             _handler_usage_recorded = True
-            self._record_response_usage(ctx, response)
-            accounted_responses.append(response)
+            if self._record_response_usage(ctx, response, request_context=req_ctx):
+                accounted_responses.append(response)
             capture_model_response_span_context(req_ctx, response, time_to_first_chunk)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
@@ -1425,15 +1425,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except Exception as e:
                 if _handler_response is not None:
                     _handler_usage_recorded = True
-                    self._record_response_usage(ctx, _handler_response)
-                    accounted_responses.append(_handler_response)
+                    if self._record_response_usage(ctx, _handler_response, request_context=req_ctx):
+                        accounted_responses.append(_handler_response)
                 response = await ctx.deps.root_capability.on_model_request_error(
                     run_context, request_context=req_ctx, error=e
                 )
             _handler_response = response
             _handler_usage_recorded = True
-            self._record_response_usage(ctx, response)
-            accounted_responses.append(response)
+            if self._record_response_usage(ctx, response, request_context=req_ctx):
+                accounted_responses.append(response)
             capture_model_response_span_context(req_ctx, response)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
@@ -1774,10 +1774,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     def _record_response_usage(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         response: _messages.ModelResponse,
-    ) -> None:
+        *,
+        request_context: ModelRequestContext | None = None,
+    ) -> bool:
         """Commit billed usage at the provider-response boundary."""
+        if request_context is not None:
+            if any(recorded is response for recorded in request_context.usage_responses):
+                return False
+            request_context.usage_responses += (response,)
         fill_response_cost(response)
         ctx.state.usage.incr(response.usage)
+        return True
 
     @staticmethod
     def _enforce_usage_limits(

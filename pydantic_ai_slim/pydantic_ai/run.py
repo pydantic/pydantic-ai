@@ -298,7 +298,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # Defensive fallback, like the two guarded branches above: reached only if a wrapper
         # returns a *node* while the graph holds an `EndMarker`/`ErrorMarker` or an unrecognised
         # shape — no streamed node's handler can produce that state in the current lifecycle.
-        return None  # pragma: no cover
+        return None
 
     def _graph_reflects(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> bool:
         """Whether the graph runner's own state already records `result` as the step's outcome.

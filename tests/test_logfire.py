@@ -3797,6 +3797,34 @@ def test_chat_span_ok_when_on_model_request_error_recovers(capfire: CaptureLogfi
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_chat_span_usage_comes_from_provider_response_before_after_hook_replacement(
+    capfire: CaptureLogfire,
+) -> None:
+    class ReplaceResponse(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('replacement')], usage=RequestUsage())
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('provider output')], usage=RequestUsage(input_tokens=7, output_tokens=3))
+
+    result = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), ReplaceResponse()],
+    ).run_sync('Hello')
+
+    assert result.output == 'replacement'
+    [chat_span] = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert chat_span['attributes']['gen_ai.usage.input_tokens'] == 7
+    assert chat_span['attributes']['gen_ai.usage.output_tokens'] == 3
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_output_function_span_ok_when_on_output_process_error_recovers(capfire: CaptureLogfire) -> None:
     class RecoverOutputError(AbstractCapability[Any]):
         async def on_output_process_error(

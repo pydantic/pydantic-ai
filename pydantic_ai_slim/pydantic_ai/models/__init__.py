@@ -363,6 +363,15 @@ class ModelRequestContext:
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
 
+    usage_responses: tuple[ModelResponse, ...] = field(default=(), init=False, repr=False)
+    """Provider-boundary responses whose usage was committed for this lifecycle.
+
+    This remains empty until the wrapped handler reaches a provider response. It can contain
+    more than one response when a continuation produced billable partial output before an
+    error hook recovered. Treat this as read-only: it exposes the agent's accounting decisions
+    to capabilities, while only the agent runtime updates the usage ledger.
+    """
+
 
 @dataclass(frozen=True, kw_only=True)
 class ModelResolutionContext(Generic[ModelContextDepsT]):

@@ -494,6 +494,8 @@ class _FinishModelRequestSpan(Protocol):
         self,
         response: ModelResponse,
         time_to_first_chunk: float | None = None,
+        *,
+        usage_response: ModelResponse | None = None,
     ) -> ModelRequestContext: ...
 
 
@@ -575,6 +577,8 @@ def open_model_request_span(
             def finish(
                 response: ModelResponse,
                 time_to_first_chunk: float | None = None,
+                *,
+                usage_response: ModelResponse | None = None,
             ) -> ModelRequestContext:
                 nonlocal prepared_request_context, record_metrics
 
@@ -589,18 +593,21 @@ def open_model_request_span(
                 request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
                 system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
 
-                response_model = response.model_name or request_model
+                accounted_response = usage_response or response
+                response_model = accounted_response.model_name or response.model_name or request_model
                 price_calculation: PriceCalculation | None = None
 
                 def _record_metrics() -> None:
                     metric_attributes = model_metric_attributes(system, request_model, response_model)
-                    settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
+                    settings.record_metrics(
+                        accounted_response, price_calculation, metric_attributes, time_to_first_chunk
+                    )
 
                 record_metrics = _record_metrics
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                price_calculation = response_price_calculation(response)
+                price_calculation = response_price_calculation(accounted_response)
 
                 if not span.is_recording():
                     return prepared_request_context
@@ -613,7 +620,7 @@ def open_model_request_span(
                     message_json_cache=message_json_cache,
                 )
 
-                attributes_to_set = response_attributes(response, response_model, price_calculation)
+                attributes_to_set = response_attributes(accounted_response, response_model, price_calculation)
                 if time_to_first_chunk is not None:
                     attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)

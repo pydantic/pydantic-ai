@@ -4900,7 +4900,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         # Replace message history with compaction + last request
         messages = [compacted_response, request_context.messages[-1]]
-        request_context.messages = tuple(messages)
+        request_context.messages = messages.copy()
         ctx.messages[:] = messages
         return request_context
 

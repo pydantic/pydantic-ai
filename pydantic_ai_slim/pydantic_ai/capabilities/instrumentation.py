@@ -37,6 +37,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 from .abstract import (
     AbstractCapability,
@@ -48,6 +49,18 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
 )
+
+
+def _usage_response(request_context: ModelRequestContext) -> ModelResponse | None:
+    """Represent the usage committed at the provider boundary without changing semantic output."""
+    responses = request_context.usage_responses
+    if not responses:
+        return None
+    usage = RequestUsage()
+    for response in responses:
+        usage.incr(response.usage)
+    return replace(responses[-1], usage=usage)
+
 
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
@@ -323,6 +336,7 @@ class Instrumentation(AbstractCapability[Any]):
                         prepared_request_context = finish(
                             captured_response,
                             time_to_first_chunk=captured_time_to_first_chunk,
+                            usage_response=_usage_response(request_context),
                         )
                         track_request(prepared_request_context)
                     raise
@@ -330,6 +344,7 @@ class Instrumentation(AbstractCapability[Any]):
                 prepared_request_context = finish(
                     response,
                     time_to_first_chunk=captured_time_to_first_chunk,
+                    usage_response=_usage_response(request_context),
                 )
                 # Use the prepared parameters so prompted-output instructions match the model payload.
                 track_request(prepared_request_context)
