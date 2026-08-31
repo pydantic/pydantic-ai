@@ -43,10 +43,11 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 def _default_sandbox() -> Sandbox:
     # Imported lazily to keep the run-context module independent of the sandbox facade during
     # package initialization. This factory runs only when a `RunContext` is constructed.
-    from .sandboxes import Sandbox, UnavailableSandbox
+    from .sandboxes import Sandbox
+    from .sandboxes._policy import default_sandbox_backend
 
     return Sandbox.wrap(
-        UnavailableSandbox(
+        default_sandbox_backend(
             reason='No sandbox is attached: this `RunContext` was created outside an agent run. '
             'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or supply one '
             "from a capability's `acquire_sandbox`."

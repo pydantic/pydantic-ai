@@ -554,8 +554,14 @@ async def test_bare_run_context_sandbox_is_unavailable():
     """
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     assert ctx.sandbox.provider == 'unavailable'
+    assert ctx.sandbox._is_framework_default()  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(UserError, match='created outside an agent run'):
         await ctx.sandbox.run(['echo', 'hello'])
+
+    backend = ctx.sandbox.backend
+    assert isinstance(backend, UnavailableSandbox)
+    explicit = Sandbox(UnavailableSandbox(backend.reason))
+    assert not explicit._is_framework_default()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_unavailable_sandbox_surfaces_reason_for_every_operation():

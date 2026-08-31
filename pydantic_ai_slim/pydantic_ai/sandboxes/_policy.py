@@ -11,10 +11,19 @@ DEFAULT_SANDBOX_UNAVAILABLE_REASON = (
 )
 
 
-def default_sandbox_backend() -> SandboxBackend:
+class _DefaultUnavailableSandbox(UnavailableSandbox):
+    """Nominal marker for framework policy, never application configuration."""
+
+
+def default_sandbox_backend(*, reason: str = DEFAULT_SANDBOX_UNAVAILABLE_REASON) -> SandboxBackend:
     """Create the framework-provided sandbox backend for a new run.
 
     Deliberately unable to execute anything: host access is never implied, so every operation
     raises with the attachment instructions.
     """
-    return UnavailableSandbox(reason=DEFAULT_SANDBOX_UNAVAILABLE_REASON)
+    return _DefaultUnavailableSandbox(reason=reason)
+
+
+def is_default_sandbox_backend(backend: object) -> bool:
+    """Whether `backend` is the framework's implicit unavailable placeholder."""
+    return isinstance(backend, _DefaultUnavailableSandbox)

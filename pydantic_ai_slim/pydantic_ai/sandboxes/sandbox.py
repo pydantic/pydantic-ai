@@ -170,6 +170,12 @@ class Sandbox:
         """Return the capability that resolves a provider-only sandbox across a durable boundary."""
         return self._capability_id if self._backend is None and self._ref is None else None
 
+    def _is_framework_default(self) -> bool:
+        """Whether this facade contains the framework's implicit unavailable placeholder."""
+        from ._policy import is_default_sandbox_backend
+
+        return is_default_sandbox_backend(self._backend)
+
     @property
     def backend(self) -> SandboxBackend:
         """The wrapped backend, for access to provider-specific functionality."""
