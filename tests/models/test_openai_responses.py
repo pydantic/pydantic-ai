@@ -1292,12 +1292,12 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     parts=[
                         TextPart(
                             content='The capital of France is Paris.',
-                            id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
+                            id='msg_003440f5ba4dd7f1006a95f3e8cd9087d2b399f7145627ec79',
                             provider_name='openai',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=278, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                        input_tokens=62, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -1305,9 +1305,9 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     provider_url='https://api.openai.com/v1/',
                     provider_details={
                         'finish_reason': 'completed',
-                        'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
+                        'timestamp': IsDatetime(),
                     },
-                    provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
+                    provider_response_id='resp_003440f5ba4dd7f1006a95f3e7961887d2ae83dcea20d24a32',
                     finish_reason='stop',
                 )
             )
