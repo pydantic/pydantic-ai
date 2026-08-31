@@ -229,6 +229,10 @@ def set_default_judge_model(model: models.Model | models.KnownModelName) -> None
 def _stringify(value: Any) -> str:
     if isinstance(value, str):
         return value
+
+    if isinstance(value, memoryview):
+        value = bytes(value)
+
     try:
         # If the value can be serialized to JSON, use that.
         # If that behavior is undesirable, the user could manually call repr on the arguments to the judge_* functions
@@ -249,7 +253,9 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
     """
     sections: list[str | UserContent] = []
     items: Sequence[str | UserContent] = (  # pyright: ignore[reportUnknownVariableType]
-        content if isinstance(content, Sequence) and not isinstance(content, str) else [content]
+        content
+        if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray, memoryview))
+        else [content]
     )
 
     sections.append(f'<{tag}>')
