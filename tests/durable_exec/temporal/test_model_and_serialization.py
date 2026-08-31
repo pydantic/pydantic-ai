@@ -79,7 +79,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
-    from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
+    from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
@@ -762,6 +762,8 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
+        'sandbox',  # live facade is rebuilt from the separately serialized `_sandbox_state` identity
+        '_run_state_key',  # process-local identity for sharing run setup state; meaningless inside an activity
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -1720,10 +1722,8 @@ def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
     assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
-async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(
-    temporal_env: WorkflowEnvironment, temporal_port: int
-) -> None:
-    client = await Client.connect(f'localhost:{temporal_port}')
+async def test_pydantic_ai_plugin_runs_workflow_in_sandbox(temporal_target: str) -> None:
+    client = await Client.connect(temporal_target)
     async with Worker(
         client,
         task_queue=TASK_QUEUE,

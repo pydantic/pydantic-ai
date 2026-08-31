@@ -609,7 +609,7 @@ try:
         logfire.shutdown(flush=False)
         # `test_examples.py` runs doc snippets that call the process-global `logfire.instrument_httpx()`,
         # which patches httpx via OTel and is never torn down. Reset it so it can't leak request spans
-        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
+        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `tests/durable_exec/temporal` snapshots).
         if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
             _httpx_instrumentor.uninstrument()
         # The worker's main-thread OTel context also persists across tests: an `attach` without a
