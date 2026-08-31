@@ -29,7 +29,7 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
-from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
+from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads, managed_model_scope
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
@@ -527,10 +527,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self, model_id: str | None, response: ModelResponse
     ) -> None:
         model = self._models_by_id.get(model_id or 'default')
-        if model is None:
+        owned = model is None
+        if owned:
             assert model_id is not None
             model = infer_model(model_id)
-        await model.cancel_suspended_response(response)
+        async with managed_model_scope(model, owned=owned) as active_model:
+            await active_model.cancel_suspended_response(response)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
