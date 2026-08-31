@@ -2984,10 +2984,10 @@ async def test_prefect_durability_allows_hook_only_per_run_capabilities(blockbus
     assert blockbuster_enabled is False
     events: list[str] = []
 
-    class RecordingCapability(AbstractCapability[None]):
+    class RecordingCapability(AbstractCapability[object]):
         # `AbstractCapability`, not `Capability`: the latter always contributes a `FunctionToolset`
         # (empty or not), which the runtime-toolset guard rejects on its own.
-        async def before_run(self, ctx: RunContext[None]) -> None:
+        async def before_run(self, ctx: RunContext[object]) -> None:
             events.append('before_run')
 
     agent = Agent(TestModel(), name='durability_per_run_hook_cap', capabilities=[PrefectDurability()])
