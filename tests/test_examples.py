@@ -971,7 +971,13 @@ async def model_logic(  # noqa: C901
                     ToolCallPart(
                         tool_name='execute',
                         args={
-                            'command': 'printf \'%s\\n\' \'for i in range(1, 16): print("fizz"*(i%3==0) + "buzz"*(i%5==0) or i)\' > fizzbuzz.py && python fizzbuzz.py'
+                            'command': [
+                                'python',
+                                '-c',
+                                'from pathlib import Path; '
+                                'code = \'for i in range(1, 16): print("fizz"*(i%3==0) + "buzz"*(i%5==0) or i)\\n\'; '
+                                "Path('fizzbuzz.py').write_text(code); exec(code)",
+                            ]
                         },
                         tool_call_id='pyd_ai_tool_call_id',
                     )
