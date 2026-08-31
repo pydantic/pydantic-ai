@@ -162,6 +162,23 @@ class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
 
 
+class TransparentDurability(RecordingDurability):
+    @property
+    def in_durable_context(self) -> bool:
+        return False
+
+
+class ModelIdReplacingBeforeModelRequest(AbstractCapability[Any]):
+    id = 'model_id_replacing_before_model'
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.model_id = 'tracked'
+        return request_context
+
+
 class LifecycleModel(LifecycleTrackingModel):
     def __init__(self, events: list[str], **kwargs: Any) -> None:
         super().__init__(events, event_prefix='model-', **kwargs)
@@ -182,6 +199,56 @@ class LifecycleModel(LifecycleTrackingModel):
                 yield streamed
         finally:
             self.events.append('stream-exit')
+
+
+async def test_capability_operation_is_direct_outside_durable_context() -> None:
+    events: list[str] = []
+    built_models: list[LifecycleTrackingModel] = []
+
+    def resolve_model(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel | None:
+        if model_id != 'tracked':
+            return None
+        model = LifecycleTrackingModel(events, event_prefix='tracked-', custom_output_text='from-tracked')
+        built_models.append(model)
+        return model
+
+    durability = TransparentDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='direct_capability_operation',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), durability],
+    )
+
+    assert (await agent.run('test')).output == 'original'
+    assert events == []
+    assert built_models == []
+    assert not any('__capability__' in name for name, _ in durability.calls)
+
+
+async def test_capability_operation_dispatch_is_unchanged_inside_durable_context() -> None:
+    events: list[str] = []
+    built_models: list[LifecycleTrackingModel] = []
+
+    def resolve_model(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel | None:
+        if model_id != 'tracked':
+            return None
+        model = LifecycleTrackingModel(events, event_prefix='tracked-', custom_output_text='from-tracked')
+        built_models.append(model)
+        return model
+
+    durability = RecordingDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='durable_capability_operation',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), durability],
+    )
+
+    with pytest.raises(UserError, match='was not registered with `RecordingDurability`'):
+        await agent.run('test')
+
+    assert events == []
+    assert len(built_models) == 1
+    assert any('__capability__' in name for name, _ in durability.calls)
 
 
 @pytest.mark.parametrize(

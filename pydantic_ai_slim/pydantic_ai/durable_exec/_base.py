@@ -413,12 +413,27 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> Any:
-        """Dispatch through serialized context so per-run capability instances recover worker-side."""
+        """Dispatch through serialized context so per-run capability instances recover worker-side.
+
+        Outside a durable container, calling the original operation preserves live context mutations
+        without rebuilding resources solely to round-trip them through the durable projection.
+        """
         capability_id = capability.id
         if capability_id is None:
             raise RuntimeError('A durable operation capability must have an explicit `id`.')
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
+        if not self.in_durable_context:
+            bound = declaration.function.__get__(capability, type(capability))
+            return await bound(*args, **kwargs)
+
+        request_context = next(
+            (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
+        )
+        if request_context is not None:
+            projection = ModelRequestContextProjection.from_context(request_context)
+            args = tuple(projection if value is request_context else value for value in args)
+            kwargs = {key: projection if value is request_context else value for key, value in kwargs.items()}
         arguments = bind_arguments(declaration, ctx=ctx, args=args, kwargs=kwargs)
         model = ctx.model
         if not isinstance(model, Model):
