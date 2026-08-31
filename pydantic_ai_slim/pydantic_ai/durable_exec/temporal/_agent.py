@@ -63,7 +63,7 @@ from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import (
     TEMPORAL_SANDBOX_UNAVAILABLE_REASON,
     TemporalRunContext,
-    activity_sandbox_connections,
+    activity_sandbox_connection_scope,
     deserialize_run_context,
 )
 from ._toolset import (
@@ -222,27 +222,28 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         activities: list[Callable[..., Any]] = []
 
         async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: AgentDepsT) -> None:
-            # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
-            # and that only ends up calling `event_stream_handler` if it is set.
-            assert self.event_stream_handler is not None
+            async with activity_sandbox_connection_scope():
+                # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
+                # and that only ends up calling `event_stream_handler` if it is set.
+                assert self.event_stream_handler is not None
 
-            run_context = deserialize_run_context(
-                self.run_context_type,
-                params.serialized_run_context,
-                deps=deps,
-                agent=self.wrapped,
-            )
+                run_context = deserialize_run_context(
+                    self.run_context_type,
+                    params.serialized_run_context,
+                    deps=deps,
+                    agent=self.wrapped,
+                )
 
-            async def streamed_response():
-                yield params.event
+                async def streamed_response():
+                    yield params.event
 
-            await self.event_stream_handler(run_context, streamed_response())
+                await self.event_stream_handler(run_context, streamed_response())
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         event_stream_handler_activity.__annotations__['deps'] = self.deps_type
 
         self.event_stream_handler_activity = activity.defn(name=f'{activity_name_prefix}__event_stream_handler')(
-            activity_sandbox_connections(event_stream_handler_activity)
+            event_stream_handler_activity
         )
         activities.append(self.event_stream_handler_activity)
 

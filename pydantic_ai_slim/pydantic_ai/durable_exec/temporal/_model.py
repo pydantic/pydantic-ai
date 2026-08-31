@@ -35,7 +35,7 @@ from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
     _RequestParams,  # pyright: ignore[reportPrivateUsage]
 )
-from ._run_context import TemporalRunContext, activity_sandbox_connections, deserialize_run_context
+from ._run_context import TemporalRunContext, activity_sandbox_connection_scope, deserialize_run_context
 from ._toolset import model_response_payload_errors
 
 if TYPE_CHECKING:
@@ -99,57 +99,57 @@ class TemporalModel(WrapperModel):
         self._agent = agent
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            run_context = deserialize_run_context(
-                self.run_context_type,
-                params.serialized_run_context,
-                deps=deps,
-                agent=self._agent,
-            )
-            model_for_request = self._resolve_model_id(params.model_id, run_context)
-            messages = self._reprepare_messages(params, model_for_request)
-            return await model_for_request.request(
-                messages,
-                cast(ModelSettings | None, params.model_settings),
-                params.model_request_parameters,
-            )
+            async with activity_sandbox_connection_scope():
+                run_context = deserialize_run_context(
+                    self.run_context_type,
+                    params.serialized_run_context,
+                    deps=deps,
+                    agent=self._agent,
+                )
+                model_for_request = self._resolve_model_id(params.model_id, run_context)
+                messages = self._reprepare_messages(params, model_for_request)
+                return await model_for_request.request(
+                    messages,
+                    cast(ModelSettings | None, params.model_settings),
+                    params.model_request_parameters,
+                )
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         # Union with None for backward compatibility with activity payloads created before deps was added
         request_activity.__annotations__['deps'] = deps_type | None
 
-        self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(
-            activity_sandbox_connections(request_activity)
-        )
+        self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
 
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
-            # An error is raised in `request_stream` if no `event_stream_handler` is set.
-            assert self.event_stream_handler is not None
-            run_context = deserialize_run_context(
-                self.run_context_type,
-                params.serialized_run_context,
-                deps=deps,
-                agent=self._agent,
-            )
-            model_for_request = self._resolve_model_id(params.model_id, run_context)
-            messages = self._reprepare_messages(params, model_for_request)
-            async with model_for_request.request_stream(
-                messages,
-                cast(ModelSettings | None, params.model_settings),
-                params.model_request_parameters,
-                run_context,
-            ) as streamed_response:
-                await self.event_stream_handler(run_context, streamed_response)
+            async with activity_sandbox_connection_scope():
+                # An error is raised in `request_stream` if no `event_stream_handler` is set.
+                assert self.event_stream_handler is not None
+                run_context = deserialize_run_context(
+                    self.run_context_type,
+                    params.serialized_run_context,
+                    deps=deps,
+                    agent=self._agent,
+                )
+                model_for_request = self._resolve_model_id(params.model_id, run_context)
+                messages = self._reprepare_messages(params, model_for_request)
+                async with model_for_request.request_stream(
+                    messages,
+                    cast(ModelSettings | None, params.model_settings),
+                    params.model_request_parameters,
+                    run_context,
+                ) as streamed_response:
+                    await self.event_stream_handler(run_context, streamed_response)
 
-                async for _ in streamed_response:
-                    pass
-            return streamed_response.get()
+                    async for _ in streamed_response:
+                        pass
+                return streamed_response.get()
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         # Union with None for backward compatibility with activity payloads created before deps was added
         request_stream_activity.__annotations__['deps'] = deps_type | None
 
         self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
-            activity_sandbox_connections(request_stream_activity)
+            request_stream_activity
         )
 
         try:
@@ -158,27 +158,28 @@ class TemporalModel(WrapperModel):
             deps_type_adapter = TypeAdapter(deps_type, config=ConfigDict(defer_build=True))
 
         async def cancel_suspended_response_activity(params: _CancelParams) -> None:
-            # Resolve the model that produced the response (mirrors `request_activity`'s use of
-            # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
-            # raw HTTP call to the provider, so it must run in an activity rather than the workflow
-            # sandbox. The run context and deps travel inside the single params payload to preserve
-            # the activity command shape for replay; old payloads omit them and keep the previous
-            # environment-inference behavior.
-            run_context = None
-            if params.serialized_run_context is not None:
-                deps = deps_type_adapter.validate_python(params.deps) if params.deps is not None else None
-                run_context = deserialize_run_context(
-                    self.run_context_type,
-                    params.serialized_run_context,
-                    deps=deps,
-                    agent=self._agent,
-                )
-            model_for_request = self._resolve_model_id(params.model_id, run_context)
-            await model_for_request.cancel_suspended_response(params.response)
+            async with activity_sandbox_connection_scope():
+                # Resolve the model that produced the response (mirrors `request_activity`'s use of
+                # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
+                # raw HTTP call to the provider, so it must run in an activity rather than the workflow
+                # sandbox. The run context and deps travel inside the single params payload to preserve
+                # the activity command shape for replay; old payloads omit them and keep the previous
+                # environment-inference behavior.
+                run_context = None
+                if params.serialized_run_context is not None:
+                    deps = deps_type_adapter.validate_python(params.deps) if params.deps is not None else None
+                    run_context = deserialize_run_context(
+                        self.run_context_type,
+                        params.serialized_run_context,
+                        deps=deps,
+                        agent=self._agent,
+                    )
+                model_for_request = self._resolve_model_id(params.model_id, run_context)
+                await model_for_request.cancel_suspended_response(params.response)
 
         self.cancel_suspended_response_activity = activity.defn(
             name=f'{activity_name_prefix}__model_cancel_suspended_response'
-        )(activity_sandbox_connections(cancel_suspended_response_activity))
+        )(cancel_suspended_response_activity)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
