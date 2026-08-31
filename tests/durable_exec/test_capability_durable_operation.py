@@ -1210,6 +1210,13 @@ def prefect_test_server() -> Generator[None, None, None]:
     The implicit ephemeral server uses the shared default PREFECT_HOME and a short
     connect timeout that flakes on slow CI runners; the test harness gives an isolated
     database and a 60s startup budget, mirroring tests/durable_exec/test_prefect.py.
+
+    Ordering constraint: these tests share the 'prefect' xdist group with
+    tests/durable_exec/test_prefect.py, whose harness fixture is session-scoped and
+    autouse, so once entered it stays entered for the rest of the worker. Today this
+    module collects first purely because it sorts alphabetically ahead of test_prefect.py,
+    so this module-scoped harness enters and exits before that one starts. Renaming either
+    module so this one sorts after test_prefect.py would nest two Prefect harnesses.
     """
     from prefect.testing.utilities import prefect_test_harness
 

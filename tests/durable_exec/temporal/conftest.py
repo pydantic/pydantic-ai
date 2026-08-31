@@ -7,7 +7,6 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
-from anyio.pytest_plugin import FreePortFactory
 
 from pydantic_ai import (
     Agent,
@@ -109,16 +108,15 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
 
 
 # One dev server (and thus one xdist group) per test module so the four temporal files can
-# run on four xdist workers concurrently instead of forming one serial chain. The port comes
-# from anyio's `free_tcp_port_factory`, so parallel workers (and a previously leaked server)
-# can never collide on a hardcoded port.
+# run on four xdist workers concurrently instead of forming one serial chain. `start_local`
+# picks the port: anyio's `free_tcp_port_factory` only probes and releases, so the port sits
+# unowned for the rest of fixture setup, and its dedup set is per factory instance — one per
+# xdist worker — so two workers can be handed the same port. The Temporal SDK instead allocates
+# immediately before spawning the server, and on Linux holds the port in `TIME_WAIT` so the kernel
+# won't hand it to another process's `bind(0)`:
+# https://github.com/temporalio/sdk-core/blob/5962c094869d691b78b9732f09851a9183173db9/crates/sdk-core/src/ephemeral_server/mod.rs#L548
 @pytest.fixture(scope='module')
-def temporal_port(free_tcp_port_factory: FreePortFactory) -> int:
-    return free_tcp_port_factory()
-
-
-@pytest.fixture(scope='module')
-async def temporal_env(temporal_port: int) -> AsyncIterator[WorkflowEnvironment]:
+async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
     # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
     # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
@@ -126,9 +124,13 @@ async def temporal_env(temporal_port: int) -> AsyncIterator[WorkflowEnvironment]
     # restricts `Path.home()` access.
     download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
     download_dest_dir.mkdir(parents=True, exist_ok=True)
+    # Leave `ui` off (the `start_local` default). With `ui=True` and no explicit `ui_port`, the dev
+    # server binds `port + 1000` without probing it first, and a bind failure there aborts the whole
+    # process — surfacing as `ConnectionRefused` on the healthy gRPC port. No test reads the UI.
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
-        port=temporal_port,
-        ui=True,
+        # `suggestContinueAsNew` is lowered from its default so the continue-as-new tests can reach
+        # the suggestion threshold in a handful of turns. Other tests are unaffected: the suggestion
+        # is only read when a `continue_as_new_args` is configured.
         dev_server_extra_args=[
             '--dynamic-config-value',
             'frontend.enableServerVersionCheck=false',
@@ -140,17 +142,24 @@ async def temporal_env(temporal_port: int) -> AsyncIterator[WorkflowEnvironment]
         yield env
 
 
+# The `host:port` the dev server actually bound — read back rather than assumed — for tests that
+# need a client of their own rather than `temporal_env.client`.
+@pytest.fixture(scope='module')
+def temporal_target(temporal_env: WorkflowEnvironment) -> str:
+    return temporal_env.client.service_client.config.target_host
+
+
 @pytest.fixture
-async def client(temporal_env: WorkflowEnvironment, temporal_port: int) -> Client:
+async def client(temporal_target: str) -> Client:
     return await Client.connect(
-        f'localhost:{temporal_port}',
+        temporal_target,
         plugins=[PydanticAIPlugin()],
     )
 
 
 @pytest.fixture
-async def client_with_logfire(temporal_env: WorkflowEnvironment, temporal_port: int) -> Client:
+async def client_with_logfire(temporal_target: str) -> Client:
     return await Client.connect(
-        f'localhost:{temporal_port}',
+        temporal_target,
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
     )
