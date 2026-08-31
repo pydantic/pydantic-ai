@@ -11,6 +11,7 @@ helpers are reserved for the bundled `temporal`, `dbos`, and `prefect`
 integrations.
 """
 
+import sys
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -30,8 +31,30 @@ __all__ = [
     'StreamedActivityResult',
     'disable_threads',
     'capture_event_stream',
+    'managed_model_scope',
     'unwrap_model',
 ]
+
+
+@asynccontextmanager
+async def managed_model_scope(model: Model, *, owned: bool) -> AsyncGenerator[Model]:
+    """Context-manage a model when the current durable unit owns it.
+
+    The model's `__aexit__` return value is deliberately discarded, so it cannot
+    suppress an error raised by the durable unit's body.
+    """
+    if not owned:
+        yield model
+        return
+
+    active_model = await model.__aenter__()
+    try:
+        yield active_model
+    except BaseException:
+        await model.__aexit__(*sys.exc_info())
+        raise
+    else:
+        await model.__aexit__(None, None, None)
 
 
 def unwrap_model(model: Model) -> Model:
