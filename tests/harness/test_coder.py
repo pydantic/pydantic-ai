@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai import messages as _pydantic_ai_messages
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.models.test import TestModel
 
@@ -18,8 +17,6 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.subagents import SubAgents
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
-_ATTRIBUTES_INSTRUCTIONS = hasattr(_pydantic_ai_messages, 'InstructionId')
-
 
 def test_coder_constructs_agent() -> None:
     agent = Agent(TestModel(), capabilities=[Coder()])
@@ -31,18 +28,12 @@ def test_coder_agent_is_model_less_and_composed() -> None:
     assert isinstance(coder_agent, Agent)
     assert coder_agent.model is None
     assert coder_agent.name == 'coder'
-    # Pydantic AI attributes each instruction to the source that contributed it, so `_instructions`
-    # holds `SourcedInstruction`s where it used to hold bare strings. Assert the base prompt is still
-    # the agent's own either way rather than dropping the check: `'agent'` is the key an application
+    # Pydantic AI attributes each instruction to the source that contributed it. Assert the base prompt
+    # is still the agent's own rather than dropping the check: `'agent'` is the key an application
     # overriding this prompt addresses it by, and it would go silently missing if attribution changed.
-    if _ATTRIBUTES_INSTRUCTIONS:  # pragma: no cover - new-version path
-        # Read through `getattr` so this typechecks against the floor, where the list holds strings.
-        assert [
-            (getattr(instruction, 'instruction'), str(getattr(instruction, 'id')))
-            for instruction in coder_agent._instructions
-        ] == [('You are a coding agent built on Pydantic AI.', 'agent')]
-    else:  # pragma: no cover - old-version path
-        assert coder_agent._instructions == ['You are a coding agent built on Pydantic AI.']
+    assert [(instruction.instruction, str(instruction.id)) for instruction in coder_agent._instructions] == [
+        ('You are a coding agent built on Pydantic AI.', 'agent')
+    ]
     assert any(isinstance(capability, FileSystem) for capability in coder_agent.root_capability.capabilities)
 
 

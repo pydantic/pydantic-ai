@@ -94,8 +94,14 @@ def find_dir_context_file(directory: Path, filenames: Sequence[str]) -> ContextF
 
 
 def render_context_file(file: ContextFile, *, label: str) -> str:
-    """Render one file as a labeled block."""
-    return f'<context-file path="{label}">\n{file.content}\n</context-file>'
+    """Render one file as a labeled block.
+
+    The closing tag sits on its own line, so the content's trailing line terminators go: keeping them
+    would put a blank line before the tag for every file that ends the way a text file should. Only the
+    terminators -- trailing spaces and tabs stay, being a hard line break in Markdown.
+    """
+    content = file.content.rstrip('\r\n')
+    return f'<context-file path="{label}">\n{content}\n</context-file>'
 
 
 def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> str:
