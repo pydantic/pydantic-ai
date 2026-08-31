@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-UPSTREAM_SHA = '252922e206ba0064eb8a96ab1e37616ba016b06a'
+UPSTREAM_SHA = '22b3d6a4dc9e409c5a581e4657311b0dfff16256'
 
 
 def test_maintainer_attention_uses_merged_upstream_workflows():
