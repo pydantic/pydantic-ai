@@ -3933,6 +3933,49 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     )
 
 
+async def test_response_scoped_tool_call_id_with_previous_response(allow_model_requests: None) -> None:
+    """The raw provider ID is restored when the qualifying response is held server-side."""
+    response_id = f'resp_{"x" * 83}'
+    qualified_call_id = f'{response_id}:call_0'
+    history: list[ModelRequest | ModelResponse] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='tool',
+                    args='{}',
+                    tool_call_id=qualified_call_id,
+                    id='fc_1',
+                    provider_name='openai',
+                )
+            ],
+            model_name='gpt-5.6-sol',
+            provider_name='openai',
+            provider_response_id=response_id,
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='tool', content='result', tool_call_id=qualified_call_id)]),
+    ]
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+    )
+
+    await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        ModelRequestParameters(),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert (request_kwargs['previous_response_id'], request_kwargs['input']) == snapshot(
+        (
+            'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+            [{'type': 'function_call_output', 'call_id': 'call_0', 'output': 'result'}],
+        )
+    )
+
+
 async def test_openai_previous_response_id_concrete_seed_without_history(openai_api_key: str):
     """A concrete seed is used as-is when there is no prior response in the history."""
     history = [ModelRequest(parts=[UserPromptPart(content='Continue')])]
