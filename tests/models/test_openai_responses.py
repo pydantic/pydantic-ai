@@ -14810,7 +14810,7 @@ async def test_background_mode_reasoning_vcr(allow_model_requests: None, openai_
                     output_tokens=12,
                     output_reasoning_tokens=0,
                     details={'reasoning_tokens': 0},
-                    cost=Decimal('0.00043'),
+                    cost=Decimal('0.000296'),
                 ),
                 model_name='gpt-5.6-sol',
                 timestamp=IsDatetime(),
