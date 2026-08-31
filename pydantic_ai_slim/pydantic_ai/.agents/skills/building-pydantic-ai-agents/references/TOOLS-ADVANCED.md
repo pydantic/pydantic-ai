@@ -123,6 +123,8 @@ def transfer_funds(ctx: RunContext[int], amount: int) -> str:
     return f'Transferred {amount}'
 ```
 
+Validation runs before the approval/deferral gate, so invalid arguments are retried instead of sent to an approver. Under durable execution, a tool with an `args_validator` gets its own validation activity, step, or task; tools without one schedule no extra durable unit.
+
 ## Use Advanced Tool Features
 
 Reach for these features when the user needs more than a simple function tool:

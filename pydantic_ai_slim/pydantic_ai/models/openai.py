@@ -279,7 +279,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels
+OpenAIModelName = str | AllModels | Literal['gpt-5.5-2026-04-23', 'gpt-5.5-pro', 'gpt-5.5-pro-2026-04-23']
 """
 Possible OpenAI model names.
 
@@ -289,6 +289,10 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
+
+The ids in the local `Literal` are bridged because `AllModels` doesn't list them at the floor the
+`openai` extra declares; they arrived in `openai` 3.1.0
+(https://github.com/openai/openai-python/pull/3617). Drop them once the floor is bumped past it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -4513,7 +4517,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                     # Collect annotations if the setting is enabled
                     if self._model_settings.get('openai_include_raw_annotations'):
-                        _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
+                        # `openai` 3.1 retyped `annotation` from `object` to a model union declared in the
+                        # event's own module, whose members are distinct classes from the identically
+                        # shaped ones `ResponseOutputText.annotations` uses. That distinction is invisible
+                        # in the payload but fatal to `responses_output_text_annotations_ta`, so normalize
+                        # to the wire dict both SDK shapes carry rather than serializing by type.
+                        annotation = chunk.annotation
+                        _annotations_by_item.setdefault(chunk.item_id, []).append(
+                            annotation.model_dump(mode='json') if isinstance(annotation, BaseModel) else annotation
+                        )
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
@@ -4537,9 +4549,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     provider_details: dict[str, Any] = {}
                     annotations = _annotations_by_item.get(chunk.item_id)
                     if annotations:
-                        provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
-                            list(annotations), warnings=False
-                        )
+                        provider_details['annotations'] = list(annotations)
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if (phase := _phase_by_item.get(chunk.item_id)) is not None:
@@ -5025,10 +5035,10 @@ def _map_usage(
         api_flavor=api_flavor,
         details=details,
     )
-    # genai-prices' `RequestUsage.extract` doesn't yet map OpenAI's `cache_write_tokens`, which is nested
-    # under `prompt_tokens_details` (chat) / `input_tokens_details` (responses), unlike Anthropic's top-level
-    # cache fields that it already handles, so lift it manually here.
-    # TODO: Remove this block once genai-prices extracts the nested `cache_write_tokens` field.
+    # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
+    # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
+    # provider's extractor does — Azure's still omits it — so lift it manually here.
+    # TODO: Remove this block once those remaining extractors map it. Check `prices/providers/azure.yml`.
     if _is_str_dict(input_tokens_details):
         cache_write_tokens = input_tokens_details.get('cache_write_tokens')
         if isinstance(cache_write_tokens, int):
@@ -5605,10 +5615,11 @@ def _map_mcp_call(
         NativeToolReturnPart(
             tool_name=tool_name,
             tool_call_id=item.id,
-            content={
-                'output': item.output,
-                'error': item.error,
-            },
+            # Dumped rather than read off the item like `output` alone would allow: `openai` 3.1 retyped
+            # `McpCall.error` from `str` to a model union, so reading the attribute puts an SDK model
+            # into a message part that then can't be serialized with the message history. `warnings=False`
+            # because pre-3.1 the wire's error object lands in that `str`-typed field unconverted.
+            content=item.model_dump(mode='json', include={'output', 'error'}, warnings=False),
             provider_name=provider_name,
         ),
     )
