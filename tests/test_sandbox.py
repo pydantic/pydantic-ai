@@ -1191,7 +1191,7 @@ async def test_declining_sandbox_capability_leaves_the_default_unavailable():
     assert decliner.acquire_calls == 1
 
 
-async def test_base_and_combined_get_sandbox_decline_cleanly():
+async def test_base_and_combined_get_sandbox_route_or_decline_cleanly():
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     base = AbstractCapability[Any]()
     assert await base.get_sandbox(ctx, None) is None
@@ -1203,6 +1203,7 @@ async def test_base_and_combined_get_sandbox_decline_cleanly():
     connector = ConnectOnlySandboxCapability()
     connector.id = 'connector'
     combined = CombinedCapability([deferred, declining, connector])
+    assert combined._has_get_sandbox  # pyright: ignore[reportPrivateUsage]
     backend = await combined.get_sandbox(ctx, SandboxRef(provider='fake', sandbox_id='combined'))
     assert backend is not None and backend.sandbox_id == 'combined'
 
