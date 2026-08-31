@@ -357,14 +357,16 @@ async def test_read_file_slow_path(
     assert window.total_lines == total_lines
 
 
-async def test_bounded_read_never_falls_back_to_a_full_file_download():
+async def test_bounded_read_falls_back_to_filesystem_without_shell_support():
     backend = FakeSandbox('no-sed', sed=False)
-    backend.fs.files['/workspace/file'] = b'line\n' * 200_000
+    backend.fs.files['/workspace/file'] = b'one\ntwo\nthree\n'
 
-    with pytest.raises(NotImplementedError, match='could not perform a bounded file read'):
-        await Sandbox(backend).read_file('file', limit=1)
+    window = await Sandbox(backend).read_file('file', offset=2, limit=1)
 
-    assert backend.fs.reads == []
+    assert window.lines == ('two',)
+    assert window.has_more is True
+    assert window.total_lines == 3
+    assert backend.fs.reads == ['/workspace/file']
 
 
 @pytest.mark.parametrize(('kwargs', 'message'), [({'offset': 0}, 'offset'), ({'limit': 0}, 'limit')])
@@ -488,6 +490,13 @@ async def test_read_file_windowed_works_without_filesystem_support():
 
     with pytest.raises(NotImplementedError, match='SupportsFilesystem'):
         await sandbox.read_file('file')
+
+
+async def test_windowed_read_without_shell_or_filesystem_has_targeted_error():
+    inner = FakeSandbox('run-only-no-sed', sed=False)
+
+    with pytest.raises(NotImplementedError, match=r'working `sed`.*SupportsFilesystem'):
+        await Sandbox(_RunOnlySandbox(inner)).read_file('file', limit=1)
 
 
 async def test_shell_slice_is_bounded_and_stops_at_the_window():

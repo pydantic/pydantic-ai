@@ -333,8 +333,10 @@ class Sandbox:
         """Read a line window from `path`, resolving relative paths through the backend first.
 
         `offset` is the 1-based first line and `limit` is the maximum number of lines. When
-        `limit` is `None`, the window extends through EOF. `limit` does not bound bytes or
-        characters: a single line may be arbitrarily large.
+        `limit` is `None`, the window extends through EOF. `limit` bounds returned lines, not
+        bytes or characters: a single line may be arbitrarily large, and a backend without a
+        usable in-sandbox `sed` command may transfer the whole file through its filesystem API
+        before the facade applies the line window.
 
         This is a model-facing view: content is decoded as UTF-8 with U+FFFD replacement for
         undecodable bytes. Use [`read_text`][pydantic_ai.sandboxes.Sandbox.read_text] for
@@ -347,28 +349,35 @@ class Sandbox:
             raise ValueError('`limit` must be at least 1')
 
         resolved_path = await self.resolve(path)
+        filesystem: SandboxFilesystem
         if limit is not None:
             # Before the filesystem lookup: a backend with only `run()` can still serve
-            # windowed reads through the slice. Never fall back to a full-file download here.
-            # This bounds line count, not byte size: one line may still be arbitrarily large.
+            # windowed reads through the slice, and command-capable remote backends avoid
+            # transferring the whole file. This bounds line count, not byte size: one line
+            # may still be arbitrarily large.
             window = await self._read_file_via_shell(resolved_path, offset, limit)
-            if window is None:
-                await self._validate_bounded_read_path(resolved_path)
-                raise NotImplementedError(
-                    'This sandbox could not perform a bounded file read. Ensure `sed` is available '
-                    'inside the sandbox, or use `fs.read_bytes()` for an explicitly unbounded read.'
-                )
-            return window
+            if window is not None:
+                return window
 
-        data = await (await self._filesystem()).read_bytes(resolved_path)
+            await self._validate_bounded_read_path(resolved_path)
+            try:
+                filesystem = await self._filesystem()
+            except NotImplementedError as e:
+                raise NotImplementedError(
+                    'This sandbox could not perform a windowed file read. Provide a working `sed` '
+                    'command through `run()`, or implement `SupportsFilesystem` on the backend.'
+                ) from e
+        else:
+            filesystem = await self._filesystem()
+
+        data = await filesystem.read_bytes(resolved_path)
         return _window_from_data(data, offset, limit)
 
     async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
         """Slice a line window with `sed` inside the sandbox, so only the window crosses the wire.
 
         Returns `None` on failure (no usable `sed`, `run()` unsupported, or a slice that
-        timed out). The caller reports that bounded reads are unavailable rather than silently
-        downloading the whole file.
+        timed out), so the caller can fall back to the backend filesystem when available.
         `total_lines` is only reported when the slice provably reached EOF.
         """
         end = offset + limit  # one extra line, to learn whether more exist

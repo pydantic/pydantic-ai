@@ -278,7 +278,7 @@ the backend's own [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesyste
 | Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — |
 | Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] (else `NotImplementedError`) |
 | Read/write files | `fs` / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] (else `NotImplementedError`) |
-| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | `sed` over `run()` (else `NotImplementedError`) |
+| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | `sed` over `run()`, with [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] fallback (else `NotImplementedError`) |
 | Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — |
 | Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | Facade-owned normalization |
 
