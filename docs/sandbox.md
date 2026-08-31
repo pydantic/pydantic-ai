@@ -56,10 +56,15 @@ path, timeout, and output policies. Keep policy (allow/deny lists, path rules, o
 in the tool layer and isolation in the sandbox. Denylists over free-form shell strings are
 security theater: if commands must be constrained, use argv form and validate arguments.
 
+`SandboxBackend.run()` returns complete captured output. Truncating its result in a tool bounds
+model context, but does not bound the backend's transfer or memory use. For commands whose output
+volume is not trusted, use a backend-native streaming or bounded-execution facility rather than
+assuming a tool-side character limit is a process resource limit.
+
 ## Reading files
 
 Use [`Sandbox.read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] to give a model a bounded
-line window:
+line-count window:
 
 ```python
 from pydantic_ai import RunContext
@@ -267,7 +272,7 @@ the backend's own [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesyste
 | Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — |
 | Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] (else `NotImplementedError`) |
 | Read/write files | `fs` / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] (else `NotImplementedError`) |
-| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | `sed` over `run()` (else read-all + slice) |
+| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | `sed` over `run()` (else `NotImplementedError`) |
 | Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — |
 | Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | Facade-owned normalization |
 

@@ -312,7 +312,8 @@ class Sandbox:
         """Read a line window from `path`, resolving relative paths through the backend first.
 
         `offset` is the 1-based first line and `limit` is the maximum number of lines. When
-        `limit` is `None`, the window extends through EOF.
+        `limit` is `None`, the window extends through EOF. `limit` does not bound bytes or
+        characters: a single line may be arbitrarily large.
 
         This is a model-facing view: content is decoded as UTF-8 with U+FFFD replacement for
         undecodable bytes. Use [`read_text`][pydantic_ai.sandboxes.Sandbox.read_text] for
@@ -327,8 +328,8 @@ class Sandbox:
         resolved_path = await self.resolve(path)
         if limit is not None:
             # Before the filesystem lookup: a backend with only `run()` can still serve
-            # windowed reads through the slice. Never fall back to a full download here:
-            # `limit` is the caller's memory and transfer bound, not merely an output hint.
+            # windowed reads through the slice. Never fall back to a full-file download here.
+            # This bounds line count, not byte size: one line may still be arbitrarily large.
             window = await self._read_file_via_shell(resolved_path, offset, limit)
             if window is None:
                 await self._validate_bounded_read_path(resolved_path)

@@ -263,6 +263,29 @@ async def test_wrap_entire_run_observes_model_resolution_error() -> None:
     assert events == ['enter', 'exit']
 
 
+async def test_wrap_entire_run_observes_invalid_sandbox_ref() -> None:
+    events: list[str] = []
+
+    @dataclass
+    class ObserveInvalidRef(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+            events.append('enter')
+            try:
+                yield
+            except UserError:
+                events.append('error')
+                raise
+            finally:
+                events.append('exit')
+
+    ref = SandboxRef(provider='missing', sandbox_id='sandbox-1', capability_id='missing')
+    with pytest.raises(UserError, match="expected one capability with id 'missing', found 0"):
+        await Agent(FunctionModel(simple_model_function), capabilities=[ObserveInvalidRef()]).run('fail', sandbox=ref)
+
+    assert events == ['enter', 'error', 'exit']
+
+
 @pytest.mark.parametrize('combined', [False, True])
 async def test_wrap_entire_run_suppression_is_a_loud_contract_violation(combined: bool) -> None:
     """A hook that swallows the run's exception must not leave the run in a broken half-state.

@@ -7,7 +7,7 @@ from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities.abstract import connect_sandbox_provider, resolve_sandbox_ref
+from pydantic_ai.capabilities._sandbox import connect_sandbox_provider, resolve_sandbox_ref
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
