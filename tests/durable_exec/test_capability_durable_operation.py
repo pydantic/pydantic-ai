@@ -30,8 +30,8 @@ from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOp
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
@@ -162,6 +162,23 @@ class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
 
 
+class TransparentDurability(RecordingDurability):
+    @property
+    def in_durable_context(self) -> bool:
+        return False
+
+
+class ModelIdReplacingBeforeModelRequest(AbstractCapability[Any]):
+    id = 'model_id_replacing_before_model'
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.model_id = 'tracked'
+        return request_context
+
+
 class LifecycleModel(LifecycleTrackingModel):
     def __init__(self, events: list[str], **kwargs: Any) -> None:
         super().__init__(events, event_prefix='model-', **kwargs)
@@ -182,6 +199,158 @@ class LifecycleModel(LifecycleTrackingModel):
                 yield streamed
         finally:
             self.events.append('stream-exit')
+
+
+class RepeatingLifecycleModel(LifecycleTrackingModel):
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.events.append('request')
+        return ModelResponse(parts=[TextPart('from-tracked')])
+
+
+def _tracked_model_resolver(
+    built: list[LifecycleTrackingModel],
+    *,
+    events: list[str] | None = None,
+    event_prefix: str = '',
+    model_type: type[LifecycleTrackingModel] = LifecycleTrackingModel,
+) -> Callable[[ModelResolutionContext[Any], str], LifecycleTrackingModel]:
+    """Build a fresh model for the one id these tests swap to, recording every instance.
+
+    Shared across the tests below rather than repeated inside each: the outside-a-container test
+    asserts this is never consulted, so a resolver of its own would leave a body nothing executes.
+    Each call gets its own event list unless the caller supplies one to share.
+    """
+
+    def resolve(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel:
+        del model_id
+        model = model_type(
+            events if events is not None else [],
+            event_prefix=event_prefix,
+            custom_output_text='from-tracked',
+        )
+        built.append(model)
+        return model
+
+    return resolve
+
+
+async def test_capability_operation_is_direct_outside_durable_context() -> None:
+    events: list[str] = []
+    built_models: list[LifecycleTrackingModel] = []
+    resolve_model = _tracked_model_resolver(built_models, events=events, event_prefix='tracked-')
+
+    durability = TransparentDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='direct_capability_operation',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), durability],
+    )
+
+    assert (await agent.run('test')).output == 'original'
+    assert events == []
+    assert built_models == []
+    assert not any('__capability__' in name for name, _ in durability.calls)
+
+
+async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
+    events: list[str] = []
+    built_models: list[LifecycleTrackingModel] = []
+    resolve_model = _tracked_model_resolver(built_models, events=events, event_prefix='tracked-')
+
+    durability = RecordingDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='durable_capability_operation',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), durability],
+    )
+
+    assert (await agent.run('test')).output == 'from-tracked'
+
+    assert events == [
+        'tracked-enter',
+        'tracked-enter',
+        'request',
+        'tracked-exit:none',
+        'tracked-exit:none',
+    ]
+    assert len(built_models) == 2
+    assert any('__capability__' in name for name, _ in durability.calls)
+
+
+async def test_capability_operation_registered_model_id_swap_does_not_manage_model() -> None:
+    events: list[str] = []
+    registered = LifecycleTrackingModel(events, event_prefix='registered-', custom_output_text='from-registered')
+    durability = RecordingDurability(models={'tracked': registered})
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='registered_capability_operation_model',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), durability],
+    )
+
+    assert (await agent.run('test')).output == 'from-registered'
+    assert events == ['request']
+
+
+async def test_resolved_request_model_records_are_released_with_their_models() -> None:
+    built_models: list[LifecycleTrackingModel] = []
+    durability = RecordingDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='released_capability_operation_model',
+        capabilities=[
+            ModelIdReplacingBeforeModelRequest(),
+            ResolveModelId(_tracked_model_resolver(built_models)),
+            durability,
+        ],
+    )
+
+    await agent.run('test')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    records = bound._resolved_request_models  # pyright: ignore[reportPrivateUsage]
+    assert records
+
+    # The record outlives the request it was made for, so it has to be released with its model
+    # rather than accumulating one entry per swapped request for the life of the agent.
+    built_models.clear()
+    gc.collect()
+
+    assert records == {}
+
+
+async def test_repeated_capability_operation_model_id_swaps_close_each_model() -> None:
+    built_models: list[LifecycleTrackingModel] = []
+    resolve_model = _tracked_model_resolver(built_models, model_type=RepeatingLifecycleModel)
+
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='repeated_capability_operation_model',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), RecordingDurability()],
+    )
+
+    attempts = 0
+
+    @agent.output_validator
+    def retry_once(output: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ModelRetry('retry once')
+        return output
+
+    assert (await agent.run('test')).output == 'from-tracked'
+    assert [model.events for model in built_models] == [
+        ['enter', 'exit:none'],
+        ['enter', 'request', 'exit:none'],
+        ['enter', 'exit:none'],
+        ['enter', 'request', 'exit:none'],
+    ]
 
 
 @pytest.mark.parametrize(

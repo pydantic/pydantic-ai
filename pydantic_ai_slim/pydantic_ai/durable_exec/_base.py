@@ -15,7 +15,7 @@ from collections.abc import (
 from contextlib import asynccontextmanager, contextmanager
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
-from weakref import ref
+from weakref import ReferenceType, ref
 
 from pydantic_core import PydanticSerializationError
 from typing_extensions import Self
@@ -133,6 +133,12 @@ class _BoundModelOperations(NamedTuple):
     request_stream: BoundDurableOperation[ModelRequestParams, Any, StreamedActivityResult]
     compact_messages: BoundDurableOperation[ModelCompactMessagesParams, Any, ModelResponse]
     cancel_suspended_response: BoundDurableOperation[ModelCancelSuspendedResponseParams, Any, None]
+
+
+class _ResolvedRequestModel(NamedTuple):
+    model_ref: ReferenceType[Model]
+    model_id: str | None
+    registered: bool
 
 
 class _ModelRequestCacheIdentity(CacheIdentity[ModelRequestParams]):
@@ -267,6 +273,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_event_operation: BoundDurableOperation[EventStreamHandlerParams, Any, None] | None = None
         self._bound_capability_operations: dict[tuple[str, str], CapabilityBoundOperation] = {}
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
+        self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
@@ -280,6 +287,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound = copy.copy(self)
         bound.name = self.name or agent.name or ''
         bound._agent = agent
+        bound._resolved_request_models = {}
         bound._bind_models(agent)
         bound._toolsets_by_id = {}
         bound._bind_to_agent(agent)
@@ -427,12 +435,27 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> Any:
-        """Dispatch through serialized context so per-run capability instances recover worker-side."""
+        """Dispatch through serialized context so per-run capability instances recover worker-side.
+
+        Outside a durable container, calling the original operation preserves live context mutations
+        without rebuilding resources solely to round-trip them through the durable projection.
+        """
         capability_id = capability.id
         if capability_id is None:
             raise RuntimeError('A durable operation capability must have an explicit `id`.')
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
+        if not self.in_durable_context:
+            bound = declaration.function.__get__(capability, type(capability))
+            return await bound(*args, **kwargs)
+
+        request_context = next(
+            (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
+        )
+        if request_context is not None:
+            projection = ModelRequestContextProjection.from_context(request_context)
+            args = tuple(projection if value is request_context else value for value in args)
+            kwargs = {key: projection if value is request_context else value for key, value in kwargs.items()}
         arguments = bind_arguments(declaration, ctx=ctx, args=args, kwargs=kwargs)
         model = ctx.model
         if not isinstance(model, Model):
@@ -451,6 +474,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             resolved_model = None
             if projection.model_id != inbound.model_id:
                 resolved_model = await self._resolve_model_for_request(projection.model_id, ctx)
+                registered, _ = self._registered_model_id(resolved_model)
+                self._record_resolved_request_model(resolved_model, projection.model_id, registered=registered)
             value: Any = _ResolvedModelRequestContext(projection=projection, model=resolved_model)
         else:
             value = result.value
@@ -1266,62 +1291,66 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if not self.in_durable_context:
             return await handler(request_context)
 
-        self._validate_model_request_parameters(request_context.model_request_parameters)
+        resolved = self._resolved_request_model(request_context.model)
+        owned = resolved is not None and not resolved.registered
         model_id = self._model_id_for_request(ctx, request_context)
-        model_name = request_context.model.model_name
-        backend = self.get_durable_operation_backend()
-        operations = self._bound_model_operations or self._bind_model_operations(
-            backend, model_id=model_id, model_name=model_name
-        )
+        async with managed_model_scope(request_context.model, owned=owned) as active_model:
+            request_context.model = active_model
+            self._validate_model_request_parameters(request_context.model_request_parameters)
+            model_name = request_context.model.model_name
+            backend = self.get_durable_operation_backend()
+            operations = self._bound_model_operations or self._bind_model_operations(
+                backend, model_id=model_id, model_name=model_name
+            )
 
-        async def request_segment(request: ModelRequestContext) -> ModelResponse:
-            return await operations.request(
-                ModelRequestParams(
-                    model_id,
-                    messages=request.messages,
-                    model_settings=request.model_settings,
-                    model_request_parameters=request.model_request_parameters,
-                    run_context=ctx,
+            async def request_segment(request: ModelRequestContext) -> ModelResponse:
+                return await operations.request(
+                    ModelRequestParams(
+                        model_id,
+                        messages=request.messages,
+                        model_settings=request.model_settings,
+                        model_request_parameters=request.model_request_parameters,
+                        run_context=ctx,
+                    )
                 )
-            )
 
-        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-            result = await operations.request_stream(
-                ModelRequestParams(
-                    model_id,
-                    messages=request.messages,
-                    model_settings=request.model_settings,
-                    model_request_parameters=request.model_request_parameters,
-                    run_context=ctx,
+            async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
+                result = await operations.request_stream(
+                    ModelRequestParams(
+                        model_id,
+                        messages=request.messages,
+                        model_settings=request.model_settings,
+                        model_request_parameters=request.model_request_parameters,
+                        run_context=ctx,
+                    )
                 )
-            )
-            return await self._load_streamed_activity_result(result, request.model_request_parameters)
+                return await self._load_streamed_activity_result(result, request.model_request_parameters)
 
-        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
-            await operations.cancel_suspended_response(
-                ModelCancelSuspendedResponseParams(model_id, response=response, run_context=ctx)
-            )
-
-        async def compact_messages_segment(
-            compact_context: ModelRequestContext, instructions: str | None
-        ) -> ModelResponse:
-            return await operations.compact_messages(
-                ModelCompactMessagesParams(
-                    model_id,
-                    request_context=compact_context,
-                    instructions=instructions,
-                    run_context=ctx,
+            async def cancel_suspended_response_segment(response: ModelResponse) -> None:
+                await operations.cancel_suspended_response(
+                    ModelCancelSuspendedResponseParams(model_id, response=response, run_context=ctx)
                 )
-            )
 
-        request_context.model = DurableModel(
-            request_context.model,
-            request_segment=request_segment,
-            request_stream_segment=request_stream_segment,
-            compact_messages_segment=compact_messages_segment,
-            cancel_suspended_response_segment=cancel_suspended_response_segment,
-        )
-        return await handler(request_context)
+            async def compact_messages_segment(
+                compact_context: ModelRequestContext, instructions: str | None
+            ) -> ModelResponse:
+                return await operations.compact_messages(
+                    ModelCompactMessagesParams(
+                        model_id,
+                        request_context=compact_context,
+                        instructions=instructions,
+                        run_context=ctx,
+                    )
+                )
+
+            request_context.model = DurableModel(
+                request_context.model,
+                request_segment=request_segment,
+                request_stream_segment=request_stream_segment,
+                compact_messages_segment=compact_messages_segment,
+                cancel_suspended_response_segment=cancel_suspended_response_segment,
+            )
+            return await handler(request_context)
 
     async def _load_streamed_activity_result(
         self, result: object, model_request_parameters: ModelRequestParameters
@@ -1576,7 +1605,24 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             and unwrap_model(request_context.model) is unwrap_model(cast('Model[Any]', run_model))
         ):
             return provenance
+        resolved = self._resolved_request_model(request_context.model)
+        if resolved is not None:
+            return resolved.model_id
         return self._find_model_id(request_context.model)
+
+    def _record_resolved_request_model(self, model: Model, model_id: str | None, *, registered: bool) -> None:
+        model_key = id(model)
+
+        def discard(_model_ref: ReferenceType[Model]) -> None:
+            self._resolved_request_models.pop(model_key, None)
+
+        self._resolved_request_models[model_key] = _ResolvedRequestModel(ref(model, discard), model_id, registered)
+
+    def _resolved_request_model(self, model: Model) -> _ResolvedRequestModel | None:
+        resolved = self._resolved_request_models.get(id(model))
+        if resolved is not None and resolved.model_ref() is model:
+            return resolved
+        return None
 
     def _find_model_id(self, model: Model) -> str | None:
         """Find the cross-boundary identifier for a registered `Model` instance.
