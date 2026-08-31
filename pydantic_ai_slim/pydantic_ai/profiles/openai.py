@@ -374,7 +374,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the Responses endpoint requires `store=false` on every request. Default: `False`.
 
     When `True`, `store=false` is sent even when no `openai_store` setting is given (the field cannot be
-    omitted), and an explicit `openai_store=True` setting is ignored with a warning.
+    omitted), and an explicit `openai_store=True` setting is silently overridden, consistent with how
+    other backend-rejected settings are dropped.
     """
 
     openai_supports_input_token_counting: bool
