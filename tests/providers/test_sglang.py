@@ -112,6 +112,7 @@ def test_sglang_provider_openai_client_is_exclusive() -> None:
         ('mistralai/Magistral-Small-2509', OpenAIJsonSchemaTransformer),
         ('CohereLabs/command-a-reasoning-08-2025', OpenAIJsonSchemaTransformer),
         ('openai/gpt-oss-20b', OpenAIJsonSchemaTransformer),
+        ('zai-org/GLM-4.7', OpenAIJsonSchemaTransformer),
         ('unknown-model', OpenAIJsonSchemaTransformer),
     ],
 )
