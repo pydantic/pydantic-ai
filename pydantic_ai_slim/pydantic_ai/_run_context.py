@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import sys
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -70,6 +70,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The active model, which is a `RealtimeModel` during a realtime session."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    _model_id: str | None = field(default=None, repr=False)
+    """The model selection token used to resolve `model`, for internal durable transport."""
     usage_limits: UsageLimits | None = None
     """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run.
 
@@ -85,6 +87,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
+
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
@@ -175,6 +178,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent.
     A public API for emitting custom events is intentionally not exposed yet.
     """
+
+    _durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None = field(default=None, repr=False)
+    """Per-run durable capability operation dispatchers, for internal use only."""
+
+    _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
+    """Per-run capability instances used for durable recovery, for internal use only."""
 
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -271,6 +280,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     stay the answer for everything that feeds a *future* request, whose provider isn't knowable yet;
     this one is the answer for a call the model has already made, where it is. See `AnchoredEvidence`.
     """
+
+    @property
+    def model_id(self) -> str | None:
+        """The identifier from which the run's active `model` was resolved.
+
+        This is `None` when the model was passed as an instance instead of being resolved from an
+        identifier. The property is read-only; Pydantic AI manages the selection token internally.
+        """
+        return self._model_id
 
     @property
     @deprecated(
