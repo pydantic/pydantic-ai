@@ -123,6 +123,9 @@ PREFECT_OPERATION_NAMES = {
     'Cancel Suspended Response: test',
     'Compact Messages: test',
     'Handle Stream Event',
+    'Get MCP Tools: mcp',
+    'Get MCP Instructions: mcp',
+    'Discover Tools: dynamic',
     'Call Tool: function_tool',
     'Validate Tool Args: function_tool',
     'Call MCP Tool: mcp_tool',
@@ -300,15 +303,10 @@ def test_prefect_operation_name_matrix() -> None:
     pytest.importorskip('prefect')
     from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
 
-    operation_ids = [
-        operation_id
-        for operation_id in _operation_ids()
-        if not isinstance(operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
-    ]
     namer = PrefectOperationNamer()
     names = {
         namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
-        for operation_id in operation_ids
+        for operation_id in _operation_ids()
     }
     assert names == PREFECT_OPERATION_NAMES
 
@@ -332,15 +330,10 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         DurableMCPToolset,
         DurableDynamicToolset,
     }
-    operation_ids = [
-        operation_id
-        for operation_id in _operation_ids()
-        if not isinstance(operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
-    ]
     namer = PrefectOperationNamer()
     assembled_names = {
         namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
-        for operation_id in operation_ids
+        for operation_id in _operation_ids()
     }
     assert assembled_names == PREFECT_OPERATION_NAMES
 

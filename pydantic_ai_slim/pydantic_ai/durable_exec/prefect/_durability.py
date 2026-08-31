@@ -46,7 +46,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-always', 'dynamic': 'enter-never'},
         tool_call_result_upgrade_lenient=True,  # cached payloads may predate value-wrapping
-        journal_discovery=False,  # resolve MCP/dynamic toolsets in flow code, journal only calls
+        journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key='prefect',
     )
