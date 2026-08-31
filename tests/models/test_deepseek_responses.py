@@ -21,7 +21,6 @@ import json
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any
 
 import httpx2
@@ -44,7 +43,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, try_import
+from ..conftest import IsDatetime, IsDecimal, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -72,6 +71,8 @@ def get_temperature(city: str) -> float:
     return 21.0
 
 
+# DeepSeek V4 prices vary by request time. These response-shape cases assert that a cost was
+# calculated without duplicating genai-prices' time-dependent pricing tests.
 @dataclass(frozen=True)
 class Case:
     id: str
@@ -119,7 +120,7 @@ CASES = [
                         input_tokens=90,
                         output_reasoning_tokens=7,
                         output_tokens=15,
-                        cost=Decimal('0.0000168'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -176,7 +177,7 @@ CASES = [
                         output_tokens=15,
                         output_reasoning_tokens=7,
                         input_tokens=90,
-                        cost=Decimal('0.0000168'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -237,7 +238,7 @@ CASES = [
                         input_tokens=87,
                         output_reasoning_tokens=6,
                         output_tokens=8,
-                        cost=Decimal('0.00001442'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -279,7 +280,7 @@ CASES = [
                         input_tokens=97,
                         output_reasoning_tokens=56,
                         output_tokens=59,
-                        cost=Decimal('0.00003010'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -358,7 +359,7 @@ CASES = [
                         cache_read_tokens=256,
                         output_reasoning_tokens=18,
                         output_tokens=63,
-                        cost=Decimal('0.0000337568'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -398,7 +399,7 @@ CASES = [
                         cache_read_tokens=384,
                         output_reasoning_tokens=0,
                         output_tokens=14,
-                        cost=Decimal('0.0000133952'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -520,7 +521,7 @@ CASES = [
                         output_reasoning_tokens=14,
                         cache_read_tokens=256,
                         input_tokens=366,
-                        cost=Decimal('0.0000326368'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -560,7 +561,7 @@ CASES = [
                         output_reasoning_tokens=0,
                         cache_read_tokens=384,
                         input_tokens=440,
-                        cost=Decimal('0.0000128352'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -683,7 +684,7 @@ CASES = [
                         cache_read_tokens=256,
                         output_reasoning_tokens=21,
                         output_tokens=81,
-                        cost=Decimal('0.0000401968'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
@@ -770,7 +771,7 @@ CASES = [
                         input_tokens=91,
                         output_reasoning_tokens=18,
                         output_tokens=20,
-                        cost=Decimal('0.00001834'),
+                        cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
                     timestamp=IsDatetime(),
