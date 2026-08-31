@@ -257,7 +257,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 !!! note
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
 
-    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client).
+    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client). See [The layers](retries.md#the-layers) in the retries guide for the full retry map.
 
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.

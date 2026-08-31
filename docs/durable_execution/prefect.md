@@ -292,7 +292,7 @@ Pydantic AI and provider API clients have their own retry logic. When using Pref
 * Turn off your provider API client's retry logic (e.g., `max_retries=0` on a [custom OpenAI client](../models/openai.md#custom-openai-client))
 * Rely on Prefect's task-level retry configuration for consistency
 
-This prevents requests from being retried multiple times at different layers.
+This prevents requests from being retried multiple times at different layers — and note the layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
 
 ## Caching and Idempotency
 

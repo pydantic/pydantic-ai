@@ -1,18 +1,44 @@
 # Retries
 
-"Retry" means five different things in an agent run, at five different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.
+"Retry" means six different things in an agent run, at six different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.
 
 ## The layers
 
 | Layer | What it re-attempts | Configured with | What it adds to message history |
 |---|---|---|---|
 | [Transport](#transport-retries) | The same HTTP request to the provider | [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport] on your HTTP client | Nothing — the agent never sees the attempts |
+| [Provider SDK](models/http-request-retries.md#provider-sdk-retries) | The same HTTP request, re-issued by the provider SDK's own client | The SDK client itself, e.g. `max_retries` on a [custom OpenAI client](models/openai.md#custom-openai-client) or `HttpRetryOptions` on Google | Nothing — the agent never sees the attempts |
 | [Model fallback](#model-fallback-is-not-a-retry) | The same request against a *different* model | [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] | Only the winning response |
 | [Tool](#tool-retries) | One tool call, by asking the model to correct it | `retries={'tools': N}` and per-tool limits | A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] in place of the tool's result |
 | [Output](#output-retries) | The model's final answer, by asking it to correct it | `retries={'output': N}` and [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] | A `RetryPromptPart` — see [below](#output-retries) for where it lands |
 | [Model-request hooks](hooks.md) | The model request, from `after_model_request`, `wrap_model_request`, or `on_model_request_error` raising `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryPromptPart` |
 
-Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The first two are invisible to the model.
+Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The first three are invisible to the model.
+
+## Retry multiplication
+
+The layers don't share budgets, but they stack: a retry at one layer wraps the attempts of every layer below it. If a logical call can issue up to `N` model requests — one initial attempt plus whatever the [tool](#tool-retries) and [output](#output-retries) retry budgets add — each model request is sent by a provider SDK client allowed up to `M` attempts, and each attempt travels on a transport allowed up to `K` attempts, one logical call can put up to `N`×`M`×`K` wire requests on the network.
+
+- `N` — model requests per logical call: one initial attempt plus the agent's retry budgets (tool retries re-prompt the model; output retries re-request the final answer)
+- `M` — attempts per model request inside the provider SDK client, e.g. `1 + max_retries` on a [custom OpenAI client](models/openai.md#custom-openai-client) or `attempts` in Google's `HttpRetryOptions`
+- `K` — attempts per request on the wire: `1 +` the retries in the transport's `RetryConfig` — see [transport retries](models/http-request-retries.md)
+
+Every wire request pays its own latency — and bills tokens once the request reaches the model — so the worst case, not the happy path, is what [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] and [`UsageLimits`][pydantic_ai.usage.UsageLimits] must absorb. See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for the time side.
+
+```python {title="retry_multiplication.py"}
+from pydantic_ai import AgentRetries, ModelSettings
+
+retries: AgentRetries = {'output': 2}  # final answer alone: up to 3 model requests
+sdk_max_retries = 2  # provider SDK client, e.g. max_retries=2 on a custom OpenAI client
+transport_max_retries = 1  # retrying transport, per HTTP request
+
+model_requests = retries['output'] + 1
+wire_requests = model_requests * (sdk_max_retries + 1) * (transport_max_retries + 1)
+assert wire_requests == 18
+
+settings = ModelSettings(timeout=10)  # per-request deadline, in seconds
+print(settings['timeout'] * wire_requests)  # 180 — size budgets for the worst case
+```
 
 ## Transport retries
 

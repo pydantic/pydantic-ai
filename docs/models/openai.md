@@ -63,6 +63,8 @@ agent = Agent(model)
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
 
+The client's `max_retries` argument is the [provider SDK retry layer](../retries.md#the-layers), independent of the agent's own retry budgets — see [Retry multiplication](../retries.md#retry-multiplication) for how they stack.
+
 ```python {title="custom_openai_client.py"}
 from openai import AsyncOpenAI
 

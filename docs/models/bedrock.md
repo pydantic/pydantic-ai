@@ -360,6 +360,8 @@ agent = Agent(model)
 
 Bedrock uses boto3's built-in retry mechanisms. You can configure retry behavior by passing a custom boto3 client with retry settings:
 
+These boto3 retries are the [provider SDK retry layer](../retries.md#the-layers) — independent of the agent's own retry budgets; see [Retry multiplication](../retries.md#retry-multiplication) for how they stack.
+
 ```python
 import boto3
 from botocore.config import Config
