@@ -1,14 +1,16 @@
 """OpenAI Codex subscription-auth provider: OAuth flow primitives, credential refresh, wire dialect.
 
-Core owns the *non-interactive* protocol primitives only (PKCE context, authorization URL, code
-exchange, refresh); interactive UX (browser opening, localhost callback servers) and persistent
-credential storage belong to applications and harnesses.
+Core owns the protocol primitives (PKCE context, authorization URL, code exchange, refresh) and,
+because the pinned redirect URI makes every login a localhost callback, the one-shot callback
+catcher (`exchange_code_from_callback()`); browser opening and persistent credential storage
+belong to applications and harnesses.
 
 The authorization-code + PKCE redirect flow is the only login flow the public Codex client
 supports: its registration pins the redirect URI to `http://localhost:1455/auth/callback`
 (exact-match, probed live 2026-08-25), and the auth service serves no device-authorization
-endpoint. Hosted-web login is therefore not possible with this client - apps on the user's
-machine serve (or tunnel) `localhost:1455` themselves and hand the code to `exchange_code()`.
+endpoint. Hosted-web login is therefore not possible with this client; apps that cannot use
+the built-in callback catcher serve (or tunnel) `localhost:1455` themselves and hand the code to
+`exchange_code()`.
 """
 
 from __future__ import annotations as _annotations
@@ -297,11 +299,12 @@ class OpenAICodexCredentialSource(Protocol):
     this only to read and write the stored set: `load()` on first use, and `save()` after tokens
     rotate.
 
-    This is also what makes multi-replica deployments safe. Refresh tokens rotate, so replicas
-    sharing one stored grant could otherwise invalidate each other. Before refreshing, the
-    provider re-reads storage with `load()`, and if another replica already rotated the grant it
-    adopts those credentials instead of spending its own. Implementations that want stricter
-    mutual exclusion can hold a per-user lock inside `save()`.
+    This also narrows the multi-replica race over a shared grant. Refresh tokens rotate, so
+    replicas refreshing one stored set can invalidate each other; before refreshing, the provider
+    re-reads storage with `load()` and adopts a peer's newer credentials instead of spending its
+    own. That is best-effort, not distributed mutual exclusion: replicas can still race between
+    `load()` and `save()`, so deployments that need a guaranteed single refresher must serialize
+    refreshes themselves (for example, a per-user lease around calls that may refresh).
 
     Conformance is structural, but implementations are encouraged to subclass the protocol
     explicitly so type checkers verify the method signatures.
