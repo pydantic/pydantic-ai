@@ -27,6 +27,7 @@ from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, R
 
 from ._activity_execution import execute_activity
 from ._operation_names import TemporalOperationNamer
+from ._run_context import activity_sandbox_connection_scope
 from ._toolset import heartbeating, model_response_payload_errors
 
 ParamsT = TypeVar('ParamsT')
@@ -182,9 +183,10 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         transport = cast(TemporalParameterTransport[ParamsT, WireT], operation.parameter_transport)
 
         async def activity_handler(params: Any, deps: Any = None) -> ResultT:
-            semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
-            async with heartbeating():
-                return await operation.handler(semantic_params)
+            async with activity_sandbox_connection_scope():
+                semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
+                async with heartbeating():
+                    return await operation.handler(semantic_params)
 
         # Existing operation transports retain their shipped wire dataclasses and activity
         # signatures. New operation ids ride this generic registration path and only need a

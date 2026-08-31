@@ -115,7 +115,11 @@ try:
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
+    from pydantic_ai.durable_exec.temporal._run_context import (
+        TemporalRunContext,
+        activity_sandbox_connection_scope,
+        deserialize_run_context,
+    )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
 
 except ImportError:  # pragma: lax no cover
@@ -2776,7 +2780,16 @@ async def test_temporal_run_context_ref_connection_failures_are_typed(failure: s
 
 
 async def test_temporal_run_context_reconnects_provider_only_sandbox():
-    backend = RecordingSandboxBackend('provider-only')
+    class ClosableBackend(RecordingSandboxBackend):
+        def __init__(self) -> None:
+            super().__init__('provider-only')
+            self.close_calls: list[bool] = []
+
+        async def close(self, *, terminate: bool) -> None:
+            await anyio.sleep(0)
+            self.close_calls.append(terminate)
+
+    backend = ClosableBackend()
 
     class Provider(Capability[Any]):
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
@@ -2789,14 +2802,54 @@ async def test_temporal_run_context_reconnects_provider_only_sandbox():
         raise AssertionError  # pragma: no cover
 
     sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
-    reconstructed = deserialize_run_context(
-        TemporalRunContext,
-        TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
-        deps=None,
-        agent=agent,
-    )
+    with anyio.CancelScope() as cancel_scope:
+        async with activity_sandbox_connection_scope():
+            reconstructed = deserialize_run_context(
+                TemporalRunContext,
+                TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+                deps=None,
+                agent=agent,
+            )
+            assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
+            cancel_scope.cancel()
 
-    assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
+    assert backend.close_calls == [False]
+
+
+async def test_temporal_activity_sandbox_close_error_does_not_mask_handler_error():
+    class FailingCloseBackend(RecordingSandboxBackend):
+        def __init__(self) -> None:
+            super().__init__('provider-only')
+            self.close_calls = 0
+
+        async def close(self, *, terminate: bool) -> None:
+            self.close_calls += 1
+            raise RuntimeError('close failed')
+
+    backend = FailingCloseBackend()
+
+    class Provider(Capability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            return backend
+
+    agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
+
+    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
+        raise AssertionError  # pragma: no cover
+
+    sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match='handler failed'):
+        async with activity_sandbox_connection_scope():
+            reconstructed = deserialize_run_context(
+                TemporalRunContext,
+                TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+                deps=None,
+                agent=agent,
+            )
+            await reconstructed.sandbox.run(['true'])
+            raise ValueError('handler failed')
+
+    assert backend.close_calls == 1
 
 
 @pytest.mark.parametrize('failure', ['no_agent', 'decline', 'user', 'runtime'])

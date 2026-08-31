@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import sys
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
+import anyio
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
@@ -26,6 +31,33 @@ TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
     'or pass a `SandboxRef` to the agent run; either way the sandbox is re-opened inside each activity '
     "through the capability chain's `get_sandbox`."
 )
+
+_activity_sandboxes: ContextVar[list[Sandbox] | None] = ContextVar('temporal_activity_sandboxes', default=None)
+
+
+@asynccontextmanager
+async def activity_sandbox_connection_scope() -> AsyncGenerator[None]:
+    """Close every deferred sandbox connection opened by one Temporal activity."""
+    sandboxes: list[Sandbox] = []
+    token = _activity_sandboxes.set(sandboxes)
+    try:
+        yield
+    finally:
+        active_error = sys.exc_info()[1]
+        try:
+            with anyio.CancelScope(shield=True):
+                error: BaseException | None = None
+                for sandbox in reversed(sandboxes):
+                    try:
+                        await sandbox._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
+                    except BaseException as close_error:
+                        if error is None:
+                            error = close_error
+                if error is not None and active_error is None:
+                    raise error
+        finally:
+            _activity_sandboxes.reset(token)
+
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
 # `TemporalRunContext` subclasses can add their own fields), which means a value whose type isn't
@@ -274,6 +306,10 @@ def deserialize_run_context(
     sandbox_state = serialized.get('_sandbox_state')
     if is_str_dict(sandbox_state):
         _restore_sandbox(ctx, sandbox_state, agent)
+        if (sandboxes := _activity_sandboxes.get()) is not None:
+            sandbox = ctx.__dict__.get('_sandbox')
+            if isinstance(sandbox, Sandbox) and all(existing is not sandbox for existing in sandboxes):
+                sandboxes.append(sandbox)
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside
     # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install

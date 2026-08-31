@@ -574,9 +574,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def has_sandbox_hooks(self) -> bool:
         """Whether this capability declares any part of the sandbox provider interface."""
         capability_type = type(self)
-        return any(
-            getattr(capability_type, name) is not getattr(AbstractCapability, name)
-            for name in ('acquire_sandbox', 'get_sandbox', 'release_sandbox')
+        return (
+            capability_type.acquire_sandbox is not AbstractCapability.acquire_sandbox
+            or capability_type.get_sandbox is not AbstractCapability.get_sandbox
+            or capability_type.release_sandbox is not AbstractCapability.release_sandbox
         )
 
     @property

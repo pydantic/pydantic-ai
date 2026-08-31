@@ -10,6 +10,9 @@ async def close_backend_connection(backend: object) -> None:
     close = getattr(backend, 'close', None)
     if close is None or not inspect.iscoroutinefunction(close):
         return
+    # Runtime-checkable protocols only test that `close` exists, not that its signature accepts
+    # `terminate`. Reflection is deliberate here, at teardown only, to avoid misclassifying an
+    # unrelated `async close()` method while keeping this provider extension out of public API.
     try:
         inspect.signature(close).bind(terminate=False)
     except (TypeError, ValueError):
