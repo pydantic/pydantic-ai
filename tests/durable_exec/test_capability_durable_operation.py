@@ -212,16 +212,37 @@ class RepeatingLifecycleModel(LifecycleTrackingModel):
         return ModelResponse(parts=[TextPart('from-tracked')])
 
 
+def _tracked_model_resolver(
+    built: list[LifecycleTrackingModel],
+    *,
+    events: list[str] | None = None,
+    event_prefix: str = '',
+    model_type: type[LifecycleTrackingModel] = LifecycleTrackingModel,
+) -> Callable[[ModelResolutionContext[Any], str], LifecycleTrackingModel]:
+    """Build a fresh model for the one id these tests swap to, recording every instance.
+
+    Shared across the tests below rather than repeated inside each: the outside-a-container test
+    asserts this is never consulted, so a resolver of its own would leave a body nothing executes.
+    Each call gets its own event list unless the caller supplies one to share.
+    """
+
+    def resolve(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel:
+        del model_id
+        model = model_type(
+            events if events is not None else [],
+            event_prefix=event_prefix,
+            custom_output_text='from-tracked',
+        )
+        built.append(model)
+        return model
+
+    return resolve
+
+
 async def test_capability_operation_is_direct_outside_durable_context() -> None:
     events: list[str] = []
     built_models: list[LifecycleTrackingModel] = []
-
-    def resolve_model(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel | None:
-        if model_id != 'tracked':
-            return None
-        model = LifecycleTrackingModel(events, event_prefix='tracked-', custom_output_text='from-tracked')
-        built_models.append(model)
-        return model
+    resolve_model = _tracked_model_resolver(built_models, events=events, event_prefix='tracked-')
 
     durability = TransparentDurability()
     agent = Agent(
@@ -239,13 +260,7 @@ async def test_capability_operation_is_direct_outside_durable_context() -> None:
 async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
     events: list[str] = []
     built_models: list[LifecycleTrackingModel] = []
-
-    def resolve_model(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel | None:
-        if model_id != 'tracked':
-            return None
-        model = LifecycleTrackingModel(events, event_prefix='tracked-', custom_output_text='from-tracked')
-        built_models.append(model)
-        return model
+    resolve_model = _tracked_model_resolver(built_models, events=events, event_prefix='tracked-')
 
     durability = RecordingDurability()
     agent = Agent(
@@ -282,14 +297,8 @@ async def test_capability_operation_registered_model_id_swap_does_not_manage_mod
 
 
 async def test_repeated_capability_operation_model_id_swaps_close_each_model() -> None:
-    model_events: list[list[str]] = []
-
-    def resolve_model(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel | None:
-        if model_id != 'tracked':
-            return None
-        events: list[str] = []
-        model_events.append(events)
-        return RepeatingLifecycleModel(events, custom_output_text='from-tracked')
+    built_models: list[LifecycleTrackingModel] = []
+    resolve_model = _tracked_model_resolver(built_models, model_type=RepeatingLifecycleModel)
 
     agent = Agent(
         TestModel(custom_output_text='original'),
@@ -308,7 +317,7 @@ async def test_repeated_capability_operation_model_id_swaps_close_each_model() -
         return output
 
     assert (await agent.run('test')).output == 'from-tracked'
-    assert model_events == [
+    assert [model.events for model in built_models] == [
         ['enter', 'exit:none'],
         ['enter', 'request', 'exit:none'],
         ['enter', 'exit:none'],
