@@ -1389,6 +1389,14 @@ async def test_temporal_activity_does_not_manage_registered_models() -> None:
         serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
     )
 
+    # A `model_id` of `None` resolves to the agent default, which is registered too, so it must not
+    # be entered either.
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+    assert events == ['request']
+
+    events = []
+    default.events = events
+    registered.events = events
     params.model_id = 'registered'
     await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
     assert events == ['request']
