@@ -31,10 +31,15 @@ def prefectify_dynamic_toolset(
 ) -> DurableDynamicToolset[AgentDepsT]:
     base_config = default_task_config | (task_config or {})
 
-    async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
-        # Runs in flow code, like static Prefect MCP `get_tools`: flow retries re-execute
-        # resolution anyway, so only tool *calls* get task retry/caching semantics.
+    @task
+    async def get_tools_task(toolset_id: str | None, ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
+        # Forks the cache key so toolsets sharing this task's source don't collide.
+        del toolset_id
         return await get_dynamic_tools(wrapped, ctx)
+
+    async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
+        task_config = with_non_retryable_errors(base_config)
+        return await get_tools_task.with_options(name=f'Discover Tools: {wrapped.id}', **task_config)(wrapped.id, ctx)
 
     @task
     async def call_tool_task(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> Any:

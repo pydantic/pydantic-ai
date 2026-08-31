@@ -1049,7 +1049,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
             if not self.engine_spec.journal_discovery:
-                # Prefect resolves the dynamic toolset in flow code, not a durable unit.
                 return await get_dynamic_tools(toolset, ctx)
 
             return await get_tools(ToolsetGetToolsParams(ctx), config=base_config)
@@ -1242,7 +1241,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return DurableMCPToolset(
             toolset,
             in_durable_context=self._toolset_in_durable_context,
-            # Prefect runs MCP discovery in flow code, not a durable unit (`journal_discovery`).
             get_tools_operation=get_tools_operation if self.engine_spec.journal_discovery else None,
             get_instructions_operation=get_instructions_operation if self.engine_spec.journal_discovery else None,
             call_tool_operation=call_tool_operation,
