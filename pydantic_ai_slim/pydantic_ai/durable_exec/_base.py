@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
 from weakref import ref
@@ -667,16 +667,22 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         both halves, and the guard is not optional for any of them: the unit's recorded result is
         replayed on recovery or a cache hit without re-running its body, so a `ctx.enqueue()` from
         the model -- or from a `resolve_model_id` capability rebuilding it -- would be dropped.
+        Models rebuilt inside the unit are owned and context-managed here; the agent's default and
+        `models=` registry instances keep their existing external lifecycle owner.
         Pairing the two here means a unit can't get its model without the guard, instead of each
         engine remembering to install it per unit (Temporal has its own chokepoint in
         `deserialize_run_context`, so it doesn't use this).
         """
         with self._durable_run_context_scope(run_context) as ctx:
             model = await self._resolve_model_for_request(model_id, ctx)
-            ctx.model = model
-            if isinstance(ctx, _RestrictedRunContext):
-                ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
-            yield model, ctx
+            registered, _ = self._registered_model_id(model)
+            async with AsyncExitStack() as stack:
+                if not registered:
+                    model = await stack.enter_async_context(model)
+                ctx.model = model
+                if isinstance(ctx, _RestrictedRunContext):
+                    ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
+                yield model, ctx
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""

@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -64,6 +65,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    StreamedResponse,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -3057,6 +3059,90 @@ def _dbos_alt_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
 # A module-level function (not a lambda): passing the instance to `agent.run(model=...)`
 # makes it part of the DBOS workflow's pickled arguments.
 _dbos_alt_model = FunctionModel(_dbos_alt_model_fn, model_name='alt')
+
+_dbos_model_lifecycle_events: list[str] = []
+
+
+class _DBOSLifecycleModel(TestModel):
+    def __init__(self) -> None:
+        super().__init__(custom_output_text='ok', model_name='lifecycle')
+
+    async def __aenter__(self) -> _DBOSLifecycleModel:
+        _dbos_model_lifecycle_events.append('model-enter')
+        return await super().__aenter__()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        exception_name = exc_type.__name__ if exc_type is not None else 'none'
+        _dbos_model_lifecycle_events.append(f'model-exit:{exception_name}')
+        return await super().__aexit__(exc_type, exc_val, exc_tb)
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        _dbos_model_lifecycle_events.append('request')
+        return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        _dbos_model_lifecycle_events.append('stream-enter')
+        try:
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed:
+                yield streamed
+        finally:
+            _dbos_model_lifecycle_events.append('stream-exit')
+
+
+def _resolve_dbos_lifecycle_model(_ctx: ModelResolutionContext[Any], _model_id: str) -> _DBOSLifecycleModel:
+    return _DBOSLifecycleModel()
+
+
+async def test_dbos_durability_context_manages_resolved_models(dbos: DBOS) -> None:
+    """Resolver-created models stay entered through ordinary and streamed DBOS steps."""
+    agent = Agent(
+        'lifecycle',
+        name='durability_resolved_model_lifecycle',
+        capabilities=[ResolveModelId(_resolve_dbos_lifecycle_model), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hello')).output
+
+    @DBOS.workflow()
+    async def stream_agent() -> str:
+        async with agent.run_stream('hello') as result:
+            return await result.get_output()
+
+    _dbos_model_lifecycle_events.clear()
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'ok'
+    assert _dbos_model_lifecycle_events == ['model-enter', 'request', 'model-exit:none']
+
+    _dbos_model_lifecycle_events.clear()
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await stream_agent() == 'ok'
+    assert _dbos_model_lifecycle_events == [
+        'model-enter',
+        'stream-enter',
+        'stream-exit',
+        'model-exit:none',
+    ]
 
 
 async def test_dbos_durability_runtime_registered_model(dbos: DBOS) -> None:
