@@ -23,7 +23,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._activity_execution import execute_activity
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import TemporalRunContext, activity_sandbox_connections, deserialize_run_context
 from ._toolset import (
     CallToolParams,
     GetToolsParams,
@@ -59,7 +59,7 @@ def temporalize_dynamic_toolset(
 
     get_tools_activity.__annotations__['deps'] = deps_type
     registered_get_tools = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__get_tools')(
-        get_tools_activity
+        activity_sandbox_connections(get_tools_activity)
     )
 
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
@@ -69,7 +69,7 @@ def temporalize_dynamic_toolset(
 
     call_tool_activity.__annotations__['deps'] = deps_type
     registered_call_tool = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__call_tool')(
-        call_tool_activity
+        activity_sandbox_connections(call_tool_activity)
     )
 
     async def validate_args_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
@@ -82,7 +82,7 @@ def temporalize_dynamic_toolset(
     validate_args_activity.__annotations__['deps'] = deps_type
     registered_validate_args = activity.defn(
         name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__validate_args'
-    )(validate_args_activity)
+    )(activity_sandbox_connections(validate_args_activity))
 
     async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
         config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}

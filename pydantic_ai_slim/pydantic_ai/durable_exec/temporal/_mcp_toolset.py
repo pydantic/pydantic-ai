@@ -21,7 +21,7 @@ from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._activity_execution import execute_activity
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import TemporalRunContext, activity_sandbox_connections, deserialize_run_context
 from ._toolset import (
     CallToolParams,
     GetToolsParams,
@@ -92,13 +92,13 @@ def temporalize_mcp_toolset(
     for activity_func in (get_tools_activity, get_instructions_activity, call_tool_activity):
         activity_func.__annotations__['deps'] = deps_type
     get_tools_activity_def = activity.defn(name=f'{activity_name_prefix}__mcp_server__{toolset.id}__get_tools')(
-        get_tools_activity
+        activity_sandbox_connections(get_tools_activity)
     )
     get_instructions_activity_def = activity.defn(
         name=f'{activity_name_prefix}__mcp_server__{toolset.id}__get_instructions'
-    )(get_instructions_activity)
+    )(activity_sandbox_connections(get_instructions_activity))
     call_tool_activity_def = activity.defn(name=f'{activity_name_prefix}__mcp_server__{toolset.id}__call_tool')(
-        call_tool_activity
+        activity_sandbox_connections(call_tool_activity)
     )
 
     def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:

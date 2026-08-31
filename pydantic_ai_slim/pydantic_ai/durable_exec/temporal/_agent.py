@@ -63,6 +63,7 @@ from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import (
     TEMPORAL_SANDBOX_UNAVAILABLE_REASON,
     TemporalRunContext,
+    activity_sandbox_connections,
     deserialize_run_context,
 )
 from ._toolset import (
@@ -241,7 +242,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler_activity.__annotations__['deps'] = self.deps_type
 
         self.event_stream_handler_activity = activity.defn(name=f'{activity_name_prefix}__event_stream_handler')(
-            event_stream_handler_activity
+            activity_sandbox_connections(event_stream_handler_activity)
         )
         activities.append(self.event_stream_handler_activity)
 

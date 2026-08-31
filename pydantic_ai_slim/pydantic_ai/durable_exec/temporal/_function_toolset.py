@@ -18,7 +18,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._activity_execution import execute_activity
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import TemporalRunContext, activity_sandbox_connections, deserialize_run_context
 from ._toolset import (
     CallToolParams,
     call_tool_in_activity,
@@ -67,7 +67,7 @@ def temporalize_function_toolset(
 
     call_tool_activity.__annotations__['deps'] = deps_type
     registered_activity = activity.defn(name=f'{activity_name_prefix}__toolset__{toolset.id}__call_tool')(
-        call_tool_activity
+        activity_sandbox_connections(call_tool_activity)
     )
 
     def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:

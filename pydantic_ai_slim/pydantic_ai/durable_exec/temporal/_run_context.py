@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import TypeVar
+from typing_extensions import ParamSpec, TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._utils import is_str_dict
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+P = ParamSpec('P')
+R = TypeVar('R')
 
 TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
@@ -57,6 +60,17 @@ async def activity_sandbox_connection_scope() -> AsyncGenerator[None]:
                     raise error
         finally:
             _activity_sandboxes.reset(token)
+
+
+def activity_sandbox_connections(function: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+    """Run an activity callable within its deferred sandbox connection scope."""
+
+    @wraps(function)
+    async def scoped(*args: P.args, **kwargs: P.kwargs) -> R:
+        async with activity_sandbox_connection_scope():
+            return await function(*args, **kwargs)
+
+    return scoped
 
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so

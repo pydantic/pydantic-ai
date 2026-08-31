@@ -35,7 +35,7 @@ from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
     _RequestParams,  # pyright: ignore[reportPrivateUsage]
 )
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import TemporalRunContext, activity_sandbox_connections, deserialize_run_context
 from ._toolset import model_response_payload_errors
 
 if TYPE_CHECKING:
@@ -117,7 +117,9 @@ class TemporalModel(WrapperModel):
         # Union with None for backward compatibility with activity payloads created before deps was added
         request_activity.__annotations__['deps'] = deps_type | None
 
-        self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
+        self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(
+            activity_sandbox_connections(request_activity)
+        )
 
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
@@ -147,7 +149,7 @@ class TemporalModel(WrapperModel):
         request_stream_activity.__annotations__['deps'] = deps_type | None
 
         self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
-            request_stream_activity
+            activity_sandbox_connections(request_stream_activity)
         )
 
         try:
@@ -176,7 +178,7 @@ class TemporalModel(WrapperModel):
 
         self.cancel_suspended_response_activity = activity.defn(
             name=f'{activity_name_prefix}__model_cancel_suspended_response'
-        )(cancel_suspended_response_activity)
+        )(activity_sandbox_connections(cancel_suspended_response_activity))
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

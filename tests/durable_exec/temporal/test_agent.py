@@ -98,6 +98,7 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
+    from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -112,7 +113,10 @@ try:
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._function_toolset import (
+        TemporalFunctionToolset,
+        temporalize_function_toolset,
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import (
@@ -2813,6 +2817,60 @@ async def test_temporal_run_context_reconnects_provider_only_sandbox():
             assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
             cancel_scope.cancel()
 
+    assert backend.close_calls == [False]
+
+
+async def test_temporal_activity_closes_deferred_sandbox_connections():
+    class ClosableBackend(RecordingSandboxBackend):
+        def __init__(self) -> None:
+            super().__init__('provider-only')
+            self.close_calls: list[bool] = []
+
+        async def close(self, *, terminate: bool) -> None:
+            self.close_calls.append(terminate)
+
+    backend = ClosableBackend()
+
+    class Provider(Capability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            return backend
+
+    async def use_sandbox(ctx: RunContext[None]) -> str:
+        return (await ctx.sandbox.run(['true'])).stdout
+
+    agent = Agent(TestModel(), capabilities=[Provider(id='provider')])
+    toolset = FunctionToolset[None](tools=[use_sandbox], id='sandbox-toolset')
+    temporal_toolset = temporalize_function_toolset(
+        toolset,
+        activity_name_prefix='test__sandbox_connection_scope',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        tool_activity_config={},
+        deps_type=type(None),
+        agent=agent,
+    )
+    (call_tool_activity,) = temporal_toolset.durable_registrations
+
+    async def unused_resolver(_ref: SandboxRef | None) -> SandboxBackend:
+        raise AssertionError  # pragma: no cover
+
+    sandbox = Sandbox._from_provider('provider', unused_resolver)  # pyright: ignore[reportPrivateUsage]
+
+    @asynccontextmanager
+    async def no_heartbeating():
+        yield
+
+    with patch('pydantic_ai.durable_exec.temporal._function_toolset.heartbeating', no_heartbeating):
+        result = await call_tool_activity(
+            CallToolParams(
+                name='use_sandbox',
+                tool_args={},
+                serialized_run_context=TemporalRunContext.serialize_run_context(_sandbox_context(sandbox)),
+                tool_def=None,
+            ),
+            None,
+        )
+
+    assert unwrap_tool_call_result(result) == 'connected'
     assert backend.close_calls == [False]
 
 
