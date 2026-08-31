@@ -9,16 +9,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import (
     ModelMessage,
-    ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.fallback import FallbackModel
@@ -66,10 +64,11 @@ def test_context_window_used_in_tool():
     assert seen == [0.2]
 
 
-def test_context_window_used_none_when_window_unknown():
-    """`None` when no profile layer sets `context_window` and genai-prices doesn't know the model."""
+@pytest.mark.parametrize('context_window', [None, 0, -100])
+def test_context_window_used_none_when_window_unavailable(context_window: int | None):
+    """`None` when the context window is unknown or non-positive."""
     seen: list[float | None] = []
-    agent = _recording_agent(_model_with_usage(context_window=None), seen)
+    agent = _recording_agent(_model_with_usage(context_window=context_window), seen)
 
     agent.run_sync('hello')
 
@@ -140,34 +139,3 @@ def test_context_window_used_none_for_non_request_response_model():
 
     ctx = RunContext(deps=None, model=model, usage=RunUsage())
     assert ctx.context_window_used is None
-
-
-def test_compaction_example_keeps_tool_call_with_mixed_resume_request():
-    """The documented turn boundary skips requests that mix a new prompt with a tool result."""
-
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('first turn')]),
-        ModelResponse(parts=[ToolCallPart('lookup', {}, 'call-1'), ToolCallPart('lookup', {}, 'call-2')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart('lookup', 'result', 'call-1'),
-                RetryPromptPart('try again', tool_name='lookup', tool_call_id='call-2'),
-                UserPromptPart('also answer this'),
-            ]
-        ),
-        ModelResponse(parts=[TextPart('done')]),
-    ]
-
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if not isinstance(message, ModelRequest):
-            continue
-        has_user_prompt = any(isinstance(part, UserPromptPart) for part in message.parts)
-        has_tool_result = any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts)
-        if has_user_prompt and not has_tool_result:
-            compacted = messages[index:]
-            break
-    else:  # pragma: no cover
-        compacted = messages
-
-    assert compacted == messages

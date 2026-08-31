@@ -246,6 +246,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset(),
+            'context_window': 1000000,
         }
     )
     # Every GPT-5.x model on Mantle's `/openai/v1` Responses endpoint resets tool-call IDs across

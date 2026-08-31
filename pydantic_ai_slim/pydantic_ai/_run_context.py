@@ -360,7 +360,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         except NotImplementedError:
             # A fallback model has no single profile because its candidate models may differ.
             return None
-        if not context_window:
+        if context_window is None or context_window <= 0:
             return None
         for message in reversed(self.messages):
             if isinstance(message, _messages.ModelResponse):
