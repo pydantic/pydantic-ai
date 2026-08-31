@@ -194,8 +194,8 @@ class ModelRequestParameters:
 
     Input to visibility resolution: `ToolDefinition.defer_loading` records what the author asked
     for and stays set after a reveal, so this answers the separate question of what the model can
-    see *now*. History can name tools that no longer exist in the current run's definitions, so
-    this is not necessarily a subset of `function_tools`' names; resolution ignores unknown names.
+    see *now*. History can name tools that no longer exist in the current run's definitions; those
+    are dropped where this is derived, so it is a subset of `function_tools`' names by construction.
     """
 
     deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
@@ -297,27 +297,47 @@ class ModelRequestContext:
 
     Wrapping these parameters in a dataclass instead of a tuple makes the signature
     future-proof: new fields can be added without breaking existing implementations.
+
+    A [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook
+    returns a context, so modifying one is normally `dataclasses.replace(request_context, ...)`. Every
+    field is therefore settable through `replace()`, including `model_id` and `streaming`: the agent
+    graph sets those two immediately before calling the hook, and `replace()` re-initializes any
+    `init=False` field to its default, so declaring them that way silently zeroed both for any hook
+    that copied its context — costing a streamed run its `streaming` flag and a durable-execution
+    worker the selection token it re-resolves an aliased model from. They are still set by the graph
+    rather than by a caller; passing either to a fresh `ModelRequestContext` is not meaningful.
     """
 
     model: Model
-    messages: Sequence[ModelMessage]
+    messages: list[ModelMessage]
     """Messages to send for this model request.
 
-    Stored as a tuple, so in-place calls like `.append()` raise; assign a new sequence instead.
-    Assigning a new sequence changes only the current request. To rewrite the persistent
+    This is an independently owned shallow list, so top-level mutations and assignments change
+    only the current request. To rewrite the persistent
     message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
     instead, or update both explicitly when both effects are intended.
 
-    This is an independent top-level sequence, not an independent object graph. Retained messages
+    This is an independent top-level list, not an independent object graph. Retained messages
     and their parts may be the same objects as those in persistent history. Filtering, reordering,
     or assigning the outer sequence is request-only, but mutating a contained message or part in
     place can affect persistent history. Construct replacements down to the level being changed
     when isolation is required.
     """
     model_settings: ModelSettings | None
-    model_request_parameters: ModelRequestParameters
 
-    model_id: str | None = field(default=None, init=False)
+    model_request_parameters: ModelRequestParameters
+    """The tool, output, and instruction configuration for this request.
+
+    [`instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts] is the source of
+    truth for the instructions in the agent flow: a
+    [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook that
+    rewrites them changes what the model receives, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+    recorded in message history is re-rendered from them afterwards, so history and traces keep showing
+    what was sent. Assigning to that message's `instructions` instead is not propagated back into the
+    parts, and so does not reach the model.
+    """
+
+    model_id: str | None = None
     """The model-name string this request's model was selected/resolved from, if any.
 
     This is the *selection* token — e.g. `'openai:gpt-5.6-sol'`, or an alias like `'tenant-x'` that a
@@ -332,7 +352,7 @@ class ModelRequestContext:
     resolved model — a model swapped in by a hook invalidates it.
     """
 
-    streaming: bool = field(default=False, init=False)
+    streaming: bool = False
     """Whether the agent loop expects to iterate the model response as a stream.
 
     Set for streamed runs — `run_stream()`, `run_stream_events()`, `iter()`'s node streaming — and
@@ -756,7 +776,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # a forged-but-well-shaped name must not reach system voice, and an always-visible
             # tool named by a delta has no "now available" news and no exchange to fabricate:
             # the delta is a no-op for it on this channel just as on the native ones.
-            available_tool_names = (
+            deferred_tool_names = (
                 {tool.name for tool in model_request_parameters.function_tools if tool.defer_loading}
                 if model_request_parameters is not None
                 else None
@@ -781,9 +801,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # arrive visible. Anthropic takes `defer_loading` with no search surface at all, so its gated
             # tools do arrive hidden and do need the reveal.
             if self._hides_deferred_schemas(model_request_parameters):
-                messages = _synthesize_tool_availability_delta_messages(messages, available_tool_names)
+                messages = _synthesize_tool_availability_delta_messages(messages, deferred_tool_names)
             else:
-                messages = _announce_tool_availability_delta_messages(messages, available_tool_names)
+                messages = _announce_tool_availability_delta_messages(messages, deferred_tool_names)
 
         from .._tool_search import synthesize_local_tool_search_messages
 
@@ -2383,7 +2403,7 @@ def _replace_tool_search_exchanges_with_deltas(
 
 
 def _announce_tool_availability_delta_messages(
-    messages: list[ModelMessage], available_tool_names: set[str] | None
+    messages: list[ModelMessage], deferred_tool_names: set[str] | None
 ) -> list[ModelMessage]:
     """Render tool availability changes as a mid-conversation system instruction.
 
@@ -2430,7 +2450,7 @@ def _announce_tool_availability_delta_messages(
                 replacement_parts.append(part)
                 continue
             # A delta that adds nothing has nothing to announce, so it drops out entirely.
-            added = [name for name in part.tools_added if available_tool_names is None or name in available_tool_names]
+            added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
             if added:
                 replacement_parts.append(
                     SystemPromptPart(
@@ -2456,7 +2476,7 @@ def _announce_tool_availability_delta_messages(
 
 
 def _synthesize_tool_availability_delta_messages(
-    messages: list[ModelMessage], available_tool_names: set[str] | None
+    messages: list[ModelMessage], deferred_tool_names: set[str] | None
 ) -> list[ModelMessage]:
     """Render tool availability changes as the local tool-search exchange.
 
@@ -2511,7 +2531,7 @@ def _synthesize_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 pending.append(part)
                 continue
-            added = [name for name in part.tools_added if available_tool_names is None or name in available_tool_names]
+            added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
             if not added:
                 continue
 

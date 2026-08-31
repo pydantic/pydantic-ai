@@ -53,7 +53,7 @@ def unwrap_model(model: Model) -> Model:
     return model
 
 
-@dataclass
+@dataclass(kw_only=True)
 class StreamedActivityResult:
     """Bundle returned across an activity/step/task boundary in durable-execution flows.
 
@@ -80,14 +80,15 @@ Receives a fresh `ModelRequestContext` carrying the segment's messages/settings/
 class DurableModel(WrapperModel):
     """Dispatches each model-request segment through its own durable unit.
 
-    The bundled durability capabilities swap this in for `request_context.model` in their
-    innermost `before_model_request` hook, so the
+    The bundled durability capabilities install this before the wrapped request lifecycle,
+    then repair it in their innermost `before_model_request` hook if an outer hook swaps the model, so the
     continuation loop (Anthropic `pause_turn`, OpenAI background mode) checkpoints every
     suspended segment durably and a failed segment retries alone, while everything else
     (`profile`, `settings`, `continuation_delay`, ...) is answered by the wrapped
-    workflow-side model. Everything engine-specific lives in the three executors, each
+    workflow-side model. Everything engine-specific lives in the four executors, each
     running one request / streamed request / cancellation inside the engine's
-    activity, step, or task.
+    activity, step, or task. Installing it before the before-hook chain also routes model-side
+    compaction through the durable operation.
     """
 
     def __init__(
@@ -96,11 +97,13 @@ class DurableModel(WrapperModel):
         *,
         request_segment: SegmentExecutor[ModelResponse],
         request_stream_segment: SegmentExecutor[StreamedActivityResult],
+        compact_messages_segment: Callable[[ModelRequestContext, str | None], Awaitable[ModelResponse]],
         cancel_suspended_response_segment: Callable[[ModelResponse], Awaitable[None]],
     ):
         super().__init__(wrapped)
         self._request_segment = request_segment
         self._request_stream_segment = request_stream_segment
+        self._compact_messages_segment = compact_messages_segment
         self._cancel_suspended_response_segment = cancel_suspended_response_segment
 
     async def request(
@@ -140,6 +143,11 @@ class DurableModel(WrapperModel):
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await self._cancel_suspended_response_segment(response)
+
+    async def compact_messages(
+        self, request_context: ModelRequestContext, *, instructions: str | None = None
+    ) -> ModelResponse:
+        return await self._compact_messages_segment(request_context, instructions)
 
 
 async def capture_event_stream(

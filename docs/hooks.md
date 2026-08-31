@@ -150,14 +150,14 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 
 `before_model_request` and `model_request` (wrap) use the same message-persistence rules. Each receives two top-level views of the messages:
 
-- Assigning a new sequence to `request_context.messages` changes only the current model request.
+- Mutating or assigning `request_context.messages` changes only the current model request.
 - Mutating the `ctx.messages` list changes persistent history returned by `all_messages()` and used by later requests, but not the current model request.
 - To change both, update both explicitly.
 
 [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] and compaction deliberately update both, preserving their existing history-rewriting contract. Because a history processor transforms the current request view and makes its whole result persistent, its position relative to other message hooks remains significant.
 
 !!! warning "Message objects may still be shared"
-    [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages] is an independent top-level `Sequence`, not an independent object graph. It is stored as a tuple, so in-place calls like `.append()` raise — assign a new sequence instead. Retained messages and their nested parts may be the same objects as those in `ctx.messages`. Filtering, reordering, or assigning the outer sequence is request-only; mutating a contained message or part in place can also change persistent history and later requests. For an isolated change, construct replacement messages and parts down to the level being changed, for example with [`dataclasses.replace`](https://docs.python.org/3/library/dataclasses.html#dataclasses.replace), then assign the new sequence to `request_context.messages`.
+    [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages] is an independent shallow top-level list, not an independent object graph. Appending, filtering, reordering, or assigning that outer list is request-only. Retained messages and their nested parts may be the same objects as those in `ctx.messages`, so mutating a contained message or part in place can also change persistent history and later requests. For an isolated change below the list level, construct replacement messages and parts down to the level being changed, for example with [`dataclasses.replace`](https://docs.python.org/3/library/dataclasses.html#dataclasses.replace).
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 

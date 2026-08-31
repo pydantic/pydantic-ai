@@ -484,7 +484,7 @@ class _JsonSchemaTestData:
         elif type_ == 'integer':
             return self._int_gen(schema)
         elif type_ == 'number':
-            return float(self._int_gen(schema))
+            return self._number_gen(schema)
         elif type_ == 'boolean':
             return self._bool_gen()
         elif type_ == 'array':
@@ -548,13 +548,52 @@ class _JsonSchemaTestData:
                 minimum = exc_min + 1
 
         if minimum is not None and maximum is not None:
-            return minimum + self.seed % (maximum - minimum)
+            span = maximum - minimum
+            if span == 0:
+                # Exclusive-bound adjustments can collapse a valid narrow range.
+                return minimum
+            if (
+                schema.get('type') == 'integer'
+                and minimum % 1 == 0
+                and maximum % 1 == 0
+                and 'exclusiveMinimum' not in schema
+                and 'exclusiveMaximum' not in schema
+                and span > 0
+            ):
+                minimum = int(minimum)
+                span = int(maximum) - minimum + 1
+            return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
         elif maximum is not None:
             return maximum - self.seed
         else:
             return self.seed
+
+    def _number_gen(self, schema: dict[str, Any]) -> float:
+        """Generate a float from a JSON Schema number."""
+        minimum = schema.get('minimum')
+        if (exclusive_minimum := schema.get('exclusiveMinimum')) is not None:
+            minimum = exclusive_minimum if minimum is None else max(minimum, exclusive_minimum)
+        maximum = schema.get('maximum')
+        if (exclusive_maximum := schema.get('exclusiveMaximum')) is not None:
+            maximum = exclusive_maximum if maximum is None else min(maximum, exclusive_maximum)
+        if minimum is not None and maximum is not None:
+            if minimum == maximum:
+                return float(minimum)
+            span = maximum - minimum
+            value = minimum + self.seed % span
+            if value == schema.get('exclusiveMinimum'):
+                value = minimum + span / 2
+            return float(value)
+        elif minimum is not None:
+            offset = 1 if 'exclusiveMinimum' in schema else 0
+            return float(minimum + self.seed + offset)
+        elif maximum is not None:
+            offset = 1 if 'exclusiveMaximum' in schema else 0
+            return float(maximum - self.seed - offset)
+        else:
+            return float(self.seed)
 
     def _bool_gen(self) -> bool:
         """Generate a boolean from a JSON Schema boolean."""

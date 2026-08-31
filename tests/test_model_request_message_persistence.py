@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 
@@ -88,13 +88,8 @@ async def test_model_request_message_persistence_depends_on_context(
 
 
 @pytest.mark.parametrize('hook', ['before', 'wrap'])
-async def test_model_request_messages_reject_in_place_mutation(hook: Literal['before', 'wrap']) -> None:
-    """The framework hands hooks `request_context.messages` as a tuple.
-
-    In-place mutation such as `.append()` raises, so the only route to a request-only change is
-    assigning a new sequence — which must still work and stay ephemeral. A unit-style hook test
-    because the pinned behavior is the runtime type handed to hooks, which no wire recording shows.
-    """
+async def test_model_request_messages_allow_request_only_list_mutation(hook: Literal['before', 'wrap']) -> None:
+    """The public list remains mutable while its top-level ownership is request-local."""
     marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
     model_messages: list[list[ModelMessage]] = []
 
@@ -102,10 +97,8 @@ async def test_model_request_messages_reject_in_place_mutation(hook: Literal['be
         model_messages.append(messages)
         return ModelResponse(parts=[TextPart(content='done')])
 
-    def mutate_then_reassign(request_context: ModelRequestContext) -> None:
-        with pytest.raises(AttributeError):
-            cast('list[ModelMessage]', request_context.messages).append(marker)
-        request_context.messages = [*request_context.messages, marker]
+    def mutate_messages(request_context: ModelRequestContext) -> None:
+        request_context.messages.append(marker)
 
     @dataclass
     class AppendMessages(AbstractCapability[Any]):
@@ -113,7 +106,7 @@ async def test_model_request_messages_reject_in_place_mutation(hook: Literal['be
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             if hook == 'before':
-                mutate_then_reassign(request_context)
+                mutate_messages(request_context)
             return request_context
 
         async def wrap_model_request(
@@ -124,13 +117,13 @@ async def test_model_request_messages_reject_in_place_mutation(hook: Literal['be
             handler: Any,
         ) -> ModelResponse:
             if hook == 'wrap':
-                mutate_then_reassign(request_context)
+                mutate_messages(request_context)
             return await handler(request_context)
 
     agent = Agent(FunctionModel(model_function), capabilities=[AppendMessages()])
     result = await agent.run('hello')
     assert result.output == 'done'
 
-    # The reassigned message reached the wire but not persistent history.
+    # The in-place list edit reached the wire but not persistent history.
     assert _contains_marker(model_messages[0])
     assert not _contains_marker(result.all_messages())

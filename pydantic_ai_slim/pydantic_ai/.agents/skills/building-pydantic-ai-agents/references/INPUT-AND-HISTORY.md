@@ -80,11 +80,11 @@ Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history befo
 
 In `before_model_request` and `wrap_model_request`, use the two message views deliberately:
 
-- `request_context.messages = rewritten` changes only the current model request.
+- Mutating or assigning `request_context.messages` changes only the current model request.
 - `ctx.messages[:] = rewritten` changes persistent history and later requests, but not the current model request.
 - Use both assignments when both effects are intended.
 
-The separation is only at the outer collection. `request_context.messages` is a `Sequence` stored as a tuple — in-place calls like `.append()` raise; assign a new sequence instead — but retained messages and nested parts may be the same objects as those in `ctx.messages`. Filtering, reordering, or replacing the outer sequence is isolated; mutating a contained message or part in place is not and can affect persistent history. For request-only changes below the message level, use `dataclasses.replace` to construct new messages and parts down to the level being changed, then assign the new sequence to `request_context.messages`.
+The separation is only at the outer collection. `request_context.messages` is an independent shallow list, but retained messages and nested parts may be the same objects as those in `ctx.messages`. Appending, filtering, reordering, or replacing the outer list is isolated; mutating a contained message or part in place is not and can affect persistent history. For request-only changes below the message level, use `dataclasses.replace` to construct new messages and parts down to the level being changed.
 
 `ProcessHistory` and compaction intentionally update both contexts. A processor transforms the current request view and makes its complete result persistent, so capability order still matters around processors.
 

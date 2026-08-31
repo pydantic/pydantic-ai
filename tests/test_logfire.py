@@ -961,6 +961,62 @@ async def test_nested_instrumentation_capabilities_capture_request_and_response(
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
+async def test_nested_uninstrumented_agent_does_not_fill_outer_failed_chat_span(capfire: CaptureLogfire) -> None:
+    inner = Agent(TestModel())
+
+    class RunNestedThenFail(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            await inner.run('inner secret')
+            raise RuntimeError('outer request never reached its model')
+
+    outer = Agent(
+        TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RunNestedThenFail()],
+    )
+
+    with pytest.raises(RuntimeError, match='outer request never reached'):
+        await outer.run('outer secret')
+
+    chat_spans = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert len(chat_spans) == 1
+    assert 'gen_ai.input.messages' not in chat_spans[0]['attributes']
+    assert 'gen_ai.output.messages' not in chat_spans[0]['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_streaming_ttft_does_not_leak_to_nested_non_streaming_request(capfire: CaptureLogfire) -> None:
+    inner = Agent(TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    class RunNestedAfterStream(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            response = await handler(request_context)
+            await inner.run('inner')
+            return response
+
+    outer = Agent(
+        TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RunNestedAfterStream()],
+    )
+    async with outer.run_stream('outer') as stream:
+        await stream.get_output()
+
+    chat_spans = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert len(chat_spans) == 2
+    ttfts = [span['attributes'].get('gen_ai.client.operation.time_to_first_chunk') for span in chat_spans]
+    assert sum(isinstance(value, float) for value in ttfts) == 1
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
 @pytest.mark.parametrize('streaming', [False, True])
 async def test_instrumented_model_request_short_circuit_has_no_model_attributes(
     capfire: CaptureLogfire, streaming: bool
@@ -1211,7 +1267,13 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'allow_text_output': False,
                         'allow_image_output': False,
                         'instruction_parts': [
-                            {'content': 'Here are some instructions', 'dynamic': False, 'part_kind': 'instruction'}
+                            {
+                                'content': 'Here are some instructions',
+                                'dynamic': False,
+                                'name': None,
+                                'id': 'agent',
+                                'part_kind': 'instruction',
+                            }
                         ],
                         'thinking': None,
                     }

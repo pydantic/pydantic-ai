@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Annotated, Literal, Union, cast
 
@@ -154,6 +154,22 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     from .messages import post_compaction_window
 
     return _parse_loaded_capabilities(post_compaction_window(messages))
+
+
+def registered_loaded_capability_ids(messages: Sequence[ModelMessage], capability_ids: Collection[str]) -> set[str]:
+    """`parse_loaded_capabilities`, narrowed to capabilities this run actually registered.
+
+    History outlives configuration: a conversation resumed against a smaller capability set still
+    carries the load records of capabilities that are no longer configured, and without this
+    `RunContext.loaded_capability_ids` — and the `active_capability_ids` that unions it — would
+    name a capability the run has no way to act on. Every consumer today starts from a real
+    capability or a real `ToolDefinition`, so nothing observes the difference yet; the sets are
+    public, though, and should not promise something that isn't there.
+
+    Leans on the registry being seeded once at run start. Capabilities registered mid-run would make
+    this a moving target and would need the narrowing reapplied wherever they land.
+    """
+    return parse_loaded_capabilities(messages) & set(capability_ids)
 
 
 def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:

@@ -402,6 +402,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """The root capability of the agent, containing all registered capabilities."""
         raise NotImplementedError
 
+    def _get_validation_context(self) -> Any | Callable[[RunContext[AgentDepsT]], Any]:
+        """Return the agent's private validation-context specification."""
+        return None
+
     @property
     @abstractmethod
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:

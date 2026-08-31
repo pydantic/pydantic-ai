@@ -23,7 +23,7 @@ from pydantic_ai._instrumentation import (
     capture_model_request_span_context,
     capture_model_response_span_context,
     get_instructions as _get_history_instructions,
-    time_to_first_chunk_ctx,
+    get_instructions_source as _get_history_instructions_source,
 )
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
@@ -49,8 +49,8 @@ from ._cost import best_effort_price, fill_response_cost
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
+    registered_loaded_capability_ids,
 )
-from ._instructions import normalize_toolset_instructions
 from ._run_context import AnchoredEvidence, set_current_run_context
 from .exceptions import ToolRetryError
 
@@ -75,6 +75,7 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
+from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -757,10 +758,25 @@ async def _get_instructions(
     if base:
         parts.extend(base)
 
-    toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
-    parts.extend(normalize_toolset_instructions(toolset_result))
+    parts.extend(await collect_toolset_instructions(ctx.deps.tool_manager.toolset, run_context))
 
     return parts or None
+
+
+def _apply_instruction_parts(
+    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+) -> None:
+    """Render the instruction parts being sent onto the request that records them.
+
+    `ModelRequestParameters.instruction_parts` is what the model reads, so a `before_model_request`
+    hook that rewrites the parts would otherwise leave message history and OTel reporting
+    instructions the model never received.
+
+    `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
+    fall back to the request's own `instructions` — so it leaves the request alone.
+    """
+    if instruction_parts is not None:
+        request.instructions = _messages.InstructionPart.join(instruction_parts)
 
 
 async def _prepare_request_parameters(
@@ -828,7 +844,6 @@ async def _prepare_request_parameters(
         function_tools=function_tools,
         native_tools=native_tools,
         deferred_capability_ids=deferred_capability_ids,
-        # Preserve discovered names that aren't in the current definitions.
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
@@ -1160,11 +1175,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         _handler_response: _messages.ModelResponse | None = None
         _handler_called = False
+        _handler_usage_recorded = False
+        time_to_first_chunk: float | None = None
+        accounted_responses: list[_messages.ModelResponse] = []
 
         async def _streaming_handler(
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
-            nonlocal _handler_called, _handler_response
+            nonlocal _handler_called, _handler_response, _handler_usage_recorded, time_to_first_chunk
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -1202,12 +1220,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
                     # that cancelled path `finish` is never reached today (no metrics of any
                     # kind are recorded), so this is symmetry rather than an observable fix.
-                    time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
+                    time_to_first_chunk = sr.time_to_first_chunk(request_start)
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
             _handler_response = response
-            capture_model_response_span_context(response)
+            _handler_usage_recorded = True
+            self._record_response_usage(ctx, response)
+            accounted_responses.append(response)
+            capture_model_response_span_context(req_ctx, response, time_to_first_chunk)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
@@ -1283,7 +1304,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # leaves the capability chain suspended. Close it now that the node is done with it.
                 await agent_stream.aclose_events()
             self.last_request_context = wrap_request_context
-            await self._finish_handling(ctx, model_response)
+            self._enforce_usage_limits(ctx, accounted_responses)
+            await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
             assert self._result is not None
             return
 
@@ -1322,17 +1344,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     try:
                         model_response = await wrap_task
                     except exceptions.ModelRetry as e:
+                        self._enforce_usage_limits(ctx, accounted_responses)
                         # Don't increment usage.requests — _streaming_handler already did.
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
                         # partially-consumed stream) and a wrap hook converted that failure to
                         # `ModelRetry` — then there's no response to preserve in history.
                         if _handler_response is not None:  # pragma: no branch
-                            self._append_response(ctx, _handler_response)
+                            self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
                         await self._build_retry_node(ctx, e)
                     else:
                         self.last_request_context = wrap_request_context
-                        await self._finish_handling(ctx, model_response)
+                        self._enforce_usage_limits(ctx, accounted_responses)
+                        await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
                         assert self._result is not None
             finally:
                 # The event iterator is memoized on the stream, so a consumer that broke out early
@@ -1369,9 +1393,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         _handler_response: _messages.ModelResponse | None = None
         _handler_called = False
+        _handler_usage_recorded = False
+        accounted_responses: list[_messages.ModelResponse] = []
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
-            nonlocal _handler_called, _handler_response
+            nonlocal _handler_called, _handler_response, _handler_usage_recorded
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -1382,8 +1408,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `model_request` resolves any suspended → complete continuation chain (Anthropic
             # `pause_turn`, OpenAI background mode) and returns the final merged response, so
             # `wrap_model_request` spans the whole chain and `after_model_request` sees just
-            # the final response. Continuations are not separate request steps, so usage is
-            # committed exactly once by `_finish_handling` → `_append_response`.
+            # the final response. Continuations are not separate request steps, so the merged
+            # usage is committed exactly once at the provider-response boundary below.
             def on_progress(response: _messages.ModelResponse) -> None:
                 nonlocal _handler_response
                 _handler_response = response
@@ -1397,11 +1423,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except exceptions.ModelRetry:
                 raise
             except Exception as e:
+                if _handler_response is not None:
+                    _handler_usage_recorded = True
+                    self._record_response_usage(ctx, _handler_response)
+                    accounted_responses.append(_handler_response)
                 response = await ctx.deps.root_capability.on_model_request_error(
                     run_context, request_context=req_ctx, error=e
                 )
             _handler_response = response
-            capture_model_response_span_context(response)
+            _handler_usage_recorded = True
+            self._record_response_usage(ctx, response)
+            accounted_responses.append(response)
+            capture_model_response_span_context(req_ctx, response)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
@@ -1418,13 +1451,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
         except exceptions.ModelRetry as e:
+            self._enforce_usage_limits(ctx, accounted_responses)
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
-                self._append_response(ctx, _handler_response)
+                self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
             return await self._build_retry_node(ctx, e)
 
-        return await self._finish_handling(ctx, model_response)
+        self._enforce_usage_limits(ctx, accounted_responses)
+        return await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
 
     async def _prepare_request(
         self,
@@ -1476,7 +1511,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         request_context = ModelRequestContext(
             model=ctx.deps.model,
-            messages=tuple(ctx.state.message_history),
+            messages=ctx.state.message_history[:],
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
@@ -1527,7 +1562,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # response); the innermost helpers split that response off as the continuation seed.
         request_context = ModelRequestContext(
             model=ctx.deps.model,
-            messages=tuple(ctx.state.message_history),
+            messages=ctx.state.message_history[:],
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
@@ -1576,7 +1611,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # request produced by the before-chain. The lifecycle also continues with this original
         # object, retaining read-only dispatch fields such as `streaming`.
         original_request_context.model = processed_context.model
-        original_request_context.messages = tuple(processed_context.messages)
+        original_request_context.messages = list(processed_context.messages)
         original_request_context.model_settings = processed_context.model_settings
         original_request_context.model_request_parameters = processed_context.model_request_parameters
         original_request_context.model_id = processed_context.model_id
@@ -1599,6 +1634,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
             fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+
+            # Instruction parts are request configuration, but the message recording the
+            # current step must still reflect what was actually sent.
+            _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -1634,7 +1673,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
             )
-            request_context.messages = tuple(messages)
+            request_context.messages = messages
 
             usage = ctx.state.usage
             if ctx.deps.usage_limits.count_tokens_before_request:
@@ -1676,6 +1715,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 self._trim_suspended_tail(ctx, persistent_messages)
             else:
                 _set_resumed_history(ctx, persistent_messages)
+
+            instructions_target = (
+                _get_history_instructions_source(ctx.state.message_history) or ctx.deps.resumed_request
+            )
+            if instructions_target is not None:
+                _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
             usage = ctx.state.usage
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
@@ -1690,9 +1735,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
+        *,
+        record_usage: bool = True,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         # Append the model response to state.message_history
-        self._append_response(ctx, response)
+        self._append_response(ctx, response, record_usage=record_usage)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
@@ -1713,11 +1760,31 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     def _append_response(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         response: _messages.ModelResponse,
+        *,
+        record_usage: bool = True,
     ) -> None:
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        if record_usage:
+            ModelRequestNode._record_response_usage(ctx, response)
+            ModelRequestNode._enforce_usage_limits(ctx, [response])
+        ctx.state.message_history.append(response)
+
+    @staticmethod
+    def _record_response_usage(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        response: _messages.ModelResponse,
+    ) -> None:
+        """Commit billed usage at the provider-response boundary."""
         fill_response_cost(response)
         ctx.state.usage.incr(response.usage)
+
+    @staticmethod
+    def _enforce_usage_limits(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        responses: Sequence[_messages.ModelResponse],
+    ) -> None:
+        """Enforce limits outside the wrapper chain so middleware cannot swallow them."""
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
@@ -1725,8 +1792,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
             # response sums usage across segments (see `_check_continuation_usage`), so this caps the
             # chain's combined input rather than any single segment's — conservative, not lenient.
-            ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
-        ctx.state.message_history.append(response)
+            for response in responses:
+                ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
 
     async def _build_retry_node(
         self,
@@ -2275,6 +2342,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         deps=ctx.deps.user_deps,
         agent=ctx.deps.agent,
         model=ctx.deps.model,
+        _model_id=ctx.deps.model_id,
         usage=ctx.state.usage,
         usage_limits=ctx.deps.usage_limits,
         prompt=ctx.deps.prompt,
@@ -2338,7 +2406,7 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
     if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
         return
 
-    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
+    loaded_capability_ids = registered_loaded_capability_ids(ctx.state.message_history, ctx.deps.capabilities.keys())
 
     # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`
     # copies made via `replace(ctx, ...)`, so clear + update keeps them all in sync.
@@ -2362,7 +2430,13 @@ def _revealed_tool_names(
     deferred_capability_ids: set[str],
     loaded_capability_ids: set[str],
 ) -> set[str]:
-    """Drop reveals whose owning capability is not available yet.
+    """Drop reveals for tools this run doesn't define, and those whose owning capability isn't active yet.
+
+    History outlives configuration, so it can name a tool the current run has no definition for. Such
+    a name can't be revealed — there is no schema to show — and every consumer already guards on
+    membership in the definitions, so dropping it here changes nothing observable; what it buys is
+    that `revealed_tool_names` is a subset of `function_tools`' names by construction, and a future
+    consumer can't be caught out by an entry that resolves to nothing.
 
     The ordering a run holds to is load, then reveal, then call: a capability's instructions and
     hooks come as a bundle, and its tools should not reach the model ahead of the runbook for using
@@ -2379,15 +2453,13 @@ def _revealed_tool_names(
     tool is revealed by discovery alone, which is why this needs `deferred_capability_ids` read from
     the capability instances rather than a guess from the tool definitions.
     """
-    owner_by_name = {
-        tool_def.name: tool_def.capability_id for tool_def in function_tools if tool_def.capability_id is not None
-    }
-    # The complement of `RunContext.available_capability_ids` over the run's capabilities: available
-    # is "not deferred, or loaded", so unavailable is "deferred and not loaded". Spelled from the
+    owner_by_name = {tool_def.name: tool_def.capability_id for tool_def in function_tools}
+    # The complement of `RunContext.active_capability_ids` over the run's capabilities: active
+    # is "not deferred, or loaded", so inactive is "deferred and not loaded". Spelled from the
     # two history-derived sets because this also runs against a bare message list, with no
     # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
-    unavailable_capability_ids = deferred_capability_ids - loaded_capability_ids
-    return {name for name in discovered if owner_by_name.get(name) not in unavailable_capability_ids}
+    inactive_capability_ids = deferred_capability_ids - loaded_capability_ids
+    return {name for name in discovered if name in owner_by_name and owner_by_name[name] not in inactive_capability_ids}
 
 
 def _with_outgoing_reveal_state(

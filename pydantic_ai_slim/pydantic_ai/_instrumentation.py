@@ -6,6 +6,7 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation
     from typing_extensions import Self
 
-    from pydantic_ai.messages import ModelMessage, ModelResponse
+    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.settings import ModelSettings
@@ -75,41 +76,38 @@ TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip
 
-time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
-"""Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
-`Instrumentation` capability, which reads it after `await handler(...)` returns — the handler runs
-in the same task, so its `set` is visible there. The agent graph spawns a fresh task per streaming
-request and only that handler ever sets the variable, so a value can't outlive its request;
-non-streaming requests read the `None` default.
-
-This is a context variable rather than a field on `ModelRequestContext` because that object is
-public and holds only the *inputs* to `Model.request[_stream]`.
-"""
-
-_model_request_span_captures: ContextVar[tuple[Callable[[ModelRequestContext], ModelRequestContext], ...]] = ContextVar(
-    'model_request_span_captures', default=()
-)
-_model_response_span_captures: ContextVar[tuple[Callable[[ModelResponse], None], ...]] = ContextVar(
-    'model_response_span_captures', default=()
-)
+_model_request_span_captures: ContextVar[
+    tuple[tuple[ModelRequestContext, Callable[[ModelRequestContext], ModelRequestContext]], ...]
+] = ContextVar('model_request_span_captures', default=())
+_model_response_span_captures: ContextVar[
+    tuple[tuple[ModelRequestContext, Callable[[ModelResponse, float | None], None]], ...]
+] = ContextVar('model_response_span_captures', default=())
 
 
 def capture_model_request_span_context(request_context: ModelRequestContext) -> None:
     """Capture the finalized request at the model-call boundary when instrumentation is active."""
-    for capture in _model_request_span_captures.get():
-        capture(replace(request_context, messages=list(request_context.messages)))
+    for owner, capture in _model_request_span_captures.get():
+        if owner is request_context:
+            capture(replace(request_context, messages=list(request_context.messages)))
 
 
-def capture_model_response_span_context(response: ModelResponse) -> None:
+def capture_model_response_span_context(
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+    time_to_first_chunk: float | None = None,
+) -> None:
     """Capture a response before an after hook can reject it when instrumentation is active."""
-    for capture in _model_response_span_captures.get():
-        capture(response)
+    for owner, capture in _model_response_span_captures.get():
+        if owner is request_context:
+            capture(response, time_to_first_chunk)
 
 
 @contextmanager
-def model_response_span_capture(capture: Callable[[ModelResponse], None]) -> Generator[None]:
+def model_response_span_capture(
+    request_context: ModelRequestContext, capture: Callable[[ModelResponse, float | None], None]
+) -> Generator[None]:
     """Scope response capture to the active instrumentation wrapper."""
-    token = _model_response_span_captures.set((*_model_response_span_captures.get(), capture))
+    token = _model_response_span_captures.set((*_model_response_span_captures.get(), (request_context, capture)))
     try:
         yield
     finally:
@@ -359,7 +357,32 @@ def model_metric_attributes(
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
+    return {
+        'model_request_parameters': safe_to_json(_serialize_model_request_parameters(model_request_parameters)).decode()
+    }
+
+
+def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
+    """Serialize the parameters through their own schema, falling back to inference.
+
+    `serialize_any` infers a shape from the value, which reads a dataclass as its fields and so
+    loses whatever its class meant. `InstructionPart.id` is exactly that case: its source is a
+    class rather than a tagged field, so inference renders a toolset and a capability sharing an
+    `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
+    the same flat key it serializes to everywhere else.
+    """
+    try:
+        return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+    except Exception:  # pragma: no cover
+        # A tool definition carrying something unserializable must not take the span down with it.
+        return serialize_any(model_request_parameters)
+
+
+@cache
+def _model_request_parameters_adapter() -> TypeAdapter[ModelRequestParameters]:
+    from pydantic_ai.models import ModelRequestParameters
+
+    return TypeAdapter(ModelRequestParameters)
 
 
 def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
@@ -601,7 +624,7 @@ def open_model_request_span(
             # `Model.prepare_request` raises (e.g. unsupported native output).
             if defer_request_attributes:
                 capture_token = _model_request_span_captures.set(
-                    (*_model_request_span_captures.get(), set_request_attributes)
+                    (*_model_request_span_captures.get(), (request_context, set_request_attributes))
                 )
                 try:
                     yield finish, request_context
@@ -660,7 +683,7 @@ def get_instructions(
     Falls back to reading `ModelRequest.instructions` from message history when
     `model_request_parameters` is not available (e.g. OTel span attributes).
     """
-    from pydantic_ai.messages import InstructionPart, ModelRequest
+    from pydantic_ai.messages import InstructionPart
     from pydantic_ai.models import Model
 
     if model_request_parameters:
@@ -669,13 +692,24 @@ def get_instructions(
             return InstructionPart.join(parts)
 
     # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
-    #
-    # Get instructions from the first ModelRequest found when iterating messages in reverse.
+    source = get_instructions_source(messages)
+    return source.instructions if source is not None else None
+
+
+def get_instructions_source(messages: Sequence[ModelMessage]) -> ModelRequest | None:
+    """The request in `messages` whose `instructions` are the ones in force for the current request.
+
+    Split out from `get_instructions` because the resume path needs the request itself, not just its
+    text: a `before_model_request` hook's rewrite has to land on the message that records the
+    instructions being echoed back, and stamping the wrong one would put instructions on a request
+    that was sent without any.
+    """
+    from pydantic_ai.messages import ModelRequest
+
+    # The first ModelRequest found when iterating messages in reverse.
     # In the case that a "mock" request was generated to include a tool-return part for a result tool,
     # we want to use the instructions from the second-to-most-recent request (which should correspond to the
     # original request that generated the response that resulted in the tool-return part).
-    instructions = None
-
     last_two_requests: list[ModelRequest] = []
     for message in reversed(messages):
         if isinstance(message, ModelRequest):
@@ -683,11 +717,10 @@ def get_instructions(
             if len(last_two_requests) == 2:
                 break
             if message.instructions is not None:
-                instructions = message.instructions
-                break
+                return message
 
-    # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-    if instructions is None and len(last_two_requests) == 2:
+    # If we don't have two requests, and we didn't already return one, there are definitely no instructions:
+    if len(last_two_requests) == 2:
         most_recent_request = last_two_requests[0]
         second_most_recent_request = last_two_requests[1]
 
@@ -706,9 +739,9 @@ def get_instructions(
         # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
 
         if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
-            instructions = second_most_recent_request.instructions
+            return second_most_recent_request
 
-    return instructions
+    return None
 
 
 def current_otel_traceparent() -> str | None:

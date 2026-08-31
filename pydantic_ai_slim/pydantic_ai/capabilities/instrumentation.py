@@ -24,7 +24,6 @@ from pydantic_ai._instrumentation import (
     redact_binary_content,
     safe_to_json,
     serialize_any,
-    time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
@@ -305,12 +304,14 @@ class Instrumentation(AbstractCapability[Any]):
             defer_request_attributes=True,
         ) as (finish, _):
             captured_response: ModelResponse | None = None
+            captured_time_to_first_chunk: float | None = None
 
-            def capture_response(response: ModelResponse) -> None:
-                nonlocal captured_response
+            def capture_response(response: ModelResponse, time_to_first_chunk: float | None) -> None:
+                nonlocal captured_response, captured_time_to_first_chunk
                 captured_response = response
+                captured_time_to_first_chunk = time_to_first_chunk
 
-            with model_response_span_capture(capture_response):
+            with model_response_span_capture(request_context, capture_response):
                 try:
                     response = await handler(request_context)
                 except BaseException:
@@ -321,14 +322,14 @@ class Instrumentation(AbstractCapability[Any]):
                     else:
                         prepared_request_context = finish(
                             captured_response,
-                            time_to_first_chunk=time_to_first_chunk_ctx.get(),
+                            time_to_first_chunk=captured_time_to_first_chunk,
                         )
                         track_request(prepared_request_context)
                     raise
 
                 prepared_request_context = finish(
                     response,
-                    time_to_first_chunk=time_to_first_chunk_ctx.get(),
+                    time_to_first_chunk=captured_time_to_first_chunk,
                 )
                 # Use the prepared parameters so prompted-output instructions match the model payload.
                 track_request(prepared_request_context)
