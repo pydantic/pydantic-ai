@@ -5012,7 +5012,6 @@ def _map_usage(
         if isinstance(v, int)
     }
     response_data = dict(model=model, usage=usage_data)
-    reasoning_tokens: int | None = None
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
         input_tokens_details = usage_data.get('input_tokens_details')
@@ -5027,7 +5026,6 @@ def _map_usage(
 
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
-            reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
 
     request_usage = usage.RequestUsage.extract(
         response_data,
@@ -5045,18 +5043,6 @@ def _map_usage(
         cache_write_tokens = input_tokens_details.get('cache_write_tokens')
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
-    # genai-prices' `openai` entry maps `completion_tokens_details.reasoning_tokens` to
-    # `output_reasoning_tokens`, but an OpenAI-compatible provider it knows by its own id resolves to that
-    # provider's extractor instead of to the `openai` fallback, and not all of those map it — `zai`'s,
-    # added in genai-prices 0.1.2, doesn't, which silently dropped Z.AI's reasoning-token count. Lift it
-    # for whichever provider matched, from what the SDK reported rather than from `details`, which the
-    # `responses` branch above fills with a synthetic zero. Left unset — not zeroed — when the SDK reports
-    # nothing, so a model that doesn't reason stays distinguishable from one that reasoned for free.
-    # TODO: Remove this block once genai-prices maps reasoning tokens for every OpenAI-compatible provider.
-    # https://github.com/pydantic/genai-prices/pull/580 (merged; not in 0.1.4 — drop once the floor is past the release that includes it).
-    if isinstance(reasoning_tokens, int) and 'output_reasoning_tokens' not in request_usage.__dict__:
-        # Extra field, not a declared `RequestUsage` attribute — `setattr` is how `__init__` sets extras.
-        setattr(request_usage, 'output_reasoning_tokens', reasoning_tokens)
     return request_usage
 
 

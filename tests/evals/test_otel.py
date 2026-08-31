@@ -496,6 +496,16 @@ async def test_span_tree_ancestors_methods():
         {'no_ancestor_has': {'name_matches_regex': 'root'}, 'stop_recursing_when': {'name_equals': 'level1'}}
     )
 
+    # Pruned results are reused by each recursive condition and must be reusable
+    # collections rather than one-shot generators.
+    assert not leaf_node.matches(
+        {
+            'all_ancestors_have': {'name_matches_regex': 'level|root'},
+            'no_ancestor_has': {'name_equals': 'root'},
+            'stop_recursing_when': {'name_equals': 'never'},
+        }
+    )
+
 
 async def test_span_tree_descendants_methods():
     """Test the descendant traversal methods in SpanNode."""
@@ -581,6 +591,104 @@ async def test_span_tree_descendants_methods():
     )
     assert root_node.matches(
         {'no_descendant_has': {'name_equals': 'leaf'}, 'stop_recursing_when': {'name_equals': 'level3'}}
+    )
+
+
+async def test_span_query_stop_recursing_when_with_multiple_conditions():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/7484.
+
+    When `stop_recursing_when` was present, the pruned descendants/ancestors were cached as a
+    generator rather than a list, so only the first descendant/ancestor condition in the query saw
+    any nodes and every later condition was evaluated against an (at least partially) exhausted
+    iterator: `no_*_has` and `all_*_have` passed vacuously, `some_*_has` failed vacuously.
+    """
+    with context_subtree() as tree:
+        with logfire.span('root', depth=0):
+            with logfire.span('level1', depth=1):
+                with logfire.span('level2', depth=2):
+                    with logfire.span('level3', depth=3):
+                        logfire.info('leaf', depth=4)
+    assert isinstance(tree, SpanTree)
+
+    root_node = tree.roots[0]
+    leaf_node = root_node.first_descendant(lambda node: node.name == 'leaf')
+    assert leaf_node is not None
+
+    # An inert prune (matching no node) must not change the result of any multi-condition query.
+    # `no_descendant_has` after another descendant condition: `level2` is a descendant, so this must fail.
+    query: SpanQuery = {
+        'all_descendants_have': {'has_attribute_keys': ['depth']},
+        'no_descendant_has': {'name_equals': 'level2'},
+    }
+    assert not root_node.matches(query)
+    assert not root_node.matches({**query, 'stop_recursing_when': {'name_equals': 'never-matches'}})
+
+    # `all_descendants_have` after another descendant condition: `leaf` does not contain `level`.
+    query = {
+        'some_descendant_has': {'name_equals': 'leaf'},
+        'all_descendants_have': {'name_contains': 'level'},
+    }
+    assert not root_node.matches(query)
+    assert not root_node.matches({**query, 'stop_recursing_when': {'name_equals': 'never-matches'}})
+
+    # Same on the ancestor side: `root` is an ancestor of the leaf, so this must fail.
+    query = {
+        'all_ancestors_have': {'has_attribute_keys': ['depth']},
+        'no_ancestor_has': {'name_equals': 'root'},
+    }
+    assert not leaf_node.matches(query)
+    assert not leaf_node.matches({**query, 'stop_recursing_when': {'name_equals': 'never-matches'}})
+
+    # `root` does not contain `level`.
+    query = {
+        'some_ancestor_has': {'name_equals': 'root'},
+        'all_ancestors_have': {'name_contains': 'level'},
+    }
+    assert not leaf_node.matches(query)
+    assert not leaf_node.matches({**query, 'stop_recursing_when': {'name_equals': 'never-matches'}})
+
+    # An effective prune applies to every condition in the query, not just the first: pruning at
+    # `level2` leaves `level1` and `level2`, so `no_descendant_has` must fail even though
+    # `some_descendant_has` already consumed past it.
+    assert not root_node.matches(
+        {
+            'some_descendant_has': {'name_equals': 'level2'},
+            'no_descendant_has': {'name_equals': 'level1'},
+            'stop_recursing_when': {'name_equals': 'level2'},
+        }
+    )
+    assert not leaf_node.matches(
+        {
+            'some_ancestor_has': {'name_equals': 'level2'},
+            'no_ancestor_has': {'name_equals': 'level3'},
+            'stop_recursing_when': {'name_equals': 'level2'},
+        }
+    )
+
+    # Splitting each condition into its own `and_` sub-query, each carrying its own prune,
+    # behaves identically to the combined queries above.
+    assert not root_node.matches(
+        {
+            'and_': [
+                {'some_descendant_has': {'name_equals': 'level2'}, 'stop_recursing_when': {'name_equals': 'level2'}},
+                {'no_descendant_has': {'name_equals': 'level1'}, 'stop_recursing_when': {'name_equals': 'level2'}},
+            ]
+        }
+    )
+    assert root_node.matches(
+        {
+            'and_': [
+                {'some_descendant_has': {'name_equals': 'level2'}, 'stop_recursing_when': {'name_equals': 'level2'}},
+                {'no_descendant_has': {'name_equals': 'level3'}, 'stop_recursing_when': {'name_equals': 'level2'}},
+            ]
+        }
+    )
+    assert root_node.matches(
+        {
+            'some_descendant_has': {'name_equals': 'level2'},
+            'no_descendant_has': {'name_equals': 'level3'},
+            'stop_recursing_when': {'name_equals': 'level2'},
+        }
     )
 
 

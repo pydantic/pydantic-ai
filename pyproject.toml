@@ -175,6 +175,8 @@ build-constraint-dependencies = [
 
 [tool.uv.exclude-newer-package]
 # These are our own packages, not worth defending from supply chain attacks on them.
+# `listentome` is maintained by a Pydantic team member and counts as one of ours.
+listentome = false
 pydantic = false
 pydantic-core = false
 pydantic-extra-types = false
@@ -183,10 +185,6 @@ pydantic-handlebars = false
 genai-prices = false
 logfire = false
 logfire-api = false
-# Anthropic 1.0 is built on HTTPX2 and drops legacy HTTPX entirely.
-# TODO(dsfaccini): Remove after 2026-08-27 19:59 UTC. https://github.com/pydantic/pydantic-ai/issues/7658
-# This admits only the reviewed 1.0.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-08-20T19:58:59Z"
 
 [dependency-groups]
 dev = [
@@ -207,14 +205,21 @@ dev = [
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.3.0",
     "pytest-recording>=0.13.2",
-    "diff-cover>=9.2.0",
     "boto3-stubs[bedrock-runtime]>=1.42.63",
-    "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
+    # Pinned at the in-process rework, which reads `Coverage._get_file_reporter` -- a private API --
+    # and so declares `coverage>=7,<8`. A future coverage 8.x bump would be blocked on this
+    # dependency until upstream reworks it off that API.
+    "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
     "genai-prices>=0.1.0",
     "brotli>=1.2.0",
+    # `tests/durable_exec/test_dbos.py`'s fixture sets `enable_otlp=True` to cover DBOS's OTLP integration, and
+    # dbos's own `config_logger` imports this unconditionally on that path without requiring its
+    # `[otel]` extra (only a real bug for callers who set `enable_otlp=True` without it — most don't,
+    # so the public `dbos` extra doesn't need this): https://github.com/dbos-inc/dbos-transact-py/issues/832
+    "opentelemetry-instrumentation-logging>=0.63b0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
     # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
@@ -262,6 +267,12 @@ include = [
     ".github/scripts/test_issue_pr_attention_monitor.py",
     ".github/scripts/semantic_owner_router.py",
     ".github/scripts/test_semantic_owner_router.py",
+    ".github/scripts/community_demand.py",
+    ".github/scripts/test_community_demand.py",
+    ".github/scripts/triage_telemetry.py",
+    ".github/scripts/test_triage_telemetry.py",
+    ".github/scripts/feature_digest.py",
+    ".github/scripts/test_feature_digest.py",
     ".github/scripts/agentic_workflow_guard.py",
     ".github/scripts/test_agentic_workflow_guard.py",
     ".github/scripts/agent_spend_report.py",
@@ -325,6 +336,9 @@ quote-style = "single"
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_semantic_owner_router.py" = ["D"]
+".github/scripts/test_community_demand.py" = ["D"]
+".github/scripts/test_triage_telemetry.py" = ["D"]
+".github/scripts/test_feature_digest.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
@@ -352,6 +366,9 @@ include = [
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/semantic_owner_router.py",
+    ".github/scripts/community_demand.py",
+    ".github/scripts/triage_telemetry.py",
+    ".github/scripts/feature_digest.py",
 ]
 # The monitor policy tests deliberately exercise private helpers and loose GitHub
 # webhook dictionaries through monkeypatching; pytest covers them, while the
@@ -371,7 +388,6 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
-    "examples/pydantic_ai_examples/realtime_voice.py",       # optional, untyped `sounddevice` audio dep
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
@@ -403,7 +419,7 @@ filterwarnings = [
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
     # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
-    # `enable_otlp` is set as `tests/test_dbos.py` does.
+    # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
     # TODO(dsfaccini): Drop this once DBOS moves to the `opentelemetry-instrumentation-logging`
     # handler. https://github.com/dbos-inc/dbos-transact-py/issues/821
     "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
