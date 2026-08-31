@@ -595,14 +595,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             nonlocal producer_done
             try:
                 async for event in stream:
-                    if isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
-                        acknowledged = asyncio.get_running_loop().create_future()
-                        acknowledged.set_result(None)
-                    else:
-                        acknowledged = asyncio.get_running_loop().create_future()
+                    acknowledged = asyncio.get_running_loop().create_future()
+                    replayed = isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES)
+                    if not replayed:
                         ready.append((event, acknowledged))
                         available.set()
                     output.put_nowait((event, acknowledged))
+                    if replayed:
+                        # Replayed model events go to no handler, so nothing else will resolve their
+                        # future: the consumer does, after yielding. Waiting for it here is what keeps
+                        # the model stream's backpressure intact. Running ahead instead advances the
+                        # shared stream accumulator underneath events the caller has not seen yet, so
+                        # earlier events observe accumulated text and later deltas apply twice.
+                        await acknowledged
             except BaseException as exc:
                 output.put_nowait(exc)
             finally:
@@ -642,8 +647,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 if isinstance(item, BaseException):
                     raise item
                 event, acknowledged = item
-                await acknowledged
-                yield event
+                if isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    # Acknowledge only once the caller has consumed it, releasing the producer to
+                    # pull the next event off the model stream. See `produce` above.
+                    yield event
+                    acknowledged.set_result(None)
+                else:
+                    # A dispatched event is only safe to hand on once its handler operation has
+                    # recorded it, so the batch's future gates the yield rather than following it.
+                    await acknowledged
+                    yield event
             await producer
             await dispatcher
         finally:

@@ -19,11 +19,15 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     FunctionToolset,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     RunContext,
     TextPart,
+    TextPartDelta,
     Tool,
     ToolsetTool,
 )
+from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
@@ -267,6 +271,48 @@ async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -
         async for event in durability._batched_event_stream(ctx, stream())  # pyright: ignore[reportPrivateUsage]
     ] == events
     assert batches == [[events[0]], events[1:]]
+
+
+async def test_event_stream_batching_preserves_model_delta_backpressure() -> None:
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    durability = JournalDurability(event_stream_handler=handler)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    part = TextPart('hello ')
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        yield PartStartEvent(index=0, part=part)
+        for delta in ('world', '!'):
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(delta))
+            part.content += delta
+
+    observed_deltas: list[str] = []
+
+    async def observe(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            await asyncio.sleep(0)
+            if isinstance(event, PartDeltaEvent):
+                assert isinstance(event.delta, TextPartDelta)
+                observed_deltas.append(event.delta.content_delta)
+
+    batched_stream = durability._batched_event_stream(  # pyright: ignore[reportPrivateUsage]
+        ctx, stream()
+    )
+    observed_stream = ProcessEventStream(observe).wrap_run_event_stream(ctx, stream=batched_stream)
+    chunks: list[str] = []
+    deltas: list[str] = []
+    async for event in observed_stream:
+        if isinstance(event, PartStartEvent):
+            assert isinstance(event.part, TextPart)
+            chunks.append(event.part.content)
+        elif isinstance(event, PartDeltaEvent):
+            assert isinstance(event.delta, TextPartDelta)
+            deltas.append(event.delta.content_delta)
+            chunks.append(chunks[-1] + event.delta.content_delta)
+
+    assert observed_deltas == deltas == ['world', '!']
+    assert chunks == ['hello ', 'hello world', 'hello world!']
 
 
 async def test_event_stream_dispatch_does_not_block_embedded_tool_execution() -> None:
