@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager, contextmanager
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
@@ -223,6 +232,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return self.engine_spec.durable_unit_noun
 
     @property
+    def durable_unit_plural(self) -> str:
+        """Plural name for durable units of work."""
+        return self.engine_spec.durable_unit_plural or f'{self.durable_unit_noun}s'
+
+    @property
     def durable_container_noun(self) -> str:
         """Name for the durable container."""
         return self.engine_spec.durable_container_noun
@@ -268,7 +282,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'An agent needs to have a unique `name` in order to be used with {self.engine_name} '
                 f'(or pass `name=` to `{type(self).__name__}`). The name is used to identify the '
-                f"agent's durable {self.durable_unit_noun}s."
+                f"agent's durable {self.durable_unit_plural}."
             )
         bound = copy.copy(self)
         bound.name = self.name or agent.name or ''
@@ -545,6 +559,27 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool_config_key=self.engine_spec.tool_config_key,
         )
 
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Reject capabilities added per-run inside a durable workflow or flow."""
+        if not self.in_durable_context or not isinstance(
+            self.get_durable_operation_backend(), RegisteredOperationBackend
+        ):
+            return
+        unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
+        if not unsafe_capabilities:
+            return
+        names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))
+        raise UserError(
+            f'Capabilities added per-run inside a {self.engine_name} {self.durable_container_noun} are not '
+            f'supported: {names}. {self.engine_name} registers durable {self.durable_unit_plural} when a '
+            f'capability is bound to the agent, before the {self.durable_container_noun} starts. A capability '
+            f'added per-run therefore has no registered durable {self.durable_unit_plural} for the toolsets it '
+            f'contributes or its own `@durable_operation` methods. Attach all capabilities at agent construction '
+            f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
+        )
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
@@ -614,7 +649,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self.durable_unit_noun}s within the "
+                f"The ID will be used to identify the toolset's {self.durable_unit_plural} within the "
                 f'{self.durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
                 "or, when it is contributed by a capability, set the capability's `id` (for example, "
                 "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
@@ -631,7 +666,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
                 f"toolsets registered with the same agent, as they identify the toolset's "
-                f'{self.durable_unit_noun}s within the {self.durable_container_noun}.'
+                f'{self.durable_unit_plural} within the {self.durable_container_noun}.'
             )
         wrapped = self._wrap_leaf_toolset(ts)
         if wrapped is None:
@@ -640,7 +675,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self.durable_unit_noun}s within the "
+                f"The ID will be used to identify the toolset's {self.durable_unit_plural} within the "
                 f'{self.durable_container_noun}.'
             )
         self._toolsets_by_id[ts_id] = wrapped
@@ -1039,7 +1074,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
             if not self.engine_spec.journal_discovery:
-                # Prefect resolves the dynamic toolset in flow code, not a durable unit.
                 return await get_dynamic_tools(toolset, ctx)
 
             return await get_tools(ToolsetGetToolsParams(ctx), config=base_config)
@@ -1232,7 +1266,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return DurableMCPToolset(
             toolset,
             in_durable_context=self._toolset_in_durable_context,
-            # Prefect runs MCP discovery in flow code, not a durable unit (`journal_discovery`).
             get_tools_operation=get_tools_operation if self.engine_spec.journal_discovery else None,
             get_instructions_operation=get_instructions_operation if self.engine_spec.journal_discovery else None,
             call_tool_operation=call_tool_operation,
