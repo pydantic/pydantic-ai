@@ -1,4 +1,4 @@
-"""The identity shared by every kind of model.
+"""The identity and common metadata shared by every kind of model.
 
 Kept apart from [`pydantic_ai.models`][pydantic_ai.models] because it is not specific to the
 request-response models defined there: [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] is a
@@ -17,7 +17,7 @@ __all__ = ('AbstractModel',)
 
 
 class AbstractModel(ABC):
-    """Shared identity for request-response and realtime models."""
+    """Shared identity and metadata for request-response and realtime models."""
 
     @property
     @abstractmethod
@@ -40,6 +40,11 @@ class AbstractModel(ABC):
     @property
     def base_url(self) -> str | None:
         """The base URL for the provider API, if available."""
+        return None
+
+    @property
+    def context_window(self) -> int | None:
+        """The maximum number of tokens the model can handle in one request, if known."""
         return None
 
     @property

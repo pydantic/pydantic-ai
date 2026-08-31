@@ -118,7 +118,10 @@ def test_context_window_used_uses_latest_response():
 
 def test_context_window_used_none_for_fallback_model():
     """`None` for `FallbackModel`, which has no single model profile of its own."""
-    ctx = RunContext(deps=None, model=FallbackModel(TestModel()), usage=RunUsage())
+    model = FallbackModel(TestModel())
+    assert model.context_window is None
+
+    ctx = RunContext(deps=None, model=model, usage=RunUsage())
     assert ctx.context_window_used is None
 
 
@@ -136,6 +139,7 @@ def test_context_window_used_none_for_non_request_response_model():
 
     model = AbstractOnlyModel()
     assert (model.model_name, model.system) == ('abstract-only', 'test')
+    assert model.context_window is None
 
     ctx = RunContext(deps=None, model=model, usage=RunUsage())
     assert ctx.context_window_used is None

@@ -340,7 +340,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Computed as the latest response's reported
         [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] (input, including cached tokens,
         plus output) over the active model's
-        [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]. This estimates how full
+        [`context_window`][pydantic_ai.models.Model.context_window]. This estimates how full
         the next request may be; history processing and newly added content can change its actual
         size. Useful to trigger history compaction, e.g. in a
         [history processor](https://pydantic.dev/docs/ai/message-history#processing-message-history).
@@ -349,18 +349,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         includes when the context window or usage is unknown, before the first model response, and
         for a fallback model whose candidate models may have different context windows.
         """
-        from .models import Model  # imported here because `models` imports `RunContext` at module level
-
-        ctx_model = self.model
-        if not isinstance(ctx_model, Model):
-            # e.g. a realtime model, whose profile has no `context_window`
-            return None
-        try:
-            context_window = ctx_model.profile.get('context_window')
-        except NotImplementedError:
-            # A fallback model has no single profile because its candidate models may differ.
-            return None
-        if context_window is None or context_window <= 0:
+        if (context_window := self.model.context_window) is None:
             return None
         for message in reversed(self.messages):
             if isinstance(message, _messages.ModelResponse):
