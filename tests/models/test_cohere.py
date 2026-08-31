@@ -5,6 +5,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -29,6 +30,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -68,6 +70,27 @@ def test_init():
     assert m.model_name == 'command-r7b-12-2024'
     assert m.system == 'cohere'
     assert m.base_url == 'https://api.cohere.com'
+
+
+def test_cohere_hidden_tools_stay_off_the_wire():
+    """Guard Cohere's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tools, _ = model._get_tool_choice(prepared, {})  # pyright: ignore[reportPrivateUsage]
+    assert len(tools) == 1
+    assert tools[0].function is not None
+    assert tools[0].function.name == 'visible'
 
 
 @dataclass
@@ -126,14 +149,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -144,6 +167,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -161,6 +185,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -200,6 +225,7 @@ async def test_request_simple_usage(allow_model_requests: None):
                 'input_tokens': 1,
                 'output_tokens': 1,
             },
+            cost=Decimal('1.875E-7'),
         )
     )
 
@@ -228,6 +254,7 @@ async def test_request_usage_without_tokens(allow_model_requests: None):
                 'input_tokens': 4,
                 'output_tokens': 2,
             },
+            cost=Decimal('0.0000'),
         )
     )
 
@@ -251,11 +278,7 @@ async def test_request_usage_with_partial_tokens(allow_model_requests: None):
     result = await agent.run('Hello')
     assert result.output == 'world'
     assert result.usage == snapshot(
-        RunUsage(
-            requests=1,
-            input_tokens=4,
-            details={'input_tokens': 3},
-        )
+        RunUsage(requests=1, input_tokens=4, details={'input_tokens': 3}, cost=Decimal('1.5E-7'))
     )
 
 
@@ -294,6 +317,7 @@ async def test_request_usage_with_cached_tokens_mock(allow_model_requests: None)
                 'input_tokens': 13,
                 'output_tokens': 8,
             },
+            cost=Decimal('0.000021525'),
         )
     )
 
@@ -334,6 +358,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -432,6 +457,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -462,7 +488,12 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=RequestUsage(input_tokens=5, output_tokens=3, details={'input_tokens': 4, 'output_tokens': 2}),
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=3,
+                    details={'input_tokens': 4, 'output_tokens': 2},
+                    cost=Decimal('6.375E-7'),
+                ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -487,6 +518,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(cost=Decimal('0.0000')),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
@@ -505,6 +537,7 @@ async def test_request_tool_call(allow_model_requests: None):
             output_tokens=3,
             details={'input_tokens': 4, 'output_tokens': 2},
             tool_calls=1,
+            cost=Decimal('6.375E-7'),
         )
     )
 
@@ -659,7 +692,10 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=542, output_tokens=63, details={'input_tokens': 13, 'output_tokens': 61}
+                    input_tokens=542,
+                    output_tokens=63,
+                    details={'input_tokens': 13, 'output_tokens': 61},
+                    cost=Decimal('0.000029775'),
                 ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
@@ -715,6 +751,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                     output_tokens=2241,
                     output_reasoning_tokens=1856,
                     details={'reasoning_tokens': 1856},
+                    cost=Decimal('0.0098747'),
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -737,6 +774,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
         model=co_model,
         message_history=result.all_messages(),
     )
+    # Cohere does not charge per-token API rates for Command A Reasoning, so no cost is calculated.
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -756,7 +794,9 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                     IsInstance(TextPart),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2190, output_tokens=1257, details={'input_tokens': 431, 'output_tokens': 661}
+                    input_tokens=2190,
+                    output_tokens=1257,
+                    details={'input_tokens': 431, 'output_tokens': 661},
                 ),
                 model_name='command-a-reasoning-08-2025',
                 timestamp=IsDatetime(),
@@ -820,3 +860,130 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
     assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+
+
+@pytest.mark.parametrize(
+    'arguments, expected_args',
+    [(None, None), ('', '')],
+    ids=['none', 'empty-string'],
+)
+async def test_zero_argument_tool_call(arguments: str | None, expected_args: str | None, allow_model_requests: None):
+    """A zero-argument tool call arrives with falsy `arguments` (`None` or `''`).
+
+    The call must be kept, with the falsy value preserved verbatim on the `ToolCallPart`
+    rather than the call being dropped, so the tool runs without a 'Please return text or
+    call a tool.' retry.
+    """
+    completions = [
+        completion_message(
+            AssistantMessageResponse(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ToolCallV2(
+                        id='tc-1',
+                        function=ToolCallV2Function(arguments=arguments, name='get_current_time'),
+                        type='function',
+                    )
+                ],
+            )
+        ),
+        completion_message(
+            AssistantMessageResponse(
+                content=[TextAssistantMessageResponseContentItem(text='it is noon')],
+                role='assistant',
+            )
+        ),
+    ]
+    mock_client = MockAsyncClientV2.create_mock(completions)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def get_current_time() -> str:
+        return '12:00'
+
+    result = await agent.run('what time is it?')
+
+    parts = [part for message in result.all_messages() for part in message.parts]
+    assert ToolCallPart(tool_name='get_current_time', args=expected_args, tool_call_id='tc-1') in parts
+    assert any(isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' for part in parts)
+    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+    assert result.output == 'it is noon'
+
+
+async def test_zero_argument_tool_call_round_trip(allow_model_requests: None):
+    """A falsy-args `ToolCallPart` must survive the request round trip.
+
+    The follow-up request keeps the assistant tool call, with `args_as_json_str()` degrading
+    `None`/`''` to `'{}'` instead of dropping the assistant message (Cohere rejects an assistant
+    message with neither content nor tool calls).
+    """
+    completions = [
+        completion_message(
+            AssistantMessageResponse(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ToolCallV2(
+                        id='tc-1',
+                        function=ToolCallV2Function(arguments=None, name='get_current_time'),
+                        type='function',
+                    )
+                ],
+            )
+        ),
+        completion_message(
+            AssistantMessageResponse(
+                content=[TextAssistantMessageResponseContentItem(text='it is noon')],
+                role='assistant',
+            )
+        ),
+    ]
+    mock_client = MockAsyncClientV2.create_mock(completions)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def get_current_time() -> str:
+        return '12:00'
+
+    result = await agent.run('what time is it?')
+    assert result.output == 'it is noon'
+
+    second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
+    assert [message.role for message in second_call_messages] == ['user', 'assistant', 'tool']
+    assistant_message = next(message for message in second_call_messages if message.role == 'assistant')
+    tool_calls = cast(list[ToolCallV2], assistant_message.tool_calls)
+    assert len(tool_calls) == 1
+    assert tool_calls[0].function is not None
+    assert tool_calls[0].function.name == 'get_current_time'
+    assert tool_calls[0].function.arguments == '{}'
+
+
+async def test_tool_call_without_function_skipped(allow_model_requests: None):
+    """A malformed tool call with no `function` at all is still skipped without raising."""
+    completions = [
+        completion_message(
+            AssistantMessageResponse(
+                content=None,
+                role='assistant',
+                tool_calls=[ToolCallV2(id='tc-1', function=None, type='function')],
+            )
+        ),
+        completion_message(
+            AssistantMessageResponse(
+                content=[TextAssistantMessageResponseContentItem(text='hello back')],
+                role='assistant',
+            )
+        ),
+    ]
+    mock_client = MockAsyncClientV2.create_mock(completions)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+
+    assert result.output == 'hello back'
+    parts = [part for message in result.all_messages() for part in message.parts]
+    assert not any(isinstance(part, ToolCallPart) for part in parts)
