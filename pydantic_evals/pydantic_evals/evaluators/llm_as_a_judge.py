@@ -229,6 +229,10 @@ def set_default_judge_model(model: models.Model | models.KnownModelName) -> None
 def _stringify(value: Any) -> str:
     if isinstance(value, str):
         return value
+    # `to_json` renders `bytes` and `bytearray` as text whenever they decode, but raises on a
+    # `memoryview`, which would then fall through to `repr` and print its address instead.
+    if isinstance(value, memoryview):
+        value = value.tobytes()
     try:
         # If the value can be serialized to JSON, use that.
         # If that behavior is undesirable, the user could manually call repr on the arguments to the judge_* functions
@@ -248,8 +252,13 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
         list[str | UserContent]: the tagged section as a list of strings or UserContent
     """
     sections: list[str | UserContent] = []
-    items: Sequence[str | UserContent] = (  # pyright: ignore[reportUnknownVariableType]
-        content if isinstance(content, Sequence) and not isinstance(content, str) else [content]
+    # A binary buffer is a `Sequence` too, but iterating one yields ints, not content, so it
+    # is kept whole exactly like a `str` and stringified below. Issue #2089 fixed this for
+    # `BinaryContent`; raw buffers were still being iterated.
+    items: Sequence[Any] = (  # pyright: ignore[reportUnknownVariableType]
+        content
+        if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray, memoryview))
+        else [content]
     )
 
     sections.append(f'<{tag}>')

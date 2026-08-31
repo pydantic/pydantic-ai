@@ -161,6 +161,43 @@ def test_build_prompt_section_order_matches_few_shot_examples(
         assert example_tags[start : start + len(expected_tags)] == expected_tags
 
 
+@pytest.mark.parametrize(
+    'binary',
+    [
+        pytest.param(b'The quick brown fox', id='bytes'),
+        pytest.param(bytearray(b'The quick brown fox'), id='bytearray'),
+        pytest.param(memoryview(b'The quick brown fox'), id='memoryview'),
+    ],
+)
+def test_build_prompt_renders_binary_content_whole(binary: bytes | bytearray | memoryview) -> None:
+    """A binary buffer is one piece of content, not a sequence of byte values.
+
+    `bytes`, `bytearray` and `memoryview` are all `Sequence`s, so iterating one yields
+    ints: the judge used to receive `104\n111\n108\n97` in place of the output and grade
+    that. Same failure as issue #2089, which was fixed for `BinaryContent` only.
+    """
+    prompt = _build_prompt(output=binary, rubric='The output mentions a fox')
+    assert isinstance(prompt, str)
+    assert 'The quick brown fox' in prompt
+    assert '\n113\n' not in prompt  # 'q', had the buffer been iterated
+    # One line of content between the tags, not one line per byte.
+    body = prompt.split('<Output>\n')[1].split('\n</Output>')[0]
+    assert body.count('\n') == 0
+
+
+def test_stringify_normalises_binary_buffers() -> None:
+    """All three binary types read the same to the judge.
+
+    `to_json` renders `bytes` as text when it decodes, but has no encoder for a
+    `bytearray` (falls through to `repr`) or a `memoryview` (renders its address).
+    """
+    assert _stringify(b'hi') == '"hi"'
+    assert _stringify(bytearray(b'hi')) == '"hi"'
+    assert _stringify(memoryview(b'hi')) == '"hi"'
+    # Undecodable bytes have no text form; `repr` is the honest fallback, not an address.
+    assert _stringify(b'\xff\xfe') == repr(b'\xff\xfe')
+
+
 @pytest.mark.anyio
 async def test_judge_output_mock(mocker: MockerFixture):
     """Test judge_output function with mocked agent."""
