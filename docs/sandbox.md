@@ -17,7 +17,7 @@ Pydantic AI resolves the sandbox once, before capability and toolset `for_run` h
    sandbox hooks. Exactly one active capability may define any of `acquire_sandbox`,
    `get_sandbox`, or `release_sandbox`; an ambiguous tree raises before any hook runs. The
    provider may acquire a [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef], or return an
-   already-live backend from `get_sandbox(ctx, None)` without an acquisition step.
+   open connection from `get_sandbox(ctx, None)` without an acquisition step.
 3. The framework default: an `UnavailableSandbox` explaining how to attach one.
 
 The selected provider remains the owner for the whole run. A capability returned by that
@@ -116,17 +116,17 @@ its state between those runs.
 ### From a capability
 
 A capability supplies a sandbox through up to three lifecycle hooks. A managed environment uses
-a serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; an already-live environment may
-skip the ref and return its backend directly from `get_sandbox`. In both cases the live connection
-is established lazily wherever it is needed, which is what makes the same capability work
-unchanged under [durable execution](#durable-execution).
+a serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; a provider configured with an
+existing environment may skip the ref and open a connection directly from `get_sandbox`. In both
+cases the run-scoped connection is established lazily wherever it is needed, which is what makes
+the same capability work unchanged under [durable execution](#durable-execution).
 
 - [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox], once per run:
   provision, check out, or select an environment and return its identity, or `None` to not contribute.
 - [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]: connect, never
-  create. With a ref, reconnect that environment; with `None`, return an already-live backend
-  using capability configuration or `ctx.deps`. Called lazily on the first sandbox operation,
-  and again in each durable unit that touches the sandbox.
+  create. With a ref, reconnect that environment; with `None`, open a backend connection using
+  capability configuration or `ctx.deps`. Called lazily on the first sandbox operation, and again
+  in each durable unit that touches the sandbox. Each call returns a detachable connection handle.
 - [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox], once
   after the run ends, including on failure. It may destroy the environment, return it to a pool,
   decrement a reference count, or do nothing. The inherited no-op suits warm sandboxes and
@@ -179,20 +179,26 @@ The same three hooks cover every lifecycle without further concepts:
 | Lifecycle | `acquire_sandbox` | `get_sandbox` | `release_sandbox` |
 |---|---|---|---|
 | Fresh sandbox per run | provision, return its ref | connect by id | destroy |
-| Warm, shared across runs | return the held backend's ref | return the held backend | inherited no-op |
+| Warm environment shared across runs | return its ref | open a run-scoped connection | inherited no-op |
 | Pooled per conversation | check out or create by `ctx.conversation_id` | connect | return to pool or decrement a reference count |
-| Already-live environment | don't override | return the configured backend for `None` | don't override |
+| Provider-configured environment | don't override | open a run-scoped connection for `None` | don't override |
 | Connect-only (provisioned elsewhere) | don't override | connect by id | don't override |
 
 Without a ref there is no provider or sandbox identity to expose before connection. The first
 async sandbox operation calls `get_sandbox(ctx, None)` and caches its backend; after that,
 `sandbox.provider`, `sandbox.sandbox_id`, and `sandbox.backend` reflect the returned backend.
+When the run ends, Pydantic AI calls `close(terminate=False)` if that backend supports it. This
+detaches the run's connection without terminating the environment. Because the facade that caches
+the connection is scoped to one run, `get_sandbox` should return a fresh detachable handle rather
+than one backend object shared by multiple runs. For a caller-owned live backend object that should
+remain open and be reused directly, pass it through `sandbox=`; run teardown never closes that
+object.
 
 Exactly one active capability may provide these hooks. Pydantic AI checks the resolved tree before
 calling `acquire_sandbox`, so configuration mistakes cannot provision a second sandbox and then
 fail without knowing which provider should release it. Returning `None` from the sole provider's
 `acquire_sandbox` skips acquisition; if it implements `get_sandbox`, the run asks it for an
-already-live backend with `ref=None`, otherwise the run uses the unavailable default. Deferred
+open connection with `ref=None`, otherwise the run uses the unavailable default. Deferred
 capabilities cannot provide a sandbox because sandbox resolution happens before they can load.
 Acquisition and release happen inside the agent-run span, so startup failures and slow
 provisioning are visible in traces.

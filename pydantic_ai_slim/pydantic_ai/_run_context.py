@@ -41,9 +41,8 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 
 
 def _default_sandbox() -> Sandbox:
-    # Imported here rather than at module scope: `pydantic_ai.sandboxes` exports the
-    # `ManagedSandbox` capability, which needs `RunPreparationContext` from this module, and this
-    # factory only runs when a `RunContext` is constructed — long after imports have settled.
+    # Imported lazily to keep the run-context module independent of the sandbox facade during
+    # package initialization. This factory runs only when a `RunContext` is constructed.
     from .sandboxes import Sandbox, UnavailableSandbox
 
     return Sandbox.wrap(

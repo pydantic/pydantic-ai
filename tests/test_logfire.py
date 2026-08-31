@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -3502,6 +3503,49 @@ async def test_run_span_end_attribute_failure_does_not_break_the_run(
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
+async def test_run_span_end_attribute_warning_does_not_mask_run_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailRun(AbstractCapability[Any]):
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            raise RuntimeError('run failed')
+
+    def broken_end_attributes(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise ValueError('attribute serialization bug')
+
+    monkeypatch.setattr(Instrumentation, '_run_span_end_attributes', broken_end_attributes)
+    agent = Agent(TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings()), FailRun()])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(RuntimeError, match='run failed'):
+            await agent.run('Hello')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_stale_history_warning_does_not_mask_result_teardown_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailOnExit(WrapperToolset[Any]):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            await self.wrapped.__aexit__(*args)
+            raise RuntimeError('toolset teardown failed')
+
+    def always_stale(*args: Any) -> bool:
+        return True
+
+    monkeypatch.setattr('pydantic_ai.capabilities.instrumentation.has_stale_message_json', always_stale)
+    agent = Agent(
+        TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+        toolsets=[FailOnExit(FunctionToolset())],
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(RuntimeError, match='toolset teardown failed'):
+            await agent.run('Hello')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
 async def test_agent_span_captures_after_run_replacement(capfire: CaptureLogfire) -> None:
     @dataclass
     class ReplaceResult(AbstractCapability[Any]):
@@ -4171,8 +4215,7 @@ def test_agent_with_capability_contributed_instrumented_model(
 def test_agent_with_resolver_returning_instrumented_model(
     get_logfire_summary: Callable[[], LogfireSummary],
 ) -> None:
-    """A model that only resolves to an `InstrumentedModel` at run time (e.g. a registry alias)
-    must still emit model and tool spans; only the whole-run span is decided earlier."""
+    """A model that resolves to an `InstrumentedModel` at run time keeps the run span."""
     from pydantic_ai.models import ModelResolutionContext
     from pydantic_ai.models.instrumented import InstrumentedModel
 
@@ -4190,7 +4233,48 @@ def test_agent_with_resolver_returning_instrumented_model(
     assert result.output == snapshot('success (no tool calls)')
 
     summary = get_logfire_summary()
-    assert summary.traces == snapshot([{'id': 0, 'name': 'chat test', 'message': 'chat test'}])
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'invoke_agent agent',
+                'message': 'agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instrumented_model_resolver_does_not_duplicate_explicit_instrumentation(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    from pydantic_ai.models import ModelResolutionContext
+    from pydantic_ai.models.instrumented import InstrumentedModel
+
+    settings = InstrumentationSettings()
+
+    class Resolver(AbstractCapability[Any]):
+        async def resolve_model_id(
+            self, ctx: ModelResolutionContext[Any], *, model_id: str
+        ) -> InstrumentedModel | None:
+            return InstrumentedModel(TestModel(), settings) if model_id == 'registry:alias' else None
+
+    agent = Agent('registry:alias', capabilities=[Instrumentation(settings=InstrumentationSettings()), Resolver()])
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('success (no tool calls)')
+
+    summary = get_logfire_summary()
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'invoke_agent agent',
+                'message': 'agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

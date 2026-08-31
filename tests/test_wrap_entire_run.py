@@ -38,6 +38,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandboxes import LocalSandbox, SandboxRef
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
+from pydantic_ai.usage import UsageLimits
 from pydantic_graph import End
 
 from .capability_models import simple_model_function
@@ -345,6 +346,34 @@ async def test_wrap_entire_run_cleanup_error_follows_context_manager_semantics(m
         context = exc_info.value.__context__
         assert isinstance(context, RuntimeError)
         assert str(context) == 'model exploded'
+
+
+async def test_wrap_entire_run_closes_on_base_exception_between_preparation_steps() -> None:
+    events: list[str] = []
+
+    class PreparationInterrupted(BaseException):
+        pass
+
+    class InterruptingUsageLimits(UsageLimits):
+        def __bool__(self) -> bool:
+            raise PreparationInterrupted
+
+    @dataclass
+    class TrackExit(AbstractCapability[Any]):
+        @asynccontextmanager
+        async def wrap_entire_run(self, ctx: RunPreparationContext[Any]) -> AsyncGenerator[None]:
+            events.append('enter')
+            try:
+                yield
+            finally:
+                events.append('exit')
+
+    with pytest.raises(PreparationInterrupted):
+        await Agent(FunctionModel(simple_model_function), capabilities=[TrackExit()]).run(
+            'run', usage_limits=InterruptingUsageLimits()
+        )
+
+    assert events == ['enter', 'exit']
 
 
 async def test_wrap_entire_run_cannot_suppress_toolset_teardown_error() -> None:

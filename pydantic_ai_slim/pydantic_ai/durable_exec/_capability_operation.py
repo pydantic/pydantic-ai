@@ -234,11 +234,12 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 return target
             raise TypeError('`durable_operation` can only decorate async methods')
         marker = Marker(name=name, function=cast(Callable[..., Awaitable[Any]], target))
+        signature = inspect.signature(target)
 
         @wraps(target)
         async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> Any:
             # Bind the call so context parameters are visible regardless of calling style.
-            bound = inspect.signature(target).bind(self, *args, **kwargs)
+            bound = signature.bind(self, *args, **kwargs)
 
             # Find the explicit or ambient run context that selects durable dispatch.
             ctx: RunContext[Any] | None = get_current_run_context()
@@ -319,7 +320,15 @@ def collect_capability_operations(
                 if isinstance(capability, WrapperCapability) and member is getattr(
                     WrapperCapability, method_name, None
                 ):
-                    continue
+                    wrapped = capability.wrapped
+                    wrapper_member = getattr(WrapperCapability, method_name, None)
+                    while (
+                        isinstance(wrapped, WrapperCapability)
+                        and getattr(type(wrapped), method_name, None) is wrapper_member
+                    ):
+                        wrapped = wrapped.wrapped
+                    if getattr(type(wrapped), method_name, None) is base_member:
+                        continue
                 handlers[marker.name] = cast(Callable[..., Awaitable[Any]], member)
 
     for method_name, member in inspect.getmembers(type(capability)):

@@ -201,6 +201,63 @@ async def test_durable_sandbox_release_failure_is_logged_and_swallowed(caplog: p
     assert 'platform idle timeout must reap it' in caplog.text
 
 
+async def test_wrapped_sandbox_provider_lifecycle_uses_durable_dispatch() -> None:
+    class SandboxProvider(AbstractCapability[Any]):
+        id = 'sandbox'
+
+        def __init__(self) -> None:
+            self.events: list[str] = []
+
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            self.events.append('acquire')
+            return SandboxRef(provider='fake', sandbox_id='wrapped')
+
+        async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            self.events.append('release')
+
+    provider = SandboxProvider()
+    agent = Agent(
+        TestModel(),
+        name='wrapped_sandbox',
+        capabilities=[WrapperCapability(wrapped=provider), RecordingDurability()],
+    )
+
+    await agent.run('go')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    durable_calls = [name for name, _ in durability.calls if '__capability__sandbox.' in name]
+    assert durable_calls == [
+        'wrapped_sandbox__capability__sandbox.acquire_sandbox',
+        'wrapped_sandbox__capability__sandbox.release_sandbox',
+    ]
+    assert provider.events == ['acquire', 'release']
+
+
+async def test_durability_rejects_live_sandbox_before_run_preparation() -> None:
+    from ..sandbox_fakes import RecordingSandboxBackend
+
+    agent = Agent(TestModel(), name='live_sandbox', capabilities=[RecordingDurability()])
+
+    with pytest.raises(UserError, match=r'live sandbox backend.*Pass a `SandboxRef`'):
+        await agent.run('go', sandbox=RecordingSandboxBackend('live'))
+
+
+async def test_durability_allows_live_sandbox_outside_durable_context() -> None:
+    from ..sandbox_fakes import RecordingSandboxBackend
+
+    class OutsideDurability(RecordingDurability):
+        @property
+        def in_durable_context(self) -> bool:
+            return False
+
+    result = await Agent(TestModel(), name='live_sandbox', capabilities=[OutsideDurability()]).run(
+        'go', sandbox=RecordingSandboxBackend('live')
+    )
+
+    assert result.output == 'success (no tool calls)'
+
+
 class Operations(AbstractCapability[Any]):
     id = 'operations'
 

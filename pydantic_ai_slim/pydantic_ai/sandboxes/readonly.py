@@ -16,6 +16,7 @@ from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
+from ._connection import close_backend_connection
 from .protocol import SandboxCommand, SupportsFilesystem
 
 if TYPE_CHECKING:
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     from .unavailable import UnavailableSandbox
 
 __all__ = ('ReadOnlySandbox',)
+
 
 _READ_ONLY_REASON = (
     'This sandbox is read-only: running commands and modifying files are disabled. '
@@ -66,28 +68,36 @@ class ReadOnlySandbox:
     [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] names the environment, never the policy,
     so whoever supplies the sandbox re-applies the wrapper on every (re)connection.
 
-    The wrapper is a boundary for model and tool access through the sandbox API, not an
-    isolation mechanism: `wrapped` deliberately remains reachable, and read-only *with*
-    command execution is only possible when the environment itself enforces it (e.g. a
-    read-only mount).
+    The wrapper is a policy boundary for access through the sandbox API, not an isolation
+    mechanism. Read-only *with* command execution is only possible when the environment itself
+    enforces it (e.g. a read-only mount).
     """
 
     def __init__(self, wrapped: SandboxBackend):
-        self.wrapped = wrapped
-        """The wrapped backend, unrestricted."""
+        self._wrapped = wrapped
         if isinstance(wrapped, SupportsFilesystem):
             self.fs: SandboxFilesystem = _ReadOnlyFilesystem(wrapped.fs)
 
+    def _backend_for_internal_read(self) -> SandboxBackend:
+        """Return the unrestricted backend for the facade's fixed, non-mutating read command."""
+        return self._wrapped
+
     @property
     def provider(self) -> str:
-        return self.wrapped.provider
+        return self._wrapped.provider
 
     @property
     def sandbox_id(self) -> str:
-        return self.wrapped.sandbox_id
+        return self._wrapped.sandbox_id
 
     async def working_dir(self) -> str:
-        return await self.wrapped.working_dir()
+        return await self._wrapped.working_dir()
+
+    async def close(self, *, terminate: bool) -> None:
+        """Detach the wrapped connection without allowing this policy view to terminate it."""
+        if terminate:
+            raise UserError('A read-only sandbox cannot terminate its wrapped environment.')
+        await close_backend_connection(self._wrapped)
 
     async def run(
         self,

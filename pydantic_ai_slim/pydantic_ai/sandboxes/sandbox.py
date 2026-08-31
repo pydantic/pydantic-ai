@@ -19,6 +19,7 @@ import anyio
 
 from pydantic_ai.exceptions import UserError
 
+from ._connection import close_backend_connection
 from .protocol import (
     SandboxBackend,
     SandboxCommand,
@@ -106,7 +107,7 @@ class Sandbox:
     """
 
     def __init__(self, backend: SandboxBackend):
-        self._initialize(backend=backend, ref=None, capability_id=None, resolver=None)
+        self._initialize(backend=backend, ref=None, capability_id=None, resolver=None, close_backend=False)
 
     def _initialize(
         self,
@@ -115,11 +116,14 @@ class Sandbox:
         ref: SandboxRef | None,
         capability_id: str | None,
         resolver: Callable[[SandboxRef | None], Awaitable[SandboxBackend]] | None,
+        close_backend: bool,
     ) -> None:
         self._backend: SandboxBackend | None = backend
         self._ref = ref
         self._capability_id = capability_id
         self._resolver = resolver
+        self._close_backend = close_backend
+        self._backend_closed = False
         self._deferred_filesystem: _DeferredFilesystem | None = None
 
     @functools.cached_property
@@ -141,6 +145,7 @@ class Sandbox:
             ref=ref,
             capability_id=ref.capability_id,
             resolver=lambda value: resolver(value if value is not None else ref),
+            close_backend=True,
         )
         return sandbox
 
@@ -150,9 +155,9 @@ class Sandbox:
         capability_id: str,
         resolver: Callable[[SandboxRef | None], Awaitable[SandboxBackend]],
     ) -> Sandbox:
-        """Create a facade that asks one capability for an already-live backend on first use."""
+        """Create a facade that asks one capability for a backend connection on first use."""
         sandbox = cls.__new__(cls)
-        sandbox._initialize(backend=None, ref=None, capability_id=capability_id, resolver=resolver)
+        sandbox._initialize(backend=None, ref=None, capability_id=capability_id, resolver=resolver, close_backend=True)
         return sandbox
 
     def _durable_identity(self) -> SandboxRef | SandboxBackend | None:
@@ -218,6 +223,16 @@ class Sandbox:
             if self._backend is None:
                 self._backend = await self._resolver(self._ref)
         return self._backend
+
+    async def _close_connected_backend(self) -> None:
+        """Detach a connection opened by this facade without terminating its sandbox."""
+        if not self._close_backend:
+            return
+        async with self._connect_lock:
+            backend = self._backend
+            if not self._backend_closed and backend is not None:
+                await close_backend_connection(backend)
+                self._backend_closed = True
 
     def _filesystem_for_backend(self, backend: SandboxBackend) -> SandboxFilesystem:
         if isinstance(backend, SupportsFilesystem):
@@ -356,7 +371,7 @@ class Sandbox:
             # The policy wrapper blocks caller-supplied commands, but this argv is an
             # implementation-owned, non-mutating read. Running it on the wrapped backend keeps
             # windowed reads bounded without granting command execution through the wrapper.
-            command_backend = backend.wrapped if isinstance(backend, ReadOnlySandbox) else backend
+            command_backend = backend._backend_for_internal_read() if isinstance(backend, ReadOnlySandbox) else backend  # pyright: ignore[reportPrivateUsage]
             # argv, never shell=True: the path is an argument, not shell-interpreted text.
             # `{end}q` stops `sed` at the window instead of scanning to EOF, and the timeout
             # bounds the optimization on paths that never finish.

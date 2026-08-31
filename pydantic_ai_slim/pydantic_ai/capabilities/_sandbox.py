@@ -46,6 +46,8 @@ def find_sandbox_provider(
     capability: AbstractCapability[AgentDepsT],
 ) -> tuple[AbstractCapability[AgentDepsT], str] | None:
     """Return the sole active sandbox provider, rejecting ambiguous trees before side effects."""
+    if not capability.has_sandbox_hooks:
+        return None
     capabilities = capabilities_by_id(capability)
     capability_ids = {id(leaf): capability_id for capability_id, leaf in capabilities.items()}
     providers = [

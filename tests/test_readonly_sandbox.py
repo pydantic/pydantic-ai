@@ -117,12 +117,10 @@ async def test_reads_forward_and_mutations_raise():
     assert backend.commands == []
 
 
-async def test_wrapped_backend_stays_fully_usable_outside_the_wrapper():
-    """Policy lives in the wrapper, not the backend: the application keeps read-write access
-    through `wrapped` while the model's view is read-only — one environment, two views."""
+async def test_caller_owned_backend_stays_fully_usable_outside_the_wrapper():
+    """The caller's backend stays read-write while its model-facing wrapper is read-only."""
     backend = _FilesystemBackend()
     read_only = ReadOnlySandbox(backend)
-    assert read_only.wrapped is backend  # the unrestricted object stays reachable
 
     await backend.fs.write_bytes('/workspace/data.csv', b'a,b\n')
     result = await backend.run(['touch', 'marker'])
@@ -140,10 +138,56 @@ async def test_identity_and_working_dir_forward():
     backend = _FilesystemBackend()
     read_only = ReadOnlySandbox(backend)
 
-    assert read_only.wrapped is backend
     assert read_only.provider == 'fake'
     assert read_only.sandbox_id == 'fake-rw'
     assert await read_only.working_dir() == '/workspace'
+
+
+async def test_connection_close_forwards_detach_but_blocks_termination():
+    class ClosableBackend(_FilesystemBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_calls: list[bool] = []
+
+        async def close(self, *, terminate: bool) -> None:
+            self.close_calls.append(terminate)
+
+    backend = ClosableBackend()
+    read_only = ReadOnlySandbox(backend)
+
+    async def connect(_: Any) -> ReadOnlySandbox:
+        return read_only
+
+    sandbox = Sandbox._from_provider('fake', connect)  # pyright: ignore[reportPrivateUsage]
+    assert await sandbox.working_dir() == '/workspace'
+    await sandbox._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(UserError, match='cannot terminate'):
+        await read_only.close(terminate=True)
+
+    assert backend.close_calls == [False]
+
+
+async def test_connection_close_ignores_unrelated_incompatible_close_method():
+    class BackendWithUnrelatedClose(_FilesystemBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    backend = BackendWithUnrelatedClose()
+    read_only = ReadOnlySandbox(backend)
+
+    async def connect(_: Any) -> ReadOnlySandbox:
+        return read_only
+
+    sandbox = Sandbox._from_provider('fake', connect)  # pyright: ignore[reportPrivateUsage]
+    await sandbox.working_dir()
+    await sandbox._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
+
+    assert backend.close_calls == 0
 
 
 async def test_filesystem_support_mirrors_wrapped_backend():

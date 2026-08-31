@@ -556,14 +556,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         When `ref` is present, return `None` if this capability doesn't recognize it (typically
         by checking `ref.provider`). When `ref` is `None`, the capability is the run's sole
-        sandbox provider and may return an already-live backend whose connection information
+        sandbox provider and may return a backend connection whose information
         comes from its configuration or `ctx.deps`, without implementing
         [`acquire_sandbox`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] or
         [`release_sandbox`][pydantic_ai.capabilities.AbstractCapability.release_sandbox].
-        May be called any number of times, in any process that holds this capability, so
-        credentials and clients belong here rather than on the ref. Must fail when the sandbox
-        no longer exists instead of silently provisioning a replacement. Inside a durable unit,
-        `ctx` is the engine's restricted run context: `ctx.deps` is always available.
+        The returned backend is a run-scoped connection handle: after the run, Pydantic AI calls
+        `close(terminate=False)` when the backend supports it. Return a fresh detachable handle
+        on every call. To share one caller-owned live backend object across runs, pass it through
+        `sandbox=` instead. May be called any number of times, in any process that holds this
+        capability, so credentials and clients belong here rather than on the ref. Must fail when
+        the sandbox no longer exists instead of silently provisioning a replacement. Inside a
+        durable unit, `ctx` is the engine's restricted run context: `ctx.deps` is always available.
         """
         return None
 

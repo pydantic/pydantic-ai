@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overloa
 import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeIs, TypeVar
+from typing_extensions import ParamSpec, Self, TypeIs, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -134,6 +134,36 @@ from .abstract import (
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
+
+_IterParams = ParamSpec('_IterParams')
+_IterResult = TypeVar('_IterResult')
+_preparation_stack_holder: ContextVar[list[AsyncExitStack] | None] = ContextVar(
+    'pydantic_ai_preparation_stack_holder', default=None
+)
+
+
+def _close_preparation_stack_on_error(
+    function: Callable[_IterParams, AbstractAsyncContextManager[_IterResult]],
+) -> Callable[_IterParams, AbstractAsyncContextManager[_IterResult]]:
+    """Give the whole `iter()` call ownership of any preparation stack it opens."""
+
+    @functools.wraps(function)
+    @asynccontextmanager
+    async def wrapped(*args: _IterParams.args, **kwargs: _IterParams.kwargs) -> AsyncGenerator[_IterResult]:
+        holder: list[AsyncExitStack] = []
+        token = _preparation_stack_holder.set(holder)
+        try:
+            async with function(*args, **kwargs) as result:
+                yield result
+        except BaseException as error:
+            if holder:
+                await holder[0].__aexit__(type(error), error, error.__traceback__)
+            raise
+        finally:
+            _preparation_stack_holder.reset(token)
+
+    return wrapped
+
 
 logger = logging.getLogger('pydantic_ai.agent')
 
@@ -1234,6 +1264,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
+    @_close_preparation_stack_on_error
     @asynccontextmanager
     async def iter(  # noqa: C901
         self,
@@ -1465,7 +1496,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._check_dynamic_model_resume(model_contribution, message_history)
 
         # Sandbox preparation is a whole-run boundary and must be entered before model resolution.
-        # In particular, durable wrappers use it to reject live handles before provider selection
+        # In particular, durability capabilities use it to reject live handles before provider selection
         # can perform I/O. Static instrumentation can join the same boundary at this point.
         instrumentation_raw_model = (
             explicit_raw_model
@@ -1518,6 +1549,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         preparation_stack = AsyncExitStack()
         await preparation_stack.__aenter__()
+        if (preparation_stack_holder := _preparation_stack_holder.get()) is not None:
+            preparation_stack_holder.append(preparation_stack)
         await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
 
         @asynccontextmanager
@@ -1653,11 +1686,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # run uses the plain model — the `Instrumentation` capability injected below
         # provides the spans.
         if isinstance(model_used, InstrumentedModel):
-            if instrumentation_settings is None:
+            instrumented_model = model_used
+            if instrumentation_settings is None and not has_capability_type(preparation_layers, InstrumentationCap):
                 instrumentation_settings = model_used.instrumentation_settings
                 tracer = instrumentation_settings.tracer
                 instrumentation_cap = InstrumentationCap(settings=instrumentation_settings)
+                # Model aliases can resolve to an `InstrumentedModel` only after the static
+                # preparation layers have been entered. Enter its run span now so this legacy
+                # instrumentation path keeps the same observable span hierarchy; subsequent
+                # capability resolution still installs its model and tool hooks normally.
+                await preparation_stack.enter_async_context(
+                    instrumentation_cap.wrap_entire_run(replace(preparation_ctx, model=model_used.wrapped))
+                )
             model_used = model_used.wrapped
+            if default_model is instrumented_model:
+                default_model = model_used
 
         initial_ctx: RunContext[AgentDepsT] | None = None
         sandbox_resolution_capability = preparation_capability
@@ -1679,8 +1722,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             return backend
 
+        async def _close_sandbox_connection(facade: Sandbox) -> None:
+            with anyio.CancelScope(shield=True):
+                await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
+
         if isinstance(sandbox, SandboxRef):
             sandbox_facade = Sandbox._from_ref(sandbox, _connect_sandbox_ref)  # pyright: ignore[reportPrivateUsage]
+            preparation_stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
         explicit_sandbox = sandbox_facade is not None
 
         # Build initial RunContext for for_run lifecycle hooks. Includes every
@@ -1766,6 +1814,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
                 if sandbox_ref is not None:
                     preparation_stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
+                if sandbox_ref is not None or sandbox_supplier.has_get_sandbox:
+                    assert sandbox_facade is not None
+                    # Detach the live connection before releasing ownership of the environment.
+                    preparation_stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
             else:
                 sandbox_facade = Sandbox.wrap(default_sandbox_backend())
             initial_ctx.sandbox = sandbox_facade

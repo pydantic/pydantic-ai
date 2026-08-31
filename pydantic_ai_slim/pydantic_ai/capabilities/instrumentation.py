@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -211,6 +212,7 @@ class Instrumentation(AbstractCapability[Any]):
                 if span.is_recording():
                     # Best effort: this runs while the exit stack unwinds, where a raised
                     # exception would mask the run's own error. Telemetry must never do that.
+                    active_error = sys.exc_info()[1]
                     try:
                         result = run_state.last_result
                         if result is not None:
@@ -221,12 +223,13 @@ class Instrumentation(AbstractCapability[Any]):
                             self._run_span_end_attributes(ctx.usage, run_state, message_history, metadata)
                         )
                     except Exception as attribute_error:
-                        warnings.warn(
-                            f'Failed to record agent run span attributes: {attribute_error!r}',
-                            RuntimeWarning,
-                            stacklevel=1,
-                        )
-                    if run_state.last_result is not None:
+                        if active_error is None:
+                            warnings.warn(
+                                f'Failed to record agent run span attributes: {attribute_error!r}',
+                                RuntimeWarning,
+                                stacklevel=1,
+                            )
+                    if active_error is None and run_state.last_result is not None:
                         # One O(history) pass per run: turn any silent staleness the per-request
                         # fragment cache may have recorded into a loud signal. Skipped when the run
                         # errored: with warnings configured as errors, warning here in the `finally`

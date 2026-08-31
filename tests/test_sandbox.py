@@ -203,6 +203,16 @@ class FakeSandbox:
         return '/workspace'
 
 
+class _ClosableFakeSandbox(FakeSandbox):
+    def __init__(self, name: str, close_calls: list[bool]) -> None:
+        super().__init__(name)
+        self.close_calls = close_calls
+
+    async def close(self, *, terminate: bool) -> None:
+        await asyncio.sleep(0)
+        self.close_calls.append(terminate)
+
+
 def _describe(sandbox: Sandbox) -> str:
     # `sandbox_id` is readable both before and after a deferred facade connects.
     return sandbox.sandbox_id.removeprefix('fake-')
@@ -745,6 +755,26 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
     assert result.output == 'done'
     assert len(observed) == 1
     assert connector.sandbox_ids == ['fake-deferred']  # concurrent first ops connect exactly once
+
+
+@pytest.mark.parametrize('sandbox_arg', [None, SandboxRef(provider='fake', sandbox_id='fake-connected')])
+async def test_capability_connection_is_detached_without_terminating_sandbox(sandbox_arg: SandboxRef | None):
+    close_calls: list[bool] = []
+
+    class Connector(AbstractCapability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> SandboxBackend | None:
+            return _ClosableFakeSandbox('connected', close_calls)
+
+    await make_connecting_probe_agent([], capabilities=[Connector()]).run('go', sandbox=sandbox_arg)
+    assert close_calls == [False]
+
+
+async def test_caller_owned_backend_is_not_closed_by_run():
+    close_calls: list[bool] = []
+    backend = _ClosableFakeSandbox('direct', close_calls)
+
+    await make_probe_agent([], capabilities=[]).run('go', sandbox=backend)
+    assert close_calls == []
 
 
 async def test_deferred_filesystem_proxy_serves_every_operation():
@@ -1408,16 +1438,24 @@ async def test_release_survives_run_cancellation():
     """
 
     class AwaitingTeardownCapability(SandboxCapability):
+        async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            self.events.append(f'{self.name}:acquire')
+            self.backend = _ClosableFakeSandbox(self.name, close_calls)
+            return SandboxRef(provider='fake', sandbox_id=self.backend.sandbox_id)
+
         async def release_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             await asyncio.sleep(0)  # a real release awaits provider I/O; an unshielded cancel lands here
+            assert close_calls == [False]
             await super().release_sandbox(ctx, ref)
 
+    close_calls: list[bool] = []
     capability = AwaitingTeardownCapability()
     agent: Agent = Agent(_tool_call_then_text(), capabilities=[capability])
     entered = anyio.Event()
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
+        await ctx.sandbox.run(['true'])
         entered.set()
         await asyncio.sleep(10)
         return 'never'  # pragma: no cover
@@ -1432,7 +1470,8 @@ async def test_release_survives_run_cancellation():
         tg.start_soon(run_agent)
         await entered.wait()
         tg.cancel_scope.cancel()
-    assert capability.events == ['cap:acquire', 'cap:release']
+    assert capability.events == ['cap:acquire', 'cap:connect', 'cap:release']
+    assert close_calls == [False]
 
 
 async def test_setup_declined_falls_through_to_default():
