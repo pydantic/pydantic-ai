@@ -352,22 +352,20 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """
         from .models import Model  # imported here because `models` imports `RunContext` at module level
 
-        # Durable run contexts can omit live model state and message history at an activity boundary.
-        # Read both through `__dict__` so those documented unknown cases return `None` rather than
-        # triggering the subclass's unavailable-field error.
-        ctx_model = self.__dict__.get('model')
-        if not isinstance(ctx_model, Model):
+        try:
+            model, messages = self.model, self.messages
+        except UserError:
+            # A durable run context can omit live model state and message history at an activity boundary.
+            return None
+        if not isinstance(model, Model):
             # e.g. a realtime model, whose profile has no `context_window`
             return None
         try:
-            context_window = ctx_model.profile.get('context_window')
+            context_window = model.profile.get('context_window')
         except NotImplementedError:
             # A fallback model has no single profile because its candidate models may differ.
             return None
         if context_window is None or context_window <= 0:
-            return None
-        messages: list[_messages.ModelMessage] | None = self.__dict__.get('messages')
-        if messages is None:
             return None
         for message in reversed(messages):
             if isinstance(message, _messages.ModelResponse):
