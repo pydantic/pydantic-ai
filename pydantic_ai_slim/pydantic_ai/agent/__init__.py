@@ -68,7 +68,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities
+from ..capabilities.abstract import combine_duplicate_capabilities, leaf_capabilities
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -2962,11 +2962,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
         )
         run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+        # Two capabilities under one `id` name the same thing, so the tree is resolved down to one
+        # each before anything reads it. Applied to the composed tree rather than per layer, so an
+        # agent-level capability and a run-level one meet under the same rule as two on the agent:
+        # `run(capabilities=[Thinking(effort='high')])` overriding an agent-level `Thinking` is
+        # `Thinking.combine` choosing the last, not a separate override mechanism.
+        run_capability = combine_duplicate_capabilities(run_capability)
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
         # capability whose `id` differs from the one that was validated, so the resolved tree is
-        # checked even when no additional layer was composed.
-        _validate_instruction_source_ids(resolved_layers)
+        # checked even when no additional layer was composed. Reads the *combined* tree, so a
+        # duplicate `combine` has already resolved is not reported twice over.
+        _validate_instruction_source_ids([run_capability])
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -4014,19 +4021,16 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
 def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:
     """Validate capability `id`s and return the set of explicit ones.
 
-    Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
-    one capability *within a single layer*.
+    Rejects deferred capabilities that lack an explicit `id`, and ids shared by capabilities that
+    have not said how they compose. Capabilities that override
+    [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] are allowed to repeat: their
+    duplication is resolved over the whole composed tree at run setup by
+    `combine_duplicate_capabilities`, the only place `combine` is called. Rejecting the rest here
+    means the common mistake still surfaces in `Agent(...)` rather than on the first run.
 
-    The layer distinction mirrors [`_validate_native_tool_ids`][pydantic_ai.agent._validate_native_tool_ids]:
-    two capabilities sharing an id in one layer are ambiguous, because the one that ends up in the
-    run registry is arbitrary. *Across* layers the reuse is the intentional override mechanism —
-    `agent.run(capabilities=[Thinking(effort='high')])` is how a run overrides an agent-level
-    `Thinking`, and the one-off capabilities carry a fixed default `id` precisely so that lines up.
-
-    Called at construction over the statically-provided capabilities (so misconfiguration fails fast
-    in `Agent(...)` rather than on the first run) and once per resolved layer in
-    `_resolve_run_capabilities`, which also covers capabilities supplied per-run or returned by
-    `for_run` and so can't be checked at construction.
+    Shared by construction-time validation over the statically-provided capabilities and run-time
+    assembly, which also covers capabilities supplied per-run or returned by `for_run` and so can't
+    be checked at construction.
     """
     explicit_ids: set[str] = set()
     for cap in capabilities:
@@ -4038,13 +4042,18 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         if cap.id is None:
             continue
         _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')
-        if cap.id in explicit_ids:
+        if cap.id in explicit_ids and not _defines_combine(type(cap)):
             raise exceptions.UserError(
                 f'Capability id {cap.id!r} is used by multiple capabilities. '
                 'Capability ids must be unique within a run.'
             )
         explicit_ids.add(cap.id)
     return explicit_ids
+
+
+def _defines_combine(capability_type: type[AbstractCapability[Any]]) -> bool:
+    """Whether a capability class says how repeated instances of it compose."""
+    return capability_type.combine.__func__ is not AbstractCapability.combine.__func__
 
 
 def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[Any]]) -> None:
@@ -4060,6 +4069,12 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
     The last of those is not redundant: a capability passed to `run()` joins the retained container
     the same way a registered sibling does, and `for_run` may hand back a capability carrying a
     different `id` than the one construction saw.
+
+    Sources whose class overrides [`combine`][pydantic_ai.capabilities.AbstractCapability.combine]
+    are exempt at construction for the same reason they are in `_validate_capability_ids`: the run
+    resolves them to one source before any instructions are collected, so the `capability:<id>` key
+    is unambiguous by the time it is used. The run-setup call sees the already-combined tree, where
+    a surviving duplicate is a genuine conflict.
     """
     sources_by_id: dict[str, AbstractCapability[Any]] = {}
     for capability in capabilities:
@@ -4071,7 +4086,9 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
         for source in sources:
             if source.id is None:
                 continue
-            if (existing := sources_by_id.setdefault(source.id, source)) is not source:
+            if (existing := sources_by_id.setdefault(source.id, source)) is not source and not _defines_combine(
+                type(source)
+            ):
                 raise exceptions.UserError(
                     f'Capability id {existing.id!r} is used by multiple capabilities that contribute '
                     'instructions. Capability ids must be unique within a run.'
