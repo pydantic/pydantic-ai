@@ -7,7 +7,6 @@
             - FileWindow
             - SandboxBackend
             - SandboxRef
-            - SandboxResolver
             - SupportsFilesystem
             - SupportsStart
             - SupportsStream

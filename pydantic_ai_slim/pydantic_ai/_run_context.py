@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
     from .models import AbstractModel, Model
     from .realtime import RealtimeModelSettings, RealtimeSession
-    from .sandboxes import Sandbox
+    from .sandboxes import Sandbox, SandboxBackend, SandboxRef
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -72,13 +72,14 @@ class RunPreparationContext(Generic[AgentDepsT]):
     contributions are not reflected here.
     """
 
-    sandbox: Sandbox | None
+    sandbox: SandboxBackend | SandboxRef | None
     """The sandbox explicitly supplied to the run, if any.
 
-    This may be a deferred facade created from a
-    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]. Capability sandbox resolution has not
+    This is the original run argument, before it is wrapped in the user-facing
+    [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade. Capability sandbox resolution has not
     happened yet. When this is `None`, a capability may contribute a sandbox; if none does, the
-    run falls back to the framework default.
+    run falls back to the framework default. Use [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
+    when an operation needs the assembled sandbox facade.
     """
 
     messages: list[_messages.ModelMessage]

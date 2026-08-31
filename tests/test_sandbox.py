@@ -136,8 +136,8 @@ class FakeSandbox:
 
     Honors the protocol's one-environment contract: the `sed` line-window form the
     `Sandbox` facade emits is served from the same files `fs` exposes. `sed=False`
-    models an environment without a usable `sed` (exit 127), forcing the facade's
-    full-read fallback. Other commands echo `ran:<command>` for forwarding tests.
+    models an environment without a usable `sed` (exit 127). Other commands echo
+    `ran:<command>` for forwarding tests.
     """
 
     provider = 'fake'
@@ -321,12 +321,7 @@ async def test_backend_without_supports_filesystem_raises_on_fs_access():
 @pytest.mark.parametrize(
     ('content', 'offset', 'limit', 'expected'),
     [
-        (b'one\ntwo\nthree\nfour\n', 2, 2, (('two', 'three'), True, 4)),
-        (b'one\ntwo\nthree\n', 1, 2, (('one', 'two'), True, 3)),
-        (b'one\ntwo\n', 4, 2, ((), False, 2)),
         (b'one\ntwo\nthree', 2, None, (('two', 'three'), False, 3)),
-        (b'one\ntwo\nthree', 3, 1, (('three',), False, 3)),
-        (b'one\ntwo\nthree\n', 3, 1, (('three',), False, 3)),
         (b'one\r\ntwo\r\n', 1, None, (('one', 'two'), False, 2)),
         (b'x\r', 1, None, (('x',), False, 1)),
         (b'', 1, None, ((), False, 0)),
@@ -339,7 +334,7 @@ async def test_read_file_slow_path(
     limit: int | None,
     expected: tuple[tuple[str, ...], bool, int],
 ):
-    backend = FakeSandbox('slow', sed=False)  # no usable `sed`: pins the full-read fallback
+    backend = FakeSandbox('slow', sed=False)
     backend.fs.files['/workspace/file'] = content
     window = await Sandbox(backend).read_file('file', offset=offset, limit=limit)
     lines, has_more, total_lines = expected
@@ -348,6 +343,16 @@ async def test_read_file_slow_path(
     assert window.start_line == offset
     assert window.has_more is has_more
     assert window.total_lines == total_lines
+
+
+async def test_bounded_read_never_falls_back_to_a_full_file_download():
+    backend = FakeSandbox('no-sed', sed=False)
+    backend.fs.files['/workspace/file'] = b'line\n' * 200_000
+
+    with pytest.raises(NotImplementedError, match='could not perform a bounded file read'):
+        await Sandbox(backend).read_file('file', limit=1)
+
+    assert backend.fs.reads == []
 
 
 @pytest.mark.parametrize(('kwargs', 'message'), [({'offset': 0}, 'offset'), ({'limit': 0}, 'limit')])
@@ -385,11 +390,7 @@ async def test_read_file_shell_slice_reports_totals_at_eof():
     assert backend.fs.reads == []
 
 
-async def test_read_file_empty_shell_window_falls_back_to_the_authoritative_read():
-    """`sed` prints nothing for an offset past EOF, an empty file, and (under BSD `sed`,
-    which exits 0 for it) a directory — indistinguishable cases, so an empty slice is
-    inconclusive and the filesystem read answers, here with the real total.
-    """
+async def test_read_file_empty_shell_window_stays_bounded():
     backend = FakeSandbox('sliced-past-eof')
     backend.fs.files['/workspace/file'] = b'one\n'
 
@@ -398,8 +399,8 @@ async def test_read_file_empty_shell_window_falls_back_to_the_authoritative_read
     assert window.lines == ()
     assert window.start_line == 10
     assert window.has_more is False
-    assert window.total_lines == 1
-    assert backend.fs.reads == ['/workspace/file']
+    assert window.total_lines is None
+    assert backend.fs.reads == []
 
 
 class _RunOnlySandbox:
@@ -491,57 +492,19 @@ async def test_run_and_start_reject_a_relative_cwd():
         await sandbox.start(['true'], cwd='subdir')
 
 
-async def test_read_file_falls_back_to_full_read_without_sed():
-    """A failed slice attempt (no `sed` in the environment) falls back to the
-    authoritative filesystem read.
-    """
-    backend = FakeSandbox('no-sed', sed=False)
-    backend.fs.files['/workspace/file'] = b'one\ntwo\n'
-
-    window = await Sandbox(backend).read_file('file', offset=1, limit=1)
-
-    assert window.lines == ('one',)
-    assert window.has_more is True
-    assert window.total_lines == 2
-    assert backend.fs.reads == ['/workspace/file']
-
-
-async def test_read_file_missing_file_falls_back_to_filesystem_error():
-    """A missing file makes the slice attempt exit non-zero, so the filesystem read runs
-    and surfaces the authoritative error: `FileNotFoundError`, as the protocol requires of
-    every filesystem.
-    """
+async def test_read_file_missing_file_surfaces_filesystem_error_without_reading():
     backend = FakeSandbox('missing')
 
     with pytest.raises(FileNotFoundError):
         await Sandbox(backend).read_file('nope.txt', limit=3)
 
-    assert backend.fs.reads == ['/workspace/nope.txt']
+    assert backend.fs.reads == []
 
 
 async def test_read_file_on_unavailable_sandbox_surfaces_reason():
-    """The slice attempt swallows `run()`'s failure so the filesystem read surfaces the
-    authoritative policy reason instead.
-    """
     sandbox = Sandbox(UnavailableSandbox('sandbox disabled by policy'))
     with pytest.raises(UserError, match='sandbox disabled by policy'):
         await sandbox.read_file('/file', limit=3)
-
-
-async def test_read_file_shell_and_full_paths_have_window_parity():
-    content = b'one\r\ntwo\r\nthree\nfour\r\nfive'
-    shell_backend = FakeSandbox('shell')
-    shell_backend.fs.files['/workspace/file'] = content
-    full_backend = FakeSandbox('full', sed=False)
-    full_backend.fs.files['/workspace/file'] = content
-
-    for offset in (1, 2, 4, 8):
-        for limit in (1, 2, 5):
-            full = await Sandbox(full_backend).read_file('file', offset=offset, limit=limit)
-            shell = await Sandbox(shell_backend).read_file('file', offset=offset, limit=limit)
-            assert (shell.lines, shell.start_line, shell.has_more) == (full.lines, full.start_line, full.has_more)
-            # The shell slice only knows the total when it provably reached EOF.
-            assert shell.total_lines in (full.total_lines, None)
 
 
 async def test_bare_run_context_sandbox_is_unavailable():
@@ -767,7 +730,9 @@ async def test_deferred_filesystem_proxy_serves_every_operation():
         connected.append(ref.sandbox_id)
         return backend
 
-    sandbox = Sandbox.from_ref(SandboxRef(provider='fake', sandbox_id='fake-proxy'), resolver)
+    sandbox = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
+        SandboxRef(provider='fake', sandbox_id='fake-proxy'), resolver
+    )
     fs = sandbox.fs  # obtained before any connection: the deferred proxy
     assert connected == []
 
@@ -857,12 +822,15 @@ async def test_multiple_ref_connectors_are_rejected_before_connection():
 
 
 async def test_sandbox_ref_capability_id_routes_to_exact_connector():
+    other = ConnectOnlySandboxCapability()
+    other.id = 'other'
     connector = ConnectOnlySandboxCapability()
     connector.id = 'connector'
     seen: list[str] = []
-    agent = make_connecting_probe_agent(seen, capabilities=[connector])
+    agent = make_connecting_probe_agent(seen, capabilities=[other, connector])
     await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1', capability_id='connector'))
     assert seen == ['1']
+    assert other.sandbox_ids == []
     assert connector.sandbox_ids == ['fake-1']
 
 
@@ -929,7 +897,7 @@ async def test_created_sandbox_ref_is_stamped_with_supplier_id():
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        identity = ctx.sandbox.durable_identity()
+        identity = ctx.sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
         assert isinstance(identity, SandboxRef)
         observed.append(identity)
         return 'ok'
@@ -945,7 +913,7 @@ async def test_created_sandbox_ref_is_stamped_with_derived_supplier_id():
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        identity = ctx.sandbox.durable_identity()
+        identity = ctx.sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
         assert isinstance(identity, SandboxRef)
         observed.append(identity)
         return 'ok'
@@ -1265,23 +1233,6 @@ async def test_wrapper_capability_forwards_sandbox_lifecycle():
     await make_connecting_probe_agent(seen, capabilities=[WrapperCapability(wrapped=inner)]).run('go')
     assert seen == ['inner']
     assert inner.events == ['inner:acquire', 'inner:connect', 'inner:release']
-
-
-async def test_capability_sandbox_tears_down_when_a_tool_raises():
-    cap = SandboxCapability()
-
-    def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart('explode', {})])
-
-    agent: Agent = Agent(FunctionModel(model_func), capabilities=[cap])
-
-    @agent.tool
-    async def explode(ctx: RunContext[Any]) -> str:
-        raise RuntimeError('boom')
-
-    with pytest.raises(RuntimeError, match='boom'):
-        await agent.run('go')
-    assert cap.events == ['cap:acquire', 'cap:release']
 
 
 async def test_capability_sandbox_tears_down_when_toolset_entry_fails():

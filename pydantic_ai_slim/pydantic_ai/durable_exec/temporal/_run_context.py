@@ -231,7 +231,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             '_deferred_capability_ids': ctx._deferred_capability_ids,
             'capability_active': ctx.capability_active,
         }
-        sandbox_identity = ctx.sandbox.durable_identity()
+        sandbox_identity = ctx.sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
         if isinstance(sandbox_identity, SandboxRef):
             serialized['_sandbox_state'] = {
                 'provider': sandbox_identity.provider,
@@ -315,7 +315,7 @@ def _restore_sandbox(
                 )
             return backend
 
-        ctx.__dict__['_sandbox'] = Sandbox.from_ref(
+        ctx.__dict__['_sandbox'] = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
             SandboxRef(
                 provider=provider,
                 sandbox_id=sandbox_id,

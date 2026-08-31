@@ -431,7 +431,7 @@ Binding hooks establish which capability participates in a run; lifecycle hooks 
 | Phase | Capability work | What is available |
 |---|---|---|
 | Agent binding | [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] | Agent name, raw constructor model, toolsets, and other constructor configuration; no run dependencies or `RunContext` |
-| Whole-run entry | [`wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run] | A [`RunPreparationContext`][pydantic_ai.RunPreparationContext] with dependencies, history, usage, IDs, and only explicitly passed model/sandbox values |
+| Whole-run entry | [`wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run] | A [`RunPreparationContext`][pydantic_ai.RunPreparationContext] with dependencies, history, usage, IDs, and the original explicitly passed model/sandbox values |
 | Run bootstrap | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], then [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] if the selection is a string; [`acquire_sandbox()`][pydantic_ai.capabilities.AbstractCapability.acquire_sandbox] | The run's initial [`RunContext`][pydantic_ai.tools.RunContext] (no tool manager or validation context yet) |
 | Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
 | Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
@@ -497,7 +497,9 @@ agent = Agent('openai:gpt-5.2', capabilities=[WholeRunTimer()])
 ```
 
 `wrap_entire_run` runs on the shared agent-level capability before `for_run`, model resolution,
-and sandbox resolution. It cannot alter control flow, and suppressing the run's exception is
+and sandbox resolution. Its `ctx.sandbox` is the raw `SandboxBackend`, `SandboxRef`, or `None`
+run argument, not the assembled facade; use `wrap_run` for sandbox operations. It cannot alter
+control flow, and suppressing the run's exception is
 reported as a [`UserError`][pydantic_ai.exceptions.UserError]. See
 [`AbstractCapability.wrap_entire_run`][pydantic_ai.capabilities.AbstractCapability.wrap_entire_run]
 for the full contract.

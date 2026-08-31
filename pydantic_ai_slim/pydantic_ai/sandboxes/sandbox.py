@@ -29,16 +29,17 @@ from .protocol import (
     SupportsFilesystem,
     SupportsStart,
 )
+from .readonly import ReadOnlySandbox
 from .references import SandboxRef
 
-SandboxResolver: TypeAlias = 'Callable[[SandboxRef], Awaitable[SandboxBackend]]'
+_SandboxResolver: TypeAlias = 'Callable[[SandboxRef], Awaitable[SandboxBackend]]'
 """Turns a serializable sandbox identity into a live backend — connect, never create.
 
 Must raise (typically [`UserError`][pydantic_ai.exceptions.UserError]) when nothing recognizes
 the reference.
 """
 
-__all__ = ('FileWindow', 'Sandbox', 'SandboxResolver')
+__all__ = ('FileWindow', 'Sandbox')
 
 _SHELL_SLICE_TIMEOUT = 10
 """Deadline in seconds for the `sed` fast path in `read_file`.
@@ -132,7 +133,7 @@ class Sandbox:
         return value if isinstance(value, Sandbox) else cls(value)
 
     @classmethod
-    def from_ref(cls, ref: SandboxRef, resolver: SandboxResolver) -> Sandbox:
+    def _from_ref(cls, ref: SandboxRef, resolver: _SandboxResolver) -> Sandbox:
         """Create a facade that connects to `ref` through `resolver` on its first operation."""
         sandbox = cls.__new__(cls)
         sandbox._initialize(
@@ -154,7 +155,7 @@ class Sandbox:
         sandbox._initialize(backend=None, ref=None, capability_id=capability_id, resolver=resolver)
         return sandbox
 
-    def durable_identity(self) -> SandboxRef | SandboxBackend | None:
+    def _durable_identity(self) -> SandboxRef | SandboxBackend | None:
         """Identity for durable frameworks: a ref, backend, or `None` for provider-only resolution."""
         if self._ref is not None:
             return self._ref
@@ -326,10 +327,16 @@ class Sandbox:
         resolved_path = await self.resolve(path)
         if limit is not None:
             # Before the filesystem lookup: a backend with only `run()` can still serve
-            # windowed reads through the slice.
+            # windowed reads through the slice. Never fall back to a full download here:
+            # `limit` is the caller's memory and transfer bound, not merely an output hint.
             window = await self._read_file_via_shell(resolved_path, offset, limit)
-            if window is not None:
-                return window
+            if window is None:
+                await self._validate_bounded_read_path(resolved_path)
+                raise NotImplementedError(
+                    'This sandbox could not perform a bounded file read. Ensure `sed` is available '
+                    'inside the sandbox, or use `fs.read_bytes()` for an explicitly unbounded read.'
+                )
+            return window
 
         data = await (await self._filesystem()).read_bytes(resolved_path)
         return _window_from_data(data, offset, limit)
@@ -337,33 +344,49 @@ class Sandbox:
     async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
         """Slice a line window with `sed` inside the sandbox, so only the window crosses the wire.
 
-        Returns `None` on any failure or inconclusive result (no usable `sed`, `run()`
-        unsupported, a slice that timed out, empty output); the caller falls back to a full
-        filesystem read, which stays the authoritative source of results and errors.
+        Returns `None` on failure (no usable `sed`, `run()` unsupported, or a slice that
+        timed out). The caller reports that bounded reads are unavailable rather than silently
+        downloading the whole file.
         `total_lines` is only reported when the slice provably reached EOF.
         """
         end = offset + limit  # one extra line, to learn whether more exist
         try:
+            backend = await self._ensure_backend()
+            # The policy wrapper blocks caller-supplied commands, but this argv is an
+            # implementation-owned, non-mutating read. Running it on the wrapped backend keeps
+            # windowed reads bounded without granting command execution through the wrapper.
+            command_backend = backend.wrapped if isinstance(backend, ReadOnlySandbox) else backend
             # argv, never shell=True: the path is an argument, not shell-interpreted text.
             # `{end}q` stops `sed` at the window instead of scanning to EOF, and the timeout
             # bounds the optimization on paths that never finish.
-            result = await self.run(['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT)
+            result = await command_backend.run(
+                ['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT
+            )
         except Exception:
             return None
-        if result.exit_code != 0:
+        if result.exit_code != 0 or result.stderr:
             return None
 
         lines = list(_split_lines(result.stdout))
         if lines and lines[-1] == '':
             lines.pop()
         if not lines:
-            # Empty output is ambiguous: an offset past EOF, an empty file, and (under BSD
-            # `sed`, which exits 0 for it) a directory all look identical. The filesystem
-            # read answers authoritatively — and cheaply, except in the rare past-EOF case.
-            return None
+            # Empty output covers an empty file or an offset past EOF. The exact total is
+            # unknown without scanning to EOF, which would defeat the bounded-read contract.
+            await self._validate_bounded_read_path(path)
+            return FileWindow(lines=(), start_line=offset, has_more=False, total_lines=None)
         if len(lines) > limit:
             return FileWindow(lines=tuple(lines[:limit]), start_line=offset, has_more=True, total_lines=None)
         return FileWindow(lines=tuple(lines), start_line=offset, has_more=False, total_lines=offset - 1 + len(lines))
+
+    async def _validate_bounded_read_path(self, path: str) -> None:
+        """Surface filesystem policy, missing-path, and directory errors without reading content."""
+        try:
+            entry = await (await self._filesystem()).stat(path)
+        except NotImplementedError:
+            return
+        if entry.is_dir:
+            raise IsADirectoryError(path)
 
 
 def _require_absolute_cwd(cwd: str | None) -> None:

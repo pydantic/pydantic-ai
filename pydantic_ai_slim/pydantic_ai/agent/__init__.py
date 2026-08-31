@@ -71,7 +71,7 @@ from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import (
     capabilities_by_id,
-    find_sandbox_provider,
+    find_sandbox_ref_connector,
     leaf_capabilities,
     resolve_run_sandbox,
     resolve_sandbox_ref,
@@ -1502,21 +1502,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
         run_state_key = object()
-        if isinstance(sandbox, SandboxRef):
-            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, lambda ref: _resolve_sandbox_ref(ref))
-        else:
-            sandbox_facade = Sandbox.wrap(sandbox) if sandbox is not None else None
+        sandbox_facade = (
+            None if isinstance(sandbox, SandboxRef) else Sandbox.wrap(sandbox) if sandbox is not None else None
+        )
         preparation_ctx = RunPreparationContext[AgentDepsT](
             agent=self,
             deps=deps,
             model=explicit_raw_model if isinstance(explicit_raw_model, models.Model) else None,
-            sandbox=sandbox_facade,
+            sandbox=sandbox,
             messages=list(state.message_history),
             usage=usage,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _run_state_key=run_state_key,
         )
+        if isinstance(sandbox, SandboxRef):
+            # Validate before entering any user hook. A named ref routes directly to that
+            # connector; a legacy unnamed ref still requires one unambiguous provider.
+            find_sandbox_ref_connector(preparation_capability, sandbox)
         preparation_stack = AsyncExitStack()
         await preparation_stack.__aenter__()
         await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
@@ -1675,7 +1678,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return backend
 
         if isinstance(sandbox, SandboxRef):
-            sandbox_facade = Sandbox.from_ref(sandbox, _resolve_sandbox_ref)
+            sandbox_facade = Sandbox._from_ref(sandbox, _resolve_sandbox_ref)  # pyright: ignore[reportPrivateUsage]
         explicit_sandbox = sandbox_facade is not None
 
         # Build initial RunContext for for_run lifecycle hooks. Includes every
@@ -1706,16 +1709,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
         sandbox_ref: SandboxRef | None = None
-        if isinstance(sandbox, SandboxRef):
-            # A caller-owned ref skips acquisition, but still requires one unambiguous connector.
-            find_sandbox_provider(preparation_capability)
-        elif not explicit_sandbox:
+        if not explicit_sandbox:
             async with _close_preparation_on_error():
                 supplied = await resolve_run_sandbox(preparation_capability, initial_ctx)
             if supplied is not None:
                 sandbox_supplier, sandbox_capability_id, sandbox_ref = supplied
                 if sandbox_ref is not None:
-                    sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
+                    sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
+                        sandbox_ref, _resolve_sandbox_ref
+                    )
                 elif sandbox_supplier.has_get_sandbox:
 
                     async def _resolve_provider_sandbox(ref: SandboxRef | None) -> SandboxBackend:

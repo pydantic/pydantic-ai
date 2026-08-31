@@ -15,7 +15,7 @@ from .protocol import (
 )
 from .readonly import ReadOnlySandbox
 from .references import SandboxRef
-from .sandbox import FileWindow, Sandbox, SandboxResolver
+from .sandbox import FileWindow, Sandbox
 from .unavailable import UnavailableSandbox
 
 __all__ = (
@@ -30,7 +30,6 @@ __all__ = (
     'SandboxOutputChunk',
     'SandboxProcess',
     'SandboxRef',
-    'SandboxResolver',
     'SandboxResult',
     'SupportsFilesystem',
     'SupportsStart',

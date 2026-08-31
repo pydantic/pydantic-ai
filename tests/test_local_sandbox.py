@@ -381,9 +381,6 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(monkeypatch: 
 
 
 async def test_read_file_on_a_directory_raises(tmp_path: Path):
-    """BSD `sed` exits 0 with no output for a directory, so the slice can't tell it from an
-    empty file; the inconclusive empty window must fall back for the filesystem to raise the
-    authoritative `IsADirectoryError` instead of reporting an empty file."""
     (tmp_path / 'adir').mkdir()
     sandbox = Sandbox(LocalSandbox(tmp_path))
     with pytest.raises(IsADirectoryError):

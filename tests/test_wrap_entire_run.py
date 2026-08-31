@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SandboxRef
+from pydantic_ai.sandboxes import LocalSandbox, SandboxRef
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_graph import End
 
@@ -170,10 +170,13 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
 
     @dataclass
     class ServeSandbox(AbstractCapability[Any]):
-        # No `get_sandbox`: the test only inspects the preparation context, so the
-        # contributed sandbox is never connected.
         async def acquire_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(provider='local', sandbox_id=str(tmp_path))
+
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef | None) -> LocalSandbox | None:
+            if ref is None or ref.provider != 'local':
+                return None
+            return LocalSandbox(ref.sandbox_id)
 
     model = FunctionModel(simple_model_function)
     await Agent(model, capabilities=[CaptureContext(), ServeSandbox()]).run('capability served')
@@ -186,14 +189,18 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
         sandbox=backend,
         message_history=[prior_message],
     )
+    ref = SandboxRef(provider='local', sandbox_id=str(tmp_path), capability_id='serve')
+    await Agent(model, capabilities=[CaptureContext(), ServeSandbox(id='serve')]).run(
+        'caller supplied ref', sandbox=ref
+    )
 
     assert seen[0].model is None
     assert seen[0].sandbox is None
     assert seen[0].messages == []
     assert seen[1].model is model
-    assert isinstance(seen[1].sandbox, Sandbox)
-    assert seen[1].sandbox.backend is backend
-    assert seen_message_counts == [0, 1]
+    assert seen[1].sandbox is backend
+    assert seen[2].sandbox is ref
+    assert seen_message_counts == [0, 1, 0]
     assert result.all_messages()[0] is prior_message
     assert [(ctx.run_id, ctx.conversation_id) for ctx in seen] == run_ids
 

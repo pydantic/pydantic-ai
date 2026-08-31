@@ -1392,6 +1392,38 @@ def find_sandbox_provider(
     return provider, capability_ids[id(provider)]
 
 
+def find_sandbox_ref_connector(
+    capability: AbstractCapability[AgentDepsT], ref: SandboxRef
+) -> AbstractCapability[AgentDepsT]:
+    """Resolve and validate the capability that reconnects an explicit sandbox ref."""
+    if ref.capability_id is None:
+        resolved = find_sandbox_provider(capability)
+        if resolved is not None and resolved[0].has_get_sandbox:
+            return resolved[0]
+        raise UserError(
+            f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
+            f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
+        )
+
+    match = capabilities_by_id(capability).get(ref.capability_id)
+    if match is None:
+        raise UserError(
+            f'Cannot reconnect sandbox {ref.sandbox_id!r}: expected one capability with id '
+            f'{ref.capability_id!r}, found 0.'
+        )
+    if match.defer_loading is True:
+        raise UserError(
+            f'Cannot reconnect sandbox {ref.sandbox_id!r} through deferred capability '
+            f'{ref.capability_id!r}; deferred capabilities cannot provide the run sandbox.'
+        )
+    if not match.has_get_sandbox:
+        raise UserError(
+            f'Cannot reconnect sandbox {ref.sandbox_id!r} through capability {ref.capability_id!r}: '
+            'the capability does not implement `get_sandbox`.'
+        )
+    return match
+
+
 async def resolve_run_sandbox(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> tuple[AbstractCapability[AgentDepsT], str, SandboxRef | None] | None:
@@ -1422,21 +1454,8 @@ async def resolve_sandbox_ref(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], ref: SandboxRef
 ) -> SandboxBackend | None:
     """Reconnect a ref through its named capability, or use chain precedence for a legacy ref."""
-    if ref.capability_id is None:
-        return await capability.get_sandbox(ctx, ref)
-
-    match = capabilities_by_id(capability).get(ref.capability_id)
-    if match is None:
-        raise UserError(
-            f'Cannot reconnect sandbox {ref.sandbox_id!r}: expected one capability with id '
-            f'{ref.capability_id!r}, found 0.'
-        )
-    if match.defer_loading is True:
-        raise UserError(
-            f'Cannot reconnect sandbox {ref.sandbox_id!r} through deferred capability '
-            f'{ref.capability_id!r}; deferred capabilities cannot provide the run sandbox.'
-        )
-    return await match.get_sandbox(ctx, ref)
+    connector = find_sandbox_ref_connector(capability, ref)
+    return await connector.get_sandbox(ctx, ref)
 
 
 async def connect_sandbox_provider(

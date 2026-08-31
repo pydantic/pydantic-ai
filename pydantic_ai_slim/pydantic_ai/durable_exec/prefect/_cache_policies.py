@@ -142,7 +142,7 @@ def _replace_run_context(
             }
             # Sandbox identity forks the key because tools can produce environment-specific
             # results. Reading durable identity must not connect a deferred sandbox.
-            sandbox_identity = value.sandbox.durable_identity()
+            sandbox_identity = value.sandbox._durable_identity()  # pyright: ignore[reportPrivateUsage]
             if sandbox_identity is None:
                 projected['sandbox_provider'] = value.sandbox._durable_capability_id()  # pyright: ignore[reportPrivateUsage]
             elif not isinstance(sandbox_identity, UnavailableSandbox):

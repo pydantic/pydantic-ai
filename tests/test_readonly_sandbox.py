@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,7 +16,7 @@ import pytest
 from pydantic_ai import Agent, ReadOnlySandbox, RunContext, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.sandboxes import Sandbox, SupportsFilesystem, SupportsStart
+from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SupportsFilesystem, SupportsStart
 
 from .sandbox_fakes import FakeSandboxResult, RecordingSandboxBackend
 
@@ -156,16 +157,14 @@ async def test_filesystem_support_mirrors_wrapped_backend():
         await Sandbox(without_filesystem).read_text('data.csv')
 
 
-async def test_windowed_read_falls_back_to_filesystem():
-    """`read_file` still works read-only: the blocked `sed` optimization falls back to `fs`."""
-    backend = _FilesystemBackend({'/workspace/lines.txt': b'one\ntwo\nthree\nfour\n'})
-    window = await Sandbox(ReadOnlySandbox(backend)).read_file('lines.txt', offset=2, limit=2)
+async def test_windowed_read_uses_internal_non_mutating_command(tmp_path: Path):
+    (tmp_path / 'lines.txt').write_text('one\ntwo\nthree\nfour\n')
+    window = await Sandbox(ReadOnlySandbox(LocalSandbox(tmp_path))).read_file('lines.txt', offset=2, limit=2)
 
     assert window.lines == ('two', 'three')
     assert window.start_line == 2
     assert window.has_more
-    assert window.total_lines == 4
-    assert backend.commands == []
+    assert window.total_lines is None
 
 
 async def test_agent_run_surfaces_read_only_reason():
