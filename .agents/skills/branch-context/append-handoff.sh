@@ -55,6 +55,10 @@ validate_index_text() {
         echo "error: $label must not contain backslashes" >&2
         exit 1
     fi
+    if [[ "$value" =~ @[^[:space:]] ]]; then
+        echo "error: $label must not contain active @-import syntax" >&2
+        exit 1
+    fi
 }
 
 validate_index_text 'writer' "$WRITER"

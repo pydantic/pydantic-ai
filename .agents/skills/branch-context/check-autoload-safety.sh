@@ -9,7 +9,7 @@ if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
 fi
 
 FILE="$1"
-if matches="$(LC_ALL=C grep -nE '@(~|/|\.{1,2}/|[[:alnum:]_])' "$FILE" || true)" && \
+if matches="$(LC_ALL=C grep -nE '@[^[:space:]]' "$FILE" || true)" && \
     [ -n "$matches" ]; then
     echo "error: $FILE contains active @-import syntax from untrusted text:" >&2
     echo "$matches" >&2
