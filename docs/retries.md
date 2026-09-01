@@ -1,45 +1,32 @@
 # Retries
 
-"Retry" means six different things in an agent run, at six different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.
+"Retry" means seven different things in an agent run, at seven different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.
 
 ## The layers
 
 | Layer | What it re-attempts | Configured with | What it adds to message history |
 |---|---|---|---|
 | [Transport](#transport-retries) | The same HTTP request to the provider | [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport] on your HTTP client | Nothing — the agent never sees the attempts |
-| [Provider SDK](models/http-request-retries.md#provider-sdk-retries) | The same HTTP request, re-issued by the provider SDK's own client | The SDK client itself, e.g. `max_retries` on a [custom OpenAI client](models/openai.md#custom-openai-client) or `HttpRetryOptions` on Google | Nothing — the agent never sees the attempts |
+| [Provider SDK](#provider-sdk-retries) | The same HTTP request, re-issued by the provider SDK's own client — on by default: the OpenAI, Anthropic and Groq clients allow 2 retries, so a plain agent is already at `M = 3` | The SDK client itself, e.g. `max_retries` on a [custom OpenAI client](models/openai.md#custom-openai-client) or `HttpRetryOptions` on Google | Nothing — the agent never sees the attempts |
+| [Durable execution](durable_execution/overview.md) | The whole model request, re-executed by the workflow engine — re-entering every layer nearer the wire; unbounded by default on Temporal (`maximum_attempts=0`) | `retry` in Temporal's `ActivityConfig`, `max_attempts` in DBOS's `StepConfig`, `retries` in Prefect's `TaskConfig` | Nothing — the engine replays the step |
 | [Model fallback](#model-fallback-is-not-a-retry) | The same request against a *different* model | [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] | Only the winning response |
 | [Tool](#tool-retries) | One tool call, by asking the model to correct it | `retries={'tools': N}` and per-tool limits | A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] in place of the tool's result |
 | [Output](#output-retries) | The model's final answer, by asking it to correct it | `retries={'output': N}` and [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] | A `RetryPromptPart` — see [below](#output-retries) for where it lands |
 | [Model-request hooks](hooks.md) | The model request, from `after_model_request`, `wrap_model_request`, or `on_model_request_error` raising `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryPromptPart` |
 
-Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The first three are invisible to the model.
+Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The other four are invisible to the model: it never sees an attempt fail.
 
 ## Retry multiplication
 
-The layers don't share budgets, but they stack: a retry at one layer wraps the attempts of every layer below it. If a logical call can issue up to `N` model requests — one initial attempt plus whatever the [tool](#tool-retries) and [output](#output-retries) retry budgets add — each model request is sent by a provider SDK client allowed up to `M` attempts, and each attempt travels on a transport allowed up to `K` attempts, one logical call can put up to `N`×`M`×`K` wire requests on the network.
+The layers don't share budgets, but they stack: a retry at one layer wraps the attempts of every layer nearer the wire. If a logical call can issue up to `N` model requests — the initial attempt plus one follow-up per tool call and whatever the [tool](#tool-retries) and [output](#output-retries) retry budgets add — each model request is sent by a provider SDK client allowed up to `M` attempts, and each attempt travels on a transport allowed up to `K` attempts, so one logical call can put up to `N`×`M`×`K` wire requests on the network. Under [durable execution](durable_execution/overview.md) the step that runs the model request retries too, re-entering `M` and `K` each time — and on Temporal that retry count is unbounded unless you set `maximum_attempts` yourself.
 
-- `N` — model requests per logical call: one initial attempt plus the agent's retry budgets (tool retries re-prompt the model; output retries re-request the final answer)
-- `M` — attempts per model request inside the provider SDK client, e.g. `1 + max_retries` on a [custom OpenAI client](models/openai.md#custom-openai-client) or `attempts` in Google's `HttpRetryOptions`
-- `K` — attempts per request on the wire: `1 +` the retries in the transport's `RetryConfig` — see [transport retries](models/http-request-retries.md)
+- `N` — model requests per logical call: the initial attempt, one follow-up per tool call (even a successful tool call queues another request), and any retry prompts the [tool](#tool-retries) and [output](#output-retries) budgets add
+- `M` — attempts per model request inside the provider SDK client: `1 + max_retries` on a [custom OpenAI client](models/openai.md#custom-openai-client) or `attempts` in Google's `HttpRetryOptions` — the OpenAI, Anthropic and Groq clients default to 2 retries, so a plain agent is already at `M = 3`; boto3 counts from the other side, `Config(retries={'max_attempts': N})` allowing `1 + N` attempts
+- `K` — attempts per request on the wire: the transport's stop strategy, so `stop_after_attempt(N)` allows `N` total attempts (`K = N`), not one plus retries — see [transport retries](#transport-retries). On Bedrock there is no transport layer under boto3: `K = 1`
 
-Every wire request pays its own latency — and bills tokens once the request reaches the model — so the worst case, not the happy path, is what [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] and [`UsageLimits`][pydantic_ai.usage.UsageLimits] must absorb. See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for the time side.
+Every wire request pays its own latency — and bills tokens once the request reaches the model — so the worst case, not the happy path, is what your budgets must absorb. [`UsageLimits`][pydantic_ai.usage.UsageLimits] bounds only `N`: its `request_limit` (default `50`) counts model requests per run and never sees the wire requests the SDK client and transport add beneath them. [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] applies per attempt — a retrying SDK client re-arms it for every retry — and only on the [model classes that forward it](timeouts.md#bounding-how-long-a-step-takes). See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for the time side.
 
-```python {title="retry_multiplication.py"}
-from pydantic_ai import AgentRetries, ModelSettings
-
-retries: AgentRetries = {'output': 2}  # final answer alone: up to 3 model requests
-sdk_max_retries = 2  # provider SDK client, e.g. max_retries=2 on a custom OpenAI client
-transport_max_retries = 1  # retrying transport, per HTTP request
-
-model_requests = retries['output'] + 1
-wire_requests = model_requests * (sdk_max_retries + 1) * (transport_max_retries + 1)
-assert wire_requests == 18
-
-settings = ModelSettings(timeout=10)  # per-request deadline, in seconds
-print(settings['timeout'] * wire_requests)  # 180 — size budgets for the worst case
-#> 180
-```
+A run with `retries={'output': 2}` (up to 3 model requests for the final answer alone), the OpenAI SDK's default `max_retries=2` (3 attempts per request), and a transport stopped by `stop_after_attempt(2)` (2 attempts per wire request) can put `3` × `3` × `2 = 18` requests on the network. Each of those carries its own `ModelSettings(timeout=10)` deadline — 180 seconds of request time in the worst case, before any backoff wait between retries.
 
 ## Transport retries
 
@@ -49,6 +36,11 @@ This is the right layer for rate limits, connection resets, and 5xx responses. S
 
 When you build your own backoff outside a transport, [`ModelHTTPError.retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] gives you the provider's `Retry-After` header already parsed into seconds.
 
+## Provider SDK retries {#provider-sdk-retries}
+
+Between the transport and the model sits one more layer the agent never sees: the provider SDK's own client, which re-issues failed requests before your code hears about them. It is on by default — the OpenAI, Anthropic and Groq clients allow `max_retries=2`, so a plain OpenAI agent is already at `M = 3` attempts per model request. The OpenAI SDK re-issues only what it considers retryable: a response carrying `x-should-retry: true`, status 408, 409 or 429, any 5xx, plus timeouts and connection errors — a 400 or 401 is never retried.
+
+To change the budget, pass your own client: `max_retries=0` on a [custom OpenAI client](models/openai.md#custom-openai-client) or a [custom Anthropic client](models/anthropic.md#custom-http-client), or `groq_client=Groq(max_retries=0)` on the Groq provider. Google sizes the same layer in total attempts via `HttpRetryOptions(attempts=N)`. Cohere's client exposes no `max_retries` knob, so its built-in two retries cannot be turned off this way — only the transport above it is yours to configure there. On AWS Bedrock there is no `httpx2` transport layer at all (`K = 1`), and boto3 counts from the other side: `Config(retries={'max_attempts': N})` allows `1 + N` total attempts — see [HTTP Request Retries](models/http-request-retries.md) and the [Bedrock notes](models/bedrock.md).
 ## Model fallback is not a retry
 
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moves to the *next* model when the current one fails; it never re-attempts the same one. Pair it with transport retries rather than treating it as a substitute: retry the same provider for transient failures, fall back to a different provider when it's genuinely down. See [Fallback Model](models/overview.md#fallback-model).

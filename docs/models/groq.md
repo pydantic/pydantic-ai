@@ -75,3 +75,5 @@ model = GroqModel(
 agent = Agent(model)
 ...
 ```
+
+The `Groq` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, like the OpenAI client it is modelled on. Pass `max_retries=0` when you construct the client yourself (for example as `groq_client=`) to keep the retry policy in your transport alone. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
