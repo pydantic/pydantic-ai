@@ -25,7 +25,6 @@ import anyio
 import httpx
 import httpx2
 import pytest
-from pydantic import SecretStr
 
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
@@ -67,9 +66,7 @@ def make_jwt(payload: dict[str, Any]) -> str:
 
 def make_credentials(*, exp: float | None = None, access_token: str = 'access-old') -> OpenAICodexCredentials:
     token = access_token if exp is None else make_jwt({'exp': exp})
-    return OpenAICodexCredentials(
-        access_token=SecretStr(token), refresh_token=SecretStr('refresh-1'), account_id='acc-1'
-    )
+    return OpenAICodexCredentials(access_token=token, refresh_token='refresh-1', account_id='acc-1')
 
 
 def make_provider(credentials: OpenAICodexCredentials | None = None) -> OpenAICodexProvider:
@@ -123,10 +120,8 @@ def test_credentials_from_codex_cli_auth():
         }
     )
     assert creds.account_id == 'acc'
-    assert creds.access_token.get_secret_value() == 'super-secret-access'
-    # Unknown top-level fields are ignored; secrets never leak through repr.
-    rendered = repr(creds)
-    assert 'super-secret' not in rendered
+    assert creds.access_token == 'super-secret-access'
+    assert creds.refresh_token == 'super-secret-refresh'
 
 
 @pytest.mark.parametrize(
@@ -307,7 +302,7 @@ async def test_simultaneous_expiry_performs_one_refresh(monkeypatch: pytest.Monk
     assert all(r.status_code == 200 for r in responses)
     assert len(mock.forms) == 1  # five waiters, one network refresh
     assert mock.forms[0] == {'grant_type': 'refresh_token', 'refresh_token': 'refresh-1', 'client_id': PUBLIC_CLIENT_ID}
-    assert provider.credentials.refresh_token.get_secret_value() == 'refresh-2'
+    assert provider.credentials.refresh_token == 'refresh-2'
 
 
 async def test_fresh_credentials_skip_proactive_refresh(monkeypatch: pytest.MonkeyPatch):
@@ -315,7 +310,7 @@ async def test_fresh_credentials_skip_proactive_refresh(monkeypatch: pytest.Monk
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider()  # healthy JWT
 
-    old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
+    old_bearer = f'Bearer {provider.credentials.access_token}'
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.headers['authorization'] == old_bearer
@@ -334,7 +329,7 @@ async def test_malformed_jwt_degrades_to_401_path(monkeypatch: pytest.MonkeyPatc
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider(make_credentials(access_token='not-a-jwt'))
-    old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
+    old_bearer = f'Bearer {provider.credentials.access_token}'
     requests_seen: list[str] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -358,7 +353,7 @@ async def test_simultaneous_401s_single_flight_recheck(monkeypatch: pytest.Monke
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     provider = make_provider(make_credentials())  # no expiry hint: only the 401 can trigger refresh
-    old_bearer = f'Bearer {provider.credentials.access_token.get_secret_value()}'
+    old_bearer = f'Bearer {provider.credentials.access_token}'
     sends: list[str] = []
     lock = anyio.Lock()
 
@@ -376,7 +371,7 @@ async def test_simultaneous_401s_single_flight_recheck(monkeypatch: pytest.Monke
 
     assert all(r.status_code == 200 for r in responses)
     assert len(mock.forms) == 1  # five simultaneous 401s must not mean five refreshes
-    assert provider.credentials.access_token.get_secret_value() == 'access-new'
+    assert provider.credentials.access_token == 'access-new'
     assert len(sends) == 10  # every logical request was sent exactly twice (original + replay)
     assert sorted(set(sends)) == sorted({'Bearer access-new', old_bearer})
 
@@ -457,7 +452,7 @@ async def test_stale_refresh_save_error_propagates(monkeypatch: pytest.MonkeyPat
         with pytest.raises(CredentialsPersistenceError):
             await client.get(CODEX_URL)
 
-    assert provider.credentials.access_token.get_secret_value() == 'access-new'  # memory is current
+    assert provider.credentials.access_token == 'access-new'  # memory is current
 
 
 # --- Application credential source (multi-replica coordination seam) ---
@@ -477,7 +472,7 @@ class FakeCredentialSource:
 
     async def save(self, credentials: OpenAICodexCredentials) -> None:
         self.credentials = credentials
-        self.saves.append(credentials.access_token.get_secret_value())
+        self.saves.append(credentials.access_token)
 
 
 CODEX_URL = 'https://chatgpt.com/backend-api/codex/x'
@@ -543,7 +538,7 @@ async def test_credential_source_adopts_a_peer_replicas_rotation(monkeypatch: py
 
     assert mock.forms == []  # no upstream refresh: the peer's set was adopted from storage
     assert source.saves == []
-    assert provider.credentials.access_token.get_secret_value() == 'access-peer'
+    assert provider.credentials.access_token == 'access-peer'
 
 
 async def test_credential_source_save_failure_surfaces(monkeypatch: pytest.MonkeyPatch):
@@ -563,7 +558,7 @@ async def test_credential_source_save_failure_surfaces(monkeypatch: pytest.Monke
         with pytest.raises(CredentialsPersistenceError, match='credential source'):
             await client.get(CODEX_URL)
 
-    assert provider.credentials.access_token.get_secret_value() == 'access-new'  # memory is current
+    assert provider.credentials.access_token == 'access-new'  # memory is current
 
 
 async def test_401_replay_resends_a_one_shot_streaming_body(monkeypatch: pytest.MonkeyPatch):
@@ -612,7 +607,7 @@ async def test_refresh_credentials_primitive():
     async with client:
         rotated = await _refresh_credentials(make_credentials(), http_client=client)
 
-    assert rotated.access_token.get_secret_value() == 'access-new'
+    assert rotated.access_token == 'access-new'
     assert rotated.account_id == 'acc-9'  # extracted from the id_token in the response
 
 
@@ -654,7 +649,7 @@ async def test_refresh_failure_surfaces_and_keeps_old_credentials(monkeypatch: p
 async def test_save_failure_on_the_401_path_updates_memory_but_raises(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', TokenEndpointMock(TOKEN_RESPONSE))
     source = FakeCredentialSource(make_credentials(exp=time.time() + 3600))
-    old_bearer = f'Bearer {source.credentials.access_token.get_secret_value()}'
+    old_bearer = f'Bearer {source.credentials.access_token}'
 
     async def exploding_save(credentials: OpenAICodexCredentials) -> None:
         raise RuntimeError('db down')
@@ -672,7 +667,7 @@ async def test_save_failure_on_the_401_path_updates_memory_but_raises(monkeypatc
             await client.get(CODEX_URL)
 
     # In-memory credentials are current even though persistence failed.
-    assert provider.credentials.access_token.get_secret_value() == 'access-new'
+    assert provider.credentials.access_token == 'access-new'
 
 
 def test_sync_auth_flow_is_rejected():
@@ -767,7 +762,7 @@ async def test_refresh_uses_the_provider_http_client():
 
     assert response.status_code == 200
     assert token_hits == 1  # the refresh went through the provider's transport
-    assert provider.credentials.access_token.get_secret_value() == 'access-new'
+    assert provider.credentials.access_token == 'access-new'
 
 
 async def test_caller_supplied_http_client_gets_scoped_auth():

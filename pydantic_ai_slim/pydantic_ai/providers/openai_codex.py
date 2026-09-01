@@ -27,7 +27,7 @@ from urllib.parse import urlencode
 
 import anyio
 import httpx2
-from pydantic import BaseModel, Field, SecretStr, StrictFloat, StrictInt, ValidationError
+from pydantic import BaseModel, Field, StrictFloat, StrictInt, ValidationError
 from typing_extensions import Self
 
 from pydantic_ai._http import create_async_httpx2_client
@@ -108,14 +108,11 @@ class CredentialsPersistenceError(_CredentialsError):
 
 @dataclass
 class OpenAICodexCredentials:
-    """Codex subscription credentials.
-
-    Secrets use `SecretStr` so tokens never leak through reprs, logs, or accidental serialization.
-    """
+    """Codex subscription credentials."""
 
     _: KW_ONLY
-    access_token: SecretStr
-    refresh_token: SecretStr
+    access_token: str
+    refresh_token: str
     account_id: str
 
     @classmethod
@@ -126,8 +123,8 @@ class OpenAICodexCredentials:
         except ValidationError as e:
             raise UserError(f'Malformed Codex CLI credentials. Run `codex login` to regenerate them.\n\n{e}') from None
         return cls(
-            access_token=SecretStr(tokens.access_token),
-            refresh_token=SecretStr(tokens.refresh_token),
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
             account_id=tokens.account_id,
         )
 
@@ -230,7 +227,7 @@ def _credentials_from_token_response(
     if not account_id:
         raise CredentialsRefreshError('Could not determine the ChatGPT account id from the token response.')
     return OpenAICodexCredentials(
-        access_token=SecretStr(data.access_token), refresh_token=SecretStr(data.refresh_token), account_id=account_id
+        access_token=data.access_token, refresh_token=data.refresh_token, account_id=account_id
     )
 
 
@@ -276,7 +273,7 @@ async def _refresh_credentials(
         _TOKEN_URL,
         {
             'grant_type': 'refresh_token',
-            'refresh_token': credentials.refresh_token.get_secret_value(),
+            'refresh_token': credentials.refresh_token,
             'client_id': _PUBLIC_CLIENT_ID,
         },
         http_client=http_client,
@@ -285,25 +282,23 @@ async def _refresh_credentials(
 
 
 class OpenAICodexCredentialSource(Protocol):
-    """Application-owned storage for a user's credentials, so rotated tokens outlive the process.
+    """Application-owned storage for the credentials, so refreshed tokens outlive the process.
 
     The provider owns the credential lifecycle (expiry checks, refresh, single-flight) and calls
     this only to read and write the stored set: `load()` on first use, and `save()` after tokens
-    rotate.
+    are refreshed.
 
-    This also narrows the multi-replica race over a shared grant. Refresh tokens rotate, so
-    replicas refreshing one stored set can invalidate each other; before refreshing, the provider
-    re-reads storage with `load()` and adopts a peer's newer credentials instead of spending its
-    own. That is best-effort, not distributed mutual exclusion: replicas can still race between
-    `load()` and `save()`, so deployments that need a guaranteed single refresher must serialize
-    refreshes themselves (for example, a per-user lease around calls that may refresh).
+    Refresh tokens are single-use, so before refreshing, the provider re-reads storage with
+    `load()` and adopts newer credentials if another process using the same store already
+    refreshed them. That is best-effort, not mutual exclusion: two processes can still race
+    between `load()` and `save()`.
 
     Conformance is structural, but implementations are encouraged to subclass the protocol
     explicitly so type checkers verify the method signatures.
     """
 
     async def load(self) -> OpenAICodexCredentials:
-        """Return the currently stored credentials for this user."""
+        """Return the currently stored credentials."""
         ...
 
     async def save(self, credentials: OpenAICodexCredentials) -> None:
@@ -406,7 +401,7 @@ class _OpenAICodexAuth(httpx2.Auth):
         self._provider = provider
 
     def _apply_headers(self, request: httpx2.Request, credentials: OpenAICodexCredentials) -> None:
-        request.headers['Authorization'] = f'Bearer {credentials.access_token.get_secret_value()}'
+        request.headers['Authorization'] = f'Bearer {credentials.access_token}'
         request.headers['chatgpt-account-id'] = credentials.account_id
         request.headers['originator'] = _ORIGINATOR
 
@@ -442,13 +437,13 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     """Provider for OpenAI Codex subscription authentication.
 
     Wraps the standard `OpenAIProvider` machinery pointed at the Codex backend, injecting Codex
-    OAuth credentials instead of API keys. One provider instance carries one tenant's credentials
-    (there is no process-global cache); construct one per user/credential set. The instance binds
-    its refresh lock to the first event loop that awaits a request, so do not reuse it across loops.
+    OAuth credentials instead of API keys. One provider instance carries one set of credentials
+    (there is no process-global cache). The instance binds its refresh lock to the first event
+    loop that awaits a request, so do not reuse it across loops.
 
     ```python {test="skip" lint="skip"}
-    provider = OpenAICodexProvider(credential_source=YourCredentialStore(user_id))
-    agent = Agent('openai-codex:gpt-5.6-codex', provider=provider)
+    provider = OpenAICodexProvider(credential_source=YourCredentialStore())
+    agent = Agent('openai-codex:gpt-5.6-luna', provider=provider)
     ```
     """
 
@@ -494,8 +489,8 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 `credential_source` are omitted, they are loaded **read-only** from the Codex
                 CLI's `auth.json` (honors `CODEX_HOME`), which never writes the file: refreshed
                 tokens then live in memory only. Pydantic AI never falls back to `OPENAI_API_KEY`.
-            credential_source: Application-owned storage for the credentials, so rotated tokens
-                are persisted and shared across replicas; see
+            credential_source: Application-owned storage for the credentials, so refreshed tokens
+                are persisted between runs; see
                 [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource].
                 Mutually exclusive with `credentials`.
             openai_client: An existing `AsyncOpenAI` client to use as-is. Opts out of credential
@@ -503,7 +498,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 be `None`.
             http_client: An existing `httpx2.AsyncClient` to use. Must be dedicated to this
                 provider (no auth of its own): the provider attaches its credential-injecting auth to it, and
-                sharing a client between providers would mix tenants' credentials. The auth only
+                sharing a client between providers would mix their credentials. The auth only
                 injects credentials on HTTPS requests to the Codex host, so the client can safely
                 be reused for other destinations.
         """
@@ -537,7 +532,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
             if http_client.auth is not None:
                 raise UserError(
                     'The `http_client` already has auth configured (it may belong to another provider); '
-                    'pass a dedicated client so credentials cannot mix across tenants.'
+                    'pass a dedicated client so credentials cannot mix between providers.'
                 )
         http_client.auth = self._auth
         self._http_client = http_client
@@ -631,7 +626,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         assert self._refresh_lock.locked()
         rejected = self.credentials
         if (source := self._credential_source) is not None:
-            # Refresh tokens rotate, so spending ours when a peer replica already rotated the grant
+            # Refresh tokens are single-use, so spending ours when another process already refreshed
             # would invalidate theirs. Re-read storage first and adopt a newer set if one is there.
             if (stored := await source.load()) != rejected:
                 self._replace(stored)
@@ -655,5 +650,5 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
     def _is_stale(self) -> bool:
         # The unverified JWT `exp` claim is a refresh hint, not an authority; refresh proactively
         # once the token is within the pre-expiry buffer.
-        expires_at = _jwt_expires_at(self.credentials.access_token.get_secret_value())
+        expires_at = _jwt_expires_at(self.credentials.access_token)
         return expires_at is not None and datetime.now(timezone.utc) >= expires_at - _TOKEN_EXPIRY_BUFFER
