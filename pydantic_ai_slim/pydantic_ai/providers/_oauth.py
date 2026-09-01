@@ -82,7 +82,13 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
 
         class CallbackHandler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
-                url = urlparse(self.path)
+                try:
+                    url = urlparse(self.path)
+                except ValueError:
+                    # A stray request with a malformed request line (port scanner, browser
+                    # prefetch) must not crash the server thread mid-login.
+                    self.send_error(400, 'Malformed request')
+                    return
                 params = {name: values[0] for name, values in parse_qs(url.query).items()}
                 if url.path == callback_path and params.get('state') == expected_state:
                     if code := params.get('code'):

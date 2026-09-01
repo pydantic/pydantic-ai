@@ -578,19 +578,6 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
         model_settings.pop(setting, None)
 
 
-def _session_affinity_id(messages: list[ModelMessage]) -> str | None:
-    """The conversation-scoped session identity mirroring the official Codex client's affinity.
-
-    The official client's root thread keeps `session-id`, `thread-id`, and `x-client-request-id`
-    equal and stable across turns; runs continuing shared message history are turns on that root
-    thread, so all three derive from the conversation. Callers modeling child threads (which
-    inherit the session but get a fresh thread id) can override individual values via
-    `extra_headers`. Returns `None` when the messages carry no conversation identity (e.g. direct
-    `Model.request()` usage outside an agent run), in which case the request is left unchanged.
-    """
-    return next((m.conversation_id for m in reversed(messages) if m.conversation_id), None)
-
-
 @dataclass
 class _ResponsesRequestParams:
     """Typed request parameters shared by Responses API calls."""
@@ -2207,6 +2194,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
         if info := self._get_continuation_info(messages, settings):
+            # Non-streaming retrieve: on `store=false` backends (Codex, which is also stream-only)
+            # `_get_continuation_info` already rejected the continuation with `UserError`.
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
         elif self.profile.get('openai_responses_requires_streaming', False):
@@ -2718,14 +2707,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 )
             )
 
-        # `truncation` rides on the request params rather than the create call, so it must honor
-        # the unsupported-settings seam here too — `_drop_unsupported_params` runs too late for it.
+        # `parallel_tool_calls`, `truncation`, and `context_management` ride on the request params
+        # rather than the create call, so they must honor the unsupported-settings seam here too —
+        # `_drop_unsupported_params` runs too late for them (and never runs for `count_tokens`).
         unsupported_settings = profile.get('openai_unsupported_model_settings', ())
         return _ResponsesRequestParams(
             model=self.model_name,
             input=openai_messages,
             instructions=instructions,
-            parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
+            parallel_tool_calls=OMIT
+            if 'parallel_tool_calls' in unsupported_settings
+            else (model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT),
             tools=tools or OMIT,
             tool_choice=tool_choice or OMIT,
             previous_response_id=previous_response_id or OMIT,
@@ -2735,7 +2727,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             truncation=OMIT
             if 'openai_truncation' in unsupported_settings
             else model_settings.get('openai_truncation', OMIT),
-            context_management=model_settings.get('openai_context_management', OMIT),
+            context_management=OMIT
+            if 'openai_context_management' in unsupported_settings
+            else model_settings.get('openai_context_management', OMIT),
         )
 
     @staticmethod
@@ -2792,7 +2786,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_headers, timeout = self._build_request_options(model_settings)
 
         prompt_cache_key: str | Omit = model_settings.get('openai_prompt_cache_key', OMIT)
-        if profile.get('openai_responses_session_affinity', False) and (session_id := _session_affinity_id(messages)):
+        # The conversation-scoped session identity mirroring the official Codex client's affinity:
+        # its root thread keeps `session-id`, `thread-id`, and `x-client-request-id` equal and
+        # stable across turns, so all three derive from the conversation carried by the messages.
+        # Callers modeling child threads (which inherit the session but get a fresh thread id)
+        # can override individual values via `extra_headers`. Messages with no conversation
+        # identity (e.g. direct `Model.request()` usage outside an agent run) leave the request
+        # unchanged.
+        if profile.get('openai_responses_session_affinity', False) and (
+            session_id := next((m.conversation_id for m in reversed(messages) if m.conversation_id), None)
+        ):
             # Explicit user-supplied headers and cache key win over the derived affinity;
             # HTTP field names are case-insensitive, so a case-variant override counts too.
             supplied_headers = {name.lower() for name in extra_headers}
@@ -2856,6 +2859,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return None
         if not (last.state == 'suspended' and last.provider_response_id):  # pragma: lax no cover
             return None
+        if self.profile.get('openai_responses_requires_store_false', False):
+            # Continuation retrieves the suspended response server-side, but a `store=false`
+            # backend (e.g. Codex subscription auth) never persisted it; without this guard the
+            # retrieve fails at resume time as a misleading `SuspendedResponseExpired` on 404.
+            raise UserError(
+                f'Resuming a suspended run is not supported for {self.system} models '
+                f'({self.model_name!r}): the backend requires `store=false`, so the suspended '
+                'response was never persisted server-side.'
+            )
         details: _OpenAIResponsesContinuationDetails = cast(
             _OpenAIResponsesContinuationDetails, last.provider_details or {}
         )

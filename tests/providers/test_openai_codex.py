@@ -1,3 +1,13 @@
+"""OpenAI Codex provider unit tests: OAuth flow, credential lifecycle, and provider wiring.
+
+These are unit tests by necessity, not omission: the lifecycle under test (single-flight
+refresh, 401 replay, rotated-grant races, application credential sources, the localhost
+callback server) is driven by token expiry and concurrency, which recorded cassettes cannot
+replay deterministically, and recording against the real token endpoint would spend (and
+rotate) a live subscription grant. The model wire-dialect tests live in
+`tests/models/test_openai_responses.py`.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +19,7 @@ import socket
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import anyio
 import httpx
@@ -17,34 +27,28 @@ import httpx2
 import pytest
 from pydantic import SecretStr
 
-from pydantic_ai import ModelRequest
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import TextPart, UserPromptPart
-from pydantic_ai.models import ModelRequestParameters, infer_model, infer_model_profile
+from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.providers import infer_provider_class
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    from openai.types import responses
-
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai_codex import (
         CredentialsPersistenceError,
         CredentialsRefreshError,
-        OpenAICodexAuth,
         OpenAICodexCredentials,
         OpenAICodexOAuthFlow,
         OpenAICodexProvider,
         _account_id_from_id_token,  # pyright: ignore[reportPrivateUsage]
         _credentials_from_token_response,  # pyright: ignore[reportPrivateUsage]
         _jwt_expires_at,  # pyright: ignore[reportPrivateUsage]
+        _OpenAICodexAuth,  # pyright: ignore[reportPrivateUsage]
         _post_token_request,  # pyright: ignore[reportPrivateUsage]
         _refresh_credentials,  # pyright: ignore[reportPrivateUsage]
         _TokenResponse,  # pyright: ignore[reportPrivateUsage]
     )
-
-    from ..models.mock_openai import MockOpenAIResponses
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
@@ -99,7 +103,7 @@ TOKEN_RESPONSE: dict[str, Any] = {
 
 def authed_client(provider: OpenAICodexProvider, handler: Any) -> httpx2.AsyncClient:
     transport = httpx2.MockTransport(handler)
-    return httpx2.AsyncClient(transport=transport, auth=OpenAICodexAuth(provider))
+    return httpx2.AsyncClient(transport=transport, auth=_OpenAICodexAuth(provider))
 
 
 # --- Credentials parsing and CLI loading ---
@@ -673,7 +677,7 @@ async def test_save_failure_on_the_401_path_updates_memory_but_raises(monkeypatc
 
 def test_sync_auth_flow_is_rejected():
     """Refresh-and-replay is async, so a sync client must fail loudly rather than send no auth."""
-    auth = OpenAICodexAuth(make_provider())
+    auth = _OpenAICodexAuth(make_provider())
     with pytest.raises(UserError, match='requires an async HTTP client'):
         auth.sync_auth_flow(httpx2.Request('GET', 'https://example.com'))
 
@@ -770,7 +774,7 @@ async def test_caller_supplied_http_client_gets_scoped_auth():
     http_client = httpx2.AsyncClient()
     try:
         OpenAICodexProvider(credentials=make_credentials(), http_client=http_client)
-        assert isinstance(http_client.auth, OpenAICodexAuth)
+        assert isinstance(http_client.auth, _OpenAICodexAuth)
     finally:
         await http_client.aclose()
 
@@ -783,7 +787,7 @@ async def test_reopen_after_close_reattaches_auth():
     async with provider:
         http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
         assert not http_client.is_closed
-        assert isinstance(http_client.auth, OpenAICodexAuth)
+        assert isinstance(http_client.auth, _OpenAICodexAuth)
 
 
 # --- Flow primitives ---
@@ -877,6 +881,34 @@ async def test_exchange_code_from_callback(monkeypatch: pytest.MonkeyPatch):
     ]
 
 
+async def test_exchange_code_from_callback_survives_malformed_request_line(monkeypatch: pytest.MonkeyPatch):
+    """REGRESSION: a malformed request line (port scanner, browser prefetch) must not kill the login.
+
+    `urlparse` raises `ValueError: Invalid IPv6 URL` on a path like `http://[/auth/callback`;
+    unguarded, that crashed the handler mid-login with a raw traceback. The server must answer
+    400 and keep serving until the real callback arrives (previously fixed on #6433).
+    """
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    port = _free_port()
+    url = f'http://127.0.0.1:{port}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback())
+
+    await _get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
+    reader, writer = await asyncio.open_connection('127.0.0.1', port)
+    writer.write(b'GET http://[/auth/callback HTTP/1.1\r\nHost: x\r\n\r\n')
+    await writer.drain()
+    status_line = await reader.readline()
+    assert b'400' in status_line
+    writer.close()
+
+    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    assert 'close this tab' in accepted.text
+    credentials = await exchange
+    assert credentials.account_id == 'acc-9'
+
+
 async def test_exchange_code_from_callback_denied():
     """An error callback (e.g. the user clicked Deny) surfaces instead of hanging."""
     url = f'http://127.0.0.1:{_free_port()}/auth/callback'
@@ -917,252 +949,3 @@ def test_standard_openai_profile_untouched():
     profile = infer_model_profile('openai:gpt-5')
     assert profile.get('openai_responses_requires_streaming', False) is False
     assert profile.get('openai_supports_input_token_counting', True) is True
-
-
-async def test_count_tokens_raises_user_error(allow_model_requests: None):
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=make_provider())
-    with pytest.raises(UserError, match='Server-side token counting is not available'):
-        await model.count_tokens([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
-
-
-# --- Wire dialect through the model's request path ---
-
-
-_MINIMAL_RESPONSE: dict[str, Any] = {
-    'id': 'resp_123',
-    'object': 'response',
-    'created_at': 0,
-    'status': 'completed',
-    'model': 'gpt-5.6-luna',
-    'output': [
-        {
-            'type': 'message',
-            'id': 'm1',
-            'status': 'completed',
-            'role': 'assistant',
-            'content': [{'type': 'output_text', 'text': 'hi there', 'annotations': []}],
-        }
-    ],
-    'usage': {
-        'input_tokens': 3,
-        'input_tokens_details': {'cached_tokens': 0, 'cache_write_tokens': 0},
-        'output_tokens': 2,
-        'output_tokens_details': {'reasoning_tokens': 0},
-        'total_tokens': 5,
-    },
-    'parallel_tool_calls': False,
-    'tool_choice': 'none',
-    'tools': [],
-}
-
-
-def _codex_stream(*, slim_completed: bool) -> list[responses.ResponseStreamEvent]:
-    """The SSE sequence observed live against the Codex backend (2026-08-25).
-
-    With `slim_completed=True` this reproduces the real Codex shape: `response.completed` carries an
-    EMPTY `output` array, and content exists only in the incremental events. `slim_completed=False`
-    is the api.openai.com shape, where the terminal event repeats the full output.
-    """
-    completed = responses.Response.model_validate(_MINIMAL_RESPONSE)
-    in_progress = completed.model_copy(update={'status': 'in_progress', 'usage': None, 'output': []})
-    if slim_completed:
-        completed = completed.model_copy(update={'output': []})
-    message_done = responses.ResponseOutputMessage(
-        id='m1',
-        type='message',
-        role='assistant',
-        status='completed',
-        content=[responses.ResponseOutputText(type='output_text', text='hi there', annotations=[])],
-    )
-    return [
-        responses.ResponseCreatedEvent(type='response.created', response=in_progress, sequence_number=0),
-        responses.ResponseInProgressEvent(type='response.in_progress', response=in_progress, sequence_number=1),
-        responses.ResponseOutputItemAddedEvent(
-            type='response.output_item.added',
-            item=message_done.model_copy(update={'status': 'in_progress', 'content': []}),
-            output_index=0,
-            sequence_number=2,
-        ),
-        responses.ResponseContentPartAddedEvent(
-            type='response.content_part.added',
-            part=responses.ResponseOutputText(type='output_text', text='', annotations=[]),
-            item_id='m1',
-            output_index=0,
-            content_index=0,
-            sequence_number=3,
-        ),
-        responses.ResponseTextDeltaEvent(
-            type='response.output_text.delta',
-            delta='hi ',
-            item_id='m1',
-            output_index=0,
-            content_index=0,
-            logprobs=[],
-            sequence_number=4,
-        ),
-        responses.ResponseTextDeltaEvent(
-            type='response.output_text.delta',
-            delta='there',
-            item_id='m1',
-            output_index=0,
-            content_index=0,
-            logprobs=[],
-            sequence_number=5,
-        ),
-        responses.ResponseContentPartDoneEvent(
-            type='response.content_part.done',
-            part=responses.ResponseOutputText(type='output_text', text='hi there', annotations=[]),
-            item_id='m1',
-            output_index=0,
-            content_index=0,
-            sequence_number=6,
-        ),
-        responses.ResponseOutputItemDoneEvent(
-            type='response.output_item.done', item=message_done, output_index=0, sequence_number=7
-        ),
-        responses.ResponseCompletedEvent(type='response.completed', response=completed, sequence_number=8),
-    ]
-
-
-def _codex_model_with_stream(
-    events: list[responses.ResponseStreamEvent],
-) -> tuple[OpenAIResponsesModel, MockOpenAIResponses]:
-    mock_client = MockOpenAIResponses.create_mock_stream(events)
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    return model, cast(MockOpenAIResponses, mock_client)
-
-
-def _assert_aggregated_response(response: Any, kwargs: dict[str, Any]) -> None:
-    part = response.parts[0]
-    assert isinstance(part, TextPart)
-    assert part.content == 'hi there'
-    assert response.usage.input_tokens == 3
-    assert response.usage.output_tokens == 2
-    assert response.provider_response_id == 'resp_123'
-    # `stream=True` itself is proven by the mock: it refuses to serve a non-streaming create call
-    # when only stream events are configured.
-    assert kwargs['store'] is False  # cannot be omitted under Codex subscription auth
-
-
-async def test_forced_stream_aggregates_codex_slim_completed(allow_model_requests: None):
-    """REGRESSION (live-verified 2026-08-25): Codex sends `response.completed` with an EMPTY `output`.
-
-    Content exists only in the incremental events, so trusting the terminal event's `response`
-    produced `ModelResponse(parts=[])` with billed tokens. The forced stream must be drained through
-    the streamed-response machinery, which builds parts from the incremental events.
-    """
-    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
-    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
-    _assert_aggregated_response(response, mock.response_kwargs[0])
-
-
-async def test_forced_stream_aggregates_full_completed_output(allow_model_requests: None):
-    # api.openai.com repeats the full output on `response.completed`; the profile flag must keep
-    # working there too if some other streaming-only endpoint ever sets it.
-    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=False))
-    response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
-    _assert_aggregated_response(response, mock.response_kwargs[0])
-
-
-async def test_forced_stream_drops_unsupported_settings(allow_model_requests: None):
-    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
-    settings = OpenAIResponsesModelSettings(
-        max_tokens=128,
-        temperature=0.5,
-        top_p=0.9,
-        openai_top_logprobs=3,
-        openai_truncation='auto',
-        openai_user='user-1',
-        openai_store=True,
-    )
-
-    # Unsupported fields (including `openai_store`) are dropped silently; the warning here is the
-    # generic reasoning seam's, about sampling params on GPT-5.6-family models.
-    with pytest.warns(UserWarning):
-        response = await model.request([ModelRequest(parts=[UserPromptPart('hi')])], settings, ModelRequestParameters())
-
-    _assert_aggregated_response(response, mock.response_kwargs[0])
-    kwargs = mock.response_kwargs[0]
-    for wire_name in ('max_output_tokens', 'temperature', 'top_p', 'top_logprobs', 'user', 'truncation'):
-        assert wire_name not in kwargs  # dropped before anything reached the wire
-
-
-async def test_forced_stream_without_events_raises(allow_model_requests: None):
-    # The nested-list form is how the shared mock represents a single, empty stream.
-    mock_client = MockOpenAIResponses.create_mock_stream([[]])
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    with pytest.raises(UnexpectedModelBehavior, match='without content'):
-        await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
-
-
-# --- Session affinity (mirrors the official Codex client's session/thread identifiers) ---
-
-
-def _codex_model_with_streams(count: int) -> tuple[OpenAIResponsesModel, MockOpenAIResponses]:
-    events = [_codex_stream(slim_completed=True) for _ in range(count)]
-    mock_client = MockOpenAIResponses.create_mock_stream(events)
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    return model, cast(MockOpenAIResponses, mock_client)
-
-
-def _turn(conversation_id: str | None, run_id: str | None) -> ModelRequest:
-    return ModelRequest(parts=[UserPromptPart('hi')], conversation_id=conversation_id, run_id=run_id)
-
-
-async def test_session_affinity_stable_within_conversation(allow_model_requests: None):
-    """Runs sharing a conversation are turns on one root thread: all three headers stay stable.
-
-    Mirrors the official client's root thread, which keeps `session-id`, `thread-id`, and
-    `x-client-request-id` equal across turns (child threads, which get fresh thread ids, are
-    modeled via explicit `extra_headers` instead).
-    """
-    model, mock = _codex_model_with_streams(2)
-    await model.request([_turn('conv-1', 'run-1')], None, ModelRequestParameters())
-    await model.request([_turn('conv-1', 'run-1'), _turn('conv-1', 'run-2')], None, ModelRequestParameters())
-
-    first, second = mock.response_kwargs
-    for kwargs in (first, second):
-        assert kwargs['extra_headers']['session-id'] == 'conv-1'
-        assert kwargs['extra_headers']['thread-id'] == 'conv-1'
-        assert kwargs['extra_headers']['x-client-request-id'] == 'conv-1'
-        assert kwargs['prompt_cache_key'] == 'conv-1'
-
-
-async def test_session_affinity_isolated_between_conversations(allow_model_requests: None):
-    model, mock = _codex_model_with_streams(2)
-    await model.request([_turn('conv-1', 'run-1')], None, ModelRequestParameters())
-    await model.request([_turn('conv-2', 'run-2')], None, ModelRequestParameters())
-
-    first, second = mock.response_kwargs
-    assert first['extra_headers']['session-id'] == 'conv-1'
-    assert second['extra_headers']['session-id'] == 'conv-2'
-    assert first['prompt_cache_key'] != second['prompt_cache_key']
-
-
-async def test_session_affinity_explicit_overrides_win(allow_model_requests: None):
-    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
-    settings = OpenAIResponsesModelSettings(
-        openai_prompt_cache_key='my-key',
-        # `Thread-Id` is a case-variant override: HTTP field names are case-insensitive.
-        extra_headers={'session-id': 'my-session', 'Thread-Id': 'child-thread'},
-    )
-    await model.request([_turn('conv-1', 'run-1')], settings, ModelRequestParameters())
-
-    kwargs = mock.response_kwargs[0]
-    assert kwargs['extra_headers']['session-id'] == 'my-session'  # the explicit header wins
-    assert kwargs['extra_headers']['Thread-Id'] == 'child-thread'  # a case-variant override also wins
-    assert 'thread-id' not in kwargs['extra_headers']  # no duplicate of the same case-insensitive field
-    assert kwargs['extra_headers']['x-client-request-id'] == 'conv-1'  # unspecified headers are still derived
-    assert kwargs['prompt_cache_key'] == 'my-key'  # the explicit cache key only affects the body
-    assert 'my-key' not in kwargs['extra_headers'].values()  # and is never copied into headers
-
-
-async def test_no_affinity_without_conversation_identity(allow_model_requests: None):
-    """Direct model use outside an agent run leaves the wire shape unchanged."""
-    model, mock = _codex_model_with_stream(_codex_stream(slim_completed=True))
-    await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
-
-    kwargs = mock.response_kwargs[0]
-    assert 'prompt_cache_key' not in kwargs
-    for header in ('session-id', 'thread-id', 'x-client-request-id'):
-        assert header not in kwargs['extra_headers']

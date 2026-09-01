@@ -14,24 +14,11 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 Codex credentials come from a browser login against your ChatGPT account. There are two ways to get them.
 
-### Use the Codex CLI
-
-Run `codex login` once with the official [Codex CLI](https://developers.openai.com/codex/cli/), then it just works:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('openai-codex:gpt-5.6-luna')
-...
-```
-
-The `'openai-codex:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] backed by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider], which loads the CLI's credentials **read-only**: it honors `CODEX_HOME`, never writes the file, and never falls back to `OPENAI_API_KEY`. Constructing [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider] without `credentials` performs the same load.
-
 ### Run your own login flow
 
-Applications that log users in themselves (including multi-tenant ones) use [`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] for the authorization-code + PKCE handshake.
+Applications that log users in themselves use [`OpenAICodexOAuthFlow`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow] for the authorization-code + PKCE handshake.
 
-The public Codex client pins its redirect URI to exactly `http://localhost:1455/auth/callback`, so every login completes on the user's own machine. [`exchange_code_from_callback()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code_from_callback] occupies that port for a moment to catch the redirect, then exchanges the code. A hosted web app cannot receive the callback directly; it runs this same flow from a component on the user's machine (or a tunnel to it) and sends the resulting credentials to the backend.
+The public Codex client pins its redirect URI to exactly `http://localhost:1455/auth/callback`, so every login completes on the user's own machine. [`exchange_code_from_callback()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code_from_callback] occupies that port for a moment to catch the redirect, then exchanges the code.
 
 Credentials outlive the login, so acquire them only when you have none stored:
 
@@ -62,7 +49,20 @@ async def load_from_your_store(user_id: str) -> OpenAICodexCredentials | None: .
 async def save_to_your_store(user_id: str, credentials: OpenAICodexCredentials) -> None: ...
 ```
 
-Store them wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI. To embed login in an existing web server or a tunnel, serve the redirect yourself and pass the code to [`exchange_code()`][pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code] instead.
+Store them wherever your app keeps secrets, not in `~/.codex`, which belongs to the Codex CLI.
+
+### Use the Codex CLI
+
+For local development, run `codex login` once with the official [Codex CLI](https://developers.openai.com/codex/cli/), then it just works:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai-codex:gpt-5.6-luna')
+...
+```
+
+The `'openai-codex:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] backed by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider], which loads the CLI's credentials **read-only**: it honors `CODEX_HOME`, never writes the file, and never falls back to `OPENAI_API_KEY`. Constructing [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider] without `credentials` performs the same load.
 
 ## Storing credentials
 
@@ -134,5 +134,6 @@ An explicit `openai_prompt_cache_key` model setting, or explicitly supplied `ext
 
 - The Codex backend is streaming-only; for non-streaming runs the library transparently drains a stream, so `agent.run_sync()` and friends work as usual.
 - The backend rejects some request settings, so they are dropped before sending: `max_tokens`, `temperature`, `top_p`, `openai_top_logprobs`, `openai_truncation`, and `openai_user`.
+- The backend requires `store=false`, so every request is sent with it and an explicit `openai_store=True` is silently overridden: responses are never persisted server-side. Consequently, resuming a suspended run raises [`UserError`][pydantic_ai.exceptions.UserError], since there is no stored response to continue from.
 - `count_tokens()` raises [`UserError`][pydantic_ai.exceptions.UserError]: the input-tokens endpoint is not served under subscription auth.
 - There is no device flow: the authorization-code + PKCE redirect flow above is the only login flow the public client supports.

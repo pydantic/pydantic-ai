@@ -8,9 +8,8 @@ belong to applications and harnesses.
 The authorization-code + PKCE redirect flow is the only login flow the public Codex client
 supports: its registration pins the redirect URI to `http://localhost:1455/auth/callback`
 (exact-match, probed live 2026-08-25), and the auth service serves no device-authorization
-endpoint. Hosted-web login is therefore not possible with this client; apps that cannot use
-the built-in callback catcher serve (or tunnel) `localhost:1455` themselves and hand the code to
-`exchange_code()`.
+endpoint. `exchange_code_from_callback()` serves this exact redirect URI and exchanges the
+authorization code.
 """
 
 from __future__ import annotations as _annotations
@@ -56,7 +55,6 @@ except ImportError as _import_error:  # pragma: no cover
 __all__ = (
     'CredentialsPersistenceError',
     'CredentialsRefreshError',
-    'OpenAICodexAuth',
     'OpenAICodexCredentialSource',
     'OpenAICodexCredentials',
     'OpenAICodexOAuthFlow',
@@ -286,12 +284,6 @@ async def _refresh_credentials(
     return _credentials_from_token_response(data, fallback_account_id=credentials.account_id)
 
 
-def _token_is_stale(access_token: str) -> bool:
-    """Whether the unverified JWT `exp` hint says the token is within the pre-expiry buffer."""
-    expires_at = _jwt_expires_at(access_token)
-    return expires_at is not None and datetime.now(timezone.utc) >= expires_at - _TOKEN_EXPIRY_BUFFER
-
-
 class OpenAICodexCredentialSource(Protocol):
     """Application-owned storage for a user's credentials, so rotated tokens outlive the process.
 
@@ -344,12 +336,20 @@ class OpenAICodexOAuthFlow(OAuthFlow[OpenAICodexCredentials]):
 
     This is the only login flow the public client supports (no device flow; redirect URI pinned to
     `localhost:1455`, probed exact-match). Construction does no I/O: build the context anywhere,
-    send the user to `authorization_url()`, then either let `exchange_code_from_callback()` serve
-    the redirect for you, or serve it yourself (on port 1455 on the user's machine, or tunneled
-    there) and call `exchange_code()`. The browser and credential storage stay caller-owned.
+    send the user to `authorization_url()`, then let `exchange_code_from_callback()` receive the
+    redirect on localhost and exchange its code. The browser and credential storage stay
+    caller-owned.
     """
 
     def __init__(self, *, redirect_uri: str = _REDIRECT_URI, state: str | None = None) -> None:
+        """Create a new flow context. Construction does no I/O.
+
+        Args:
+            redirect_uri: Where the authorization code is delivered. The public client's
+                registration pins this to `http://localhost:1455/auth/callback` (exact-match),
+                so leave the default unchanged when using the public client.
+            state: The CSRF token bound to the callback; auto-generated when `None`.
+        """
         super().__init__(redirect_uri=redirect_uri, state=state)
 
     def authorization_url(self, *, scope: str | None = None, extra_params: Mapping[str, str] | None = None) -> str:
@@ -393,7 +393,7 @@ class OpenAICodexOAuthFlow(OAuthFlow[OpenAICodexCredentials]):
         return _credentials_from_token_response(data)
 
 
-class OpenAICodexAuth(httpx2.Auth):
+class _OpenAICodexAuth(httpx2.Auth):
     """httpx auth injecting Codex subscription headers, with single-flight refresh-and-replay.
 
     Injects `Authorization: Bearer …`, `chatgpt-account-id`, and `originator`, but only on
@@ -412,7 +412,7 @@ class OpenAICodexAuth(httpx2.Auth):
 
     def sync_auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
         # `httpx.Auth`'s default would send the request unauthenticated; refresh-and-replay is async.
-        raise UserError('`OpenAICodexAuth` requires an async HTTP client.')
+        raise UserError('`OpenAICodexProvider` requires an async HTTP client to inject credentials.')
 
     async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
         if request.url.scheme != 'https' or request.url.host != _CODEX_HOST:
@@ -502,7 +502,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
                 injection entirely; `credentials`, `credential_source`, and `http_client` must
                 be `None`.
             http_client: An existing `httpx2.AsyncClient` to use. Must be dedicated to this
-                provider (no auth of its own): the provider attaches `OpenAICodexAuth` to it, and
+                provider (no auth of its own): the provider attaches its credential-injecting auth to it, and
                 sharing a client between providers would mix tenants' credentials. The auth only
                 injects credentials on HTTPS requests to the Codex host, so the client can safely
                 be reused for other destinations.
@@ -523,7 +523,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
             self._credentials = credentials if credentials is not None else _read_codex_cli_credentials()
         self._revision = 0
         self._last_refresh_error: tuple[int, Exception] | None = None
-        self._auth = OpenAICodexAuth(self)
+        self._auth = _OpenAICodexAuth(self)
         if http_client is None:
             http_client = create_async_httpx2_client()
             self._own_http_client = http_client
@@ -543,7 +543,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         self._http_client = http_client
         self._client = AsyncOpenAI(
             base_url=_CODEX_BASE_URL,
-            # The SDK merges its own bearer header into requests; `OpenAICodexAuth` replaces it.
+            # The SDK merges its own bearer header into requests; `_OpenAICodexAuth` replaces it.
             api_key='codex-subscription-auth',
             http_client=http_client,
         )
@@ -653,4 +653,7 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         self._revision += 1
 
     def _is_stale(self) -> bool:
-        return _token_is_stale(self.credentials.access_token.get_secret_value())
+        # The unverified JWT `exp` claim is a refresh hint, not an authority; refresh proactively
+        # once the token is within the pre-expiry buffer.
+        expires_at = _jwt_expires_at(self.credentials.access_token.get_secret_value())
+        return expires_at is not None and datetime.now(timezone.utc) >= expires_at - _TOKEN_EXPIRY_BUFFER
