@@ -62,7 +62,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 
 ## OpenAI
 
-When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags are converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
+When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags is converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](../models/openai.md#model-profile).
 
 Some [OpenAI-compatible model providers](../models/openai.md#openai-compatible-models) might also support native thinking parts that are not delimited by tags. Instead, they are sent and received as separate, custom fields in the API. Typically, if you are calling the model via the `<provider>:<model>` shorthand, Pydantic AI handles it for you. Nonetheless, you can still configure the fields with [`openai_chat_thinking_field`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_thinking_field].
@@ -139,7 +139,7 @@ agent = Agent(model, model_settings=settings)
 Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7, 4.8, 5, and Sonnet 5. Claude Opus 4.7, 4.8, 5, and Sonnet 5 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
 
 !!! note "Claude Opus 5 caps effort when thinking is disabled"
-    Claude Opus 5 rejects `xhigh` and `max` effort while thinking is explicitly disabled with `anthropic_thinking={'type': 'disabled'}`; use an effort of `high` or below, or leave thinking enabled. Claude Opus 4.8 accepts that combination, so audit requests that disable thinking when migrating. Pydantic AI raises a `UserError` before sending the request rather than surfacing Anthropic's 400.
+    Claude Opus 5 rejects `xhigh` and `max` effort while thinking is explicitly disabled with `anthropic_thinking={'type': 'disabled'}`; use an effort of `high` or below, or leave thinking enabled. Claude Opus 4.8 accepts that combination, so audit requests that disable thinking when migrating. Pydantic AI raises a `UserError` before sending the request.
 
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
@@ -242,7 +242,7 @@ For older Claude models or to pin a specific `budget_tokens`, you can still use 
     ```
 
 === "Deepseek"
-    Reasoning is [always enabled](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-reasoning.html) for Deepseek model
+    Reasoning is [always enabled](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-reasoning.html) for the DeepSeek model.
 
     ```python {title="bedrock_deepseek_thinking_part.py"}
     from pydantic_ai import Agent

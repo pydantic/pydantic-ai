@@ -4,7 +4,7 @@ If you need help getting started with Pydantic AI or with advanced usage, the fo
 
 ## Slack
 
-Join the `#pydantic-ai` channel in the [Pydantic Slack][slack] to ask questions, get help, and chat about Pydantic AI. There's also channels for Pydantic, Logfire, and FastUI.
+Join the `#pydantic-ai` channel in the [Pydantic Slack][slack] to ask questions, get help, and chat about Pydantic AI. There are also channels for Pydantic, Logfire, and FastUI.
 
 If you're on a [Logfire][logfire] Pro plan, you can also get a dedicated private slack collab channel with us.
 

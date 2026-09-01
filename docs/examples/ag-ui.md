@@ -20,7 +20,7 @@ you will need two command line windows.
 
 ### Pydantic AI AG-UI backend
 
-Setup your OpenAI API Key
+Set up your OpenAI API key:
 
 ```bash
 export OPENAI_API_KEY=<your api key>
@@ -42,7 +42,7 @@ Next run the AG-UI Dojo example frontend.
     git clone https://github.com/ag-ui-protocol/ag-ui.git
     ```
 
-2. Change into to the `ag-ui/typescript-sdk` directory
+2. Change to the `ag-ui/sdks/typescript` directory:
 
     ```shell
     cd ag-ui/sdks/typescript
@@ -185,7 +185,7 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 
 ### Tool Based Generative UI
 
-Demonstrates customised rendering for tool output with used confirmation.
+This example demonstrates customised rendering for tool output with user confirmation.
 
 If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/tool_based_generative_ui>.
 

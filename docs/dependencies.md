@@ -2,7 +2,7 @@
 
 Pydantic AI uses a dependency injection system to provide data and services to your agent's [system prompts](agent.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
 
-Matching Pydantic AI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable, easier to test, and ultimately easier to deploy in production.
+Pydantic AI's dependency system follows established Python practices, making dependencies type-safe, understandable, easy to test, and easy to deploy in production.
 
 ## Defining Dependencies
 
@@ -94,7 +94,6 @@ async def main():
 1. [`RunContext`][pydantic_ai.tools.RunContext] may optionally be passed to a [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] function as the only argument.
 2. [`RunContext`][pydantic_ai.tools.RunContext] is parameterized with the type of the dependencies, if this type is incorrect, static type checkers will raise an error.
 3. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
-4. Access dependencies through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 

@@ -42,7 +42,7 @@ dataset = Dataset(
 
 ### Rubric
 
-The `rubric` is your evaluation criteria. Be specific and clear:
+The `rubric` defines the evaluation criteria. Be specific and clear:
 
 **Bad rubrics (vague):**
 ```python
@@ -116,7 +116,7 @@ Choose the judge model based on cost/quality tradeoffs:
 ```python
 from pydantic_evals.evaluators import LLMJudge
 
-# Default: GPT-4o (good balance)
+# Default: openai:gpt-5.2
 LLMJudge(rubric='...')
 
 # Anthropic Claude (alternative default)
