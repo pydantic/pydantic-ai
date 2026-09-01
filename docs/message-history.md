@@ -379,7 +379,9 @@ _(This example is complete, it can be run "as is")_
     mapping, including one whose own keys happen to look like ours — as long as the mapping carries
     the shape Pydantic AI dumps for it, which always includes `media_type`. A mapping that merely
     reuses one of our `kind` values, or that leaves `media_type` out, stays the plain mapping your
-    tool returned. So a tool can return any dictionary at all without colliding with ours, and every
+    tool returned. Spelling one of our items out in full — its `kind`, its `media_type` and the
+    fields that type requires — does reconstruct it, and the keys that type doesn't declare are
+    dropped along the way, so keep `kind` off any dictionary you want handed back verbatim. Every
     item that *is* reconstructed brings its own media type rather than guessing one from the URL.
 
     A tool return keyed by something other than a string is the one place that reconstruction

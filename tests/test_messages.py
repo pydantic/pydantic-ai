@@ -1651,6 +1651,33 @@ def test_tool_return_multimodal_rehydrates_only_with_media_type(
     assert ModelMessagesTypeAdapter.dump_python(loaded)[0]['parts'][0]['content'] == expected_dump
 
 
+def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():
+    """A mapping that spells one of our items out in full is that item, extra keys and all.
+
+    `media_type` separates our dumped shape from a mapping that stops short of it; it cannot separate
+    it from a mapping that *is* our dumped shape with a key added, and the added key goes with the
+    mapping. `docs/message-history.md` names this boundary — keep `kind` off a dictionary that has to
+    come back verbatim.
+    """
+    content = {'kind': 'binary', 'data': 'eA==', 'media_type': 'text/plain', 'label': 'keep'}
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    assert message_part(loaded, ToolReturnPart).content == snapshot(BinaryContent(data=b'x', media_type='text/plain'))
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(loaded))[0]['parts'][0]['content'] == snapshot(
+        {
+            'data': 'eA==',
+            'media_type': 'text/plain',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'identifier': '11f6ad',
+        }
+    )
+
+
 def test_user_prompt_multimodal_rehydrates_without_media_type():
     """The `media_type` requirement is scoped to the tool-return arm.
 
