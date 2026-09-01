@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx2
 import pytest
 from inline_snapshot import snapshot
+from pydantic import JsonValue
 
 from pydantic_ai import Agent, ModelHTTPError
 from pydantic_ai.capabilities import NativeTool
@@ -21,6 +22,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
 from .conftest import try_import
+from .models.conftest import cache_breakpoints, content_blocks, message_shape
 
 with try_import() as anthropic_imports_successful:
     from anthropic import APIStatusError, omit as OMIT
@@ -36,6 +38,36 @@ pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
 ]
+
+
+async def test_anthropic_request_projection_shapes():
+    """The shared wire projections handle string content and cache breakpoints."""
+    body: dict[str, JsonValue] = {
+        'cache_control': {'type': 'ephemeral'},
+        'system': [{'type': 'text', 'cache_control': {'type': 'ephemeral'}}],
+        'messages': [
+            {'role': 'user', 'content': 'hello'},
+            {
+                'role': 'assistant',
+                'content': [{'type': 'text', 'text': 'hi', 'cache_control': {'type': 'ephemeral'}}],
+            },
+        ],
+    }
+
+    assert (
+        content_blocks(body, 'text'),
+        message_shape(body),
+        cache_breakpoints(body),
+    ) == snapshot(
+        (
+            [{'type': 'text', 'text': 'hi', 'cache_control': {'type': 'ephemeral'}}],
+            [('user', ['<str>']), ('assistant', ['text'])],
+            (
+                {'type': 'ephemeral'},
+                ['system[0]', 'messages[1].content[0]'],
+            ),
+        )
+    )
 
 
 async def test_anthropic_code_execution_files_500_without_uploads_is_not_retried(allow_model_requests: None):
