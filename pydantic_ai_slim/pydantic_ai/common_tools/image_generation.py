@@ -27,24 +27,25 @@ strings are resolved to a model at call time.
 ImageGenerationFallbackModel = Model | KnownModelName | str | ImageGenerationFallbackModelFunc | None
 """Type for the fallback model: a model, model name, factory callable, or None."""
 
-ImageGenerationNativeToolFunc: TypeAlias = Callable[
-    [RunContext[AgentDepsT]],
-    Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None,
-]
-"""Callable that resolves the native image generation tool dynamically per-run.
+ImageGenerationNativeTool: TypeAlias = (
+    ImageGenerationTool
+    | Callable[
+        [RunContext[AgentDepsT]],
+        Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None,
+    ]
+)
+"""Type for the native tool: an `ImageGenerationTool` instance, or a callable resolving one from the run context.
 
-Returning `None` omits the tool on the native path. The fallback subagent raises
+The callable resolves on each model request, and again with the same outer context when the
+fallback subagent runs. Returning `None` omits the tool on the native path; the subagent has
+already been invoked and cannot omit, so it raises
 [`UserError`][pydantic_ai.exceptions.UserError] rather than enabling a default `ImageGenerationTool`.
 """
-
-ImageGenerationNativeTool: TypeAlias = ImageGenerationTool | ImageGenerationNativeToolFunc[AgentDepsT]
-"""Type for the native tool: an `ImageGenerationTool` instance or a factory callable."""
 
 __all__ = (
     'ImageGenerationFallbackModel',
     'ImageGenerationFallbackModelFunc',
     'ImageGenerationNativeTool',
-    'ImageGenerationNativeToolFunc',
     'ImageGenerationSubagentTool',
     'image_generation_tool',
 )
@@ -108,7 +109,7 @@ class ImageGenerationSubagentTool:
             # static strings are already validated at factory time
             _check_image_only_model(model)
 
-        native_tool = await _resolve_native_tool(self.native_tool, ctx, ImageGenerationTool)
+        native_tool = await _resolve_native_tool(ImageGenerationTool, self.native_tool, ctx)
 
         agent = Agent(
             model,

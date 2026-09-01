@@ -26,24 +26,25 @@ strings are resolved to a model at call time.
 XSearchFallbackModel = Model | KnownModelName | str | XSearchFallbackModelFunc | None
 """Type for the fallback model: a model, model name, factory callable, or None."""
 
-XSearchNativeToolFunc: TypeAlias = Callable[
-    [RunContext[AgentDepsT]],
-    Awaitable[XSearchTool | None] | XSearchTool | None,
-]
-"""Callable that resolves the native X search tool dynamically per-run.
+XSearchNativeTool: TypeAlias = (
+    XSearchTool
+    | Callable[
+        [RunContext[AgentDepsT]],
+        Awaitable[XSearchTool | None] | XSearchTool | None,
+    ]
+)
+"""Type for the native tool: an `XSearchTool` instance, or a callable resolving one from the run context.
 
-Returning `None` omits the tool on the native path. The fallback subagent raises
+The callable resolves on each model request, and again with the same outer context when the
+fallback subagent runs. Returning `None` omits the tool on the native path; the subagent has
+already been invoked and cannot omit, so it raises
 [`UserError`][pydantic_ai.exceptions.UserError] rather than enabling a default `XSearchTool`.
 """
-
-XSearchNativeTool: TypeAlias = XSearchTool | XSearchNativeToolFunc[AgentDepsT]
-"""Type for the native tool: an `XSearchTool` instance or a factory callable."""
 
 __all__ = (
     'XSearchFallbackModel',
     'XSearchFallbackModelFunc',
     'XSearchNativeTool',
-    'XSearchNativeToolFunc',
     'XSearchSubagentTool',
     'x_search_tool',
 )
@@ -78,7 +79,7 @@ class XSearchSubagentTool:
         if callable(model):
             model = await await_maybe(model(ctx))
 
-        native_tool = await _resolve_native_tool(self.native_tool, ctx, XSearchTool)
+        native_tool = await _resolve_native_tool(XSearchTool, self.native_tool, ctx)
 
         agent = Agent(
             model,

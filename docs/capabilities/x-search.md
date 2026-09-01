@@ -14,4 +14,7 @@ agent = Agent(
 )
 ```
 
-`native=` can be a per-run factory: a callable taking [`RunContext`][pydantic_ai.tools.RunContext] that returns [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] or `None`. On the `fallback_model` subagent, capability-level fields such as `include_output` override the factory result. Returning `None` omits the native tool; if the request would go through `fallback_model`, that raises [`UserError`][pydantic_ai.exceptions.UserError] rather than searching X with default settings. See [Dynamic Configuration](../native-tools.md#dynamic-configuration).
+`native=` can be a factory: a callable taking [`RunContext`][pydantic_ai.tools.RunContext] that returns [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] or `None`. It resolves on each model request, and again with the same outer context when the `fallback_model` subagent runs — so keep it free of one-shot side effects. On the subagent, capability-level fields such as `include_output` override the factory result. See [Dynamic Configuration](../native-tools.md#dynamic-configuration).
+
+!!! note "A factory returning `None`"
+    On the native path, `None` omits the tool for that request. If the request goes through `fallback_model` instead, the subagent has already been invoked and cannot omit anything, so it raises [`UserError`][pydantic_ai.exceptions.UserError] rather than searching X with default settings.

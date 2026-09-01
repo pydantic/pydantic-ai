@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, BinaryImage
-from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import await_maybe
-from pydantic_ai.capabilities import ImageGeneration, XSearch
+from pydantic_ai.capabilities import ImageGeneration, NativeOrLocalTool, XSearch
 from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
 from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
@@ -22,63 +22,220 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, ImageGenerationTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.tools import Tool
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.tools import RunContext
+
+from .capability_models import build_run_context
 
 pytestmark = [pytest.mark.anyio]
 
 
-def _run_context(deps: Any = None) -> RunContext[Any]:
-    return RunContext(deps=deps, model=TestModel(), usage=RunUsage(), run_step=0)
+def _none_native_factory(ctx: RunContext[str]) -> None:
+    """Omits the native tool: legal on the native path, but the invoked fallback cannot honor it."""
+    return None
 
 
-async def test_xsearch_callable_native_config_is_used_by_fallback(allow_model_requests: None):
-    """The fallback subagent resolves callable native config with the outer run context."""
-    seen_native_tools: list[list[AbstractNativeTool]] = []
+def _xsearch_from_deps(ctx: RunContext[str]) -> XSearchTool:
+    return XSearchTool(allowed_x_handles=[ctx.deps])
 
-    def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen_native_tools.append(info.model_request_parameters.native_tools)
-        return ModelResponse(parts=[TextPart(content='summary of recent tweets')])
 
-    inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})))
+_XSEARCH_PASS_THROUGH = XSearchTool(enable_image_understanding=True)
+
+
+def _xsearch_pass_through(ctx: RunContext[str]) -> XSearchTool:
+    return _XSEARCH_PASS_THROUGH
+
+
+async def _image_generation_from_deps(ctx: RunContext[str]) -> ImageGenerationTool:
+    return ImageGenerationTool(model=ctx.deps, quality='high')
+
+
+_IMAGE_GENERATION_PASS_THROUGH = ImageGenerationTool(quality='high')
+
+
+def _image_generation_pass_through(ctx: RunContext[str]) -> ImageGenerationTool:
+    return _IMAGE_GENERATION_PASS_THROUGH
+
+
+@dataclass(frozen=True, kw_only=True)
+class Case:
+    """A `NativeOrLocalTool` subclass that routes native-tool configuration into a fallback subagent.
+
+    The builder fields each take the fallback model and return the capability under test, so a case
+    reads as the table of `native=` shapes the capability has to handle.
+    """
+
+    id: str
+    prompt: str
+    deps: str
+    """Outer-run dependency the dynamic native factory reads."""
+    tool_name: str
+    tool_args: str
+    """JSON arguments the outer model calls the local fallback tool with."""
+    fallback_profile: ModelProfile
+    """Profile of the subagent's model: it supports the native tool the outer model lacks."""
+    make_fallback_response: Callable[[], ModelResponse]
+    with_deps_factory: Callable[[Model], NativeOrLocalTool[str]]
+    expected_fallback_native_tools: list[AbstractNativeTool]
+    """What the subagent's model is given: the factory result plus the capability-level override."""
+    with_pass_through_factory: Callable[[Model], NativeOrLocalTool[str]]
+    pass_through_tool: AbstractNativeTool
+    """The exact instance `with_pass_through_factory`'s factory returns."""
+    with_none_factory: Callable[[Model], NativeOrLocalTool[str]]
+    with_native_false: Callable[[Model], NativeOrLocalTool[str]]
+    expected_override_only_native_tools: list[AbstractNativeTool]
+    """What the subagent's model is given when the capability's own fields are the only config."""
+    subagent: Callable[[RunContext[str], str], Awaitable[object]]
+    """The capability's subagent tool, built directly with a `None`-returning factory."""
+    subagent_input: str = 'a query'
+
+
+XSEARCH_CASE = Case(
+    id='x_search',
+    prompt='What is happening on X?',
+    deps='pydantic',
+    tool_name='x_search',
+    tool_args='{"query": "latest news"}',
+    fallback_profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})),
+    make_fallback_response=lambda: ModelResponse(parts=[TextPart(content='summary of recent tweets')]),
+    with_deps_factory=lambda fallback_model: XSearch[str](
+        native=_xsearch_from_deps, fallback_model=fallback_model, include_output=True
+    ),
+    expected_fallback_native_tools=snapshot([XSearchTool(allowed_x_handles=['pydantic'], include_output=True)]),
+    with_pass_through_factory=lambda fallback_model: XSearch[str](
+        native=_xsearch_pass_through, fallback_model=fallback_model
+    ),
+    pass_through_tool=_XSEARCH_PASS_THROUGH,
+    with_none_factory=lambda fallback_model: XSearch[str](
+        native=_none_native_factory, fallback_model=fallback_model, include_output=True
+    ),
+    with_native_false=lambda fallback_model: XSearch[str](
+        native=False, fallback_model=fallback_model, include_output=True
+    ),
+    expected_override_only_native_tools=snapshot([XSearchTool(include_output=True)]),
+    subagent=XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=_none_native_factory),
+)
+
+IMAGE_GENERATION_CASE = Case(
+    id='image_generation',
+    prompt='Generate an image',
+    deps='gpt-image-2',
+    tool_name='generate_image',
+    tool_args='{"prompt": "test"}',
+    fallback_profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}), supports_image_output=True),
+    make_fallback_response=lambda: ModelResponse(
+        parts=[FilePart(content=BinaryImage(data=b'png', media_type='image/png'))]
+    ),
+    with_deps_factory=lambda fallback_model: ImageGeneration[str](
+        native=_image_generation_from_deps, fallback_model=fallback_model, output_format='jpeg'
+    ),
+    expected_fallback_native_tools=snapshot(
+        [ImageGenerationTool(model='gpt-image-2', quality='high', output_format='jpeg')]
+    ),
+    with_pass_through_factory=lambda fallback_model: ImageGeneration[str](
+        native=_image_generation_pass_through, fallback_model=fallback_model
+    ),
+    pass_through_tool=_IMAGE_GENERATION_PASS_THROUGH,
+    with_none_factory=lambda fallback_model: ImageGeneration[str](
+        native=_none_native_factory, fallback_model=fallback_model, output_format='jpeg'
+    ),
+    with_native_false=lambda fallback_model: ImageGeneration[str](
+        native=False, fallback_model=fallback_model, output_format='jpeg'
+    ),
+    expected_override_only_native_tools=snapshot([ImageGenerationTool(output_format='jpeg')]),
+    subagent=ImageGenerationSubagentTool(model='openai-responses:gpt-5.4', native_tool=_none_native_factory),
+)
+
+CASES = [XSEARCH_CASE, IMAGE_GENERATION_CASE]
+
+case_param = pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
+
+
+def _outer_model(
+    case: Case, *, supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset()
+) -> FunctionModel:
+    """A model that calls the capability's local fallback tool once, then answers."""
 
     def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
             return ModelResponse(parts=[TextPart(content='done')])
-        return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
+        return ModelResponse(parts=[ToolCallPart(tool_name=case.tool_name, args=case.tool_args)])
 
-    def native_factory(ctx: RunContext[str]) -> XSearchTool:
-        return XSearchTool(allowed_x_handles=[ctx.deps])
+    return FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=supported_native_tools))
 
-    outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-    agent = Agent[str, str](
-        outer_model,
-        deps_type=str,
-        capabilities=[XSearch(native=native_factory, fallback_model=inner_model, include_output=True)],
-    )
 
-    result = await agent.run('What is happening on X?', deps='pydantic')
+def _recording_fallback_model(case: Case, seen_native_tools: list[AbstractNativeTool]) -> FunctionModel:
+    """The subagent's model: it supports the native tool and records the ones it is handed."""
+
+    def fallback_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_native_tools.extend(info.model_request_parameters.native_tools)
+        return case.make_fallback_response()
+
+    return FunctionModel(fallback_model_fn, profile=case.fallback_profile)
+
+
+@case_param
+async def test_callable_native_config_is_used_by_fallback(case: Case, allow_model_requests: None):
+    """The fallback subagent resolves the callable native config with the outer run context."""
+    seen_native_tools: list[AbstractNativeTool] = []
+    capability = case.with_deps_factory(_recording_fallback_model(case, seen_native_tools))
+    agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
+
+    result = await agent.run(case.prompt, deps=case.deps)
 
     assert result.output == 'done'
-    assert seen_native_tools == [[XSearchTool(allowed_x_handles=['pydantic'], include_output=True)]]
+    assert seen_native_tools == case.expected_fallback_native_tools
 
 
-async def test_xsearch_callable_native_pass_through_without_overrides():
-    """A factory result is unchanged when the capability has no override fields."""
-    factory_tool = XSearchTool(enable_image_understanding=True)
+@case_param
+async def test_callable_native_pass_through_without_overrides(case: Case, allow_model_requests: None):
+    """A factory result reaches the subagent unchanged when the capability sets no override fields."""
+    seen_native_tools: list[AbstractNativeTool] = []
+    capability = case.with_pass_through_factory(_recording_fallback_model(case, seen_native_tools))
+    agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
 
-    def native_factory(ctx: RunContext[Any]) -> XSearchTool:
-        return factory_tool
+    result = await agent.run(case.prompt, deps=case.deps)
 
-    cap = XSearch(native=native_factory, fallback_model='xai:grok-4-1-fast-non-reasoning')
-    assert isinstance(cap.local, Tool)
-    resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-    assert callable(resolved)
-    assert await await_maybe(resolved(_run_context())) is factory_tool
+    assert result.output == 'done'
+    assert seen_native_tools == [case.pass_through_tool]
+    assert seen_native_tools[0] is case.pass_through_tool
+
+
+@case_param
+async def test_callable_native_none_raises(case: Case, allow_model_requests: None):
+    """A callable native factory returning `None` raises rather than enabling the default native tool."""
+    seen_native_tools: list[AbstractNativeTool] = []
+    capability = case.with_none_factory(_recording_fallback_model(case, seen_native_tools))
+    agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
+
+    with pytest.raises(UserError, match='returned `None`'):
+        await agent.run(case.prompt, deps=case.deps)
+
+    assert seen_native_tools == []
+
+
+@case_param
+async def test_native_false_keeps_fallback_overrides(case: Case, allow_model_requests: None):
+    """Disabling the outer native tool retains fallback-native configuration."""
+    seen_native_tools: list[AbstractNativeTool] = []
+    capability = case.with_native_false(_recording_fallback_model(case, seen_native_tools))
+    agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
+
+    result = await agent.run(case.prompt, deps=case.deps)
+
+    assert capability.get_native_tools() == []
+    assert result.output == 'done'
+    assert seen_native_tools == case.expected_override_only_native_tools
+
+
+@case_param
+async def test_subagent_dynamic_native_none_raises(case: Case):
+    """The subagent raises when its dynamic factory returns `None` instead of enabling the default tool."""
+    with pytest.raises(UserError, match='returned `None`'):
+        await case.subagent(build_run_context(), case.subagent_input)
 
 
 def test_xsearch_incompatible_native_tool_raises():
@@ -90,156 +247,29 @@ def test_xsearch_incompatible_native_tool_raises():
         )
 
 
-async def test_xsearch_callable_native_wrong_tool_type_raises():
-    """The shared resolver validates dynamic factory results before applying overrides."""
+async def test_xsearch_callable_native_wrong_tool_type_raises(allow_model_requests: None):
+    """The shared resolver validates dynamic factory results before applying overrides.
 
-    def native_factory(ctx: RunContext[Any]) -> ImageGenerationTool:
+    The outer model supports the tool type the factory wrongly returns, so it passes the native
+    path's own support check and the mismatch surfaces where the subagent resolves it.
+    """
+
+    def native_factory(ctx: RunContext[str]) -> ImageGenerationTool:
         return ImageGenerationTool()
 
-    cap = XSearch(
+    seen_native_tools: list[AbstractNativeTool] = []
+    capability = XSearch[str](
         native=native_factory,  # pyright: ignore[reportArgumentType]
-        fallback_model='xai:grok-4-1-fast-non-reasoning',
+        fallback_model=_recording_fallback_model(XSEARCH_CASE, seen_native_tools),
+        include_output=True,
     )
-    resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-    assert callable(resolved)
-    with pytest.raises(UserError, match=r'must resolve to a `XSearchTool` instance'):
-        await await_maybe(resolved(_run_context()))
-
-
-async def test_xsearch_callable_native_none_raises(allow_model_requests: None):
-    """A callable native factory returning None raises rather than enabling default X search."""
-
-    def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('fallback model should not run when the native factory returns None')  # pragma: no cover
-
-    inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})))
-
-    def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
-
-    def native_factory(ctx: RunContext[Any]) -> None:
-        return None
-
-    outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-    agent = Agent(
-        outer_model,
-        capabilities=[XSearch(native=native_factory, fallback_model=inner_model, include_output=True)],
-    )
-    with pytest.raises(UserError, match='returned `None`'):
-        await agent.run('What is happening on X?')
-
-
-def test_xsearch_native_false_keeps_fallback_overrides():
-    """Disabling the outer native tool retains fallback-native configuration."""
-    cap = XSearch(native=False, fallback_model='xai:grok-4-1-fast-non-reasoning', include_output=True)
-
-    assert cap.get_native_tools() == []
-    assert cap._resolved_native() == XSearchTool(include_output=True)  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_xsearch_subagent_dynamic_native_none_raises():
-    """The subagent raises when its dynamic factory returns None instead of enabling default X search."""
-
-    def native_factory(ctx: RunContext[Any]) -> None:
-        return None
-
-    subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=native_factory)
-    with pytest.raises(UserError, match='returned `None`'):
-        await subagent(_run_context(), 'latest news')
-
-
-async def test_image_generation_callable_native_config_is_used_by_fallback(allow_model_requests: None):
-    """The fallback subagent resolves callable native config with the outer run context."""
-    seen_native_tools: list[list[AbstractNativeTool]] = []
-
-    def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen_native_tools.append(info.model_request_parameters.native_tools)
-        return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'png', media_type='image/png'))])
-
-    inner_model = FunctionModel(
-        inner_model_fn,
-        profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}), supports_image_output=True),
-    )
-
-    def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
-            return ModelResponse(parts=[TextPart(content='done')])
-        return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-
-    async def native_factory(ctx: RunContext[str]) -> ImageGenerationTool:
-        return ImageGenerationTool(model=ctx.deps, quality='high')
-
-    outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
     agent = Agent[str, str](
-        outer_model,
+        _outer_model(XSEARCH_CASE, supported_native_tools=frozenset({ImageGenerationTool})),
         deps_type=str,
-        capabilities=[ImageGeneration(native=native_factory, fallback_model=inner_model, output_format='jpeg')],
+        capabilities=[capability],
     )
 
-    result = await agent.run('Generate an image', deps='gpt-image-2')
+    with pytest.raises(UserError, match=r'must resolve to a `XSearchTool` instance'):
+        await agent.run(XSEARCH_CASE.prompt, deps=XSEARCH_CASE.deps)
 
-    assert result.output == 'done'
-    assert seen_native_tools == [[ImageGenerationTool(model='gpt-image-2', quality='high', output_format='jpeg')]]
-
-
-async def test_image_generation_callable_native_pass_through_without_overrides():
-    """A factory result is unchanged when the capability has no override fields."""
-    factory_tool = ImageGenerationTool(quality='high')
-
-    def native_factory(ctx: RunContext[Any]) -> ImageGenerationTool:
-        return factory_tool
-
-    cap = ImageGeneration(native=native_factory, fallback_model='openai-responses:gpt-5.4')
-    assert isinstance(cap.local, Tool)
-    resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-    assert callable(resolved)
-    assert await await_maybe(resolved(_run_context())) is factory_tool
-
-
-async def test_image_generation_callable_native_none_raises(allow_model_requests: None):
-    """A callable native factory returning None raises rather than enabling default image generation."""
-
-    def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('fallback model should not run when the native factory returns None')  # pragma: no cover
-
-    inner_model = FunctionModel(
-        inner_model_fn,
-        profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}), supports_image_output=True),
-    )
-
-    def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-
-    def native_factory(ctx: RunContext[Any]) -> None:
-        return None
-
-    outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-    agent = Agent(
-        outer_model,
-        capabilities=[ImageGeneration(native=native_factory, fallback_model=inner_model, output_format='jpeg')],
-    )
-    with pytest.raises(UserError, match='returned `None`'):
-        await agent.run('Generate an image')
-
-
-def test_image_generation_native_false_keeps_fallback_overrides():
-    """Disabling the outer native tool retains fallback-native configuration."""
-    cap = ImageGeneration(
-        native=False,
-        fallback_model='openai-responses:gpt-5.4',
-        output_format='jpeg',
-    )
-
-    assert cap.get_native_tools() == []
-    assert cap._resolved_native() == ImageGenerationTool(output_format='jpeg')  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_image_generation_subagent_dynamic_native_none_raises():
-    """The subagent raises when its dynamic factory returns None instead of enabling default image generation."""
-
-    def native_factory(ctx: RunContext[Any]) -> None:
-        return None
-
-    subagent = ImageGenerationSubagentTool(model='openai-responses:gpt-5.4', native_tool=native_factory)
-    with pytest.raises(UserError, match='returned `None`'):
-        await subagent(_run_context(), 'test')
+    assert seen_native_tools == []
