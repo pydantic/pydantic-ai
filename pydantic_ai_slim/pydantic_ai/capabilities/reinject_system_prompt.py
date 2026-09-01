@@ -8,7 +8,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, merge_capability_fields
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -93,7 +93,7 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         Two of these under one `id` are one configuration stated twice, so the run keeps the
         last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
         """
-        return capabilities[-1]
+        return merge_capability_fields(capabilities)
 
 
 def _has_system_prompt(messages: list[ModelMessage]) -> bool:

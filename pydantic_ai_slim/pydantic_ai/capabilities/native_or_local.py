@@ -4,6 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -11,7 +12,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, merge_capability_fields
 
 
 @dataclass(init=False)
@@ -193,3 +194,31 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
             return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the declared configuration, then rebuild the native tool from the result.
+
+        `__post_init__` copies this capability's configuration into the native tool it builds, and
+        that tool -- not the capability -- is what reaches the provider. Merging the capability's
+        fields alone would leave a merged `allowed_domains` beside a native tool still carrying one
+        instance's, so a composed restriction would read as applied while the request went out
+        without it. Anything `_default_native` produced is therefore produced again from the merged
+        configuration.
+
+        A native tool the user passed in is left alone: it states its own configuration, and
+        rebuilding would discard it. Two of those take the later, like any other value the merge
+        cannot reconcile.
+        """
+        merged = merge_capability_fields(capabilities)
+        assert isinstance(merged, cls)
+        if all(_has_derived_native(capability) for capability in capabilities):
+            merged = replace_no_init(merged, native=merged._default_native())
+        return merged
+
+
+def _has_derived_native(capability: AbstractCapability[Any]) -> bool:
+    """Whether this capability's native tool is one `_default_native` built from its own fields."""
+    assert isinstance(capability, NativeOrLocalTool)
+    default = capability._default_native()  # pyright: ignore[reportPrivateUsage]
+    return default is not None and capability.native == default

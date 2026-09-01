@@ -8,7 +8,7 @@ from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, merge_capability_fields
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -65,4 +65,4 @@ class RaiseContentFilterError(AbstractCapability[AgentDepsT]):
         Two of these under one `id` are one configuration stated twice, so the run keeps the
         last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
         """
-        return capabilities[-1]
+        return merge_capability_fields(capabilities)

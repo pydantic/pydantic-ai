@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -9,7 +9,6 @@ from pydantic_ai.native_tools import WebSearchTool, WebSearchUserLocation
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .abstract import AbstractCapability
 from .native_or_local import NativeOrLocalTool
 
 WebSearchLocalStrategy = Literal['duckduckgo']
@@ -122,12 +121,3 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             or self.max_uses is not None
             or self.external_web_access is False
         )
-
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        """One web search configuration per agent: the last one supplied is the one in effect.
-
-        Two of these under one `id` are one configuration stated twice, so the run keeps the
-        last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
-        """
-        return capabilities[-1]

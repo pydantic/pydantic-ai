@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, merge_capability_fields
 
 
 @dataclass
@@ -46,4 +46,4 @@ class Thinking(AbstractCapability[Any]):
         Two of these under one `id` are one configuration stated twice, so the run keeps the
         last. That is what lets `agent.run(capabilities=[...])` override an agent-level one.
         """
-        return capabilities[-1]
+        return merge_capability_fields(capabilities)

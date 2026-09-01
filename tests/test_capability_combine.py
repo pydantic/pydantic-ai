@@ -1,0 +1,244 @@
+"""How two capabilities that resolve to the same `id` compose.
+
+Every capability Pydantic AI ships is listed in `COMBINE_POLICY`, and
+`test_every_capability_declares_a_combine_policy` fails when one is missing. Adding a capability is
+therefore a decision about what two of it mean, taken once, here -- not something that defaults
+quietly to whatever `AbstractCapability` happens to do.
+"""
+
+from __future__ import annotations
+
+import importlib
+import inspect
+import pkgutil
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+import pytest
+
+import pydantic_ai.capabilities as capabilities_package
+from pydantic_ai.capabilities import (
+    ImageGeneration,
+    Instrumentation,
+    RaiseContentFilterError,
+    ReinjectSystemPrompt,
+    Thinking,
+    WebFetch,
+    WebSearch,
+    XSearch,
+)
+from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import WebFetchTool, WebSearchTool, XSearchTool
+
+pytestmark = pytest.mark.anyio
+
+
+@dataclass
+class Anonymous:
+    """No default `id`: two of these are two different things, so `combine` is never reached.
+
+    The run derives a distinct id per occurrence instead. A user who gives two the same `id`
+    explicitly gets the base `combine`, which raises -- that is a mistake, not a composition.
+    """
+
+    reason: str
+
+
+@dataclass
+class Combines:
+    """A default `id`: two of these are one configuration stated twice, and `combine` resolves them."""
+
+    reason: str
+    make: Callable[[], tuple[AbstractCapability[Any], AbstractCapability[Any]]]
+    """Builds two instances that state *different* configuration, so a merge is observable."""
+    check: Callable[[Any], None]
+    """Asserts what survived. Reads derived state too, not just the declared fields."""
+
+
+Policy = Anonymous | Combines
+
+
+def _check_thinking(merged: Thinking) -> None:
+    assert merged.effort == 'high', 'a scalar takes the later value'
+
+
+def _check_web_search(merged: WebSearch) -> None:
+    assert merged.allowed_domains == ['a.com', 'b.com'], 'allow-lists are unioned, not replaced'
+    # The native tool is what reaches the provider, so the merge has to reach it too.
+    assert isinstance(merged.native, WebSearchTool)
+    assert merged.native.allowed_domains == ['a.com', 'b.com'], (
+        'the merged allow-list must reach the native tool, or the request goes out unrestricted'
+    )
+
+
+def _check_web_fetch(merged: WebFetch) -> None:
+    assert merged.allowed_domains == ['a.com', 'b.com']
+    assert isinstance(merged.native, WebFetchTool)
+    assert merged.native.allowed_domains == ['a.com', 'b.com']
+
+
+def _check_reinject(merged: ReinjectSystemPrompt) -> None:
+    assert merged.replace_existing is True
+
+
+def _check_content_filter(merged: RaiseContentFilterError) -> None:
+    assert merged.id == 'raise_content_filter_error'
+
+
+def _check_x_search(merged: XSearch) -> None:
+    assert merged.allowed_x_handles == ['a', 'b']
+    assert isinstance(merged.native, XSearchTool)
+    assert merged.native.allowed_x_handles == ['a', 'b']
+
+
+def _check_image_generation(merged: ImageGeneration) -> None:
+    assert merged.quality == 'high'
+
+
+def _check_instrumentation(merged: Instrumentation) -> None:
+    assert merged.settings is not None
+
+
+COMBINE_POLICY: dict[str, Policy] = {
+    # -- One per agent: a default `id`, and `combine` says what two of them mean. --
+    'Thinking': Combines(
+        'an agent has one thinking configuration',
+        lambda: (Thinking(effort='low'), Thinking(effort='high')),
+        _check_thinking,
+    ),
+    'WebSearch': Combines(
+        'one web search configuration, but its allow-list must not be silently widened',
+        lambda: (WebSearch(allowed_domains=['a.com']), WebSearch(allowed_domains=['b.com'])),
+        _check_web_search,
+    ),
+    'WebFetch': Combines(
+        'one web fetch configuration, same allow-list concern as `WebSearch`',
+        lambda: (WebFetch(allowed_domains=['a.com']), WebFetch(allowed_domains=['b.com'])),
+        _check_web_fetch,
+    ),
+    'XSearch': Combines(
+        'one X search configuration',
+        lambda: (
+            XSearch(fallback_model='xai:grok-4.3', allowed_x_handles=['a']),
+            XSearch(fallback_model='xai:grok-4.3', allowed_x_handles=['b']),
+        ),
+        _check_x_search,
+    ),
+    'ImageGeneration': Combines(
+        'one image generation configuration',
+        lambda: (
+            ImageGeneration(fallback_model='openai-responses:gpt-5.4', quality='low'),
+            ImageGeneration(fallback_model='openai-responses:gpt-5.4', quality='high'),
+        ),
+        _check_image_generation,
+    ),
+    'Instrumentation': Combines(
+        'an agent is instrumented one way',
+        lambda: (Instrumentation(), Instrumentation()),
+        _check_instrumentation,
+    ),
+    'ReinjectSystemPrompt': Combines(
+        'one reinjection policy per agent',
+        lambda: (ReinjectSystemPrompt(), ReinjectSystemPrompt(replace_existing=True)),
+        _check_reinject,
+    ),
+    'RaiseContentFilterError': Combines(
+        'carries no configuration at all, so two are interchangeable',
+        lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
+        _check_content_filter,
+    ),
+    # -- Several of these is the normal case, so they stay anonymous. --
+    'Capability': Anonymous('a generic bundle; several per agent is the usual shape'),
+    'CombinedCapability': Anonymous('structural container; nesting is the semantic'),
+    'WrapperCapability': Anonymous('structural wrapper; nesting is the semantic'),
+    'PrefixTools': Anonymous('structural wrapper, applied once per wrapped capability'),
+    'DynamicCapability': Anonymous('one per capability function'),
+    'ResolvedDynamicCapability': Anonymous('the resolved form of a `DynamicCapability`'),
+    'NativeTool': Anonymous('one per native tool'),
+    'NativeOrLocalTool': Anonymous('used directly it is parameterized by the tools passed to it'),
+    'MCP': Anonymous(
+        'several servers per agent is the normal case; the URL derives its *toolset* id, not a capability id'
+    ),
+    'Toolset': Anonymous('one per toolset'),
+    'Hooks': Anonymous('several hook bundles compose'),
+    'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
+    'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
+    'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
+    'ProcessHistory': Anonymous('history processors stack'),
+    'ProcessEventStream': Anonymous('event-stream processors stack'),
+    'PrepareTools': Anonymous('tool preparers stack'),
+    'PrepareOutputTools': Anonymous('output-tool preparers stack'),
+    'SetToolMetadata': Anonymous('one per `ToolSelector`; several selectors compose'),
+    'IncludeToolReturnSchemas': Anonymous('one per `ToolSelector`; several selectors compose'),
+    'UseThreadExecutor': Anonymous('parameterized by which executor it names'),
+    'ToolSearch': Anonymous('auto-injected only when absent'),
+    'DeferredCapabilityLoader': Anonymous('auto-injected only when absent'),
+    'PendingMessageDrainCapability': Anonymous('auto-injected only when absent'),
+}
+
+
+def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
+    """Every capability class in `pydantic_ai.capabilities`, public or not."""
+    found: dict[str, type[AbstractCapability[Any]]] = {}
+    for module_info in pkgutil.walk_packages(capabilities_package.__path__, f'{capabilities_package.__name__}.'):
+        module = importlib.import_module(module_info.name)
+        for obj in vars(module).values():
+            if (
+                inspect.isclass(obj)
+                and issubclass(obj, AbstractCapability)
+                and obj is not AbstractCapability
+                and obj.__module__.startswith('pydantic_ai.')
+            ):
+                found[obj.__name__] = obj
+    return found
+
+
+def test_every_capability_declares_a_combine_policy() -> None:
+    """A new capability must say what two of it mean before it can ship.
+
+    Without this the answer defaults to whatever the base class does, which is the one outcome
+    nobody chose. Add an entry to `COMBINE_POLICY` -- `Anonymous` when several per agent is normal,
+    `Combines` when it carries a default `id`.
+    """
+    shipped = set(_shipped_capability_types())
+    declared = set(COMBINE_POLICY)
+    assert not (shipped - declared), (
+        f'capabilities with no `COMBINE_POLICY` entry: {sorted(shipped - declared)}. '
+        'Decide what two of them mean and add an entry.'
+    )
+    assert not (declared - shipped), (
+        f'`COMBINE_POLICY` names capabilities that no longer exist: {sorted(declared - shipped)}.'
+    )
+
+
+@pytest.mark.parametrize('name', sorted(COMBINE_POLICY))
+def test_capability_combine_policy_holds(name: str) -> None:
+    """Each capability composes -- or refuses to -- the way its policy says."""
+    policy = COMBINE_POLICY[name]
+    capability_type = _shipped_capability_types()[name]
+
+    if isinstance(policy, Anonymous):
+        # Anonymous capabilities carry no default id, so two never meet under one key.
+        assert capability_type.id is None, (
+            f'{name} is declared `Anonymous` but carries a default id {capability_type.id!r}'
+        )
+        return
+
+    first, second = policy.make()
+    assert first.id is not None and first.id == second.id, (
+        f'{name} is declared `Combines` but two instances do not share an id'
+    )
+    policy.check(type(first).combine([first, second]))
+
+
+def test_base_combine_rejects_duplicates() -> None:
+    """A capability that has not said how it composes refuses to guess."""
+
+    @dataclass
+    class Custom(AbstractCapability[Any]):
+        pass
+
+    with pytest.raises(UserError, match='is used by'):
+        Custom.combine([Custom(id='same'), Custom(id='same')])
