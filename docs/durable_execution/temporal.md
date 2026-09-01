@@ -318,152 +318,120 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 #### Streaming events to a frontend with Workflow Streams
 
-Rather than standing up a separate message queue, you can use Temporal's built-in [Workflow Streams](https://docs.temporal.io/develop/python/workflows/workflow-streams) as the transport: the parent workflow itself becomes the durable, offset-addressed channel that an external consumer subscribes to.
+Rather than standing up a message queue, you can use Temporal's built-in [Workflow Streams](https://docs.temporal.io/develop/python/workflows/workflow-streams) as the transport: the workflow itself becomes the durable, offset-addressed channel that a consumer outside it subscribes to.
 
-Set `event_stream_topic` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and construct a [`WorkflowStream`](https://docs.temporal.io/develop/python/workflows/workflow-streams) in your workflow's `@workflow.init`. Every event is then published to that topic from within the activity. Setting `event_stream_topic` enables streaming on its own, and it's orthogonal to `event_stream_handler`: if you also pass a handler, both run concurrently with no ordering guarantee, and each sees every event.
+Set `event_stream_topic` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and host an [`AgentEventStream`][pydantic_ai.durable_exec.temporal.AgentEventStream] in your workflow. Setting the topic enables streaming on its own, and it's orthogonal to `event_stream_handler`: if you also pass a handler, it still sees every event.
 
-The publisher and user handler form one unit of replay. If either fails, the other is cancelled and the durable event-handler activity fails. When Temporal retries that activity, the publisher can publish earlier events again at new offsets. Consumers must therefore handle these events with at-least-once delivery semantics.
-
-```python {test="skip"}
-import asyncio
-from datetime import timedelta
-
+```python {title="temporal_workflow_streams_workflow.py" test="skip"}
 from temporalio import workflow
-from temporalio.contrib.workflow_streams import WorkflowStream
 
 with workflow.unsafe.imports_passed_through():
     from pydantic_ai import Agent
-    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal import AgentEventStream, TemporalDurability
 
-agent = Agent(
-    'openai:gpt-5.6-sol',
-    name='assistant',
-    capabilities=[TemporalDurability(event_stream_topic='agent-events')],
-)
+durability = TemporalDurability(event_stream_topic='agent-events')
+agent = Agent('openai:gpt-5.6-sol', name='assistant', capabilities=[durability])
 
 
 @workflow.defn
 class AssistantWorkflow:
     @workflow.init
     def __init__(self, prompt: str) -> None:
-        # Hosts the stream that the agent's activities publish to. Without this,
-        # published events are silently dropped.
-        self.stream = WorkflowStream()
-        self._finished = False
-        self._released = False
+        self.events = AgentEventStream()
 
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await agent.run(prompt)
-        # All events are published by now. A Workflow Stream subscription is an Update long-poll
-        # that can't complete once the workflow has returned, so stay alive until the consumer
-        # acknowledges it has drained the stream. Otherwise a consumer that starts late or lags
-        # behind would miss the tail. Bound the wait so a consumer that never connects can't hang
-        # the run.
-        self._finished = True
-        try:
-            await workflow.wait_condition(lambda: self._released, timeout=timedelta(minutes=1))
-        except asyncio.TimeoutError:
-            pass
+        async with self.events:
+            result = await agent.run(prompt)
         return result.output
-
-    @workflow.query
-    def finished(self) -> bool:
-        return self._finished
-
-    @workflow.signal
-    def release(self) -> None:
-        self._released = True
 ```
 
-An external consumer (with just the workflow handle) observes events as they arrive using [`stream_agent_events`][pydantic_ai.durable_exec.temporal.stream_agent_events], which decodes them back into typed [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s. This is effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary. The run, not any individual event, is the terminal signal (an event like `PartEndEvent` only ends a single response part, and tool calls or further parts can follow), so the consumer relays until the run has finished, then releases the workflow so it completes and the subscription ends:
+A consumer that holds only a workflow handle then observes the run as it happens, with
+[`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events]:
 
-```python {test="skip" lint="skip"}
-import asyncio
-
+```python {title="temporal_workflow_streams_consumer.py" test="skip" lint="skip"}
 from temporalio.client import Client
-
-from pydantic_ai.durable_exec.temporal import stream_agent_events
 
 
 async def relay_events(client: Client, prompt: str) -> str:
     handle = await client.start_workflow(
         AssistantWorkflow.run, prompt, id='assistant-1', task_queue='my-task-queue'
     )
-
-    async def relay() -> None:
-        async for event in stream_agent_events(client, handle, 'agent-events'):
-            ...  # forward `event` to the frontend over SSE
-
-    relay_task = asyncio.create_task(relay())
-    # Wait until the run has finished producing events. This is queryable while the workflow is still
-    # alive, unlike `handle.result()` which is gated on the release below. Then let the relay
-    # drain and release the workflow so it completes and the subscription ends.
-    while not await handle.query(AssistantWorkflow.finished):
-        await asyncio.sleep(0.2)
-    await handle.signal(AssistantWorkflow.release)
-    await relay_task
+    async for event in durability.stream_agent_events(client, handle, output_type=str):
+        ...  # forward `event` to the frontend over SSE
     return await handle.result()
 ```
 
-Because Workflow Streams are offset-addressed, a reconnecting consumer can resume where it left off, which is more robust than ordinary in-process streaming. Pass `with_offsets=True` to yield `(offset, event)` pairs, checkpoint the offset of the last event you handled, and reconnect with `from_offset=last_offset + 1`:
+This is effectively a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] across the workflow boundary: the same [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, in order, ending with the [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] that carries the run's result — except the events crossed into another process to get here. The `async for` therefore ends on its own when the run does; you don't need a separate signal to know when to stop.
 
-```python {test="skip"}
-import asyncio
-from typing import Any
+Leaving the `async with` block is what makes that work. A Workflow Stream is served by the workflow itself, so once the workflow returns, its stream can no longer be read and anything a subscriber hadn't polled yet is gone. The block holds the workflow open until a subscriber acknowledges the terminal event — automatically, from inside `stream_agent_events()`. Nobody watching is not an error: the wait is bounded by `drain_timeout` (30 seconds by default), and the workflow's result stays authoritative either way.
 
-from temporalio.client import Client, WorkflowHandle
+##### Driving a UI protocol
 
-from pydantic_ai.durable_exec.temporal import stream_agent_events
+Because the stream ends in an `AgentRunResultEvent`, it is exactly what a [`UIAdapter`][pydantic_ai.ui.UIAdapter] consumes, so an HTTP handler can start the workflow and serve a [UI event stream protocol](../ui/overview.md) straight off the topic — including `on_complete`, which receives the run result the same way it would for an in-process run:
+
+```python {title="temporal_workflow_streams_ui.py" test="skip" lint="skip"}
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 
-async def relay_with_resume(client: Client, handle: WorkflowHandle[Any, Any]) -> None:
-    """Relay a run's events, reconnecting after the last offset already handled."""
-    last_offset = -1
-    delay = 1.0
-    while True:
-        try:
-            async for offset, event in stream_agent_events(
-                client, handle, 'agent-events', from_offset=last_offset + 1, with_offsets=True
-            ):
-                print(event)  # forward to the frontend over SSE
-                last_offset = offset
-                delay = 1.0  # progress, so the next failure starts from a short delay again
-            return  # the subscription ended, so the workflow is in a terminal state
-        except Exception:
-            # Back off between reconnects and give up eventually: a persistent failure
-            # (bad credentials, an unreachable server, a payload that won't decode) fails
-            # before the subscription's own poll cooldown, so retrying immediately would
-            # spin the loop and hammer Temporal instead of waiting for recovery.
-            if delay > 30:
-                raise
-            await asyncio.sleep(delay)
-            delay *= 2
+async def handle_chat(request: Request) -> Response:
+    body = await request.body()
+    handle = await client.start_workflow(
+        AssistantWorkflow.run, body, id=..., task_queue='my-task-queue'
+    )
+
+    adapter = VercelAIAdapter(agent=agent, run_input=VercelAIAdapter.build_run_input(body))
+    events = durability.stream_agent_events(client, handle)
+    return adapter.streaming_response(adapter.transform_stream(events))
 ```
 
-Offsets are assigned over the whole `WorkflowStream` rather than per topic, so a topic-filtered subscription sees gaps wherever the workflow published to another topic. You can't reconstruct them by counting events, which is why `with_offsets=True` exists. `stream_agent_events` targets the specific run behind the handle you pass, so it's unaffected by later executions that reuse the same workflow ID.
+##### Reconnecting
 
-A model stream emits a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] per token, so to keep the volume down you can publish only a subset of events with the `event_stream_events` predicate:
+Workflow Streams are offset-addressed, so a consumer that drops can resume where it left off — which is more than ordinary in-process streaming can offer. Checkpoint [`offset`][pydantic_ai.durable_exec.temporal.DurableAgentRunEvents.offset] as you go and reconnect with `from_offset=offset + 1`:
 
-```python {test="skip"}
-from pydantic_ai.durable_exec.temporal import TemporalDurability
+```python {title="temporal_workflow_streams_resume.py" test="skip" lint="skip"}
+last_offset = -1
+while True:
+    events = durability.stream_agent_events(client, handle, from_offset=last_offset + 1)
+    async for event in events:
+        print(event)  # forward to the frontend over SSE
+        last_offset = events.offset
+    if events.result is not None:
+        break  # the run finished; without a result the workflow ended some other way
+```
+
+Offsets run over the whole stream rather than per topic, so a topic-filtered subscription sees gaps wherever the workflow published to another topic — which is why they have to be read off the stream rather than counted.
+
+##### Choosing what to publish
+
+A model stream emits a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] per token, and every published event stays in the workflow's state for the life of the run. To keep both cost and workflow size down, pass a [`WorkflowStreamTopic`][pydantic_ai.durable_exec.temporal.WorkflowStreamTopic] instead of a bare name and filter:
+
+```python {title="temporal_workflow_streams_filter.py" test="skip"}
+from pydantic_ai.durable_exec.temporal import TemporalDurability, WorkflowStreamTopic
 from pydantic_ai.messages import PartDeltaEvent
 
 TemporalDurability(
-    event_stream_topic='agent-events',
-    event_stream_events=lambda event: not isinstance(event, PartDeltaEvent),  # skip per-token deltas
+    event_stream_topic=WorkflowStreamTopic(
+        'agent-events',
+        events=lambda event: not isinstance(event, PartDeltaEvent),  # skip per-token deltas
+    )
 )
 ```
 
-Under the hood, `event_stream_topic` is sugar over [`workflow_stream_event_handler`][pydantic_ai.durable_exec.temporal.workflow_stream_event_handler], which returns a regular `EventStreamHandler` you can also compose or wrap yourself.
+The terminal `AgentRunResultEvent` is always published, as it's what ends a subscription.
+
+Under the hood, the live model stream is published by [`workflow_stream_event_handler()`][pydantic_ai.durable_exec.temporal.workflow_stream_event_handler], which returns a regular `EventStreamHandler` you can compose or wrap yourself. Prefer `event_stream_topic`: it also publishes the run's workflow-side events from workflow code and the terminal event that ends a subscription, neither of which a handler on its own can do.
 
 !!! note "Caveats"
-    - Workflow Streams add roughly 100ms of latency per roundtrip (tunable via `event_stream_batch_interval`) and their cost scales with the number of durable batches; they're suited to driving a UI, not ultra-low-latency use cases like real-time voice. Use `event_stream_events` to publish fewer events if the volume is a concern.
-    - Each `stream_agent_events` subscription holds a long-poll against the Temporal service, so opening one per frontend connection scales your Temporal usage with your user count and can run into Temporal Cloud's connection limits. Run a single consumer per workflow run and fan its events out to frontend connections yourself (e.g. through pub/sub or an SSE broadcast); a subscription per subscriber works in development but falls over at the cap.
-    - Delivery is at-least-once: the publishing handler runs inside an activity, so if that activity is retried its events are re-published (at new offsets), and consumers should tolerate duplicates. The workflow's final result remains authoritative.
-    - Publishing to a Workflow Stream is non-blocking and unbounded: the SDK buffers published events in the activity and ships them in batches, so a high event rate or slow delivery grows that in-memory buffer until the activity exits. There's no backpressure at the stream layer, so keep the volume down with `event_stream_events` (e.g. dropping per-token deltas) for chatty runs. (When a user `event_stream_handler` is combined with a topic, a slow handler does back-pressure the shared stream.)
-    - The stream is durable, so events may be produced and consumed by processes running different Pydantic AI versions. `AgentStreamEvent` shapes are stable within a major version; keep producer and consumer on the same major version.
-    - `stream_agent_events` ends when the workflow reaches a terminal state; use the workflow result for the authoritative output. Live events reach external consumers only; `run_stream_events()` remains unavailable inside workflow code.
+    - Workflow Streams add roughly 100ms of latency per roundtrip (tunable via the topic's `batch_interval`); they're suited to driving a UI, not to ultra-low-latency use cases like real-time voice.
+    - Each `stream_agent_events()` subscription holds a long-poll against the Temporal service, so opening one per frontend connection scales your Temporal usage with your user count and can run into Temporal Cloud's connection limits. Run a single consumer per workflow run and fan its events out to frontend connections yourself (e.g. through pub/sub or an SSE broadcast); a subscription per subscriber works in development and falls over at the cap.
+    - Model events are published from inside the model-request activity, so if that activity retries, its events are published again at new offsets. Consumers should tolerate duplicates. Events published from workflow code — tool events and the terminal event — are not affected, as replay rebuilds the log rather than appending to it.
+    - The stream is durable, so events may be produced and consumed by processes running different Pydantic AI versions. Event shapes are stable within a major version; keep producer and consumer on the same major version.
+    - One iterator covers one agent run. A workflow that runs the agent repeatedly publishes a terminal event per run, so a consumer that wants the next one reconnects with `from_offset=offset + 1`.
+    - Live events reach consumers outside the workflow only; `run_stream_events()` inside workflow code still buffers.
 
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 

@@ -26,7 +26,13 @@ from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
-from ._event_stream import stream_agent_events, workflow_stream_event_handler
+from ._event_stream import (
+    AgentEventStream,
+    DurableAgentRunEvents,
+    WorkflowStreamTopic,
+    stream_agent_events,
+    workflow_stream_event_handler,
+)
 from ._logfire import LogfirePlugin
 from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
@@ -45,6 +51,9 @@ __all__ = [
     'TemporalOperationNamer',
     'PydanticAIWorkflow',
     'PydanticAIPayloadConverter',
+    'AgentEventStream',
+    'WorkflowStreamTopic',
+    'DurableAgentRunEvents',
     'workflow_stream_event_handler',
     'stream_agent_events',
 ]
