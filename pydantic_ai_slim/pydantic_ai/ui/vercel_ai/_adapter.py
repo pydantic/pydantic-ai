@@ -1173,7 +1173,10 @@ def _normalize_client_file_shapes(value: Any) -> Any:
     kind = normalized.get('kind')
     if kind == 'binary' and 'media_type' in normalized:
         normalized['data'] = _js_binary_to_bytes(normalized.get('data'))
-    elif kind in _FILE_URL_KINDS and 'media_type' not in normalized:
+    # Absent, `null` or `''` are the three ways a client leaves the media type open — `File.type` is
+    # `''` whenever the browser cannot tell — and are what `FileUrl` itself treats as "infer one". A
+    # `media_type` of any other shape is the client's own value and is left for validation to judge.
+    elif kind in _FILE_URL_KINDS and normalized.get('media_type') in (None, ''):
         url = normalized.get('url')
         if isinstance(url, str):
             try:

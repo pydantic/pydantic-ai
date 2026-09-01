@@ -66,6 +66,7 @@ from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
     CompactionPart,
+    FileUrl,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     RealtimeSessionErrorEvent,
@@ -1612,6 +1613,12 @@ def test_tool_return_content_nested_multimodal():
             id='kind-without-url',
         ),
         pytest.param(
+            {'kind': 'video-url', 'url': 'https://youtu.be/lCdaVNyHtjU'},
+            snapshot({'kind': 'video-url', 'url': 'https://youtu.be/lCdaVNyHtjU'}),
+            snapshot({'kind': 'video-url', 'url': 'https://youtu.be/lCdaVNyHtjU'}),
+            id='no-media-type-on-a-url-that-always-infers',
+        ),
+        pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''},
             snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''}),
             snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': ''}),
@@ -1781,6 +1788,11 @@ def test_multi_modal_content_types_matches_union():
         get_args(m)[0] if get_origin(m) is Annotated else m for m in get_args(get_args(MultiModalContent)[0])
     }
     assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
+
+    # `_FILE_URL_KINDS` is built from exactly these four, and drives both the tool-return gate and the
+    # Vercel adapter's media-type completion, so a fifth `FileUrl` added to the union would escape both
+    # silently and reopen issue #4190.
+    assert {m for m in union_members if issubclass(m, FileUrl)} == {ImageUrl, AudioUrl, DocumentUrl, VideoUrl}
 
     # Positive cases: each multimodal type is recognized
     assert is_multi_modal_content(ImageUrl(url='https://example.com/image.png'))

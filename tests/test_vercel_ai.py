@@ -5175,6 +5175,51 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
             id='file-url-media-type-inferred-from-url',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png', 'media_type': ''},
+            snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/x.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'f27cce',
+                }
+            ),
+            id='file-url-empty-media-type',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/x.png', 'media_type': None},
+            snapshot(ImageUrl(url='https://example.com/x.png', media_type='image/png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/x.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'f27cce',
+                }
+            ),
+            id='file-url-null-media-type',
+        ),
+        pytest.param(
+            {'kind': 'video-url', 'url': 'https://youtu.be/lCdaVNyHtjU'},
+            snapshot(VideoUrl(url='https://youtu.be/lCdaVNyHtjU', media_type='video/mp4')),
+            snapshot(
+                {
+                    'url': 'https://youtu.be/lCdaVNyHtjU',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'video-url',
+                    'media_type': 'video/mp4',
+                    'identifier': '5ff549',
+                }
+            ),
+            id='video-url',
+        ),
+        pytest.param(
             {'kind': 'image-url', 'url': 'https://e.com/report'},
             snapshot({'kind': 'image-url', 'url': 'https://e.com/report'}),
             snapshot({'kind': 'image-url', 'url': 'https://e.com/report'}),
@@ -5209,9 +5254,11 @@ async def test_adapter_load_tool_return_completes_documented_file_shapes(
     """The file shapes `docs/ui/vercel-ai.md` documents a browser tool may return all reach the agent as files.
 
     A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
-    the type itself would, and an `uploaded-file` shape needs nothing completed. The dump is asserted
-    for every case because it is the leg the completion protects: a URL with no readable media type is
-    left as the mapping it is, where reconstructing it would raise `Could not infer media type` here.
+    the type itself would — including when the client left the key `null` or empty, which is what
+    `File.type` gives a browser that cannot tell — and an `uploaded-file` shape needs nothing
+    completed. The dump is asserted for every case because it is the leg the completion protects: a
+    URL with no readable media type is left as the mapping it is, where reconstructing it would raise
+    `Could not infer media type` here.
     """
     ui_messages: list[UIMessage] = [
         UIMessage(id='m1', role='user', parts=[TextUIPart(text='give me a file')]),
