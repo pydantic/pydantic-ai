@@ -2199,11 +2199,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 output_final_result=output_final_result,
             ):
                 yield event
-        except BaseException:
+        except BaseException as exc:
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
             # is intentionally omitted: this request was never sent to the model.
-            if output_parts:
+            if (
+                output_parts
+                or ctx.deps.cancellation.cancel_requested
+                or isinstance(exc, (asyncio.CancelledError, exceptions.RunCancelled))
+            ):
                 ctx.state.message_history.append(
                     _messages.ModelRequest(
                         parts=list(output_parts),

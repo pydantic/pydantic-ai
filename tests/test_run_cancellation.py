@@ -868,6 +868,13 @@ async def test_task_cancel_of_run_carries_run_cancelled():
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
         ]
     )
     assert cancelled.usage.requests == 1
@@ -901,7 +908,8 @@ async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions()
 
     (cancelled,) = recorded
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
+    assert cancelled.all_messages()[-1].state == 'interrupted'
     assert cancelled.usage.requests == 1
     assert cancelled.run_id is not None
 
@@ -930,7 +938,8 @@ async def test_from_cancellation_through_asyncio_timeout():
 
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
+    assert cancelled.all_messages()[-1].state == 'interrupted'
     assert started.is_set()
 
 
@@ -1034,7 +1043,8 @@ async def test_iter_external_cancel_carries_run_cancelled():
 
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
+    assert cancelled.all_messages()[-1].state == 'interrupted'
     assert cancelled.usage.requests == 1
 
 
@@ -1186,11 +1196,13 @@ async def test_run_stream_events_external_cancel_of_consumer():
     assert task.cancelled()
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
+    assert cancelled.all_messages()[-1].state == 'interrupted'
     assert cancelled.usage.requests == 1
     # The handle itself also remains usable after teardown.
     (events,) = holder
-    assert [type(message) for message in events.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in events.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
+    assert events.all_messages()[-1].state == 'interrupted'
     assert events.result is None
 
 
@@ -1224,7 +1236,8 @@ async def test_run_stream_events_external_cancel_caught_in_task():
 
     (cancelled,) = recorded
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
+    assert cancelled.all_messages()[-1].state == 'interrupted'
 
 
 async def test_run_stream_events_external_cancel_before_iteration_attaches_nothing():
@@ -1877,3 +1890,36 @@ async def test_absorbed_cancellation_completes_on_py310():  # pragma: lax no cov
     task.cancel()
     result = await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
     assert result.output == 'success (no tool calls)'
+
+
+async def test_single_in_flight_tool_cancels_run_and_history_is_resumable():
+    """Cancelling during the only in-flight tool emits an interrupted ModelRequest and resumes cleanly."""
+    tool_started = asyncio.Event()
+
+    agent = Agent(TestModel(call_tools=['in_flight_tool']))
+
+    @agent.tool_plain
+    async def in_flight_tool() -> None:
+        tool_started.set()
+        await asyncio.Event().wait()
+
+    token = CancellationToken()
+    task = asyncio.create_task(agent.run('start', cancellation_token=token))
+
+    await asyncio.wait_for(tool_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    token.cancel()
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await task
+
+    history = exc_info.value.all_messages()
+    assert len(history) == 3
+    assert history[0].state == 'complete'
+    assert history[1].state == 'complete'
+    assert history[2].state == 'interrupted'
+    assert isinstance(history[2], ModelRequest)
+    assert history[2].parts == []
+
+    # Resuming with a new prompt succeeds and auto-repairs dangling tool calls
+    result = await agent.run('next', message_history=history)
+    assert result.output == '{"in_flight_tool":"The tool call was interrupted before a result was produced."}'
