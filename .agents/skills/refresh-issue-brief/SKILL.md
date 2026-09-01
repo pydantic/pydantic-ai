@@ -40,9 +40,11 @@ Collect:
 - Current title / state / labels (flag changes)
 - Whether `updatedAt` differs from the issue's stored `updated_at`. Treat a missing stored value as
   stale so briefs created before this field was added get one full comparison.
-- A fresh comment-state fingerprint, computed from the fetched issue JSON with
-  `jq -c '[.comments[] | {id, updatedAt}]' | git hash-object --stdin`. A mismatch detects added,
-  edited, or deleted comments. Treat a missing stored fingerprint as stale.
+- A fresh comment-state fingerprint from
+  `.agents/skills/branch-context/issue-comment-fingerprint <issue-number>`. The helper paginates
+  comment `id` and `updatedAt` through GraphQL because `gh issue view` omits comment `updatedAt`.
+  A mismatch detects added, edited, or deleted comments. Treat a missing stored fingerprint as
+  stale.
 
 ### 3. Compare
 

@@ -119,7 +119,8 @@ LANES="$HAND_DIR/.lanes"
 
 LANE_ID="${HANDOFF_LANE:-${CLAUDE_CODE_HOST_SESSION_ID:-${CODEX_THREAD_ID:-}}}"
 if [ -z "$LANE_ID" ] && [ -n "${TMUX:-}" ]; then
-    LANE_ID="tmux-$(tmux display-message -p '#S' 2>/dev/null || echo unknown)"
+    tmux_lane="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    [ -n "$tmux_lane" ] && LANE_ID="tmux-$tmux_lane"
 fi
 [ -z "$LANE_ID" ] && LANE_ID="unlaned"
 

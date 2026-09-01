@@ -45,7 +45,7 @@ issues:
     type: <bug|improvement|feature>
     role: <primary|related|follow-up>
     updated_at: <issue updatedAt from GitHub>
-    comments_fingerprint: <git hash-object of canonical comment IDs + updatedAt values>
+    comments_fingerprint: <output of issue-comment-fingerprint for this issue>
 ---
 
 # Issue Brief
@@ -82,6 +82,9 @@ issues:
 ```
 
 Rules:
+- Compute each `comments_fingerprint` with
+  `.agents/skills/branch-context/issue-comment-fingerprint <issue-number>`; the helper paginates the
+  GraphQL fields that `gh issue view` omits.
 - Multi-issue branches: list every linked issue in the `issues:` frontmatter + `## Issues` section. Share one success-criteria table across them unless they're genuinely independent.
 - Free-text problems (no issue): use `issues: []`, set `role: n/a`, keep everything else.
 - Don't paste research prose here — it belongs in `local-notes/`. This file is a contract, not a log.
