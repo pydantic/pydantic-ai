@@ -46,9 +46,17 @@ jobs:
             exit 0
           fi
 
-          total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')
-          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
-            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"
+          if ! total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files'); then
+            echo '::warning::Could not read the PR changed-file count; running full CI.'
+            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
+            echo '::warning::Could not list the PR changed files; running full CI.'
+            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
           if [ "$total" -eq 0 ] || [ "${#changed_files[@]}" -ne "$total" ]; then
