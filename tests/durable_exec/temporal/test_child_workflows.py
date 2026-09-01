@@ -16,7 +16,7 @@ from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 from temporalio.workflow import (
     ChildWorkflowCancellationType,
     ChildWorkflowConfig,
-    _Definition as WorkflowDefinition,  # pyright: ignore[reportPrivateUsage]
+    _Definition as WorkflowDefinition,
 )
 
 from pydantic_ai import Agent, FunctionToolset
@@ -129,7 +129,7 @@ async def nested_child_activity(value: str) -> str:
     return f'delegated: {value}'
 
 
-toolset = FunctionToolset(id='child_workflow_tools')
+toolset = FunctionToolset[None](id='child_workflow_tools')
 validated_values: list[str] = []
 
 
@@ -156,6 +156,7 @@ async def durable_delegate(value: str) -> str:
 agent = Agent(
     TestModel(call_tools='all'),
     name='child_workflow_agent',
+    deps_type=type(None),
     toolsets=[toolset],
     capabilities=[TemporalDurability()],
 )
@@ -239,15 +240,19 @@ async def test_tool_call_runs_as_child_workflow(client: Client) -> None:
     ).replay_workflow(history)
 
 
-def _child_workflow_registration(agent: Agent[None, str], toolset_id: str) -> type:
+class _ChildWorkflow(Protocol):
+    async def run(self, params: None) -> str: ...
+
+
+def _child_workflow_registration(agent: Agent[None, str], toolset_id: str) -> type[_ChildWorkflow]:
     durability = TemporalDurability.from_agent(agent)
     assert durability is not None
     registrations = [
         registration
         for registration in durability.temporal_registrations
         if isinstance(registration, type)
-        and f'__toolset__{toolset_id}__call_tool__child_workflow'
-        in WorkflowDefinition.must_from_class(registration).name
+        and (workflow_name := WorkflowDefinition.must_from_class(registration).name) is not None
+        and f'__toolset__{toolset_id}__call_tool__child_workflow' in workflow_name
     ]
     assert len(registrations) == 1
     return registrations[0]
@@ -317,7 +322,9 @@ async def test_child_workflow_classes_do_not_collide(client: Client) -> None:
             task_queue=TASK_QUEUE,
         )
 
+    assert hyphen_result is not None
     assert 'hyphen' in hyphen_result
+    assert underscore_result is not None
     assert 'underscore' in underscore_result
 
 
