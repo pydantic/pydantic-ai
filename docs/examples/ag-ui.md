@@ -42,9 +42,15 @@ Next run the AG-UI Dojo example frontend.
     git clone https://github.com/ag-ui-protocol/ag-ui.git
     ```
 
-2. Follow the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup) to install dependencies and build the project from the repository root.
+2. Follow the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup) to install the prerequisites, then install dependencies and build the project from the repository root:
 
-3. Change to the `ag-ui/apps/dojo` directory and run the Dojo app:
+    ```shell
+    cd ag-ui
+    pnpm i
+    pnpm build --projects=demo-viewer
+    ```
+
+3. Change to the `apps/dojo` directory and run the Dojo app:
 
     ```shell
     cd apps/dojo
