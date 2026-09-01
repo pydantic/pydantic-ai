@@ -8203,6 +8203,15 @@ class TestWebFetchCapability:
         assert isinstance(cap.local, Tool)
 
 
+@pytest.fixture
+def openai_image_generation_model(openai_api_key: str) -> Model:
+    """Import OpenAI before the async test starts; the SDK reads aiohttp metadata during import."""
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    return OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+
+
 class TestImageGenerationCapability:
     def test_image_gen_init_params_match_builtin_tool(self):
         """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
@@ -8507,11 +8516,11 @@ class TestImageGenerationCapability:
             ImageGeneration(fallback_model=f'{provider}:{model_name}')
 
     @pytest.mark.vcr()
-    async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
+    async def test_image_generation_local_fallback(
+        self, allow_model_requests: None, openai_image_generation_model: Model
+    ):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-        from pydantic_ai.providers.openai import OpenAIProvider
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # If we see a tool return, the image was generated — return final text
@@ -8528,12 +8537,11 @@ class TestImageGenerationCapability:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
-        inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
         outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
             capabilities=[
-                ImageGeneration(fallback_model=inner_model),
+                ImageGeneration(fallback_model=openai_image_generation_model),
             ],
         )
         result = await agent.run('Generate an image of a cute baby sea otter')
