@@ -622,6 +622,34 @@ async def test_event_stream_file():
     )
 
 
+async def test_event_stream_file_default_noop():
+    """A stream that doesn't override `handle_file` emits nothing for file parts.
+
+    `UIEventStream.handle_file` is the documented default for subclasses that have no file
+    representation, so the part is dropped rather than erroring.
+    """
+
+    class FileAgnosticStream(DummyUIEventStream):
+        def handle_file(self, part: FilePart) -> AsyncIterator[str]:
+            return super(DummyUIEventStream, self).handle_file(part)
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=FilePart(content=BinaryImage(data=b'fake', media_type='image/png')))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = FileAgnosticStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_external_tools():
     agent = Agent(model=TestModel())
 

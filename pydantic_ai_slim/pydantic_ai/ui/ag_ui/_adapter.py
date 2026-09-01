@@ -303,7 +303,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
-        return AGUIEventStream(self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version)
+        return AGUIEventStream(
+            self.run_input,
+            accept=self.accept,
+            ag_ui_version=self.ag_ui_version,
+            preserve_file_data=self.preserve_file_data,
+        )
 
     @classmethod
     async def from_request(
