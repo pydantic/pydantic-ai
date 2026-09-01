@@ -30,18 +30,7 @@ classifiers = [
 dependencies = [
     "genai-prices>=0.0.71",
     "httpx>=0.28.1",
-    # 2.36.0 is the release that attributes each instruction to the source that contributed it, so the
-    # parts this package's capabilities contribute are separated by a blank line instead of running
-    # together into one paragraph (pydantic-ai#7595), and each carries an `InstructionId` an
-    # application can address to override it.
-    # Earlier floors are subsumed by it: 2.33.0's Anthropic provider is built on HTTPX2 and raises its
-    # own `anthropic` floor to 1.0.0 to match, and below it slim hands the SDK a client of the other
-    # kind, where the pair only type-checks when both halves come from the same generation; the
-    # compaction estimator and the conversation-search indexer have to recognise
-    # `ToolAvailabilityDeltaPart` (2.23.0), the one `ModelRequestPart` carrying no `content`, so code
-    # walking request parts raises `AttributeError` rather than ignoring it (#577); `CodeMode` reads
-    # `ModelRequestParameters.revealed_tool_names` (2.22.0).
-    "pydantic-ai-slim>=2.36.0",
+    "pydantic-ai-slim>=2.37.0",
 ]
 
 [project.optional-dependencies]
@@ -49,22 +38,22 @@ dependencies = [
 # without separately naming pydantic-ai-slim. (No openai/google pass-throughs: browser-use pins
 # provider SDKs that conflict with slim's floors when the workspace resolves all extras together.)
 anthropic = [
-    "pydantic-ai-slim[anthropic]>=2.36.0",
+    "pydantic-ai-slim[anthropic]>=2.37.0",
 ]
 cli = [
-    "pydantic-ai-slim[cli]>=2.36.0",
+    "pydantic-ai-slim[cli]>=2.37.0",
 ]
 code-mode = [
-    "pydantic-ai-slim[duckduckgo]>=2.36.0",
+    "pydantic-ai-slim[duckduckgo]>=2.37.0",
     "pydantic-monty>=0.0.19",
 ]
 # Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
 codemode = [
-    "pydantic-ai-slim[duckduckgo]>=2.36.0",
+    "pydantic-ai-slim[duckduckgo]>=2.37.0",
     "pydantic-monty>=0.0.19",
 ]
 researcher = [
-    "pydantic-ai-slim[duckduckgo,web-fetch]>=2.36.0",
+    "pydantic-ai-slim[duckduckgo,web-fetch]>=2.37.0",
 ]
 temporal = [
     'pydantic-ai-slim[temporal]',

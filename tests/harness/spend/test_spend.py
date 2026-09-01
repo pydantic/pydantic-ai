@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import warnings
 from collections.abc import Mapping, Sequence
@@ -800,13 +799,11 @@ class TestCompositionWarning:
         await agent.run('hi')
 
     async def test_a_durable_execution_capability_is_not_reported(self):
-        """It routes the request into a durable unit rather than rejecting what comes back.
+        """A durability capability is excluded even though it wraps the model request.
 
         Core also requires its dispatch to be the innermost wrapper, so listing `SpendLimits`
-        after it is the one correction a reader must not make. On `pydantic-ai-slim` 2.36 the
-        dispatch projects through the workflow runtime and stops at Temporal's dispatch error;
-        from 2.37 the operations run inline outside a durable container, so the run completes
-        and accrues like any other.
+        after it is the one correction a reader must not make. Durable capability operations pass
+        through outside a durable container, so the run completes and accrues normally.
         """
         pytest.importorskip('temporalio')
         from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
@@ -819,17 +816,9 @@ class TestCompositionWarning:
             capabilities=[guard, TemporalDurability[None]()],
         )
 
-        dispatches_inline = tuple(
-            int(part) for part in importlib.metadata.version('pydantic-ai-slim').split('.')[:2]
-        ) >= (2, 37)
-
         with warnings.catch_warnings(record=True) as caught:
-            if dispatches_inline:  # pragma: no cover - latest-version path
-                await agent.run('hi')
-                assert (await guard.status())[0].spent.usd == Decimal('1')
-            else:
-                with pytest.raises(Exception, match='Not in workflow event loop'):
-                    await agent.run('hi')
+            await agent.run('hi')
+            assert (await guard.status())[0].spent.usd == Decimal('1')
 
         assert not [warning for warning in caught if isinstance(warning.message, SpendCompositionWarning)]
 
