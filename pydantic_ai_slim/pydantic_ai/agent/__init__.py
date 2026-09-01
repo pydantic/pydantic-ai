@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overloa
 import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import ParamSpec, Self, TypeIs, TypeVar
+from typing_extensions import Self, TypeIs, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -134,36 +134,6 @@ from .abstract import (
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
-
-_IterParams = ParamSpec('_IterParams')
-_IterResult = TypeVar('_IterResult')
-_preparation_stack_holder: ContextVar[list[AsyncExitStack] | None] = ContextVar(
-    'pydantic_ai_preparation_stack_holder', default=None
-)
-
-
-def _close_preparation_stack_on_error(
-    function: Callable[_IterParams, AbstractAsyncContextManager[_IterResult]],
-) -> Callable[_IterParams, AbstractAsyncContextManager[_IterResult]]:
-    """Give the whole `iter()` call ownership of any preparation stack it opens."""
-
-    @functools.wraps(function)
-    @asynccontextmanager
-    async def wrapped(*args: _IterParams.args, **kwargs: _IterParams.kwargs) -> AsyncGenerator[_IterResult]:
-        holder: list[AsyncExitStack] = []
-        token = _preparation_stack_holder.set(holder)
-        try:
-            async with function(*args, **kwargs) as result:
-                yield result
-        except BaseException as error:
-            if holder:
-                await holder[0].__aexit__(type(error), error, error.__traceback__)
-            raise
-        finally:
-            _preparation_stack_holder.reset(token)
-
-    return wrapped
-
 
 logger = logging.getLogger('pydantic_ai.agent')
 
@@ -1264,7 +1234,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
-    @_close_preparation_stack_on_error
     @asynccontextmanager
     async def iter(  # noqa: C901
         self,
@@ -1548,21 +1517,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _run_state_key=run_state_key,
         )
         preparation_stack = AsyncExitStack()
-        await preparation_stack.__aenter__()
-        preparation_stack_holder = _preparation_stack_holder.get()
-        assert preparation_stack_holder is not None
-        preparation_stack_holder.append(preparation_stack)
-        await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
-
-        @asynccontextmanager
-        async def _close_preparation_on_error() -> AsyncGenerator[None]:
-            try:
-                yield
-            except BaseException as error:
-                await preparation_stack.__aexit__(type(error), error, error.__traceback__)
-                raise
-
         try:
+            await preparation_stack.enter_async_context(preparation_capability.wrap_entire_run(preparation_ctx))
+
             if isinstance(sandbox, SandboxRef):
                 # A named ref routes directly to that connector; a legacy unnamed ref still
                 # requires one unambiguous provider. Validate inside `wrap_entire_run` so the
@@ -1607,49 +1564,43 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_used = default_model
             else:
                 raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
-        except BaseException as error:
-            await preparation_stack.__aexit__(type(error), error, error.__traceback__)
-            raise
-        del model
-        async with _close_preparation_on_error():
+            del model
             output_schema = self._prepare_output_schema(output_type)
 
-        output_type_ = output_type or self.output_type
+            output_type_ = output_type or self.output_type
 
-        # We consider it a user error if a user tries to restrict the result type while having an output validator that
-        # may change the result type from the restricted type to something else. Therefore, we consider the following
-        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
-        output_validators = self._output_validators
+            # We consider it a user error if a user tries to restrict the result type while having an output validator that
+            # may change the result type from the restricted type to something else. Therefore, we consider the following
+            # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
+            output_validators = self._output_validators
 
-        # Resolve the effective per-output-tool default: run arg > spec > agent init default
-        effective_output_toolset_max_retries = (
-            effective_output_retries if effective_output_retries is not None else self._max_output_retries
-        )
+            # Resolve the effective per-output-tool default: run arg > spec > agent init default
+            effective_output_toolset_max_retries = (
+                effective_output_retries if effective_output_retries is not None else self._max_output_retries
+            )
 
-        output_toolset = self._output_toolset
-        if output_schema != self._output_schema or output_validators:
-            output_toolset = output_schema.toolset
-            if output_toolset:
-                # Clone before mutating max_retries when the toolset is the shared agent-level
-                # instance (output_schema == self._output_schema, branch hit via output_validators);
-                # when output_schema differs, output_schema.toolset is already a fresh per-run instance.
-                if output_toolset is self._output_toolset and effective_output_retries is not None:
-                    output_toolset = copy(output_toolset)
-                if output_toolset.max_retries is None or effective_output_retries is not None:
-                    output_toolset.max_retries = effective_output_toolset_max_retries
-                output_toolset.output_validators = output_validators
-        elif output_toolset is not None and effective_output_retries is not None:
-            # Clone before mutating max_retries so concurrent runs don't race on the
-            # shared agent-level toolset.
-            output_toolset = copy(output_toolset)
-            output_toolset.max_retries = effective_output_toolset_max_retries
+            output_toolset = self._output_toolset
+            if output_schema != self._output_schema or output_validators:
+                output_toolset = output_schema.toolset
+                if output_toolset:
+                    # Clone before mutating max_retries when the toolset is the shared agent-level
+                    # instance (output_schema == self._output_schema, branch hit via output_validators);
+                    # when output_schema differs, output_schema.toolset is already a fresh per-run instance.
+                    if output_toolset is self._output_toolset and effective_output_retries is not None:
+                        output_toolset = copy(output_toolset)
+                    if output_toolset.max_retries is None or effective_output_retries is not None:
+                        output_toolset.max_retries = effective_output_toolset_max_retries
+                    output_toolset.output_validators = output_validators
+            elif output_toolset is not None and effective_output_retries is not None:
+                # Clone before mutating max_retries so concurrent runs don't race on the
+                # shared agent-level toolset.
+                output_toolset = copy(output_toolset)
+                output_toolset.max_retries = effective_output_toolset_max_retries
 
-        # Build the graph
-        async with _close_preparation_on_error():
+            # Build the graph
             graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
-        # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
-        async with _close_preparation_on_error():
+            # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
             model_settings_override = self._override_model_settings.get()
             agent_model_settings = (
                 model_settings_override.value if model_settings_override is not None else self.model_settings
@@ -1676,169 +1627,166 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         f'`pydantic_ai.direct.model_request` for single-shot model calls.'
                     )
 
-        usage_limits = usage_limits or _usage.UsageLimits()
+            usage_limits = usage_limits or _usage.UsageLimits()
 
-        # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
-        # to `Agent(model=...)`, e.g. by `logfire.instrument_pydantic_ai(model)`) wins,
-        # then `Agent.instrument_all()` / `agent.instrument = ...` (read via
-        # `_resolve_instrumentation_settings`). When detected, unwrap so the rest of the
-        # run uses the plain model — the `Instrumentation` capability injected below
-        # provides the spans.
-        if isinstance(model_used, InstrumentedModel):
-            instrumented_model = model_used
-            if instrumentation_settings is None and not has_capability_type(preparation_layers, InstrumentationCap):
-                instrumentation_settings = model_used.instrumentation_settings
-                tracer = instrumentation_settings.tracer
-                instrumentation_cap = InstrumentationCap(settings=instrumentation_settings)
-                # Model aliases can resolve to an `InstrumentedModel` only after the static
-                # preparation layers have been entered. Enter its run span now so this legacy
-                # instrumentation path keeps the same observable span hierarchy; subsequent
-                # capability resolution still installs its model and tool hooks normally.
-                await preparation_stack.enter_async_context(
-                    instrumentation_cap.wrap_entire_run(replace(preparation_ctx, model=model_used.wrapped))
-                )
-            model_used = model_used.wrapped
-            if default_model is instrumented_model:
-                default_model = model_used
-
-        initial_ctx: RunContext[AgentDepsT] | None = None
-        sandbox_resolution_capability = preparation_capability
-
-        async def _connect_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
-            assert initial_ctx is not None, 'sandbox connection attempted before the run context was built'
-            try:
-                backend = await resolve_sandbox_ref(sandbox_resolution_capability, initial_ctx, ref)
-            except exceptions.UserError:
-                raise
-            except Exception as error:
-                raise exceptions.UserError(
-                    f'Failed to connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}.'
-                ) from error
-            if backend is None:
-                raise exceptions.UserError(
-                    f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
-                    f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
-                )
-            return backend
-
-        async def _close_sandbox_connection(facade: Sandbox) -> None:
-            with anyio.CancelScope(shield=True):
-                await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
-
-        if isinstance(sandbox, SandboxRef):
-            sandbox_facade = Sandbox._from_ref(sandbox, _connect_sandbox_ref)  # pyright: ignore[reportPrivateUsage]
-            preparation_stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
-        explicit_sandbox = sandbox_facade is not None
-
-        # Build initial RunContext for for_run lifecycle hooks. Includes every
-        # field that's already known here — `tool_manager` and `validation_context`
-        # are populated later by `build_run_context` once the run is iterating.
-        initial_ctx = RunContext[AgentDepsT](
-            deps=deps,
-            agent=self,
-            model=model_used,
-            _model_id=model_id,
-            usage=usage,
-            usage_limits=usage_limits,
-            prompt=user_prompt,
-            messages=state.message_history,
-            tracer=tracer,
-            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
-            instrumentation_version=instrumentation_settings.version
-            if instrumentation_settings
-            else DEFAULT_INSTRUMENTATION_VERSION,
-            run_step=0,
-            pending_messages=state.pending_messages,
-            run_id=state.run_id,
-            conversation_id=state.conversation_id,
-            _cancellation=cancellation,
-            sandbox=sandbox_facade or Sandbox.wrap(default_sandbox_backend()),
-            _run_state_key=run_state_key,
-        )
-
-        sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
-        sandbox_ref: SandboxRef | None = None
-        if not explicit_sandbox:
-            async with _close_preparation_on_error():
-                supplied = await resolve_run_sandbox(preparation_capability, initial_ctx)
-            if supplied is not None:
-                sandbox_supplier, sandbox_capability_id, sandbox_ref = supplied
-                if sandbox_ref is not None:
-                    sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
-                        sandbox_ref, _connect_sandbox_ref
+            # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
+            # to `Agent(model=...)`, e.g. by `logfire.instrument_pydantic_ai(model)`) wins,
+            # then `Agent.instrument_all()` / `agent.instrument = ...` (read via
+            # `_resolve_instrumentation_settings`). When detected, unwrap so the rest of the
+            # run uses the plain model — the `Instrumentation` capability injected below
+            # provides the spans.
+            if isinstance(model_used, InstrumentedModel):
+                instrumented_model = model_used
+                if instrumentation_settings is None and not has_capability_type(preparation_layers, InstrumentationCap):
+                    instrumentation_settings = model_used.instrumentation_settings
+                    tracer = instrumentation_settings.tracer
+                    instrumentation_cap = InstrumentationCap(settings=instrumentation_settings)
+                    # Model aliases can resolve to an `InstrumentedModel` only after the static
+                    # preparation layers have been entered. Enter its run span now so this legacy
+                    # instrumentation path keeps the same observable span hierarchy; subsequent
+                    # capability resolution still installs its model and tool hooks normally.
+                    await preparation_stack.enter_async_context(
+                        instrumentation_cap.wrap_entire_run(replace(preparation_ctx, model=model_used.wrapped))
                     )
-                elif sandbox_supplier._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
+                model_used = model_used.wrapped
+                if default_model is instrumented_model:
+                    default_model = model_used
 
-                    async def _resolve_provider_sandbox(ref: SandboxRef | None) -> SandboxBackend:
-                        assert ref is None
-                        try:
-                            backend = await sandbox_supplier.get_sandbox(initial_ctx, None)
-                        except Exception as error:
-                            raise exceptions.UserError(
-                                f'Capability {sandbox_capability_id!r} failed to connect its sandbox.'
-                            ) from error
-                        if backend is None:
-                            raise exceptions.UserError(
-                                f'Capability {sandbox_capability_id!r} provides sandbox hooks but its '
-                                '`get_sandbox` hook returned `None` without a `SandboxRef`.'
-                            )
-                        return backend
+            initial_ctx: RunContext[AgentDepsT] | None = None
+            sandbox_resolution_capability = preparation_capability
 
-                    sandbox_facade = Sandbox._from_provider(sandbox_capability_id, _resolve_provider_sandbox)  # pyright: ignore[reportPrivateUsage]
+            async def _connect_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
+                assert initial_ctx is not None, 'sandbox connection attempted before the run context was built'
+                try:
+                    backend = await resolve_sandbox_ref(sandbox_resolution_capability, initial_ctx, ref)
+                except exceptions.UserError:
+                    raise
+                except Exception as error:
+                    raise exceptions.UserError(
+                        f'Failed to connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}.'
+                    ) from error
+                if backend is None:
+                    raise exceptions.UserError(
+                        f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
+                        f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
+                    )
+                return backend
+
+            async def _close_sandbox_connection(facade: Sandbox) -> None:
+                with anyio.CancelScope(shield=True):
+                    await facade._close_connected_backend()  # pyright: ignore[reportPrivateUsage]
+
+            if isinstance(sandbox, SandboxRef):
+                sandbox_facade = Sandbox._from_ref(sandbox, _connect_sandbox_ref)  # pyright: ignore[reportPrivateUsage]
+                preparation_stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
+            explicit_sandbox = sandbox_facade is not None
+
+            # Build initial RunContext for for_run lifecycle hooks. Includes every
+            # field that's already known here — `tool_manager` and `validation_context`
+            # are populated later by `build_run_context` once the run is iterating.
+            initial_ctx = RunContext[AgentDepsT](
+                deps=deps,
+                agent=self,
+                model=model_used,
+                _model_id=model_id,
+                usage=usage,
+                usage_limits=usage_limits,
+                prompt=user_prompt,
+                messages=state.message_history,
+                tracer=tracer,
+                trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
+                instrumentation_version=instrumentation_settings.version
+                if instrumentation_settings
+                else DEFAULT_INSTRUMENTATION_VERSION,
+                run_step=0,
+                pending_messages=state.pending_messages,
+                run_id=state.run_id,
+                conversation_id=state.conversation_id,
+                _cancellation=cancellation,
+                sandbox=sandbox_facade or Sandbox.wrap(default_sandbox_backend()),
+                _run_state_key=run_state_key,
+            )
+
+            sandbox_supplier: AbstractCapability[AgentDepsT] | None = None
+            sandbox_ref: SandboxRef | None = None
+            if not explicit_sandbox:
+                supplied = await resolve_run_sandbox(preparation_capability, initial_ctx)
+                if supplied is not None:
+                    sandbox_supplier, sandbox_capability_id, sandbox_ref = supplied
+                    if sandbox_ref is not None:
+                        sandbox_facade = Sandbox._from_ref(  # pyright: ignore[reportPrivateUsage]
+                            sandbox_ref, _connect_sandbox_ref
+                        )
+                    elif sandbox_supplier._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
+
+                        async def _resolve_provider_sandbox(ref: SandboxRef | None) -> SandboxBackend:
+                            assert ref is None
+                            try:
+                                backend = await sandbox_supplier.get_sandbox(initial_ctx, None)
+                            except Exception as error:
+                                raise exceptions.UserError(
+                                    f'Capability {sandbox_capability_id!r} failed to connect its sandbox.'
+                                ) from error
+                            if backend is None:
+                                raise exceptions.UserError(
+                                    f'Capability {sandbox_capability_id!r} provides sandbox hooks but its '
+                                    '`get_sandbox` hook returned `None` without a `SandboxRef`.'
+                                )
+                            return backend
+
+                        sandbox_facade = Sandbox._from_provider(sandbox_capability_id, _resolve_provider_sandbox)  # pyright: ignore[reportPrivateUsage]
+                    else:
+                        sandbox_facade = Sandbox.wrap(default_sandbox_backend())
+
+                    async def _release_run_sandbox(supplier: AbstractCapability[AgentDepsT], ref: SandboxRef) -> None:
+                        with anyio.CancelScope(shield=True):
+                            durable = active_durable_operation(supplier, 'release_sandbox', initial_ctx) is not None
+                            try:
+                                await invoke_durable_operation(
+                                    supplier,
+                                    'release_sandbox',
+                                    initial_ctx,
+                                    supplier.release_sandbox,
+                                    (initial_ctx, ref),
+                                    {},
+                                )
+                            except Exception:
+                                if not durable:
+                                    raise
+                                logger.warning(
+                                    'Failed to release sandbox %r for provider %r after durable retries; '
+                                    'the platform idle timeout must reap it.',
+                                    ref.sandbox_id,
+                                    ref.provider,
+                                    exc_info=True,
+                                )
+
+                    if sandbox_ref is not None:
+                        preparation_stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
+                    if sandbox_ref is not None or sandbox_supplier._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
+                        assert sandbox_facade is not None
+                        # Detach the live connection before releasing ownership of the environment.
+                        preparation_stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
                 else:
                     sandbox_facade = Sandbox.wrap(default_sandbox_backend())
+                initial_ctx.sandbox = sandbox_facade
 
-                async def _release_run_sandbox(supplier: AbstractCapability[AgentDepsT], ref: SandboxRef) -> None:
-                    with anyio.CancelScope(shield=True):
-                        durable = active_durable_operation(supplier, 'release_sandbox', initial_ctx) is not None
-                        try:
-                            await invoke_durable_operation(
-                                supplier,
-                                'release_sandbox',
-                                initial_ctx,
-                                supplier.release_sandbox,
-                                (initial_ctx, ref),
-                                {},
-                            )
-                        except Exception:
-                            if not durable:
-                                raise
-                            logger.warning(
-                                'Failed to release sandbox %r for provider %r after durable retries; '
-                                'the platform idle timeout must reap it.',
-                                ref.sandbox_id,
-                                ref.provider,
-                                exc_info=True,
-                            )
-
-                if sandbox_ref is not None:
-                    preparation_stack.push_async_callback(_release_run_sandbox, sandbox_supplier, sandbox_ref)
-                if sandbox_ref is not None or sandbox_supplier._has_get_sandbox:  # pyright: ignore[reportPrivateUsage]
-                    assert sandbox_facade is not None
-                    # Detach the live connection before releasing ownership of the environment.
-                    preparation_stack.push_async_callback(_close_sandbox_connection, sandbox_facade)
-            else:
-                sandbox_facade = Sandbox.wrap(default_sandbox_backend())
-            initial_ctx.sandbox = sandbox_facade
-
-        # Resolve run metadata up front so capability and toolset `for_run` hooks
-        # can see it on `RunContext.metadata`. Metadata factories receive the
-        # `initial_ctx` above (no `tool_manager` / `validation_context` yet); they
-        # will be invoked again at the end of the run with the full final state,
-        # so any field that becomes available later still ends up reflected in
-        # `agent_run.metadata`. Factories should be pure mappings over the run
-        # context, not perform IO or have side effects.
-        async with _close_preparation_on_error():
+            # Resolve run metadata up front so capability and toolset `for_run` hooks
+            # can see it on `RunContext.metadata`. Metadata factories receive the
+            # `initial_ctx` above (no `tool_manager` / `validation_context` yet); they
+            # will be invoked again at the end of the run with the full final state,
+            # so any field that becomes available later still ends up reflected in
+            # `agent_run.metadata`. Factories should be pure mappings over the run
+            # context, not perform IO or have side effects.
             state.metadata = self._get_metadata(initial_ctx, metadata)
-        initial_ctx.metadata = state.metadata
+            initial_ctx.metadata = state.metadata
 
-        # Resolve the capability layers and extract their per-run contributions. Shared with
-        # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
-        # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
-        # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
-        # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
-        # with the realtime call site.
-        async with _close_preparation_on_error():
+            # Resolve the capability layers and extract their per-run contributions. Shared with
+            # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
+            # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
+            # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
+            # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
+            # with the realtime call site.
             resolved_caps = await self._resolve_run_capabilities(
                 initial_ctx,
                 base_capability=base_capability,
@@ -1847,40 +1795,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 inject_deferred_loader=True,
                 base_is_override=base_is_override,
             )
-        run_capability = resolved_caps.run_capability
-        capabilities_dict = resolved_caps.capabilities
-        cap_instructions = resolved_caps.instructions
-        cap_native_tools = resolved_caps.native_tools
-        cap_model_settings = resolved_caps.model_settings
-        cap_toolsets = resolved_caps.toolsets
+            run_capability = resolved_caps.run_capability
+            capabilities_dict = resolved_caps.capabilities
+            cap_instructions = resolved_caps.instructions
+            cap_native_tools = resolved_caps.native_tools
+            cap_model_settings = resolved_caps.model_settings
+            cap_toolsets = resolved_caps.toolsets
 
-        # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
-        # per-step model-selection block below keys off this. The model layers are the tail of the
-        # resolved layers (the `Instrumentation` capability, when injected, sits at the front).
-        resolved_layers = resolved_caps.resolved_layers
-        model_layer_start = len(resolved_layers) - len(model_layers)
-        model_layers_unchanged = all(
-            resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
-        )
-
-        # Build model settings resolver using per-run capability. Shared with `realtime_session` via
-        # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
-        # base for a graph run). Resolved per model-request step here; once at connect in a session.
-        def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
-            # A capability can select a different model per step, so the base is the step's live
-            # `run_context.model` settings, not a captured initial model. A graph run always uses a
-            # request-response `Model` here; realtime has its own settings path and never reaches this.
-            # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
-            # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
-            step_model = run_context.model
-            return _layer_model_settings(
-                run_context,
-                (agent_model_settings, cap_model_settings, run_model_settings),
-                base=step_model.settings if isinstance(step_model, models.Model) else None,
+            # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
+            # per-step model-selection block below keys off this. The model layers are the tail of the
+            # resolved layers (the `Instrumentation` capability, when injected, sits at the front).
+            resolved_layers = resolved_caps.resolved_layers
+            model_layer_start = len(resolved_layers) - len(model_layers)
+            model_layers_unchanged = all(
+                resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
             )
 
-        # Build toolset with per-run capability contributions
-        async with _close_preparation_on_error():
+            # Build model settings resolver using per-run capability. Shared with `realtime_session` via
+            # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
+            # base for a graph run). Resolved per model-request step here; once at connect in a session.
+            def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+                # A capability can select a different model per step, so the base is the step's live
+                # `run_context.model` settings, not a captured initial model. A graph run always uses a
+                # request-response `Model` here; realtime has its own settings path and never reaches this.
+                # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
+                # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
+                step_model = run_context.model
+                return _layer_model_settings(
+                    run_context,
+                    (agent_model_settings, cap_model_settings, run_model_settings),
+                    base=step_model.settings if isinstance(step_model, models.Model) else None,
+                )
+
+            # Build toolset with per-run capability contributions
             toolset = self._get_toolset(
                 output_toolset=output_toolset,
                 additional_toolsets=toolsets,
@@ -1893,30 +1840,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
             )
 
-        # Build instructions with per-run capability contributions
-        async with _close_preparation_on_error():
+            # Build instructions with per-run capability contributions
             sourced_instructions = self._get_instructions(
                 additional_instructions=instructions,
                 cap_instructions=cap_instructions,
             )
 
-        async def get_instructions(
-            run_context: RunContext[AgentDepsT],
-        ) -> list[_messages.InstructionPart] | None:
-            return await _instructions.resolve_sourced_instructions(sourced_instructions, run_context) or None
+            async def get_instructions(
+                run_context: RunContext[AgentDepsT],
+            ) -> list[_messages.InstructionPart] | None:
+                return await _instructions.resolve_sourced_instructions(sourced_instructions, run_context) or None
 
-        # The deferred capabilities the model has already loaded in prior steps; the graph
-        # refreshes this from history before each model request, so the seed only matters
-        # for pre-first-step access. Non-deferred capabilities are folded in by the
-        # `RunContext.active_capability_ids` property.
-        loaded_capability_ids = (
-            registered_loaded_capability_ids(message_history, capabilities_dict.keys())
-            if message_history
-            else set[str]()
-        )
-        discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
+            # The deferred capabilities the model has already loaded in prior steps; the graph
+            # refreshes this from history before each model request, so the seed only matters
+            # for pre-first-step access. Non-deferred capabilities are folded in by the
+            # `RunContext.active_capability_ids` property.
+            loaded_capability_ids = (
+                registered_loaded_capability_ids(message_history, capabilities_dict.keys())
+                if message_history
+                else set[str]()
+            )
+            discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
-        async with _close_preparation_on_error():
             run_model_contribution = None if model_is_explicit else run_capability.get_model()
             self._check_dynamic_model_resume(run_model_contribution, message_history)
             model_selector: ModelSelector[AgentDepsT] | None
@@ -1958,110 +1903,118 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     'A capability removed the bootstrap model in `for_run()` but the agent has no default model.'
                 )
 
-        async def evaluate_model_selector(
-            selector: ModelSelector[AgentDepsT], selection_ctx: models.ModelSelectionContext[AgentDepsT]
-        ) -> tuple[models.Model, str | None]:
-            return await self._evaluate_model_contribution(
-                selector,
-                capability=run_capability,
-                ctx=selection_ctx,
-                resolved_models=resolved_models_by_selection,
+            async def evaluate_model_selector(
+                selector: ModelSelector[AgentDepsT], selection_ctx: models.ModelSelectionContext[AgentDepsT]
+            ) -> tuple[models.Model, str | None]:
+                return await self._evaluate_model_contribution(
+                    selector,
+                    capability=run_capability,
+                    ctx=selection_ctx,
+                    resolved_models=resolved_models_by_selection,
+                )
+
+            model_stack: AsyncExitStack | None = None
+            entered_model_ids = self._entered_model_ids.copy()
+
+            async def enter_model(selected_model: models.Model) -> None:
+                model_identity = id(selected_model)
+                if model_identity in entered_model_ids:
+                    return
+                assert model_stack is not None
+                await model_stack.enter_async_context(selected_model)
+                entered_model_ids.add(model_identity)
+
+            assert sandbox_facade is not None
+            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
+                user_deps=deps,
+                agent=self,
+                prompt=user_prompt,
+                new_message_index=len(message_history) if message_history else 0,
+                resumed_request=None,
+                resumed_request_index=None,
+                model=model_used,
+                model_id=model_id,
+                model_selector=model_selector,
+                model_selected_for_step=model_selected_for_step,
+                evaluate_model_selector=evaluate_model_selector,
+                enter_model=enter_model,
+                get_model_settings=get_model_settings,
+                usage_limits=usage_limits,
+                max_output_retries=effective_output_toolset_max_retries,
+                end_strategy=self.end_strategy,
+                output_schema=output_schema,
+                output_validators=output_validators,
+                validation_context=self._validation_context,
+                root_capability=run_capability,
+                capabilities=capabilities_dict,
+                loaded_capability_ids=loaded_capability_ids,
+                discovered_tool_names=discovered_tool_names,
+                sandbox=sandbox_facade,
+                run_state_key=run_state_key,
+                native_tools=cap_native_tools,
+                tool_manager=tool_manager,
+                tracer=tracer,
+                get_instructions=get_instructions,
+                instrumentation_settings=instrumentation_settings,
+                cancellation=cancellation,
             )
 
-        model_stack: AsyncExitStack | None = None
-        entered_model_ids = self._entered_model_ids.copy()
+            user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
+                user_prompt=user_prompt,
+                deferred_tool_results=deferred_tool_results,
+                instructions=None,
+                instructions_functions=[],
+                system_prompts=self._system_prompts,
+                system_prompt_functions=self._system_prompt_functions,
+                system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
+            )
 
-        async def enter_model(selected_model: models.Model) -> None:
-            model_identity = id(selected_model)
-            if model_identity in entered_model_ids:
-                return
-            assert model_stack is not None
-            await model_stack.enter_async_context(selected_model)
-            entered_model_ids.add(model_identity)
+            agent_name = self.name or 'agent'
 
-        assert sandbox_facade is not None
-        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
-            user_deps=deps,
-            agent=self,
-            prompt=user_prompt,
-            new_message_index=len(message_history) if message_history else 0,
-            resumed_request=None,
-            resumed_request_index=None,
-            model=model_used,
-            model_id=model_id,
-            model_selector=model_selector,
-            model_selected_for_step=model_selected_for_step,
-            evaluate_model_selector=evaluate_model_selector,
-            enter_model=enter_model,
-            get_model_settings=get_model_settings,
-            usage_limits=usage_limits,
-            max_output_retries=effective_output_toolset_max_retries,
-            end_strategy=self.end_strategy,
-            output_schema=output_schema,
-            output_validators=output_validators,
-            validation_context=self._validation_context,
-            root_capability=run_capability,
-            capabilities=capabilities_dict,
-            loaded_capability_ids=loaded_capability_ids,
-            discovered_tool_names=discovered_tool_names,
-            sandbox=sandbox_facade,
-            run_state_key=run_state_key,
-            native_tools=cap_native_tools,
-            tool_manager=tool_manager,
-            tracer=tracer,
-            get_instructions=get_instructions,
-            instrumentation_settings=instrumentation_settings,
-            cancellation=cancellation,
-        )
+            @asynccontextmanager
+            async def _translate_cancellation() -> AsyncGenerator[None]:
+                def _run_cancelled(message: str) -> exceptions.RunCancelled:
+                    return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
 
-        user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
-            user_prompt=user_prompt,
-            deferred_tool_results=deferred_tool_results,
-            instructions=None,
-            instructions_functions=[],
-            system_prompts=self._system_prompts,
-            system_prompt_functions=self._system_prompt_functions,
-            system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
-        )
+                try:
+                    yield
+                except exceptions.RunCancelled as exc:
+                    # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
+                    # awaited a sub-agent run that cancelled itself via `cancel()` — carries the
+                    # *nested* run's history, not this run's. Presenting it to this run's caller
+                    # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
+                    # use the wrong conversation. Re-stamp it with this run's state, keeping the nested
+                    # cancellation as the cause. Whether a nested cancellation should terminate this run
+                    # at all, or be isolated as a tool failure, is a separate semantics question tracked
+                    # in https://github.com/pydantic/pydantic-ai/issues/7199.
+                    raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
+                except asyncio.CancelledError as exc:
+                    first_party = graph_deps.cancellation.resolve()
+                    if first_party:
+                        raise _run_cancelled('The agent run was cancelled.') from exc
+                    # An external cancellation must keep propagating as `CancelledError`, but the run
+                    # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
+                    # Nested runs attach to the same propagating exception; the outermost run attaches
+                    # last and wins, giving its awaiter the outer run's history.
+                    _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                    raise
+                finally:
+                    # On every exit path — translation above, a clean exit after user code swallowed a
+                    # requested cancellation, a superseded driving task, or a non-cancellation error
+                    # overtaking a requested cancel — an issued-but-unresolved cancellation must not
+                    # leak an elevated `Task.cancelling()` count past the run: it would spuriously
+                    # cancel unrelated later work on the task that drove the run.
+                    graph_deps.cancellation.release_issued()
 
-        agent_name = self.name or 'agent'
+            _run_error: BaseException | None = None
+        except BaseException as error:
+            # `wrap_entire_run` hooks must observe every preparation failure and close exactly
+            # once; suppression is deliberately ignored, as a swallowed preparation error cannot
+            # produce a run. On success, `stack.push_async_exit` below transfers ownership to
+            # the run's exit stack, which unwinds the preparation entries last.
+            await preparation_stack.__aexit__(type(error), error, error.__traceback__)
+            raise
 
-        @asynccontextmanager
-        async def _translate_cancellation() -> AsyncGenerator[None]:
-            def _run_cancelled(message: str) -> exceptions.RunCancelled:
-                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
-
-            try:
-                yield
-            except exceptions.RunCancelled as exc:
-                # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
-                # awaited a sub-agent run that cancelled itself via `cancel()` — carries the
-                # *nested* run's history, not this run's. Presenting it to this run's caller
-                # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
-                # use the wrong conversation. Re-stamp it with this run's state, keeping the nested
-                # cancellation as the cause. Whether a nested cancellation should terminate this run
-                # at all, or be isolated as a tool failure, is a separate semantics question tracked
-                # in https://github.com/pydantic/pydantic-ai/issues/7199.
-                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
-            except asyncio.CancelledError as exc:
-                first_party = graph_deps.cancellation.resolve()
-                if first_party:
-                    raise _run_cancelled('The agent run was cancelled.') from exc
-                # An external cancellation must keep propagating as `CancelledError`, but the run
-                # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
-                # Nested runs attach to the same propagating exception; the outermost run attaches
-                # last and wins, giving its awaiter the outer run's history.
-                _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
-                raise
-            finally:
-                # On every exit path — translation above, a clean exit after user code swallowed a
-                # requested cancellation, a superseded driving task, or a non-cancellation error
-                # overtaking a requested cancel — an issued-but-unresolved cancellation must not
-                # leak an elevated `Task.cancelling()` count past the run: it would spuriously
-                # cancel unrelated later work on the task that drove the run.
-                graph_deps.cancellation.release_issued()
-
-        _run_error: BaseException | None = None
         async with AsyncExitStack() as stack:
             stack.push_async_exit(preparation_stack)
 
