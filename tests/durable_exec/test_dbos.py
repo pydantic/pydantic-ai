@@ -4175,8 +4175,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
 
 
 def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
-    # Rejected before the factory is resolved.
-    return FunctionToolset()  # pragma: no cover
+    return FunctionToolset()
 
 
 async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
