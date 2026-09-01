@@ -87,6 +87,15 @@ update-examples: ## Update documentation examples
 update-vcr-tests: ## Update tests using VCR that hit LLM APIs; note you'll need to set API keys as appropriate
 	uv run -m pytest --record-mode=rewrite tests
 
+.PHONY: docs-map
+docs-map: ## Regenerate the committed docs atlas and a local HTML viewer
+	mkdir -p local-notes/docs-map
+	uv run python scripts/generate_docs_map.py --html local-notes/docs-map/index.html
+
+.PHONY: docs-map-check
+docs-map-check: ## Check the committed docs atlas is up to date
+	uv run python scripts/generate_docs_map.py --check
+
 .PHONY: all
 all: format lint typecheck testcov ## Run code formatting, linting, static type checks, and tests with coverage report generation
 
