@@ -35,9 +35,14 @@ If a gate fails, do the alternative and **stop** — don't file:
    ```bash
    gh issue create --title "<title>" --body "<body>"
    ```
-   If David or an AICA will tackle the follow-up directly or soon, add
-   `--assignee dsfaccini --label pydanty:skip`. The label prevents Pydanty from
-   running triage or `retry-pr` on the issue.
+   Use the ownership shortcut only when the acting account can assign issues and apply repository labels.
+   If a maintainer will tackle the follow-up directly or soon, use
+   `--assignee <maintainer-login> --label pydanty:skip`. This includes an AICA acting for that
+   maintainer. Assign the maintainer who will own the work. The label prevents Pydanty from running
+   triage or `retry-pr` on the issue.
+
+   Do not use the ownership shortcut for an external contributor. External contributors cannot
+   apply repository labels, so leave their follow-up issues in normal triage.
 
    Add `--label <name>` only for labels you've confirmed exist (`gh label list`); a missing label fails the command.
 
