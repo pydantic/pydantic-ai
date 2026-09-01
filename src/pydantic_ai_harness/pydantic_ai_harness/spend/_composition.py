@@ -18,7 +18,7 @@ from __future__ import annotations
 import warnings
 
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks, WrapperCapability
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.tools import AgentDepsT
 
 from pydantic_ai_harness.spend._exceptions import SpendCompositionWarning
@@ -116,19 +116,12 @@ def _may_reject_a_billed_response(capability: AbstractCapability[AgentDepsT]) ->
 
     A subclass of either that overrides the method supplies its own and is answered on that.
 
-    A durable-execution capability is read as "no" for a different reason: the signal is right,
-    and the correction is the problem. Core requires the durable dispatch to be the innermost
-    wrapper (`BaseDurabilityCapability.get_ordering`), so listing `SpendLimits` after it is the
-    one thing a reader must not do, and the report would name an unavailable fix. What that
-    combination costs is covered by the durable-execution caveat rather than here, and how
-    loudly depends on the engine: Temporal refuses the workflow clock and names
-    <https://github.com/pydantic/pydantic-ai-harness/issues/531>, while DBOS recovery and
-    Prefect flow retry re-execute the accrual and report nothing, leaving what the counter
-    ends up holding to the store. Matched by `isinstance` against
-    the base the bundled Temporal, DBOS and Prefect integrations share, the same way
-    `PlaywrightBrowser.for_agent` matches it, so both sites move together if core renames
-    `pydantic_ai.durable_exec._base`. A public route is asked for in
-    [pydantic-ai#7771](https://github.com/pydantic/pydantic-ai/issues/7771).
+    A durable-execution capability is read as "no" for a different reason: its wrapper
+    dispatches work rather than rejecting a response. Core requires that dispatch to be the
+    innermost wrapper (`BaseDurabilityCapability.get_ordering`), so the report's usual advice
+    to reorder `SpendLimits` would be unavailable. The clock, reads, and accrual instead cross
+    that boundary through `durable_operation`. Matched by `isinstance` against the public base
+    shared by the bundled Temporal, DBOS, and Prefect integrations.
 
     Everything else is reported, including a capability that would not have rejected anything
     on the run in hand. `InputGuardrail` is the case in point: it can reach a billed response

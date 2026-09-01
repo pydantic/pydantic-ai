@@ -1,16 +1,8 @@
 """Temporal composition tests for `SpendLimits`.
 
-`SpendLimits` is **not supported** inside a Temporal workflow: its hooks run in workflow code
-while only the model request is the activity, so Temporal replays the accrual and a window
-counts the same response more than once. See
-<https://github.com/pydantic/pydantic-ai-harness/issues/531>.
-
-What is pinned here is that behaviour being stated rather than worked around. The default
-sandbox refuses the clock these hooks read, and the capability translates that into what it
-means instead of into the setting that silences it. The remaining two tests drive the forced
-configuration -- module passed through the sandbox -- to pin what a caller who overrides the
-advice actually gets: the counters do accumulate and the gate does refuse, within one workflow
-execution. Neither asserts anything about replay, which is the part that is unsafe.
+The clock, reads, and accrual execute as activities through `TemporalDurability`, so the
+workflow sandbox does not need `pydantic_ai_harness` passed through and replay does not repeat
+the store mutation.
 
 These tests start a local Temporal dev server via `WorkflowEnvironment.start_local()` -- the
 Temporal SDK downloads and runs `temporalite` automatically.
@@ -41,7 +33,6 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
@@ -57,12 +48,12 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
     retry_policy=RetryPolicy(maximum_attempts=1),
 )
 
-# The two runners the tests contrast. Both pass through `coverage`, which imports parser
-# modules lazily while tracing workflow code, and `annotated_types`, which pydantic imports
+# Both runners pass through `coverage`, which imports parser modules lazily while tracing
+# workflow code, and `annotated_types`, which pydantic imports
 # lazily while building the type adapter for an activity result -- either one trips Temporal's
 # "imported after initial workflow load" warning, which `filterwarnings = ['error']` turns into
 # a workflow task failure. Neither is specific to this capability; `pydantic_ai_harness` is the
-# only variable under test.
+# only variable between the runners.
 _SANDBOXED = SandboxRestrictions.default.with_passthrough_modules('coverage', 'annotated_types')
 _PASSTHROUGH = _SANDBOXED.with_passthrough_modules('pydantic_ai_harness')
 
@@ -125,22 +116,7 @@ exhausted_agent = Agent(
 class CountingWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        await counting_agent.run(prompt)
-        statuses = await counting_limits.status()
-        return str(statuses[0].spent.usd)
-
-
-@workflow.defn
-class SandboxProbeWorkflow:
-    """Reports what the capability raises when the sandbox is left at its defaults."""
-
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        try:
-            await exhausted_agent.run(prompt)
-        except UserError as error:
-            return str(error)
-        return 'the sandbox allowed the clock'  # pragma: no cover
+        return (await counting_agent.run(prompt)).output
 
 
 @workflow.defn
@@ -155,31 +131,24 @@ class ExhaustedWorkflow:
         return 'the budget did not refuse the second request'  # pragma: no cover
 
 
-async def test_the_default_sandbox_refuses_the_clock_and_names_the_real_problem(client: Client) -> None:
-    """The sandbox refuses a symptom; the message has to name the replay, not the passthrough.
-
-    A caller told only how to silence the error would pass the module through and get a
-    counter Temporal replays, which is worse than the error they started with.
-    """
+async def test_the_default_sandbox_dispatches_the_clock_to_an_activity(client: Client) -> None:
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[SandboxProbeWorkflow],
-        plugins=[AgentPlugin(exhausted_agent)],
+        workflows=[CountingWorkflow],
+        plugins=[AgentPlugin(counting_agent)],
         workflow_runner=SandboxedWorkflowRunner(restrictions=_SANDBOXED),
     ):
-        message = await client.execute_workflow(
-            SandboxProbeWorkflow.run,
+        output = await client.execute_workflow(
+            CountingWorkflow.run,
             'hello',
             id='test_spend_temporal_sandbox',
             task_queue=TASK_QUEUE,
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert 'not safe to run inside a Temporal workflow' in message
-    assert 'exhausted()' in message
-    assert 'issues/531' in message
-    assert 'with_passthrough_modules' not in message
+    assert output == 'ok'
+    assert (await counting_limits.status())[0].spent.usd == Decimal('2')
 
 
 async def test_budgets_accumulate_inside_a_forced_workflow(client: Client) -> None:
@@ -195,7 +164,7 @@ async def test_budgets_accumulate_inside_a_forced_workflow(client: Client) -> No
         plugins=[AgentPlugin(counting_agent)],
         workflow_runner=SandboxedWorkflowRunner(restrictions=_PASSTHROUGH),
     ):
-        spent = await client.execute_workflow(
+        output = await client.execute_workflow(
             CountingWorkflow.run,
             'hello',
             id='test_spend_temporal_counting',
@@ -203,7 +172,7 @@ async def test_budgets_accumulate_inside_a_forced_workflow(client: Client) -> No
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert Decimal(spent) == Decimal('2')
+    assert output == 'ok'
 
 
 async def test_the_gate_refuses_a_second_run_inside_a_forced_workflow(client: Client) -> None:

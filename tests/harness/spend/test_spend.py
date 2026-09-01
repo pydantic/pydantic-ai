@@ -75,13 +75,14 @@ class Clock:
 def _run_ctx(
     *,
     run_id: str | None = 'run-1',
+    run_step: int = 0,
     conversation_id: str | None = 'conv-1',
     deps: Any = None,
     trace_include_content: bool = False,
     tracer: Tracer | None = None,
     root_capability: AbstractCapability[None] | None = None,
 ) -> RunContext[Any]:
-    return RunContext(
+    ctx = RunContext(
         deps=deps,
         model=TestModel(),
         usage=RunUsage(),
@@ -91,6 +92,8 @@ def _run_ctx(
         tracer=tracer if tracer is not None else NoOpTracer(),
         root_capability=root_capability,
     )
+    ctx.run_step = run_step
+    return ctx
 
 
 def _request_context() -> ModelRequestContext:
@@ -320,8 +323,8 @@ class TestWindows:
 
     async def test_conversation_window_keys_on_the_conversation_id(self):
         guard = SpendLimits(budgets=[Budget(window='conversation')], price=lambda r: Decimal('1'))
-        await _record(guard, ctx=_run_ctx(conversation_id='c1'))
-        await _record(guard, ctx=_run_ctx(conversation_id='c1'))
+        await _record(guard, ctx=_run_ctx(run_id='r1', conversation_id='c1'))
+        await _record(guard, ctx=_run_ctx(run_id='r2', conversation_id='c1'))
 
         assert (await guard.status(_run_ctx(conversation_id='c1')))[0].spent.requests == 2
 
@@ -403,9 +406,9 @@ class TestScope:
             budgets=[Budget(usd=Decimal('1'), scope=lambda ctx: str(ctx.deps))],
             price=lambda r: Decimal('0.4'),
         )
-        await _record(guard, ctx=_run_ctx(deps='alice'))
-        await _record(guard, ctx=_run_ctx(deps='alice'))
-        await _record(guard, ctx=_run_ctx(deps='bob'))
+        await _record(guard, ctx=_run_ctx(run_id='r1', deps='alice'))
+        await _record(guard, ctx=_run_ctx(run_id='r2', deps='alice'))
+        await _record(guard, ctx=_run_ctx(run_id='r3', deps='bob'))
 
         assert (await guard.status(scope='alice'))[0].spent.usd == Decimal('0.8')
         assert (await guard.status(scope='bob'))[0].spent.usd == Decimal('0.4')
@@ -799,8 +802,8 @@ class TestCompositionWarning:
         """It routes the request into a durable unit rather than rejecting what comes back.
 
         Core also requires its dispatch to be the innermost wrapper, so listing `SpendLimits`
-        after it is the one correction a reader must not make. What `SpendLimits` does not
-        support under a durable engine is reported separately, by refusing the workflow clock.
+        after it is the one correction a reader must not make. The durable operations require
+        a workflow runtime, so this assertion stops at the expected Temporal dispatch error.
         """
         pytest.importorskip('temporalio')
         from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
@@ -813,7 +816,11 @@ class TestCompositionWarning:
             capabilities=[guard, TemporalDurability[None]()],
         )
 
-        await agent.run('hi')
+        with warnings.catch_warnings(record=True) as caught:
+            with pytest.raises(Exception, match='Not in workflow event loop'):
+                await agent.run('hi')
+
+        assert not [warning for warning in caught if isinstance(warning.message, SpendCompositionWarning)]
 
     async def test_a_capability_that_only_looks_durable_is_still_reported(self):
         """The exclusion matches the durability base type, not attributes anything could carry."""
@@ -1962,22 +1969,22 @@ class TestBatchAccrual:
 class TestIdempotentAccrual:
     """A durable engine re-executes the hooks around a response it already holds."""
 
-    async def test_a_response_the_provider_identified_survives_a_new_run_id(self):
-        """DBOS recovery and a Prefect flow retry replay the response under a fresh `run_id`."""
+    async def test_a_response_from_a_different_run_is_not_deduplicated(self):
+        """The run identity prevents equal provider responses in separate runs from colliding."""
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
         response = _response(provider_response_id='resp-1')
 
         await _record(guard, ctx=_run_ctx(run_id='first'), response=response)
         await _record(guard, ctx=_run_ctx(run_id='second'), response=response)
 
-        assert (await guard.status())[0].spent == Spent(usd=Decimal('1'), tokens=1100, requests=1)
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('2'), tokens=2200, requests=2)
 
-    async def test_a_response_with_no_provider_id_needs_a_stable_run_id(self):
-        """The documented limit: without a response id the token falls back to the run's own.
+    async def test_the_same_response_position_needs_a_stable_run_id(self):
+        """The run identity is part of the token whether or not the provider reports an id.
 
         `_agent_graph.resolve_run_id` honours a `run_id` the caller passes, which is how a
-        replayed accrual stays idempotent for a provider that reports none. A fresh id is a
-        different response as far as the token can tell.
+        replayed accrual stays idempotent. A fresh id is a different response as far as the
+        token can tell, which prevents equal responses from separate runs colliding.
         """
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
         response = _response()
@@ -1998,25 +2005,62 @@ class TestIdempotentAccrual:
         """
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
 
-        for _ in range(3):
-            await _record(guard, response=_response(provider_response_id=''))
+        for step in range(3):
+            await _record(guard, ctx=_run_ctx(run_step=step), response=_response(provider_response_id=''))
 
         assert (await guard.status())[0].spent.requests == 3
 
     async def test_a_provider_that_repeats_one_id_does_not_collapse_its_responses(self):
-        """The response timestamp joins the id, so a broken id does not stand alone.
+        """The response digest and run step mean a broken id does not stand alone.
 
         A server returning a constant `id` would otherwise have everything after the first
         response dropped as a replay of it, which is spend the ceiling never sees. A genuine
-        replay hands back the response object it checkpointed, so its timestamp is unchanged
-        and `test_a_response_the_provider_identified_survives_a_new_run_id` still holds.
+        replay retains the response's run position and therefore retains the same token.
         """
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
 
-        for _ in range(3):
-            await _record(guard, response=_response(provider_response_id='resp-const'))
+        for step in range(3):
+            await _record(guard, ctx=_run_ctx(run_step=step), response=_response(provider_response_id='resp-const'))
 
         assert (await guard.status())[0].spent.requests == 3
+
+    async def test_non_serializable_metadata_does_not_prevent_accrual(self):
+        """Provider bookkeeping is not part of the replay identity."""
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        response = _response(provider_response_id='resp-1')
+        response.metadata = {'sentinel': object()}
+        response.provider_details = {'sentinel': object()}
+
+        await _record(guard, response=response)
+
+        assert (await guard.status())[0].spent.requests == 1
+
+    async def test_different_content_at_the_same_position_is_not_deduplicated(self):
+        """A repeated provider id does not hide a genuinely different response."""
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+
+        await _record(guard, response=_response(provider_response_id='resp-1'))
+        changed = _response(provider_response_id='resp-1')
+        changed.parts = [TextPart(content='different')]
+        await _record(guard, response=changed)
+
+        assert (await guard.status())[0].spent.requests == 2
+
+    async def test_scope_drift_reports_the_durable_execution_requirement(self):
+        """A replayed accrual can carry totals keyed by the original scope."""
+
+        class ReplayedAccrual(SpendLimits[str]):
+            async def _accrue(self, entries: list[SpendEntry]) -> Mapping[str, Spent]:
+                del entries
+                return {'tenant|3:day|10:2026-07-26|8:original': Spent(requests=1)}
+
+        guard = ReplayedAccrual(
+            budgets=[Budget(window='day', name='tenant', scope=lambda ctx: ctx.deps)],
+            price=lambda r: Decimal('1'),
+        )
+
+        with pytest.raises(UserError, match='returned a different value on replay'):
+            await _record(guard, ctx=_run_ctx(deps='changed'))
 
     async def test_two_responses_of_one_run_both_count(self):
         """The marker identifies a response, so it must not swallow the next one."""
@@ -2067,6 +2111,7 @@ class TestDeprecatedStore:
         assert len(warned) == 1
         message = str(warned[0].message)
         assert 'one window at a time' in message
+        assert 'durable journal' in message
         assert 'removed in 0.28.0' in message
 
     def test_a_batch_store_is_not_warned_about(self):
@@ -2556,9 +2601,9 @@ class TestDurableClock:
 
         guard = SpendLimits[None](budgets=[Budget(usd=Decimal('5'))], clock=restricted)
 
-        with pytest.raises(UserError, match='not safe to run inside a Temporal workflow'):
+        with pytest.raises(UserError, match='needs a durability capability'):
             await _gate(guard)
-        with pytest.raises(UserError, match='exhausted'):
+        with pytest.raises(UserError, match='TemporalDurability'):
             await guard.status()
 
     async def test_any_other_clock_failure_is_left_alone(self):

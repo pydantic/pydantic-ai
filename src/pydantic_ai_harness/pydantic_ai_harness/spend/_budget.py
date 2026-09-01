@@ -97,7 +97,11 @@ class Budget(Generic[AgentDepsT]):
     """The period the ceiling applies to."""
 
     scope: Callable[[RunContext[AgentDepsT]], str] | None = None
-    """Partitions the counter -- per tenant, per user, per agent. `None` counts globally."""
+    """Partitions the counter -- per tenant, per user, per agent. `None` counts globally.
+
+    Under durable execution this callable must return the same value when replayed
+    with the same run context, because its result is part of the store key.
+    """
 
     warn_at: float | None = None
     """Fraction of the ceiling past which `BudgetStatus.warning` is set. Never blocks."""

@@ -29,10 +29,9 @@ _Entries = dict[str, tuple[Spent, 'datetime | None']]
 DEFAULT_DEDUP_RETAIN = timedelta(hours=1)
 """How long a store remembers a `SpendEntry.token` by default.
 
-Long enough for a durable engine to re-execute an accrual it had already committed:
-DBOS recovers a workflow when the process that owned it comes back, and a Prefect
-flow retry replays from its cache. Short enough that the markers are bounded by an
-hour of traffic rather than a day of it.
+Long enough for recovery outside the durable journal to present an accrual again.
+Short enough that the markers are bounded by an hour of traffic rather than a day
+of it.
 """
 
 
@@ -72,11 +71,10 @@ class SpendEntry:
     token: str | None = None
     """Identifies the response this entry came from, so it is applied at most once.
 
-    A capability hook runs in orchestration code, which a durable engine re-executes:
-    DBOS recovers a workflow by running it again, and a Prefect flow retry replays the
-    model request from its cache. Both hand the same response back to the accrual, and
-    without a token the window counts it twice. A store that recognises a token it has
-    already applied to `key` returns the current total instead of adding again.
+    The durable accrual operation handles ordinary replay through its journal. Recovery
+    without that record can still present the same response to the store. A store that
+    recognises a token it has already applied to `key` returns the current total instead
+    of adding again.
 
     `None` means "apply unconditionally", which is what a reconciler posting a delta
     wants: two corrections of the same size are two corrections.
@@ -206,8 +204,8 @@ def as_batch_store(store: SpendStore | BatchSpendStore) -> BatchSpendStore:
     warnings.warn(
         f'{type(store).__name__} implements the deprecated `SpendStore` protocol, so each response is applied '
         'one window at a time: a response counting against a day and a month budget is two writes, and a failure '
-        'between them leaves the day counted and the month not. `SpendEntry.token` is dropped too, so a durable '
-        'engine that re-executes the accrual (DBOS recovery, a Prefect flow retry) counts the response twice. '
+        'between them leaves the day counted and the month not. `SpendEntry.token` is dropped too, so recovery '
+        'that cannot consult the durable journal has no store-side protection against applying a response twice. '
         'Implement `get_many` and `add_many` (`BatchSpendStore`) to get both. `SpendStore` is removed in 0.28.0.',
         HarnessDeprecationWarning,
         stacklevel=4,
@@ -220,8 +218,8 @@ class InMemorySpendStore:
     """Counters for the lifetime of one process.
 
     Catches a runaway loop inside the worker it runs in. It does not enforce a
-    budget across processes: every worker of a queue would keep its own count,
-    which is what a shared store such as
+    budget across processes and cannot survive durable recovery on a replacement
+    worker: each process has its own counters and deduplication markers. A shared store such as
     [`RedisSpendStore`][pydantic_ai_harness.spend.RedisSpendStore] is for.
     """
 

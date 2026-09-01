@@ -18,14 +18,15 @@ from __future__ import annotations
 import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
@@ -86,22 +87,12 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     budget that reset every run would not be a daily budget. Per-run isolation
     comes from `Budget(window='run')`, whose key carries the run id.
 
-    Durable execution: not supported inside a durable workflow, on Temporal, DBOS,
-    or Prefect. The hooks run in orchestration code, while the model request beside
-    them is a durable unit restored from its checkpoint, so re-execution replays the
-    accrual without replaying the request it counted. `SpendEntry.token` identifies
-    the response, so a store implementing `BatchSpendStore` applies a replayed accrual
-    once rather than twice -- within `dedup_retain`, and not at all through the adapter
-    that drives a deprecated `SpendStore`, which has nowhere to put the token. What is
-    left is the other direction: recovery that lands in a fresh worker holding a fresh
-    `InMemorySpendStore` finds neither the counter nor the marker that guards it, and
-    admits more than the budget allows. Temporal stops earlier than any of that, on
-    the wall clock `before_model_request` reads to pick the window, which the sandbox
-    restricts and `PydanticAIPlugin` does not pass `pydantic_ai_harness` through.
-    `exhausted()` works without a `RunContext` so a workflow can at least be refused
-    admission on what is already recorded -- but it reserves nothing, so it is a gate
-    on the door, not a budget on what happens inside. Tracked in
-    <https://github.com/pydantic/pydantic-ai-harness/issues/531>.
+    Under a durability capability, clock reads, counter reads, and accruals are durable
+    operations. Their recorded results are replayed without re-entering the store. A
+    shared store is still required when recovery can move to another worker: the default
+    `InMemorySpendStore` loses its counters and deduplication markers with the process.
+    A deprecated `SpendStore` also loses token-based deduplication outside the journal
+    because its single-key `add` method has nowhere to receive `SpendEntry.token`.
     """
 
     budgets: Sequence[Budget[AgentDepsT]] = ()
@@ -124,10 +115,18 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     `UserError`, after the response's tokens and request count have been recorded:
     a credit would move a budget away from its ceiling, and a NaN or an infinity
     is a broken pricing function rather than a price.
+
+    Under durable execution this callable must return the same result when replayed
+    for the same response. It runs in orchestration after the durable model request,
+    outside the journaled accrual.
     """
 
     on_spend: SpendCallback | None = None
-    """Called with a `SpendSnapshot` after each response. May be sync or async."""
+    """Called with a `SpendSnapshot` after each response. May be sync or async.
+
+    Durable replay can invoke this callback again after the response's journaled
+    accrual has run only once, so the callback must be idempotent.
+    """
 
     on_unpriced: Literal['zero', 'raise'] = 'zero'
     """What to do when a response cannot be priced.
@@ -152,6 +151,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     expiry. Both remain absolute instants, so a custom clock buckets on one and expires on
     the other; pass the same callable to the store when that matters.
     """
+
+    # Override the inherited default ID because durable-operation recovery needs a stable identity.
+    _: KW_ONLY
+    id: str | None = 'spend_limits'
 
     _warned_unpriced: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Model names already reported by `UnpricedModelWarning`, so each reports once.
@@ -298,7 +301,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         than on having reported is what covers a chain that differs between runs.
         """
         warn_about_inner_wrappers(ctx.root_capability, self, self._reported_arrangements)
-        enforcing = [(budget, key) for budget, key in self._keyed(ctx) if budget.enforces]
+        enforcing = [(budget, key) for budget, key in await self._keyed(ctx) if budget.enforces]
         read = await self._read(list(dict.fromkeys(key for _, key in enforcing)))
         for budget, key in enforcing:
             self._check(budget, read[key], ctx)
@@ -328,7 +331,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """
         response = await handler(request_context)
         usd, priced, price_error = self._price_of(response)
-        keyed = self._keyed(ctx)
+        keyed = await self._keyed(ctx)
         token = self._dedup_token(ctx, response)
         entries: dict[str, SpendEntry] = {}
         for budget, key in keyed:
@@ -347,7 +350,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 )
         # Every window in one call, so a failure cannot leave the response counted
         # against the day and not the month. Nothing to apply is not a call: see `_read`.
-        accrued: Mapping[str, Spent] = await self._store.add_many(list(entries.values())) if entries else {}
+        accrued = await self._accrue(list(entries.values()))
+        missing = sorted({key for _, key in keyed} - accrued.keys())
+        if missing:
+            raise UserError(
+                f'The spend accrual returned no total for key(s) {missing}. Under durable execution this can mean '
+                'a `Budget.scope` callable returned a different value on replay; scope and price callables must be '
+                'deterministic. Otherwise, the `BatchSpendStore` must return a total for every submitted key.'
+            )
         statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
 
         if self.on_spend is not None:
@@ -407,7 +417,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
         Inside a run, pass `ctx` and every budget resolves. Without one -- the
         reading a cost display wants, and the check to make before starting a
-        durable workflow whose hooks cannot reach a shared store -- budgets on a
+        durable workflow -- budgets on a
         `run` or `conversation` window are omitted, since those periods have no
         meaning outside a run, and a budget declaring a `scope` is omitted
         unless `scope` names the partition to read, since its callable has no
@@ -436,7 +446,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 'so a second answer here would be reporting one scope under the name of another. '
                 'Drop `scope=` to read the run, or drop `ctx` to read another partition.'
             )
-        now = self._now()
+        now = await self._now()
         keyed: list[tuple[Budget[AgentDepsT], str]] = []
         unresolved: list[str] = []
         for budget in self.budgets:
@@ -456,15 +466,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """Whether any budget this call can read is exhausted, refusing to guess about the rest.
 
         An admission check, and only that. It reads the counters; it reserves nothing and
-        records nothing, so work started on the strength of it goes unmeasured unless
-        something else accrues it. That makes it the pre-flight option on every durable
-        engine, and what the next caller reads differs. Under Temporal nothing accrues
-        inside the workflow at all, because the sandbox refuses the clock these hooks read,
-        so the counter still holds the admission reading. Under DBOS and Prefect the accrual
-        does run, and `SpendEntry.token` keeps a replay of it from counting twice, so the
-        counter tracks the workflow as long as recovery still reaches the store that accrued.
-        Either way this is a floor on runaway spend already recorded, not a ceiling on what
-        the workflow goes on to spend.
+        records nothing, so work started on the strength of it is measured only if the agent
+        also carries this capability. Under durable execution, the agent's clock reads,
+        counter reads, and accruals are journaled. The store still has to survive worker
+        replacement for a budget shared across those workers.
 
         `status()` omits what it cannot resolve, and `any(...)` over the remainder is a brake
         that silently checks nothing when every budget is scoped -- so this raises instead,
@@ -485,7 +490,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         budgets: Sequence[BudgetSpec] = (),
         on_unpriced: Literal['zero', 'raise'] = 'zero',
         expose_tools: bool = False,
-        id: str | None = None,
+        id: str | None = 'spend_limits',
         description: str | None = None,
         defer_loading: bool = False,
         **unsupported: Any,
@@ -522,8 +527,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             defer_loading=defer_loading,
         )
 
-    def _now(self) -> datetime:
-        """The current time, naming the real problem when Temporal's sandbox refuses the clock.
+    @durable_operation('now')
+    async def _now(self) -> datetime:
+        """Read the clock durably, naming the remedy when Temporal runs it in orchestration.
 
         These hooks run in workflow code, and the default clock calls `datetime.now`, which
         Temporal's workflow sandbox restricts. The sandbox's own error names
@@ -532,9 +538,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         on, and which core's own `pydantic_ai/durable_exec/AGENTS.md` rules out: "Prefer generic
         capabilities/toolsets/models extension points over engine-specific escape hatches."
 
-        The message leads with the unsafety rather than the passthrough that silences it: the
-        sandbox is refusing a symptom, and a caller who only removes the symptom gets a
-        counter that Temporal replays.
+        A durability capability dispatches this method to an activity, step, or task. The
+        translation remains for an agent run directly inside a Temporal workflow without
+        durability attached, where the decorator deliberately calls through to this method.
+        Passing the module through the sandbox would only silence the useful symptom.
         """
         try:
             return self.clock()
@@ -542,14 +549,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             if type(error).__name__ != 'RestrictedWorkflowAccessError':
                 raise
             raise UserError(
-                'SpendLimits is not safe to run inside a Temporal workflow. Its hooks run in '
-                'workflow code rather than in the model activity, and the clock they read to pick '
-                'the budget window is what the sandbox stopped here; a workflow day and a key day '
-                'diverge under time-skipping even once it is let through. Refuse the workflow '
-                'admission before starting it instead, '
-                'with `exhausted()` -- which reads the counters and does not move them, so it '
-                'bounds what has already been recorded rather than what the workflow will spend. '
-                'See https://github.com/pydantic/pydantic-ai-harness/issues/531'
+                'SpendLimits needs a durability capability when it runs inside a Temporal workflow. '
+                'The clock read that selects the budget window must run in an activity, which attaching '
+                '`TemporalDurability` arranges through the durable `now` operation. Without durability, '
+                'the hook reads the clock in workflow orchestration and Temporal restricts it.'
             ) from error
 
     def _key(
@@ -566,54 +569,37 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return store_key(budget, bucket_id, scope_key(budget, ctx, scope))
 
     def _dedup_token(self, ctx: RunContext[AgentDepsT], response: ModelResponse) -> str:
-        """Identifies the response, so an accrual a durable engine re-executes lands once.
+        """Identify one response from replay-stable run and response data.
 
-        These hooks run in orchestration code, which DBOS re-executes when it recovers a
-        workflow and Prefect re-executes when a flow retries. The model request itself is
-        the durable unit, so both hand back the response they already have while the
-        accrual around it runs again, and the window counts one response twice.
+        Durable execution journals `_accrue`, so ordinary replay returns its recorded totals
+        without entering the store. The token is the second layer for recovery that presents
+        the same entry without consulting that journal, as long as it reaches the store that
+        remembers the token.
 
-        The token therefore has to come from the response rather than from the run.
-        `provider_response_id` is the provider's own identifier for the request, kept in
-        the checkpointed response, and paired with the provider name because two providers
-        can mint the same string. When a provider reports none, the fallback identifies
-        the response by where it sat in the run and when it arrived:
-        `ModelResponse.timestamp` is set as the response is built, inside the durable unit,
-        and `run_step` is incremented by `ModelRequestNode._prepare_request` before any of
-        these hooks run. That pair is replay-stable only as far as `ctx.run_id` is, which
-        is a fresh UUID7 unless the caller passes one -- so a provider that reports no
-        response id needs a `run_id` chosen by the caller for the accrual to be idempotent.
+        `run_id` and `run_step` locate the response in the run. The digest includes semantic
+        response parts to distinguish different content, usage to distinguish different
+        billing, and provider/model identity fields to distinguish otherwise equal responses
+        from different sources. This also distinguishes responses when a provider repeats an id.
 
-        `ModelResponse.run_id` is not usable here: `fill_run_metadata` stamps it after this
-        wrapper returns, so it is still `None` at this point.
-
-        The parts are `delimited` rather than joined, because a provider id and a
-        caller-supplied run id can contain anything: joined on a separator,
-        `provider_name='a|b'` with id `'c'` and `provider_name='a'` with id `'b|c'` name
-        the same response, and the second one's spend is dropped as a replay of the first.
-
-        An empty `provider_response_id` takes the fallback rather than the primary path.
-        The field is a plain `str` on the wire -- `ChatCompletion.id` is required and
-        unnormalised -- so an OpenAI-compatible server answering `"id": ""` would otherwise
-        name every one of its responses the same, and every response after the first would
-        be dropped as a replay of it. Core reads the same field for truth rather than for
-        presence where it matters (`models/_continuation.py`, `models/openai.py`).
-
-        The timestamp joins the id rather than only standing in for it, so a server that
-        reports the *same* non-empty id for different responses does not have them collapse
-        into one. It costs the primary path nothing: a replayed response is the same object
-        checkpointed and handed back, so its timestamp is the one it was built with, which
-        is the property the fallback below already rests on. `ModelResponse.timestamp` is
-        the client's own `now_utc()` rather than a provider field (`models/openai.py` keeps
-        the provider's coarse `created` in `provider_details`), so it separates responses at
-        microsecond resolution. What is left is two responses sharing an id *and* a
-        microsecond; tracked in
-        <https://github.com/pydantic/pydantic-ai-harness/issues/693>.
+        Provider details and metadata are deliberately excluded because providers may put
+        arbitrary non-serializable objects there. Timestamp is excluded because core creates it
+        from the local clock, and the response's run stamp is excluded because core adds it only
+        after this wrapper returns. Length-prefixing prevents boundary collisions.
         """
-        stamp = response.timestamp.isoformat()
-        if response.provider_response_id:
-            return delimited(response.provider_name or '', response.provider_response_id, stamp)
-        return delimited(ctx.run_id or '', str(ctx.run_step), stamp)
+        stable_response = replace(
+            response,
+            parts=[
+                replace(part, provider_details=None) if hasattr(part, 'provider_details') else part
+                for part in response.parts
+            ],
+            timestamp=datetime.min.replace(tzinfo=response.timestamp.tzinfo),
+            run_id=None,
+            conversation_id=None,
+            metadata=None,
+            provider_details=None,
+        )
+        digest = sha256(ModelMessagesTypeAdapter.dump_json([stable_response])).hexdigest()
+        return delimited(ctx.run_id or '', str(ctx.run_step), digest)
 
     def _check(self, budget: Budget[AgentDepsT], spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
         """Raise if `spent` has reached either of the budget's ceilings."""
@@ -632,6 +618,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         ctx.tracer.start_span('spend budget exhausted', attributes=attributes).end()
         raise SpendLimitExceeded(f'Budget {budget.name!r} exhausted for this {budget.window}: {detail}')
 
+    @durable_operation('read')
     async def _read(self, keys: Sequence[str]) -> Mapping[str, Spent]:
         """What each key holds, without asking the store about none of them.
 
@@ -642,7 +629,12 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """
         return await self._store.get_many(keys) if keys else {}
 
-    def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
+    @durable_operation('accrue')
+    async def _accrue(self, entries: list[SpendEntry]) -> Mapping[str, Spent]:
+        """Apply one response and journal the totals returned by the store."""
+        return await self._store.add_many(entries) if entries else {}
+
+    async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
         """Each budget paired with the store key it accumulates under right now.
 
         No collision check here. Every part of a key is fixed at construction -- `name`,
@@ -650,7 +642,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         that would collide, so two budgets share a key only where sharing one is the
         point. Checking again would repeat that work on every model request.
         """
-        now = self._now()
+        now = await self._now()
         return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
 
     def _price_of(self, response: ModelResponse) -> tuple[Decimal, bool, str | None]:
