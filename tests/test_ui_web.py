@@ -1428,18 +1428,36 @@ def test_create_web_app_custom_lifespan():
     from contextlib import asynccontextmanager
 
     agent = Agent(TestModel())
-    lifespan_events: list[str] = []
+
+    # 1. Stateful custom lifespan (yields a Mapping)
+    stateful_events: list[str] = []
 
     @asynccontextmanager
-    async def custom_lifespan(app: Starlette):
-        lifespan_events.append('startup')
+    async def stateful_lifespan(app: Starlette):
+        stateful_events.append('stateful_startup')
         yield {'custom_key': 'custom_value'}
-        lifespan_events.append('shutdown')
+        stateful_events.append('stateful_shutdown')
 
-    app = create_web_app(agent, lifespan=custom_lifespan)
+    app = create_web_app(agent, lifespan=stateful_lifespan)
 
     with TestClient(app, base_url=LOCAL_BASE_URL):
-        assert lifespan_events == ['startup']
+        assert stateful_events == ['stateful_startup']
         assert getattr(app.state, 'custom_key', None) == 'custom_value'
 
-    assert lifespan_events == ['startup', 'shutdown']
+    assert stateful_events == ['stateful_startup', 'stateful_shutdown']
+
+    # 2. Stateless custom lifespan (yields None)
+    stateless_events: list[str] = []
+
+    @asynccontextmanager
+    async def stateless_lifespan(app: Starlette):
+        stateless_events.append('stateless_startup')
+        yield
+        stateless_events.append('stateless_shutdown')
+
+    stateless_app = create_web_app(agent, lifespan=stateless_lifespan)
+
+    with TestClient(stateless_app, base_url=LOCAL_BASE_URL):
+        assert stateless_events == ['stateless_startup']
+
+    assert stateless_events == ['stateless_startup', 'stateless_shutdown']
