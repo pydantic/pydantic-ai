@@ -256,7 +256,7 @@ function select(path) {
     <div class="row">${n.path}</div>
     <div class="row">${n.top} · ${n.tokens.toLocaleString()} tokens · in ${n.in} · out ${n.out_unique}</div>
     <div class="row">${n.tokens >= PAGE_SLURP ? '⚠ over ' + PAGE_SLURP.toLocaleString() + ' — grep/read sections, do not slurp' : 'fits in one read'}</div>
-    <div class="row"><a href="https://ai.pydantic.dev/${slug}" target="_blank">open on site</a></div>
+    <div class="row"><a href="https://pydantic.dev/docs/ai/${slug}" target="_blank">open on site</a></div>
     <h4>outbound</h4>
     ${outs.slice(0,12).map(e => `<div class="row">→ ${e.dst} ×${e.n}</div>`).join('') || '<div class="row muted">none</div>'}
     <h4>inbound</h4>

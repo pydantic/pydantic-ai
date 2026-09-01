@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         '--html',
         type=Path,
         metavar='PATH',
-        help='write a self-contained HTML viewer (graph.json is inlined and also written next to it)',
+        help='write an HTML viewer with the graph inlined (D3 is loaded from a CDN; graph.json is also written next to it)',
     )
     args = parser.parse_args(argv)
 
@@ -202,7 +202,7 @@ def render_atlas(docs_map: _DocsMap) -> str:
         '',
         f'- Region ≥ {_fmt(REGION_SUBAGENT_TOKENS)} tok → spawn a subagent; do not load the region into this session.',
         f'- Page ≥ {_fmt(PAGE_SLURP_TOKENS)} tok → grep / read by section. Do not slurp the file.',
-        '- Start at the hub page of the region (first page listed).',
+        '- Start at the hub page of the region (overview, else the first sidebar page).',
         '- API reference: open the one symbol page, never the section.',
         '',
         '## Cross-region highways',
@@ -216,10 +216,10 @@ def render_atlas(docs_map: _DocsMap) -> str:
 
     lines.extend(['', '## Regions', ''])
     for top in listed_regions:
-        region_nodes = _hub_sort(by_region[top])
+        region_nodes = by_region[top]
         region_tokens = sum(node.tokens for node in region_nodes)
         flag = 'SUBAGENT' if region_tokens >= REGION_SUBAGENT_TOKENS else 'inline'
-        hub = region_nodes[0]
+        hub = _region_hub(region_nodes)
         lines.append(f'### {top} — {_fmt(region_tokens)} tok, {len(region_nodes)} pages — {flag}')
         lines.append('')
         lines.append(f'Hub: `{hub.path}` ({_fmt(hub.tokens)} tok, in {hub.inbound}, out {hub.outbound})')
@@ -387,8 +387,17 @@ def _encoding() -> Encoding:
     return tiktoken.get_encoding(TOKEN_ENCODING)
 
 
-def _hub_sort(nodes: list[_Node]) -> list[_Node]:
-    return sorted(nodes, key=lambda node: (-node.inbound, -node.tokens, node.path))
+def _region_hub(nodes: list[_Node]) -> _Node:
+    """Pick the sidebar entry point, not the most-linked page.
+
+    Pages are already in `docs/navigation.yml` order. Prefer an overview/index
+    page when one exists in the region; otherwise the first sidebar page.
+    """
+    for node in nodes:
+        name = node.path.rsplit('/', 1)[-1]
+        if name == 'index.md' or node.title.casefold() == 'overview':
+            return node
+    return nodes[0]
 
 
 def _fmt(n: int) -> str:

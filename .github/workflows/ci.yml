@@ -61,6 +61,11 @@ jobs:
       # (.github/scripts/pydantic-ai-runner).
       - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0"
 
+      - name: Check docs atlas is current
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run python scripts/generate_docs_map.py --check
+
       - name: Test GitHub agentic workflow policy
         env:
           UV_NO_SYNC: "1"

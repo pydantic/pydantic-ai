@@ -9,7 +9,7 @@ Published local pages: 227 (487,751 tok). API reference omitted below (7,688 tok
 
 - Region ≥ 40,000 tok → spawn a subagent; do not load the region into this session.
 - Page ≥ 8,000 tok → grep / read by section. Do not slurp the file.
-- Start at the hub page of the region (first page listed).
+- Start at the hub page of the region (overview, else the first sidebar page).
 - API reference: open the one symbol page, never the section.
 
 ## Cross-region highways
@@ -34,224 +34,224 @@ Published local pages: 227 (487,751 tok). API reference omitted below (7,688 tok
 
 ### Overview — 19,571 tok, 8 pages — inline
 
-Hub: `install.md` (2,538 tok, in 11, out 29)
+Hub: `index.md` (7,073 tok, in 0, out 42)
 
+- `index.md` — 7,073 tok, in 0, out 42
 - `install.md` — 2,538 tok, in 11, out 29
-- `gateway.md` — 3,852 tok, in 5, out 0
-- `migration.md` — 3,777 tok, in 2, out 6
 - `interfaces.md` — 557 tok, in 2, out 9
+- `migration.md` — 3,777 tok, in 2, out 6
 - `help.md` — 194 tok, in 2, out 0
 - `troubleshooting.md` — 918 tok, in 1, out 7
 - `coding-agent-skills.md` — 662 tok, in 1, out 9
-- `index.md` — 7,073 tok, in 0, out 42
+- `gateway.md` — 3,852 tok, in 5, out 0
 
 ### Core Concepts — 100,985 tok, 13 pages — SUBAGENT
 
 Hub: `agent.md` (20,972 tok, in 135, out 22)
 
 - `agent.md` — 20,972 tok, in 135, out 22 **do not slurp**
-- `output.md` — 14,593 tok, in 88, out 16 **do not slurp**
-- `capabilities/overview.md` — 5,126 tok, in 87, out 38
-- `message-history.md` — 12,478 tok, in 59, out 18 **do not slurp**
-- `hooks.md` — 6,461 tok, in 32, out 6
 - `dependencies.md` — 2,946 tok, in 31, out 9
+- `output.md` — 14,593 tok, in 88, out 16 **do not slurp**
+- `input.md` — 4,768 tok, in 6, out 4
+- `hooks.md` — 6,461 tok, in 32, out 6
+- `capabilities/overview.md` — 5,126 tok, in 87, out 38
+- `capabilities/on-demand.md` — 6,873 tok, in 18, out 12
 - `capabilities/custom.md` — 18,538 tok, in 24, out 17 **do not slurp**
 - `agent-spec.md` — 2,241 tok, in 19, out 9
-- `capabilities/on-demand.md` — 6,873 tok, in 18, out 12
-- `input.md` — 4,768 tok, in 6, out 4
+- `message-history.md` — 12,478 tok, in 59, out 18 **do not slurp**
+- `direct.md` — 1,230 tok, in 1, out 1
 - `retries.md` — 2,805 tok, in 4, out 15
 - `timeouts.md` — 1,954 tok, in 4, out 12
-- `direct.md` — 1,230 tok, in 1, out 1
 
 ### Models & Providers — 55,701 tok, 17 pages — SUBAGENT
 
-Hub: `models/openai.md` (13,052 tok, in 43, out 5)
+Hub: `models/overview.md` (7,300 tok, in 21, out 21)
 
-- `models/openai.md` — 13,052 tok, in 43, out 5 **do not slurp**
 - `models/overview.md` — 7,300 tok, in 21, out 21
-- `models/anthropic.md` — 7,808 tok, in 13, out 7
-- `models/bedrock.md` — 5,136 tok, in 12, out 3
-- `models/google.md` — 5,654 tok, in 11, out 3
 - `models/http-request-retries.md` — 3,043 tok, in 8, out 4
+- `models/openai.md` — 13,052 tok, in 43, out 5 **do not slurp**
+- `models/anthropic.md` — 7,808 tok, in 13, out 7
+- `models/google.md` — 5,654 tok, in 11, out 3
 - `models/xai.md` — 2,839 tok, in 6, out 4
-- `models/huggingface.md` — 1,142 tok, in 4, out 1
+- `models/bedrock.md` — 5,136 tok, in 12, out 3
+- `models/cerebras.md` — 534 tok, in 3, out 0
+- `models/cohere.md` — 609 tok, in 3, out 0
+- `models/crusoe.md` — 680 tok, in 3, out 1
 - `models/groq.md` — 506 tok, in 4, out 0
+- `models/huggingface.md` — 1,142 tok, in 4, out 1
+- `models/mistral.md` — 557 tok, in 3, out 0
+- `models/ollama.md` — 952 tok, in 2, out 0
 - `models/openrouter.md` — 3,652 tok, in 3, out 3
 - `models/snowflake.md` — 1,186 tok, in 3, out 2
 - `models/zai.md` — 1,051 tok, in 3, out 0
-- `models/crusoe.md` — 680 tok, in 3, out 1
-- `models/cohere.md` — 609 tok, in 3, out 0
-- `models/mistral.md` — 557 tok, in 3, out 0
-- `models/cerebras.md` — 534 tok, in 3, out 0
-- `models/ollama.md` — 952 tok, in 2, out 0
 
 ### Tools & Toolsets — 51,924 tok, 7 pages — SUBAGENT
 
-Hub: `tools-advanced.md` (15,774 tok, in 55, out 18)
+Hub: `tools.md` (3,829 tok, in 46, out 11)
 
+- `tools.md` — 3,829 tok, in 46, out 11
 - `tools-advanced.md` — 15,774 tok, in 55, out 18 **do not slurp**
 - `toolsets.md` — 10,483 tok, in 50, out 14 **do not slurp**
 - `deferred-tools.md` — 6,353 tok, in 49, out 13
-- `tools.md` — 3,829 tok, in 46, out 11
 - `native-tools.md` — 12,216 tok, in 29, out 9 **do not slurp**
 - `common-tools.md` — 2,588 tok, in 10, out 1
 - `third-party-tools.md` — 681 tok, in 3, out 5
 
 ### Capabilities — 17,276 tok, 22 pages — inline
 
-Hub: `capabilities/thinking.md` (6,467 tok, in 13, out 6)
+Hub: `capabilities/mcp.md` (572 tok, in 8, out 3)
 
-- `capabilities/thinking.md` — 6,467 tok, in 13, out 6
-- `capabilities/compaction.md` — 1,195 tok, in 11, out 6
 - `capabilities/mcp.md` — 572 tok, in 8, out 3
-- `capabilities/resolve-model-id.md` — 543 tok, in 7, out 3
-- `capabilities/web-search.md` — 488 tok, in 6, out 3
-- `capabilities/third-party.md` — 1,996 tok, in 5, out 10
 - `capabilities/image-generation.md` — 445 tok, in 4, out 3
-- `capabilities/process-event-stream.md` — 507 tok, in 2, out 3
+- `capabilities/web-search.md` — 488 tok, in 6, out 3
+- `capabilities/web-fetch.md` — 364 tok, in 2, out 3
+- `capabilities/x-search.md` — 266 tok, in 1, out 4
+- `capabilities/thinking.md` — 6,467 tok, in 13, out 6
+- `capabilities/tool-search.md` — 371 tok, in 1, out 3
+- `capabilities/compaction.md` — 1,195 tok, in 11, out 6
+- `capabilities/handle-deferred-tool-calls.md` — 394 tok, in 1, out 2
+- `capabilities/instrumentation.md` — 347 tok, in 2, out 2
+- `capabilities/thread-executor.md` — 197 tok, in 1, out 2
+- `capabilities/select-model.md` — 313 tok, in 1, out 2
+- `capabilities/resolve-model-id.md` — 543 tok, in 7, out 3
+- `capabilities/prepare-tools.md` — 315 tok, in 2, out 3
+- `capabilities/prefix-tools.md` — 257 tok, in 1, out 1
+- `capabilities/include-tool-return-schemas.md` — 580 tok, in 1, out 2
+- `capabilities/set-tool-metadata.md` — 359 tok, in 1, out 2
+- `capabilities/raise-content-filter-error.md` — 434 tok, in 1, out 2
 - `capabilities/reinject-system-prompt.md` — 490 tok, in 2, out 3
 - `capabilities/process-history.md` — 376 tok, in 2, out 3
-- `capabilities/web-fetch.md` — 364 tok, in 2, out 3
-- `capabilities/instrumentation.md` — 347 tok, in 2, out 2
-- `capabilities/prepare-tools.md` — 315 tok, in 2, out 3
-- `capabilities/include-tool-return-schemas.md` — 580 tok, in 1, out 2
-- `capabilities/raise-content-filter-error.md` — 434 tok, in 1, out 2
-- `capabilities/handle-deferred-tool-calls.md` — 394 tok, in 1, out 2
-- `capabilities/tool-search.md` — 371 tok, in 1, out 3
-- `capabilities/set-tool-metadata.md` — 359 tok, in 1, out 2
-- `capabilities/select-model.md` — 313 tok, in 1, out 2
-- `capabilities/x-search.md` — 266 tok, in 1, out 4
-- `capabilities/prefix-tools.md` — 257 tok, in 1, out 1
-- `capabilities/thread-executor.md` — 197 tok, in 1, out 2
+- `capabilities/process-event-stream.md` — 507 tok, in 2, out 3
+- `capabilities/third-party.md` — 1,996 tok, in 5, out 10
 
 ### Realtime (speech-to-speech) — 26,422 tok, 15 pages — inline
 
 Hub: `realtime/overview.md` (3,702 tok, in 29, out 25)
 
 - `realtime/overview.md` — 3,702 tok, in 29, out 25
+- `realtime/audio.md` — 1,401 tok, in 23, out 12
+- `realtime/events.md` — 1,160 tok, in 9, out 6
 - `realtime/turns.md` — 1,406 tok, in 27, out 7
 - `realtime/tools.md` — 2,392 tok, in 25, out 9
-- `realtime/audio.md` — 1,401 tok, in 23, out 12
-- `realtime/deployment.md` — 1,425 tok, in 22, out 10
 - `realtime/capabilities.md` — 1,171 tok, in 19, out 5
 - `realtime/history.md` — 1,487 tok, in 14, out 6
+- `realtime/deployment.md` — 1,425 tok, in 22, out 10
 - `realtime/lifecycle.md` — 1,774 tok, in 13, out 11
-- `realtime/gemini.md` — 2,134 tok, in 11, out 13
 - `realtime/observability.md` — 1,443 tok, in 9, out 9
-- `realtime/events.md` — 1,160 tok, in 9, out 6
+- `realtime/troubleshooting.md` — 432 tok, in 2, out 7
 - `realtime/openai.md` — 1,763 tok, in 7, out 13
 - `realtime/azure.md` — 3,462 tok, in 6, out 12
+- `realtime/gemini.md` — 2,134 tok, in 11, out 13
 - `realtime/xai.md` — 1,270 tok, in 5, out 10
-- `realtime/troubleshooting.md` — 432 tok, in 2, out 7
 
 ### Durable Execution — 28,824 tok, 8 pages — inline
 
 Hub: `durable_execution/overview.md` (327 tok, in 18, out 11)
 
 - `durable_execution/overview.md` — 327 tok, in 18, out 11
-- `durable_execution/temporal.md` — 11,550 tok, in 11, out 19 **do not slurp**
-- `durable_execution/prefect.md` — 5,712 tok, in 6, out 12
-- `durable_execution/dbos.md` — 4,960 tok, in 5, out 14
-- `durable_execution/restate.md` — 1,073 tok, in 3, out 0
 - `durable_execution/backends.md` — 2,044 tok, in 2, out 1
+- `durable_execution/temporal.md` — 11,550 tok, in 11, out 19 **do not slurp**
+- `durable_execution/dbos.md` — 4,960 tok, in 5, out 14
+- `durable_execution/prefect.md` — 5,712 tok, in 6, out 12
+- `durable_execution/restate.md` — 1,073 tok, in 3, out 0
 - `durable_execution/kitaru.md` — 1,636 tok, in 2, out 2
 - `durable_execution/airflow.md` — 1,522 tok, in 2, out 0
 
 ### Guides — 20,520 tok, 5 pages — inline
 
-Hub: `multi-agent-applications.md` (4,433 tok, in 13, out 10)
+Hub: `extensibility.md` (1,128 tok, in 7, out 7)
 
-- `multi-agent-applications.md` — 4,433 tok, in 13, out 10
-- `testing.md` — 2,975 tok, in 8, out 4
 - `extensibility.md` — 1,128 tok, in 7, out 7
-- `embeddings.md` — 9,887 tok, in 6, out 8 **do not slurp**
+- `multi-agent-applications.md` — 4,433 tok, in 13, out 10
 - `web.md` — 2,097 tok, in 5, out 4
+- `embeddings.md` — 9,887 tok, in 6, out 8 **do not slurp**
+- `testing.md` — 2,975 tok, in 8, out 4
 
 ### MCP — 10,803 tok, 3 pages — inline
 
-Hub: `mcp/client.md` (8,855 tok, in 29, out 7)
+Hub: `mcp/overview.md` (790 tok, in 3, out 5)
 
+- `mcp/overview.md` — 790 tok, in 3, out 5
 - `mcp/client.md` — 8,855 tok, in 29, out 7 **do not slurp**
 - `mcp/server.md` — 1,158 tok, in 3, out 1
-- `mcp/overview.md` — 790 tok, in 3, out 5
 
 ### Pydantic Evals — 74,051 tok, 22 pages — SUBAGENT
 
-Hub: `evals/evaluators/custom.md` (4,752 tok, in 20, out 4)
+Hub: `evals.md` (3,232 tok, in 7, out 15)
 
-- `evals/evaluators/custom.md` — 4,752 tok, in 20, out 4
-- `evals/evaluators/built-in.md` — 3,684 tok, in 13, out 6
-- `evals/how-to/logfire-integration.md` — 1,493 tok, in 12, out 2
-- `evals/evaluators/span-based.md` — 3,705 tok, in 10, out 3
-- `evals/how-to/dataset-management.md` — 3,598 tok, in 8, out 3
-- `evals/evaluators/report-evaluators.md` — 5,921 tok, in 7, out 4
 - `evals.md` — 3,232 tok, in 7, out 15
-- `evals/how-to/concurrency.md` — 1,563 tok, in 7, out 3
-- `evals/evaluators/llm-judge.md` — 4,060 tok, in 6, out 2
+- `evals/quick-start.md` — 1,394 tok, in 5, out 5
 - `evals/core-concepts.md` — 3,995 tok, in 6, out 5
 - `evals/evaluators/overview.md` — 3,668 tok, in 6, out 9
-- `evals/how-to/metrics-attributes.md` — 4,838 tok, in 5, out 4
-- `evals/how-to/retry-strategies.md` — 3,395 tok, in 5, out 2
-- `evals/quick-start.md` — 1,394 tok, in 5, out 5
-- `evals/examples/simple-validation.md` — 2,589 tok, in 4, out 4
-- `evals/evaluators/standard-quality-metrics.md` — 2,037 tok, in 4, out 2
+- `evals/evaluators/built-in.md` — 3,684 tok, in 13, out 6
+- `evals/evaluators/llm-judge.md` — 4,060 tok, in 6, out 2
 - `evals/evaluators/framework-integrations.md` — 1,340 tok, in 4, out 2
-- `evals/how-to/dataset-serialization.md` — 3,073 tok, in 3, out 3
-- `evals/how-to/lifecycle.md` — 1,584 tok, in 2, out 3
+- `evals/evaluators/custom.md` — 4,752 tok, in 20, out 4
+- `evals/evaluators/report-evaluators.md` — 5,921 tok, in 7, out 4
+- `evals/evaluators/span-based.md` — 3,705 tok, in 10, out 3
 - `evals/evaluators/agentic.md` — 3,397 tok, in 1, out 4
+- `evals/evaluators/standard-quality-metrics.md` — 2,037 tok, in 4, out 2
 - `evals/online-evaluation.md` — 9,686 tok, in 0, out 6 **do not slurp**
+- `evals/how-to/logfire-integration.md` — 1,493 tok, in 12, out 2
+- `evals/how-to/dataset-management.md` — 3,598 tok, in 8, out 3
+- `evals/how-to/dataset-serialization.md` — 3,073 tok, in 3, out 3
+- `evals/how-to/concurrency.md` — 1,563 tok, in 7, out 3
 - `evals/how-to/multi-run.md` — 1,047 tok, in 0, out 3
+- `evals/how-to/retry-strategies.md` — 3,395 tok, in 5, out 2
+- `evals/how-to/metrics-attributes.md` — 4,838 tok, in 5, out 4
+- `evals/how-to/lifecycle.md` — 1,584 tok, in 2, out 3
+- `evals/examples/simple-validation.md` — 2,589 tok, in 4, out 4
 
 ### Pydantic Graph — 23,343 tok, 6 pages — inline
 
 Hub: `graph.md` (5,872 tok, in 6, out 5)
 
 - `graph.md` — 5,872 tok, in 6, out 5
-- `graph/builder/joins.md` — 4,952 tok, in 5, out 2
-- `graph/builder/parallel.md` — 4,010 tok, in 5, out 3
-- `graph/builder/decisions.md` — 3,098 tok, in 4, out 2
-- `graph/builder/steps.md` — 2,877 tok, in 4, out 3
 - `graph/builder/index.md` — 2,534 tok, in 2, out 6
+- `graph/builder/steps.md` — 2,877 tok, in 4, out 3
+- `graph/builder/joins.md` — 4,952 tok, in 5, out 2
+- `graph/builder/decisions.md` — 3,098 tok, in 4, out 2
+- `graph/builder/parallel.md` — 4,010 tok, in 5, out 3
 
 ### Integrations — 24,320 tok, 5 pages — inline
 
-Hub: `logfire.md` (5,821 tok, in 40, out 6)
+Hub: `ui/overview.md` (3,160 tok, in 30, out 7)
 
 - `logfire.md` — 5,821 tok, in 40, out 6
 - `ui/overview.md` — 3,160 tok, in 30, out 7
 - `ui/ag-ui.md` — 8,465 tok, in 8, out 7 **do not slurp**
-- `cli.md` — 2,124 tok, in 7, out 3
 - `ui/vercel-ai.md` — 4,750 tok, in 2, out 7
+- `cli.md` — 2,124 tok, in 7, out 3
 
 ### Examples — 13,146 tok, 20 pages — inline
 
 Hub: `examples/setup.md` (506 tok, in 21, out 2)
 
 - `examples/setup.md` — 506 tok, in 21, out 2
+- `examples/pydantic-model.md` — 196 tok, in 1, out 2
+- `examples/weather-agent.md` — 457 tok, in 3, out 4
+- `examples/chat-app.md` — 301 tok, in 2, out 3
+- `examples/bank-support.md` — 140 tok, in 1, out 4
+- `examples/sql-gen.md` — 279 tok, in 3, out 4
+- `examples/data-analyst.md` — 541 tok, in 0, out 2
 - `examples/rag.md` — 578 tok, in 6, out 4
-- `examples/realtime-camera.md` — 1,276 tok, in 4, out 4
+- `examples/twelvelabs-video-agent.md` — 318 tok, in 0, out 3
+- `examples/stream-markdown.md` — 140 tok, in 1, out 2
+- `examples/stream-whales.md` — 170 tok, in 1, out 2
 - `examples/realtime-voice.md` — 582 tok, in 4, out 4
 - `examples/realtime-text-to-audio.md` — 357 tok, in 4, out 2
-- `examples/weather-agent.md` — 457 tok, in 3, out 4
-- `examples/sql-gen.md` — 279 tok, in 3, out 4
+- `examples/realtime-handoff.md` — 479 tok, in 0, out 5
+- `examples/realtime-camera.md` — 1,276 tok, in 4, out 4
 - `examples/realtime-webrtc.md` — 972 tok, in 2, out 3
-- `examples/chat-app.md` — 301 tok, in 2, out 3
 - `examples/flight-booking.md` — 298 tok, in 1, out 3
-- `examples/pydantic-model.md` — 196 tok, in 1, out 2
-- `examples/stream-whales.md` — 170 tok, in 1, out 2
-- `examples/bank-support.md` — 140 tok, in 1, out 4
-- `examples/stream-markdown.md` — 140 tok, in 1, out 2
+- `examples/medical-agent-delegation.md` — 298 tok, in 0, out 4
 - `examples/slack-lead-qualifier.md` — 3,832 tok, in 0, out 5
 - `examples/ag-ui.md` — 1,426 tok, in 0, out 3
-- `examples/data-analyst.md` — 541 tok, in 0, out 2
-- `examples/realtime-handoff.md` — 479 tok, in 0, out 5
-- `examples/twelvelabs-video-agent.md` — 318 tok, in 0, out 3
-- `examples/medical-agent-delegation.md` — 298 tok, in 0, out 4
 
 ### Project — 13,177 tok, 3 pages — inline
 
-Hub: `changelog.md` (9,802 tok, in 6, out 9)
+Hub: `contributing.md` (2,635 tok, in 1, out 3)
 
-- `changelog.md` — 9,802 tok, in 6, out 9 **do not slurp**
 - `contributing.md` — 2,635 tok, in 1, out 3
+- `changelog.md` — 9,802 tok, in 6, out 9 **do not slurp**
 - `version-policy.md` — 740 tok, in 1, out 3

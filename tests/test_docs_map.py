@@ -11,6 +11,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip('tiktoken')
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts' / 'generate_docs_map.py'
 ATLAS = ROOT / 'agent_docs' / 'docs-atlas.md'
@@ -52,7 +56,25 @@ def test_harness_sourced_pages_are_absent():
         assert f'`{path}`' not in text
 
 
-def test_html_viewer_is_self_contained(tmp_path: Path):
+def test_hubs_follow_sidebar_entry_points():
+    """Hubs are overview/index pages, not the highest-inbound page."""
+    text = ATLAS.read_text(encoding='utf-8')
+    assert 'Hub: `index.md`' in text
+    assert 'Hub: `agent.md`' in text
+    assert 'Hub: `models/overview.md`' in text
+    assert 'Hub: `tools.md`' in text
+    assert 'Hub: `evals.md`' in text
+    assert 'Hub: `mcp/overview.md`' in text
+    core = text.split('### Core Concepts', 1)[1].split('### ', 1)[0]
+    assert 'Hub: `agent.md`' in core
+    assert 'Hub: `capabilities/overview.md`' not in core
+    overview = text.split('### Overview', 1)[1].split('### ', 1)[0]
+    assert overview.index('`index.md`') < overview.index('`install.md`')
+    tools = text.split('### Tools & Toolsets', 1)[1].split('### ', 1)[0]
+    assert tools.index('`tools.md`') < tools.index('`tools-advanced.md`')
+
+
+def test_html_viewer_inlines_graph(tmp_path: Path):
     html_path = tmp_path / 'index.html'
     result = _run('--check', '--html', str(html_path))
     assert result.returncode == 0, result.stderr + result.stdout
