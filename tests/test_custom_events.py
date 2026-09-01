@@ -7,7 +7,7 @@ import sys
 import textwrap
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pydantic
@@ -461,6 +461,54 @@ def test_replay_isolation_keeps_the_canonical_event_class():
     finally:
         set_replay_isolation_guard(lambda: False)
         CUSTOM_EVENT_TYPES.pop('isolated', None)
+
+
+def test_replay_isolation_canonicalizes_an_init_false_field():
+    """A field the constructor won't accept is assigned onto the canonical copy, not dropped.
+
+    Passing every field as a keyword argument raises `TypeError` for an `init=False` field, which
+    Pydantic downgrades to a serializer warning and falls back from — restoring the exact
+    `PydanticSerializationUnexpectedValue` noise canonicalization exists to avoid, under
+    `filterwarnings = ["error"]` a hard failure. Dropping the field instead would only be lossless
+    for a value `__post_init__` can recompute, so the value is carried over.
+    """
+
+    def define() -> Any:
+        @dataclass(kw_only=True)
+        class InitFalseEvent(CustomEvent):
+            done: int = 0
+            recorded: str = field(init=False, default='')
+
+        return InitFalseEvent
+
+    host_cls = define()
+    isolated = True
+    set_replay_isolation_guard(lambda: isolated)
+    try:
+        copy_cls = define()
+        assert copy_cls is not host_cls
+        instance = copy_cls(done=3)
+        # Not derivable from `done`, so a dropped field would come back as its default.
+        instance.recorded = 'carried'
+        adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            wire = adapter.dump_python(instance, mode='json')
+        assert wire == snapshot(
+            {
+                'name': 'init_false',
+                'tool_call_id': None,
+                'tool_name': None,
+                'event_kind': 'custom',
+                'done': 3,
+                'recorded': 'carried',
+            }
+        )
+        assert isinstance(adapter.validate_python(wire), host_cls)
+    finally:
+        set_replay_isolation_guard(lambda: False)
+        CUSTOM_EVENT_TYPES.pop('init_false', None)
 
 
 async def test_event_delivered_while_tool_still_running():

@@ -130,7 +130,15 @@ def _canonicalize(value: object, event_cls: type) -> Any:
     value_type = type(value)
     if value_type is event_cls or not is_redefinition(event_cls, value_type):
         return value
-    return event_cls(**{f.name: getattr(value, f.name) for f in dataclasses.fields(event_cls)})
+    fields = dataclasses.fields(event_cls)
+    # A field declared `init=False` isn't accepted by the constructor, so it's assigned afterwards
+    # rather than dropped: `__post_init__` can only recompute one whose value follows from the init
+    # fields, and anything else would silently come back as its default.
+    canonical = event_cls(**{f.name: getattr(value, f.name) for f in fields if f.init})
+    for f in fields:
+        if not f.init:
+            setattr(canonical, f.name, getattr(value, f.name))
+    return canonical
 
 
 def guard_post_init(cls: type, base_post_init: Callable[[Any], None]) -> None:
