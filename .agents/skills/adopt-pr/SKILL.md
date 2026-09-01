@@ -47,7 +47,7 @@ Two sources, in order:
 
 For each linked issue:
 ```bash
-gh issue view <N> --json number,url,title,state,body,labels,comments
+gh issue view <N> --json number,url,title,state,body,labels,comments,updatedAt
 ```
 
 If no linked issue and body has no problem description worth linking, proceed with `issues: []` (free-text problem) — ask the user whether to continue or abort.
@@ -75,6 +75,7 @@ Use the same schema as `/initialize-worktree` Step 3 (see `.claude/skills/initia
 
 - `related_pr`: the PR URL (not `TBD` — the PR already exists)
 - `branch`: `git rev-parse --abbrev-ref HEAD`
+- `issues[].updated_at`: the issue's current `updatedAt` value from GitHub
 - **Success criteria** — derive from:
   1. The issue text (as usual)
   2. Tests already on the branch — each existing test is a *de facto* criterion. Cross-reference them explicitly in the table.

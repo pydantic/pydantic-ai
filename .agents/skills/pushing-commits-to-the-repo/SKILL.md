@@ -154,10 +154,15 @@ if the head changes, capture the new SHA and restart the loop.
    flake or pre-existing on main, say so with evidence.
 3. **Wait for a standards review on the captured SHA.**
    [`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
-   is the source of truth for eligibility and accepted verdicts or no-ops. Require its accepted
-   terminal outcome to identify the captured SHA, then recheck that the live head is unchanged.
-   Do not substitute a named reviewer unless repository instructions explicitly require one. Any
-   valid finding and push restarts the lifecycle. A human request remains blocking until that human
+   is the source of truth for eligibility and accepted verdicts or no-ops.
+   - **Same-repository PR:** require the `CI Review` terminal outcome to identify the captured SHA.
+   - **Fork PR:** `CI Review` deliberately skips without leaving a head check. Apply the `douwebot`
+     label, then follow `.github/workflows/bots.yml`: do not push or touch review threads while the
+     label is present; require the triggered `douwebot` run to succeed; and verify that the PR head
+     still equals the captured SHA after the label is removed. A failure comment or guard refusal
+     leaves the gate unsatisfied.
+   Recheck that the live head is unchanged. Do not substitute another named reviewer. Any valid
+   finding and push restarts the lifecycle. A human request remains blocking until that human
    re-reviews or a maintainer dismisses it; do not dismiss a human request. Missing, stale, or failed
    required reviews are unsatisfied; retry when appropriate, otherwise escalate.
 4. **Triage every comment** (bots and humans alike). For each one:

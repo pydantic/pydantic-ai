@@ -15,7 +15,7 @@ Study a problem or GitHub issue, research the codebase, plan a fix, optionally i
 ## Step 1 — Parse Input
 
 Parse `$ARGUMENTS`:
-- **GitHub issue URL or number** (e.g. `https://github.com/pydantic/pydantic-ai/issues/1234` or `#1234`) → fetch via `gh issue view <number> --json title,body,comments,labels,state`
+- **GitHub issue URL or number** (e.g. `https://github.com/pydantic/pydantic-ai/issues/1234` or `#1234`) → fetch via `gh issue view <number> --json title,body,comments,labels,state,updatedAt`
 - **Free text** → treat as problem description
 - **Empty** → ask the user to link an issue or describe the problem.
 
@@ -44,6 +44,7 @@ issues:
     title: "<title>"
     type: <bug|improvement|feature>
     role: <primary|related|follow-up>
+    updated_at: <issue updatedAt from GitHub>
 ---
 
 # Issue Brief

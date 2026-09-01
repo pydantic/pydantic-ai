@@ -85,6 +85,26 @@ if [[ -z "$TITLE" || -z "$DECISION" || -z "$WHY" || -z "$SOURCE" ]]; then
     usage
 fi
 
+validate_field() {
+    local label="$1" value="$2"
+    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]] || \
+        LC_ALL=C grep -q '[[:cntrl:]]' <<< "$value"; then
+        echo "error: $label must be one line without control characters" >&2
+        exit 1
+    fi
+}
+
+validate_field 'title' "$TITLE"
+validate_field 'decision' "$DECISION"
+validate_field 'why' "$WHY"
+validate_field 'source' "$SOURCE"
+validate_field 'iteration' "$ITER"
+validate_field 'supersedes' "$SUPERSEDES"
+if [[ "$TITLE" == *' · '* || "$ITER" == *' · '* ]]; then
+    echo "error: title and iteration must not contain the decision-header separator" >&2
+    exit 1
+fi
+
 # Source is the load-bearing field — an entry whose link doesn't resolve can't be traced back,
 # and it's the field prose lands in when positional args go in the wrong order.
 case "$SOURCE" in

@@ -21,7 +21,7 @@ Never run autonomously. The brief is meant to stay stable across many sessions â
 ### 1. Parse current brief
 
 Read `.claude/skills/branch-context/issue-brief.md` frontmatter:
-- `issues:` list (numbers + URLs)
+- `issues:` list (numbers, URLs, and the last fetched `updated_at` value)
 - `last_fetched_at`
 - `last_fetched_comment_count`
 
@@ -31,22 +31,27 @@ If `issues:` is empty (free-text problem, no linked issue), print: "No linked is
 
 For each issue:
 ```bash
-gh issue view <N> --json title,state,comments,labels,body
+gh issue view <N> --json title,state,comments,labels,body,updatedAt
 ```
 
 Collect:
 - Current comment count
 - Any comments with `createdAt > last_fetched_at`
 - Current title / state / labels (flag changes)
+- Whether `updatedAt` differs from the issue's stored `updated_at`. Treat a missing stored value as
+  stale so briefs created before this field was added get one full comparison.
 
 ### 3. Compare
 
 For each issue, build a short summary of deltas:
 - New comments (count + one-line summary of each)
 - Title changed? state changed (reopened/closed)? labels added/removed?
-- Body edited? (compare first 200 chars against what the brief cites)
+- Body edited? A changed `updatedAt` requires comparing the complete current body with the brief's
+  scope, criteria, constraints, and references; never use a prefix comparison.
 
-If no deltas anywhere: update `last_fetched_at` + `last_fetched_comment_count` in the brief frontmatter and print "No changes since last fetch." Exit.
+If no semantic deltas remain after comparison: update `last_fetched_at`,
+`last_fetched_comment_count`, and every issue's stored `updated_at` in the brief frontmatter, then
+print "No changes since last fetch." Exit.
 
 ### 4. Classify deltas
 
@@ -68,7 +73,8 @@ Before writing any changes, use the harness's structured question mechanism for 
 
 For approved deltas, edit `.claude/skills/branch-context/issue-brief.md`:
 - Update the relevant section(s) â€” keep the tight format from the brief template
-- Always update frontmatter: `last_fetched_at` (ISO now), `last_fetched_comment_count` (fresh total)
+- Always update frontmatter: `last_fetched_at` (ISO now), `last_fetched_comment_count` (fresh total),
+  and each issue's `updated_at` (fresh GitHub value)
 
 ### 7. Log a decision entry
 

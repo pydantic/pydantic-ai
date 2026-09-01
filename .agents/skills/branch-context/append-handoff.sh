@@ -71,6 +71,26 @@ fi
 
 mkdir -p "$HAND_DIR"
 
+# The index, lane map, session ledger, and handoff file form one state transition.
+# Serialize the complete transition so concurrent first writers cannot split it.
+LOCK_DIR="$HAND_DIR/.append.lock"
+lock_acquired=false
+for ((attempt = 0; attempt < 200; attempt++)); do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        lock_acquired=true
+        break
+    fi
+    sleep 0.05
+done
+if [ "$lock_acquired" != true ]; then
+    echo "error: timed out waiting for branch-context handoff lock: $LOCK_DIR" >&2
+    exit 1
+fi
+release_lock() {
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+trap release_lock EXIT HUP INT TERM
+
 if [ ! -f "$INDEX" ]; then
     if [ -f "$DIR/handoffs-index.template.md" ]; then
         cp "$DIR/handoffs-index.template.md" "$INDEX"
@@ -88,6 +108,20 @@ if [ -z "$LANE_ID" ] && [ -n "${TMUX:-}" ]; then
 fi
 [ -z "$LANE_ID" ] && LANE_ID="unlaned"
 
+validate_state_id() {
+    local label="$1" value="$2"
+    validate_index_text "$label" "$value"
+    if [[ "$value" =~ [[:space:]] || "$value" == *']'* || "$value" == *' · '* ]]; then
+        echo "error: $label must be a single delimiter-safe field" >&2
+        exit 1
+    fi
+}
+
+validate_state_id 'lane id' "$LANE_ID"
+if [ -n "$SESSION_ID" ]; then
+    validate_state_id 'session id' "$SESSION_ID"
+fi
+
 LANE_LABEL=""
 if [ -f "$LANES" ]; then
     LANE_LABEL="$(awk -v id="$LANE_ID" '$1 == id { $1 = ""; sub(/^ /, ""); print; exit }' "$LANES")"
@@ -104,11 +138,7 @@ if [ -z "$LANE_LABEL" ]; then
     done
     echo "$LANE_ID $LANE_LABEL" >> "$LANES"
 fi
-validate_index_text 'lane label' "$LANE_LABEL"
-if [[ "$LANE_LABEL" == *']'* ]]; then
-    echo "error: lane label must not contain ']'" >&2
-    exit 1
-fi
+validate_state_id 'lane label' "$LANE_LABEL"
 
 # Same session already handed off → amend that entry instead of competing with it.
 if [ -n "$SESSION_ID" ] && [ -f "$LEDGER" ]; then
