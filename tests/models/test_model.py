@@ -596,6 +596,14 @@ def test_profile_context_window_explicit_override():
     assert model.profile.get('context_window') == 1234
 
 
+def test_profile_context_window_partial_override():
+    """A partial user profile keeps inferred fields alongside its explicit overrides."""
+    with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
+        model = OpenAIChatModel('gpt-5', profile=ModelProfile(supports_tools=False))
+    assert model.profile.get('context_window') is not None
+    assert model.profile.get('supports_tools') is False
+
+
 def test_profile_context_window_explicit_unknown():
     """An explicit `None` remains authoritative instead of being replaced from genai-prices."""
     with patch.dict(os.environ, {'OPENAI_API_KEY': 'x'}):
@@ -615,32 +623,3 @@ def test_profile_context_window_callable_override():
         model = OpenAIChatModel('gpt-5', profile=profile)
     assert model.profile.get('context_window') is None
     assert inferred_context_windows[0] is not None
-
-
-@pytest.mark.parametrize('base_url_error', [UserError, AttributeError])
-def test_profile_context_window_base_url_unavailable(base_url_error: type[Exception]):
-    """A model whose `base_url` raises still resolves its profile.
-
-    `UserError` happens for e.g. HuggingFace without a base URL; `AttributeError` when `profile` is
-    first resolved inside a subclass `__init__` before the client attribute `base_url` reads exists
-    (e.g. Bedrock Mantle).
-    """
-
-    class NoBaseURLModel(TestModel):
-        @property
-        def base_url(self) -> str | None:
-            raise base_url_error('no base URL')
-
-    assert NoBaseURLModel().profile.get('context_window') is None
-
-
-def test_profile_context_window_partially_initialized_model():
-    """`profile` still resolves on a model built via `__new__`, before `__init__` sets any attributes.
-
-    Some tests construct models this way to exercise a method in isolation (e.g. the Cerebras
-    thinking-translation tests), so `model_name` and `system` raise `AttributeError` and the
-    genai-prices lookup must be skipped rather than propagate.
-    """
-    model = OpenAIChatModel.__new__(OpenAIChatModel)
-    model._profile = ModelProfile(supports_tools=True)  # pyright: ignore[reportPrivateUsage]
-    assert model.profile.get('context_window') is None

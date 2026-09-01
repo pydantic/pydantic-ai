@@ -918,6 +918,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
         user = self._profile
+        context_window_set = 'context_window' in provider_profile or (
+            user is not None and not callable(user) and 'context_window' in user
+        )
+        if not context_window_set:
+            context_window = self._get_resolved_context_window()
+            if context_window is not None:
+                resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
 
         # Step 4: user override
         if user is None:
@@ -929,12 +936,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
-
-        if resolved.get('context_window', None) is not None:
-            # We need to fetch the cw from genai-prices
-            context_window = self._get_resolved_context_window()
-            if context_window is not None:
-                resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
 
         # Step 5: native tools intersection — profile's allowed tools & model's implemented tools
         model_supported = self.__class__.supported_native_tools()

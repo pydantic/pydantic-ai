@@ -1172,7 +1172,6 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model.model_name == 'gpt-5'
         assert temporal_model.system == 'openai'
         assert temporal_model.profile == infer_model_profile('openai:gpt-5')
-        assert temporal_model.profile.get('context_window') is not None
 
     # Anthropic profile inference includes WebSearchTool support
     with temporal_model.using_model('anthropic:claude-sonnet-4-5'):

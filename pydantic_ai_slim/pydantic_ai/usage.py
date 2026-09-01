@@ -329,9 +329,8 @@ class RequestUsage(UsageBase):
             provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
         ):
             try:
-                extracted_usage = get_snapshot().extract_usage(
-                    data, provider_id=provider_id, provider_api_url=provider_api_url
-                )
+                provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
+                _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
                 return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
             except Exception:
                 pass

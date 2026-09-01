@@ -5,7 +5,6 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterator
 from datetime import datetime
-from functools import cache
 from typing import TYPE_CHECKING
 
 from genai_prices import calc_price
@@ -46,7 +45,6 @@ def iter_provider_references(
             yield candidate_id, candidate_url
 
 
-@cache
 def lookup_context_window(
     model_name: str,
     *,

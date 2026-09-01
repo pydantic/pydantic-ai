@@ -2658,6 +2658,12 @@ def test_temporal_run_context_preserves_run_id():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.run_id == 'run-123'
+
+
+def test_temporal_run_context_context_window_used_is_none_without_messages():
+    reconstructed = TemporalRunContext.deserialize_run_context(
+        TemporalRunContext.serialize_run_context(RunContext(deps=None, model=TestModel(), usage=RunUsage())), deps=None
+    )
     assert reconstructed.context_window_used is None
 
     # Even if a custom activity context carries a model, the ratio stays unknown when it omits the
