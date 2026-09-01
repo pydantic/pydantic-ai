@@ -29,6 +29,7 @@ API_REGION = 'API Reference'
 LOCAL_SOURCE = 'pydantic-ai'
 NAV_RELATIVE_PATH = Path('docs/navigation.yml')
 ATLAS_RELATIVE_PATH = Path('agent_docs/docs-atlas.md')
+HTML_RELATIVE_PATH = Path('docs/map.html')
 GRAPH_PLACEHOLDER = '__GRAPH_JSON__'
 _SKIP_SCHEMES = ('http://', 'https://', 'mailto:', 'ftp://', 'javascript:')
 _VIEWER_TEMPLATE = Path(__file__).resolve().parent / 'docs_map' / 'viewer.html'
@@ -96,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         '--html',
         type=Path,
         metavar='PATH',
-        help='write an HTML viewer with the graph inlined (D3 is loaded from a CDN; graph.json is also written next to it)',
+        help='write an HTML viewer with the graph inlined (D3 is loaded from a CDN). Defaults to docs/map.html when regenerating',
     )
     args = parser.parse_args(argv)
 
@@ -105,14 +106,21 @@ def main(argv: list[str] | None = None) -> int:
     markdown = render_atlas(docs_map)
     atlas_path = root / ATLAS_RELATIVE_PATH
 
+    html = _render_html(docs_map)
+    default_html_path = root / HTML_RELATIVE_PATH
+
     if args.check:
-        status = _check_atlas(atlas_path, markdown)
+        status = _check_file(atlas_path, markdown, 'Docs atlas')
+        if status == 0:
+            status = _check_file(default_html_path, html, 'Docs map HTML')
     else:
         atlas_path.write_text(markdown, encoding='utf-8')
+        default_html_path.write_text(html, encoding='utf-8')
         status = 0
 
     if args.html is not None:
-        _write_html(args.html, docs_map)
+        args.html.parent.mkdir(parents=True, exist_ok=True)
+        args.html.write_text(html, encoding='utf-8')
 
     return status
 
@@ -404,7 +412,7 @@ def _fmt(n: int) -> str:
     return f'{n:,}'
 
 
-def _check_atlas(path: Path, expected: str) -> int:
+def _check_file(path: Path, expected: str, label: str) -> int:
     if not path.is_file():
         print(f'{path} is missing. Run `make docs-map` to generate it.', file=sys.stderr)
         return 1
@@ -419,7 +427,7 @@ def _check_atlas(path: Path, expected: str) -> int:
         n=3,
     )
     preview = ''.join(list(diff)[:80])
-    print('Docs atlas is stale. Run `make docs-map` to regenerate.', file=sys.stderr)
+    print(f'{label} is stale. Run `make docs-map` to regenerate.', file=sys.stderr)
     sys.stderr.write(preview)
     if not preview.endswith('\n'):
         print(file=sys.stderr)
@@ -461,7 +469,7 @@ def _graph_payload(docs_map: _DocsMap) -> dict[str, object]:
     }
 
 
-def _write_html(path: Path, docs_map: _DocsMap) -> None:
+def _render_html(docs_map: _DocsMap) -> str:
     if not _VIEWER_TEMPLATE.is_file():
         raise SystemExit(f'viewer template is missing: {_VIEWER_TEMPLATE}')
     template = _VIEWER_TEMPLATE.read_text(encoding='utf-8')
@@ -469,10 +477,7 @@ def _write_html(path: Path, docs_map: _DocsMap) -> None:
         raise SystemExit(f'{_VIEWER_TEMPLATE} is missing {GRAPH_PLACEHOLDER}')
     payload = json.dumps(_graph_payload(docs_map), indent=2, sort_keys=True)
     payload = payload.replace('<', '\\u003c')
-    html = template.replace(GRAPH_PLACEHOLDER, payload)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(html, encoding='utf-8')
-    path.with_name('graph.json').write_text(payload + '\n', encoding='utf-8')
+    return template.replace(GRAPH_PLACEHOLDER, payload)
 
 
 if __name__ == '__main__':

@@ -85,4 +85,4 @@ def test_html_viewer_inlines_graph(tmp_path: Path):
     assert 'Fortress rooms' in html
     assert 'Agent atlas' in html
     assert "searchParams.set('variant'" in html or 'searchParams.set("variant"' in html
-    assert html_path.with_name('graph.json').is_file()
+    assert 'https://pydantic.dev/docs/ai/' in html

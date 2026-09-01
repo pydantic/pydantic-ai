@@ -88,9 +88,8 @@ update-vcr-tests: ## Update tests using VCR that hit LLM APIs; note you'll need 
 	uv run -m pytest --record-mode=rewrite tests
 
 .PHONY: docs-map
-docs-map: ## Regenerate the committed docs atlas and a local HTML viewer
-	mkdir -p local-notes/docs-map
-	uv run python scripts/generate_docs_map.py --html local-notes/docs-map/index.html
+docs-map: ## Regenerate the committed docs atlas and docs/map.html
+	uv run python scripts/generate_docs_map.py
 
 .PHONY: docs-map-check
 docs-map-check: ## Check the committed docs atlas is up to date
