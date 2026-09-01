@@ -1686,10 +1686,10 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
 def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():
     """A mapping that spells one of our items out in full is that item, extra keys and all.
 
-    `media_type` separates our dumped shape from a mapping that stops short of it; it cannot separate
-    it from a mapping that *is* our dumped shape with a key added, and the added key goes with the
-    mapping. `docs/message-history.md` names this boundary — keep `kind` off a dictionary that has to
-    come back verbatim.
+    Whatever separates our shape from a mapping that stops short of it — `BinaryContent`'s required
+    fields here, a `media_type` for a URL item — cannot separate it from a mapping that *is* our shape
+    with a key added, and the added key goes with the mapping. `docs/message-history.md` names this
+    boundary — keep `kind` off a dictionary that has to come back verbatim.
     """
     content = {'kind': 'binary', 'data': 'eA==', 'media_type': 'text/plain', 'label': 'keep'}
     messages: list[ModelMessage] = [
