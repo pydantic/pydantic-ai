@@ -702,6 +702,18 @@ def test_unknown_event_name_with_nested_data_preserved():
     assert {k: v for k, v in redumped.items() if k in wire} == wire
 
 
+def test_unknown_event_without_payload_fields():
+    """An unregistered event that carries no payload fields leaves the envelope's `data` empty."""
+    adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    wire = {'event_kind': 'custom', 'name': 'unseen_bare'}
+    with pytest.warns(UserWarning, match="Unknown event name 'unseen_bare'"):
+        event = adapter.validate_python(wire)
+    assert event == snapshot(UnknownCustomEvent(name='unseen_bare', data=None))
+    assert adapter.dump_python(event) == snapshot(
+        {'name': 'unseen_bare', 'tool_call_id': None, 'tool_name': None, 'event_kind': 'custom', 'data': None}
+    )
+
+
 def test_unknown_event_data_key_collision_round_trips():
     """An unknown wire dict carrying both payload fields and its own `data` key keeps both.
 
